@@ -1,3 +1,6 @@
+type ToolStartCallback = Box<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
+type ToolCompleteCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Handle `hermes gateway [action]`.
 #[allow(clippy::too_many_arguments)]
 async fn run_gateway(
@@ -325,7 +328,7 @@ async fn run_gateway(
                         let gateway_for_tool_progress = gateway_for_review.clone();
                         let platform_for_tool_progress = ctx.platform.clone();
                         let chat_for_tool_progress = ctx.chat_id.clone();
-                        let on_tool_start: Box<dyn Fn(&str, &serde_json::Value) + Send + Sync> =
+                        let on_tool_start: ToolStartCallback =
                             Box::new(move |name: &str, args: &serde_json::Value| {
                                 let preview =
                                     build_tool_label_from_value(name, args, 60, friendly_tool_labels)
@@ -371,7 +374,7 @@ async fn run_gateway(
                                 }
                             });
                         let tool_events_for_complete = tool_events.clone();
-                        let on_tool_complete: Box<dyn Fn(&str, &str) + Send + Sync> =
+                        let on_tool_complete: ToolCompleteCallback =
                             Box::new(move |name: &str, result: &str| {
                                 if let Ok(mut guard) = tool_events_for_complete.lock() {
                                     guard.push(serde_json::json!({
@@ -613,7 +616,7 @@ async fn run_gateway(
                         let gateway_for_tool_progress = gateway_for_review.clone();
                         let platform_for_tool_progress = ctx.platform.clone();
                         let chat_for_tool_progress = ctx.chat_id.clone();
-                        let on_tool_start: Box<dyn Fn(&str, &serde_json::Value) + Send + Sync> =
+                        let on_tool_start: ToolStartCallback =
                             Box::new(move |name: &str, args: &serde_json::Value| {
                                 let preview =
                                     build_tool_label_from_value(name, args, 60, friendly_tool_labels)
@@ -659,7 +662,7 @@ async fn run_gateway(
                                 }
                             });
                         let tool_events_for_complete = tool_events.clone();
-                        let on_tool_complete: Box<dyn Fn(&str, &str) + Send + Sync> =
+                        let on_tool_complete: ToolCompleteCallback =
                             Box::new(move |name: &str, result: &str| {
                                 if let Ok(mut guard) = tool_events_for_complete.lock() {
                                     guard.push(serde_json::json!({
@@ -1065,10 +1068,7 @@ async fn configure_platform_basic_prompts(
     disk: &mut hermes_config::GatewayConfig,
     key: &str,
 ) -> Result<(), AgentError> {
-    let p = disk
-        .platforms
-        .entry(key.to_string())
-        .or_insert_with(PlatformConfig::default);
+    let p = disk.platforms.entry(key.to_string()).or_default();
     p.enabled = true;
 
     match key {
