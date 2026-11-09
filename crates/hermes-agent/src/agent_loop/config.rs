@@ -398,7 +398,8 @@ pub struct AgentConfig {
     pub cost_guard_degrade_at_ratio: f64,
 
     /// Optional explicit cheaper model to use after crossing the degrade ratio.
-    /// If unset, falls back to `retry.fallback_model` then a built-in cheap default.
+    /// If unset, falls back to `retry.fallback_model` then, only when the
+    /// primary provider is OpenAI, a built-in cheap default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_guard_degrade_model: Option<String>,
 

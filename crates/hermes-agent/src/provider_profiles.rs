@@ -6,6 +6,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::local_backends;
+
 pub const NOUS_PRODUCT_TAG: &str = "product=hermes-agent";
 pub const NOUS_CLIENT_TAG_PREFIX: &str = "client=hermes-client-v";
 pub const KIMI_CODE_BASE_URL: &str = "https://api.kimi.com/coding/v1";
@@ -152,6 +154,97 @@ pub fn profile_base_url(profile: &str) -> Option<&'static str> {
         "xiaomi" => Some("https://api.xiaomimimo.com/v1"),
         _ => None,
     }
+}
+
+/// Canonical runtime name for a provider alias, shared by the primary provider
+/// builder and the agent loop's runtime routes.
+pub fn normalize_runtime_provider_name(provider: &str) -> String {
+    let normalized = provider.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "codex" => "openai-codex".to_string(),
+        "claude" | "claude-code" => "anthropic".to_string(),
+        "mixture" | "mixture-of-agents" | "mixture_of_agents" => "moa".to_string(),
+        "nous_api" | "nousapi" | "nous-portal-api" => "nous-api".to_string(),
+        "qwen-cli" | "qwen-portal" => "qwen-oauth".to_string(),
+        "gemini-cli" | "gemini-oauth" => "google-gemini-cli".to_string(),
+        "google" | "google-gemini" | "google-ai-studio" => "gemini".to_string(),
+        "azure" | "azure-ai-foundry" | "azure_ai_foundry" => "azure-foundry".to_string(),
+        "step" | "step-plan" => "stepfun".to_string(),
+        "moonshot" | "kimi-coding" | "kimi-coding-cn" => "kimi".to_string(),
+        "alibaba" | "alibaba-coding-plan" => "qwen".to_string(),
+        "minimax-cn" => "minimax".to_string(),
+        "novita-ai" | "novitaai" => "novita".to_string(),
+        "glm" | "z-ai" | "z_ai" | "zhipu" => "zai".to_string(),
+        "aigateway" | "vercel" => "ai-gateway".to_string(),
+        "github-copilot" | "github-models" => "copilot".to_string(),
+        "github-copilot-acp" | "copilot-acp-agent" => "copilot-acp".to_string(),
+        "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
+        "gmi-cloud" | "gmicloud" => "gmi".to_string(),
+        "arcee-ai" | "arceeai" => "arcee".to_string(),
+        "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
+        "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
+        "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
+        "kilo" | "kilo-code" | "kilo-gateway" => "kilocode".to_string(),
+        "opencode" | "opencode-zen" | "zen" => "opencode-zen".to_string(),
+        "go" => "opencode-go".to_string(),
+        local if local_backends::local_backend_spec(local).is_some() => {
+            local_backends::local_backend_spec(local)
+                .expect("local backend spec checked")
+                .provider
+                .to_string()
+        }
+        _ => normalized,
+    }
+}
+
+/// Base URL that the provider's environment variable selects, if set. The
+/// primary provider builder and the agent loop's runtime routes both read it,
+/// so a rerouted turn addresses the same endpoint as the primary.
+pub fn provider_base_url_from_env(provider: &str) -> Option<String> {
+    let raw_provider = provider.trim().to_ascii_lowercase();
+    let normalized_provider = normalize_runtime_provider_name(raw_provider.as_str());
+    if let Some(url) = local_backends::local_backend_base_url_from_env(raw_provider.as_str())
+        .or_else(|| local_backends::local_backend_base_url_from_env(normalized_provider.as_str()))
+    {
+        return Some(url);
+    }
+    let env_var = match raw_provider.as_str() {
+        "minimax-cn" | "minimax_cn" => "MINIMAX_CN_BASE_URL",
+        _ => match normalized_provider.as_str() {
+            "openai" => "OPENAI_BASE_URL",
+            "openai-codex" | "codex" => "HERMES_OPENAI_CODEX_BASE_URL",
+            "nous-api" => "NOUS_BASE_URL",
+            "anthropic" => "ANTHROPIC_BASE_URL",
+            "bedrock" => "BEDROCK_BASE_URL",
+            "google-gemini-cli" => "HERMES_GEMINI_BASE_URL",
+            "gemini" | "google" => "GEMINI_BASE_URL",
+            "qwen" => "DASHSCOPE_BASE_URL",
+            "qwen-oauth" => "HERMES_QWEN_BASE_URL",
+            "stepfun" => "STEPFUN_BASE_URL",
+            "ai-gateway" => "AI_GATEWAY_BASE_URL",
+            "kimi" => "KIMI_BASE_URL",
+            "minimax" => "MINIMAX_BASE_URL",
+            "novita" => "NOVITA_BASE_URL",
+            "xai" => "XAI_BASE_URL",
+            "nvidia" => "NVIDIA_BASE_URL",
+            "copilot" => "COPILOT_API_BASE_URL",
+            "opencode-go" => "OPENCODE_GO_BASE_URL",
+            "opencode-zen" => "OPENCODE_ZEN_BASE_URL",
+            "kilocode" => "KILOCODE_BASE_URL",
+            "huggingface" => "HF_BASE_URL",
+            "gmi" => "GMI_BASE_URL",
+            "xiaomi" => "XIAOMI_BASE_URL",
+            "zai" => "GLM_BASE_URL",
+            "arcee" => "ARCEE_BASE_URL",
+            "tencent-tokenhub" => "TOKENHUB_BASE_URL",
+            "deepseek" => "DEEPSEEK_BASE_URL",
+            _ => return None,
+        },
+    };
+    std::env::var(env_var)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
 }
 
 pub fn hermes_client_tag() -> String {

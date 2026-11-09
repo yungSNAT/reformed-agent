@@ -474,10 +474,26 @@ impl AgentLoop {
                 return Some(m.trim().to_string());
             }
         }
-        if self.config.model.trim() != "openai:gpt-4o-mini" {
-            return Some("openai:gpt-4o-mini".to_string());
+        let (primary_provider, _) = self.extract_provider_and_model(self.config.model.as_str());
+        Self::builtin_degrade_model(primary_provider.as_str(), self.config.model.as_str())
+    }
+
+    const BUILTIN_DEGRADE_MODEL: &'static str = "openai:gpt-4o-mini";
+
+    /// Built-in cheap degrade target for the cost and reliability guards. It
+    /// applies only when the active provider is OpenAI, so a guard never moves
+    /// a turn, or its credential, to a provider the configuration did not
+    /// select (a custom endpoint keeps its turns unless a fallback is set).
+    fn builtin_degrade_model(active_provider: &str, active_model: &str) -> Option<String> {
+        if active_provider.trim().eq_ignore_ascii_case("openai")
+            && !active_model
+                .trim()
+                .eq_ignore_ascii_case(Self::BUILTIN_DEGRADE_MODEL)
+        {
+            Some(Self::BUILTIN_DEGRADE_MODEL.to_string())
+        } else {
+            None
         }
-        None
     }
 
     fn resolve_reliability_degrade_model(
@@ -490,27 +506,27 @@ impl AgentLoop {
                 return Some(fallback.trim().to_string());
             }
         }
-        let provider_hint = route
+        // The provider this turn addresses, resolved as the LLM call resolves it.
+        let (inferred_provider, active_model_id) = self.extract_provider_and_model(active_model);
+        let active_provider = route
             .and_then(|r| r.provider.as_deref())
-            .or(self.config.provider.as_deref())
-            .unwrap_or("openai");
-        let (_, active_model_id) = self.extract_provider_and_model(active_model);
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .unwrap_or(inferred_provider);
         if let Some(candidate) =
-            preferred_tool_payload_fallback_model(provider_hint, active_model_id)
+            preferred_tool_payload_fallback_model(active_provider.as_str(), active_model_id)
         {
             let normalized = if candidate.contains(':') {
                 candidate
             } else {
-                format!("{}:{}", provider_hint, candidate)
+                format!("{}:{}", active_provider, candidate)
             };
             if !normalized.eq_ignore_ascii_case(active_model) {
                 return Some(normalized);
             }
         }
-        if !active_model.eq_ignore_ascii_case("openai:gpt-4o-mini") {
-            return Some("openai:gpt-4o-mini".to_string());
-        }
-        None
+        Self::builtin_degrade_model(active_provider.as_str(), active_model)
     }
 
     fn resolve_retry_failover_chain(&self, active_model: &str) -> Vec<String> {
@@ -538,8 +554,11 @@ impl AgentLoop {
         if let Some(ref fallback) = self.config.retry.fallback_model {
             push_candidate(fallback);
         }
-        if let Some(dynamic) = self.resolve_reliability_degrade_model(active_model, None) {
-            push_candidate(&dynamic);
+        match self.resolve_reliability_degrade_model(active_model, None) {
+            Some(dynamic) => push_candidate(&dynamic),
+            // Failover sends these model names to the primary runtime, so the
+            // built-in model stays a last resort whatever the provider.
+            None => push_candidate(Self::BUILTIN_DEGRADE_MODEL),
         }
 
         out

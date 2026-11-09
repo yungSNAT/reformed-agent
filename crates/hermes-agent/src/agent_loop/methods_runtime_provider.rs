@@ -263,6 +263,7 @@ impl AgentLoop {
             .and_then(|c| c.base_url.as_ref())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .or_else(|| crate::provider_profiles::provider_base_url_from_env(provider))
             .or_else(|| {
                 if provider == "copilot-acp" {
                     std::env::var("COPILOT_ACP_BASE_URL")
@@ -280,30 +281,16 @@ impl AgentLoop {
                     provider,
                     "bedrock" | "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon"
                 ) {
-                    std::env::var("BEDROCK_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| Some(bedrock_runtime_base_url(&resolve_bedrock_region())))
+                    Some(bedrock_runtime_base_url(&resolve_bedrock_region()))
                 } else if matches!(
                     provider,
                     "nous-api" | "nous_api" | "nousapi" | "nous-portal-api"
                 ) {
-                    std::env::var("NOUS_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| Some("https://inference-api.nousresearch.com/v1".to_string()))
+                    Some("https://inference-api.nousresearch.com/v1".to_string())
                 } else if provider == "stepfun" {
                     Some("https://api.stepfun.ai/step_plan/v1".to_string())
                 } else if matches!(provider, "kimi" | "moonshot" | "kimi-coding") {
-                    std::env::var("KIMI_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| {
-                            Some(crate::provider_profiles::KIMI_LEGACY_BASE_URL.to_string())
-                        })
+                    Some(crate::provider_profiles::KIMI_LEGACY_BASE_URL.to_string())
                 } else if provider == "kimi-coding-cn" {
                     Some(crate::provider_profiles::KIMI_CN_BASE_URL.to_string())
                 } else if provider == "minimax-cn" || provider == "minimax_cn" {
