@@ -1,21 +1,22 @@
 # syntax=docker/dockerfile:1.7
 
 # ----- Build stage -----
-FROM rust:1.79-bookworm AS builder
+FROM rust:1.99.1-bookworm AS builder
 
 WORKDIR /app
 
 # Copy workspace manifests first for better layer caching
 COPY --link Cargo.toml Cargo.lock ./
 COPY --link crates crates
+# The workspace patches four crates from third_party; the build fails without them.
+COPY --link third_party third_party
 
-# Build with all optional platform features
-RUN cargo build --release --features "telegram,discord,slack" \
-    || cargo build --release
+# hermes-cli's default features enable every gateway platform adapter.
+RUN cargo build --release --locked -p hermes-cli --bin hermes
 
 # ----- Runtime stage -----
 FROM debian:bookworm-slim
-LABEL org.opencontainers.image.source="https://github.com/sheawinkler/hermes-agent-ultra" \
+LABEL org.opencontainers.image.source="https://github.com/yungSNAT/reformed-agent" \
       org.opencontainers.image.licenses="MIT"
 
 RUN apt-get update \
