@@ -3,7 +3,7 @@
     use hermes_core::JsonSchema;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    fn env_test_lock() -> MutexGuard<'static, ()> {
+    pub(crate) fn env_test_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()

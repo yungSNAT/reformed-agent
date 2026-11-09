@@ -4,6 +4,7 @@
     /// precedence over environment lookup.
     #[test]
     fn test_oauth_refresh_config_prefers_provider_config_over_env() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;
@@ -99,6 +100,7 @@
 
     #[test]
     fn test_runtime_provider_api_key_env_is_resolved() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;
@@ -232,6 +234,7 @@
 
     #[test]
     fn test_runtime_provider_api_key_env_supports_anthropic_aliases_and_gemini_oauth() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;
@@ -295,6 +298,7 @@
 
     #[test]
     fn test_oauth_refresh_config_anthropic_defaults_available() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;
@@ -343,6 +347,7 @@
 
     #[test]
     fn test_oauth_refresh_config_openai_defaults_available() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;
@@ -393,6 +398,7 @@
 
     #[test]
     fn test_oauth_refresh_config_nous_defaults_available() {
+        let _env_lock = env_test_lock();
         use futures::stream::BoxStream;
 
         struct DummyProvider;

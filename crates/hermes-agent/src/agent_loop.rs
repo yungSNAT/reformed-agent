@@ -85,7 +85,7 @@ include!("agent_loop/methods_tools_background.rs");
 include!("agent_loop/finalizer_helpers.rs");
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     include!("agent_loop/tests_core.rs");
     include!("agent_loop/tests_runtime.rs");
 }
