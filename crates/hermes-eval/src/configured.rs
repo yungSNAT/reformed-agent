@@ -115,7 +115,7 @@ impl BenchmarkAdapter for ConfiguredBenchmarkAdapter {
     }
 
     fn verifier(&self) -> Box<dyn Verifier> {
-        Box::new(ConfiguredVerifier::default())
+        Box::new(ConfiguredVerifier)
     }
 }
 
