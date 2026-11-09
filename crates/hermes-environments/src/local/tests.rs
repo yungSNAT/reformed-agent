@@ -110,6 +110,8 @@ fn test_with_login_profile_sources_prefers_user_shell_when_supported() {
     );
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_resolve_shell_init_files_auto_profile_before_bashrc() {
     let _lock = lock_env();
@@ -127,6 +129,8 @@ fn test_resolve_shell_init_files_auto_profile_before_bashrc() {
     assert_eq!(names, [".profile", ".bash_profile", ".bashrc"]);
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_resolve_shell_init_files_explicit_list_wins_over_auto() {
     let _lock = lock_env();
@@ -145,6 +149,8 @@ fn test_resolve_shell_init_files_explicit_list_wins_over_auto() {
     assert_eq!(resolved, [custom]);
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_resolve_shell_init_files_auto_source_off_suppresses_defaults() {
     let _lock = lock_env();
@@ -156,6 +162,8 @@ fn test_resolve_shell_init_files_auto_source_off_suppresses_defaults() {
     assert!(resolved.is_empty());
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_resolve_shell_init_files_expands_home_and_env_vars() {
     let _lock = lock_env();
@@ -179,6 +187,8 @@ fn test_resolve_shell_init_files_expands_home_and_env_vars() {
     assert_eq!(env_resolved, [custom]);
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_resolve_shell_init_files_uses_subprocess_home_override() {
     let _lock = lock_env();
@@ -248,8 +258,10 @@ fn test_profile_home_mode_sets_home_and_real_home() {
         Vec::new(),
     );
 
+    // An MSYS shell on Windows prints HOME in its POSIX form, so prove which
+    // directory HOME names by writing a file through it.
     let output = block_on(backend.execute_command(
-        "printf '%s|%s' \"$HOME\" \"$HERMES_REAL_HOME\"",
+        "printf home-probe > \"$HOME/home-probe\" && printf '%s' \"$HERMES_REAL_HOME\"",
         None,
         None,
         false,
@@ -257,13 +269,11 @@ fn test_profile_home_mode_sets_home_and_real_home() {
     ))
     .unwrap();
 
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    assert_eq!(output.stdout, real.path().display().to_string());
     assert_eq!(
-        output.stdout,
-        format!(
-            "{}|{}",
-            hermes.path().join("home").display(),
-            real.path().display()
-        )
+        std::fs::read_to_string(hermes.path().join("home").join("home-probe")).unwrap(),
+        "home-probe"
     );
 }
 
@@ -419,6 +429,8 @@ async fn test_execute_command_with_workdir() {
     assert!(output.stdout.trim().contains("/tmp"));
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[tokio::test]
 async fn test_execute_command_sources_explicit_shell_init_file() {
     let td = tempdir().unwrap();
@@ -780,6 +792,8 @@ fn test_execute_command_force_prefix_reinjects_blocked_var() {
     assert_eq!(output.stdout, "sk-explicit|");
 }
 
+// Shell init files are sourced only on Unix; see `with_login_profile_sources`.
+#[cfg(unix)]
 #[test]
 fn test_execute_command_cleans_profile_reintroduced_blocked_vars() {
     let _lock = lock_env();
@@ -811,6 +825,8 @@ fn test_execute_command_cleans_profile_reintroduced_blocked_vars() {
     assert_eq!(output.stdout, "|ok");
 }
 
+// PATH normalisation runs only on Unix; Windows keeps the inherited PATH.
+#[cfg(unix)]
 #[test]
 fn test_subprocess_path_appends_homebrew_when_path_is_minimal() {
     let normalized = normalize_subprocess_path(Some("/some/custom/bin"));
@@ -820,12 +836,46 @@ fn test_subprocess_path_appends_homebrew_when_path_is_minimal() {
     assert!(normalized.contains("/opt/homebrew/sbin"));
 }
 
+// PATH normalisation runs only on Unix; Windows keeps the inherited PATH.
+#[cfg(unix)]
 #[test]
 fn test_subprocess_path_preserves_full_path() {
     assert_eq!(
         normalize_subprocess_path(Some("/usr/bin:/bin")),
         "/usr/bin:/bin"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn test_windows_command_finds_programs_on_the_inherited_path() {
+    let _lock = lock_env();
+    let bin = tempdir().unwrap();
+    std::fs::write(
+        bin.path().join("hermes-path-probe.bat"),
+        "@echo path-probe-ok\r\n",
+    )
+    .unwrap();
+    // Last, not first: an MSYS shell reads the first entry of a `:`-joined
+    // Windows PATH correctly and loses the drive of every later one.
+    let inherited = std::env::var_os("PATH").unwrap_or_default();
+    let path = std::env::join_paths(
+        std::env::split_paths(&inherited).chain(std::iter::once(bin.path().to_path_buf())),
+    )
+    .unwrap();
+    let _path = EnvGuard::set("PATH", path.to_string_lossy().as_ref());
+
+    let output = block_on(LocalBackend::default().execute_command(
+        "hermes-path-probe.bat",
+        None,
+        None,
+        false,
+        false,
+    ))
+    .unwrap();
+
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    assert!(output.stdout.contains("path-probe-ok"));
 }
 
 #[tokio::test]
