@@ -288,8 +288,7 @@ pub fn convert_tools_to_anthropic(tools: &[Value]) -> Vec<AnthropicTool> {
 /// Convert an OpenAI-style image URL/data URL into an Anthropic image source.
 pub fn image_source_from_openai_url(url: &str) -> ImageSource {
     let url = url.trim();
-    if url.starts_with("data:") {
-        let after_data = &url[5..];
+    if let Some(after_data) = url.strip_prefix("data:") {
         let (header, data) = match after_data.find(',') {
             Some(idx) => (&after_data[..idx], &after_data[idx + 1..]),
             None => ("image/jpeg", after_data),
@@ -335,11 +334,7 @@ pub fn convert_messages_to_anthropic(
 
         match role {
             "system" => {
-                system = if content.is_array() {
-                    Some(content)
-                } else {
-                    Some(content)
-                };
+                system = Some(content);
             }
             "assistant" => {
                 let mut blocks: Vec<AnthropicContentBlock> = Vec::new();
@@ -416,7 +411,7 @@ pub fn convert_messages_to_anthropic(
                 if let Some(last) = result.last_mut() {
                     if last.role == "user" {
                         if let AnthropicContent::Blocks(ref mut blocks) = last.content {
-                            if blocks.first().map_or(false, |b| {
+                            if blocks.first().is_some_and(|b| {
                                 matches!(b, AnthropicContentBlock::ToolResult { .. })
                             }) {
                                 blocks.push(tool_result);
@@ -504,20 +499,17 @@ fn convert_content_part(part: &Value) -> Option<AnthropicContentBlock> {
                 source: image_source_from_openai_url(url),
             })
         }
-        _ => {
-            if let Some(text) = part.get("text").and_then(|t| t.as_str()) {
-                Some(AnthropicContentBlock::Text {
-                    text: text.to_string(),
-                    cache_control: part.get("cache_control").cloned(),
-                })
-            } else {
-                None
-            }
-        }
+        _ => part
+            .get("text")
+            .and_then(|t| t.as_str())
+            .map(|text| AnthropicContentBlock::Text {
+                text: text.to_string(),
+                cache_control: part.get("cache_control").cloned(),
+            }),
     }
 }
 
-fn strip_orphaned_blocks(messages: &mut Vec<AnthropicMessage>) {
+fn strip_orphaned_blocks(messages: &mut [AnthropicMessage]) {
     // Collect tool_result IDs
     let mut tool_result_ids: HashSet<String> = HashSet::new();
     for m in messages.iter() {
@@ -1053,12 +1045,10 @@ mod tests {
     #[test]
     fn test_default_anthropic_beta_list_oauth_appends() {
         let api = default_anthropic_beta_list(None, false);
-        assert!(api
-            .iter()
-            .any(|b| *b == "fine-grained-tool-streaming-2025-05-14"));
+        assert!(api.contains(&"fine-grained-tool-streaming-2025-05-14"));
 
         let oauth = default_anthropic_beta_list(None, true);
-        assert!(oauth.iter().any(|b| *b == "oauth-2025-04-20"));
+        assert!(oauth.contains(&"oauth-2025-04-20"));
         assert!(oauth.len() > api.len());
     }
 
@@ -1082,8 +1072,8 @@ mod tests {
     fn test_azure_endpoint_keeps_context_1m_and_tool_streaming_betas() {
         let betas =
             common_betas_for_base_url(Some("https://my-resource.openai.azure.com/anthropic"));
-        assert!(betas.iter().any(|b| *b == CONTEXT_1M_BETA));
-        assert!(betas.iter().any(|b| *b == TOOL_STREAMING_BETA));
+        assert!(betas.contains(&CONTEXT_1M_BETA));
+        assert!(betas.contains(&TOOL_STREAMING_BETA));
     }
 
     #[test]

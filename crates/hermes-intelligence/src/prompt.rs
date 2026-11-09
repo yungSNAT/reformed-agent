@@ -123,8 +123,7 @@ impl PromptBuilder {
                 .tools
                 .iter()
                 .map(|t| {
-                    let params_desc = if t.parameters.required.is_some() {
-                        let required = t.parameters.required.as_ref().unwrap();
+                    let params_desc = if let Some(required) = &t.parameters.required {
                         format!(" (required: {})", required.join(", "))
                     } else {
                         String::new()
@@ -167,7 +166,7 @@ impl PromptBuilder {
     /// - Mark the system message as `Persistent` (cache for the whole session).
     /// - Mark the last N user/assistant message turns as `Ephemeral` (short-lived cache).
     /// - The number of turns to mark is configurable via `ephemeral_turns`.
-    pub fn add_cache_markers(&self, messages: &mut Vec<Message>, ephemeral_turns: usize) {
+    pub fn add_cache_markers(&self, messages: &mut [Message], ephemeral_turns: usize) {
         if messages.is_empty() {
             return;
         }

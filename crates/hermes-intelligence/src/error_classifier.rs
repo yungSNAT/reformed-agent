@@ -167,9 +167,7 @@ fn classify_llm_api_message(msg: &str) -> ErrorCategory {
         || lower.contains("service unavailable")
     {
         ErrorCategory::ModelOverloaded
-    } else if has_ssl_transient {
-        ErrorCategory::Timeout
-    } else if lower.contains("timeout") || lower.contains("timed out") {
+    } else if has_ssl_transient || lower.contains("timeout") || lower.contains("timed out") {
         ErrorCategory::Timeout
     } else if lower.contains("invalid") || lower.contains("bad request") || lower.contains("400") {
         ErrorCategory::InvalidRequest

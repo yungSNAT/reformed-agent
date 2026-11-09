@@ -423,7 +423,7 @@ pub fn get_model_context_length(model: &str) -> u64 {
 
     // Hardcoded defaults (fuzzy match, longest key first)
     let mut entries: Vec<_> = DEFAULT_CONTEXT_LENGTHS.to_vec();
-    entries.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+    entries.sort_by_key(|entry| std::cmp::Reverse(entry.0.len()));
     for (key, length) in entries {
         if model_lower.contains(key) {
             return length;
@@ -451,7 +451,7 @@ pub fn estimate_tokens_rough(text: &str) -> u64 {
     if text.is_empty() {
         return 0;
     }
-    ((text.chars().count() as u64) + 3) / 4
+    (text.chars().count() as u64).div_ceil(4)
 }
 
 /// Rough token estimate for a serialized message list.
@@ -470,7 +470,7 @@ pub fn estimate_request_tokens_rough(
     if let Some(tools) = tools {
         total_chars += tools.iter().map(|t| t.to_string().len()).sum::<usize>();
     }
-    ((total_chars as u64) + 3) / 4
+    (total_chars as u64).div_ceil(4)
 }
 
 /// Build a user-facing warning when a model switch will likely require
