@@ -799,9 +799,11 @@ async fn chat_completion_returns_final_reply_without_tool_use() {
 
 #[tokio::test]
 async fn chat_completion_returns_final_reply_when_gateway_streams() {
-    let mut config = GatewayConfig::default();
-    config.streaming_enabled = true;
-    let (adapter, gateway) = api_gateway(config).await;
+    let (adapter, gateway) = api_gateway(GatewayConfig {
+        streaming_enabled: true,
+        ..GatewayConfig::default()
+    })
+    .await;
     gateway
         .set_streaming_handler_with_context(Arc::new(|_messages, _ctx, on_chunk| {
             Box::pin(async move {
