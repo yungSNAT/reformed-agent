@@ -751,3 +751,58 @@
             Some("openai:gpt-4o-mini")
         );
     }
+
+    #[test]
+    fn test_primary_credential_pool_stays_with_the_primary_provider() {
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "deepseek".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("deepseek-fixture-key".to_string()),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let mut config = AgentConfig {
+            model: "openai:gpt-4o".to_string(),
+            provider: Some("openai".to_string()),
+            runtime_providers,
+            smart_model_routing: SmartModelRoutingConfig {
+                enabled: true,
+                max_simple_chars: 160,
+                max_simple_words: 28,
+                cheap_model: Some(CheapModelRouteConfig {
+                    provider: Some("deepseek".to_string()),
+                    model: Some("deepseek-chat".to_string()),
+                    base_url: None,
+                    api_key_env: None,
+                }),
+            },
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        )
+        .with_primary_credential_pool(Arc::new(CredentialPool::single("primary-pool-key")));
+
+        let same_provider = agent.turn_route_reliability_guard("openai:gpt-4o-mini".to_string());
+        assert!(
+            agent.credential_pool_for_route(&same_provider).is_some(),
+            "a route on the primary's provider keeps the primary pool"
+        );
+        let guard = agent.turn_route_reliability_guard("deepseek:deepseek-chat".to_string());
+        assert!(
+            agent.credential_pool_for_route(&guard).is_none(),
+            "a guard route to another provider must not carry the primary's keys"
+        );
+        let cheap = agent
+            .resolve_smart_runtime_route(&[Message::user("hi")])
+            .expect("cheap route");
+        assert_eq!(cheap.provider.as_deref(), Some("deepseek"));
+        assert!(
+            agent.credential_pool_for_route(&cheap).is_none(),
+            "a cheap route to another provider must not carry the primary's keys"
+        );
+    }

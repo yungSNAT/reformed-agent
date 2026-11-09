@@ -3,13 +3,27 @@ impl AgentLoop {
         &'a self,
         rt: &'a TurnRuntimeRoute,
     ) -> Option<&'a Arc<CredentialPool>> {
-        if rt.credential_pool_fallback {
+        let pool = if rt.credential_pool_fallback {
             rt.credential_pool
                 .as_ref()
                 .or(self.primary_credential_pool.as_ref())
         } else {
             rt.credential_pool.as_ref()
-        }
+        };
+        // Route pools are the primary's pool, whose keys belong to the primary
+        // provider only; a route to another provider uses its own credential.
+        let (primary_provider, _) = self.extract_provider_and_model(self.config.model.as_str());
+        let route_provider = rt
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.extract_provider_and_model(rt.model.as_str()).0);
+        let same_provider =
+            crate::provider_profiles::normalize_runtime_provider_name(&primary_provider)
+                == crate::provider_profiles::normalize_runtime_provider_name(&route_provider);
+        pool.filter(|_| same_provider)
     }
 
     fn messages_for_api_call(&self, ctx: &ContextManager) -> Vec<Message> {
