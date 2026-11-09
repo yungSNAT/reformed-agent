@@ -95,9 +95,8 @@ impl AgentLoop {
         ) {
             return Some(BEDROCK_AUTH_MARKER.to_string());
         }
-        if let Some(token) = self.resolve_oauth_store_api_key(provider) {
-            return Some(token);
-        }
+        // A key set on the route itself (a cheap model's `api_key_env`) comes
+        // first; after that the route follows the primary builder's order.
         if let Some(key) = explicit_api_key.map(str::trim).filter(|s| !s.is_empty()) {
             return Some(key.to_string());
         }
@@ -111,144 +110,14 @@ impl AgentLoop {
                 }
             }
         }
-        if let Some(cfg) = self.runtime_provider_config(provider) {
-            if let Some(ref key) = cfg.api_key {
-                let trimmed = key.trim();
-                if let Some(env_ref) = trimmed.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
-                {
-                    if let Ok(v) = std::env::var(env_ref) {
-                        if !v.trim().is_empty() {
-                            return Some(v);
-                        }
-                    }
-                } else if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-            if let Some(env_name) = cfg
-                .api_key_env
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                if let Ok(v) = std::env::var(env_name) {
-                    if !v.trim().is_empty() {
-                        return Some(v);
-                    }
-                }
-            }
-        }
-        if matches!(provider, "openai" | "codex" | "openai-codex") {
-            return std::env::var("HERMES_OPENAI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty());
-        }
-        if provider == "stepfun" {
-            return std::env::var("HERMES_STEPFUN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("STEPFUN_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty());
-        }
-        match provider {
-            "google-ai-studio" => std::env::var("GOOGLE_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GEMINI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "gemini" | "google" | "google-gemini" => std::env::var("GEMINI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "gmi" | "gmi-cloud" | "gmicloud" => std::env::var("GMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "arcee" | "arcee-ai" | "arceeai" => std::env::var("ARCEEAI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ARCEE_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "xiaomi" | "mimo" | "xiaomi-mimo" => std::env::var("XIAOMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
-                std::env::var("TOKENHUB_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "anthropic" | "claude" | "claude-code" => std::env::var("ANTHROPIC_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ANTHROPIC_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => {
-                std::env::var("HERMES_GEMINI_OAUTH_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "openrouter" => std::env::var("OPENROUTER_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "qwen" | "qwen-oauth" => std::env::var("DASHSCOPE_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "kimi-coding" => std::env::var("KIMI_CODING_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "kimi" | "moonshot" => std::env::var("KIMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_CODING_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "kimi-coding-cn" => std::env::var("KIMI_CN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "minimax" => std::env::var("MINIMAX_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "minimax-cn" | "minimax_cn" => std::env::var("MINIMAX_CN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "nous" | "nous-api" | "nous_api" | "nousapi" | "nous-portal-api" => {
-                std::env::var("NOUS_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => std::env::var("GLM_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ZAI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("Z_AI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "copilot" | "copilot-acp" => std::env::var("COPILOT_GITHUB_TOKEN")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GH_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GITHUB_COPILOT_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty()),
-            _ => None,
-        }
+        let cfg = self.runtime_provider_config(provider);
+        let canonical = crate::provider_profiles::normalize_runtime_provider_name(provider);
+        crate::provider_profiles::resolve_provider_api_key(
+            &[provider, canonical.as_str()],
+            cfg.and_then(|c| c.api_key.as_deref()),
+            cfg.and_then(|c| c.api_key_env.as_deref()),
+            |name| self.resolve_oauth_store_api_key(name),
+        )
     }
 
     fn resolve_runtime_base_url(

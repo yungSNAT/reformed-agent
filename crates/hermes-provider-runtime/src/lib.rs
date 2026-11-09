@@ -28,12 +28,16 @@ use serde_json::Value;
 
 pub use hermes_agent::local_backends::LocalBackendSpec;
 pub use hermes_agent::provider_profiles::{
-    normalize_runtime_provider_name, provider_base_url_from_env, provider_default_base_url,
-    AI_GATEWAY_BASE_URL, ALIBABA_CODING_PLAN_BASE_URL, ARCEE_BASE_URL, COPILOT_BASE_URL,
-    DEEPSEEK_BASE_URL, DEFAULT_NOUS_INFERENCE_URL, GMI_BASE_URL, GOOGLE_GEMINI_CLI_BASE_URL,
-    HUGGINGFACE_BASE_URL, KILOCODE_BASE_URL, MINIMAX_CN_BASE_URL, NOVITA_BASE_URL, NVIDIA_BASE_URL,
-    OLLAMA_CLOUD_BASE_URL, OPENCODE_GO_BASE_URL, OPENCODE_ZEN_BASE_URL, QWEN_BASE_URL,
-    STEPFUN_BASE_URL, TENCENT_TOKENHUB_BASE_URL, XAI_BASE_URL, XIAOMI_BASE_URL, ZAI_BASE_URL,
+    normalize_runtime_provider_name, provider_api_key_from_env, provider_base_url_from_env,
+    provider_default_base_url, AI_GATEWAY_BASE_URL, ALIBABA_CODING_PLAN_BASE_URL, ARCEE_BASE_URL,
+    COPILOT_BASE_URL, DEEPSEEK_BASE_URL, DEFAULT_NOUS_INFERENCE_URL, GMI_BASE_URL,
+    GOOGLE_GEMINI_CLI_BASE_URL, HUGGINGFACE_BASE_URL, KILOCODE_BASE_URL, MINIMAX_CN_BASE_URL,
+    NOVITA_BASE_URL, NVIDIA_BASE_URL, OLLAMA_CLOUD_BASE_URL, OPENCODE_GO_BASE_URL,
+    OPENCODE_ZEN_BASE_URL, QWEN_BASE_URL, STEPFUN_BASE_URL, TENCENT_TOKENHUB_BASE_URL,
+    XAI_BASE_URL, XIAOMI_BASE_URL, ZAI_BASE_URL,
+};
+use hermes_agent::provider_profiles::{
+    resolve_api_key_literal_or_env_ref, resolve_provider_api_key,
 };
 
 pub const GEMINI_BASE_URL: &str = provider_profiles::GEMINI_OPENAI_BASE_URL;
@@ -640,17 +644,6 @@ pub fn resolve_provider_and_model(config: &GatewayConfig, model: &str) -> (Strin
     ("openai".to_string(), trimmed.to_string())
 }
 
-fn resolve_api_key_literal_or_env_ref(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty() {
-        return None;
-    }
-    if let Some(env_ref) = trimmed.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
-        return std::env::var(env_ref).ok().filter(|v| !v.trim().is_empty());
-    }
-    Some(trimmed.to_string())
-}
-
 pub fn allow_no_api_key(
     provider_name: &str,
     runtime_provider: &str,
@@ -663,164 +656,6 @@ pub fn allow_no_api_key(
         || runtime_provider == "bedrock"
         || provider_name == "bedrock"
         || base_url.is_some_and(local_backends::is_local_or_private_base_url)
-}
-
-/// Resolve API key / token for a named LLM provider from well-known environment variables.
-pub fn provider_api_key_from_env(provider: &str) -> Option<String> {
-    let raw_provider = provider.trim().to_ascii_lowercase();
-    if raw_provider == "kimi-coding-cn" {
-        return ["KIMI_CN_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"]
-            .iter()
-            .find_map(|env_var| {
-                std::env::var(env_var)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            });
-    }
-    if matches!(raw_provider.as_str(), "minimax-cn" | "minimax_cn") {
-        return std::env::var("MINIMAX_CN_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty());
-    }
-    let provider = normalize_runtime_provider_name(raw_provider.as_str());
-    if let Some(api_key) = local_backends::local_backend_api_key_from_env(raw_provider.as_str())
-        .or_else(|| local_backends::local_backend_api_key_from_env(provider.as_str()))
-    {
-        return Some(api_key);
-    }
-    match provider.as_str() {
-        "openai" => std::env::var("HERMES_OPENAI_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "openai-codex" | "codex" => std::env::var("HERMES_OPENAI_CODEX_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "anthropic" | "claude" | "claude-code" => std::env::var("ANTHROPIC_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("ANTHROPIC_TOKEN").ok())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "bedrock" => Some(BEDROCK_AUTH_MARKER.to_string()),
-        "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => {
-            std::env::var("HERMES_GEMINI_OAUTH_API_KEY")
-                .ok()
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-                .filter(|s| !s.trim().is_empty())
-                .or_else(|| std::env::var("GEMINI_API_KEY").ok())
-                .filter(|s| !s.trim().is_empty())
-        }
-        "openrouter" => std::env::var("OPENROUTER_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "qwen" => std::env::var("DASHSCOPE_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "qwen-oauth" => std::env::var("HERMES_QWEN_OAUTH_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("DASHSCOPE_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "kimi" | "moonshot" => {
-            let env_vars: &[&str] = if raw_provider == "kimi-coding" {
-                &["KIMI_CODING_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"]
-            } else {
-                &[
-                    "KIMI_API_KEY",
-                    "KIMI_CODING_API_KEY",
-                    "MOONSHOT_API_KEY",
-                    "KIMI_CN_API_KEY",
-                ]
-            };
-            env_vars.iter().find_map(|env_var| {
-                std::env::var(env_var)
-                    .ok()
-                    .map(|s| s.trim().to_string())
-                    .filter(|s| !s.is_empty())
-            })
-        }
-        "minimax" => std::env::var("MINIMAX_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("MINIMAX_CN_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "stepfun" => std::env::var("HERMES_STEPFUN_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("STEPFUN_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "novita" => std::env::var("NOVITA_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "nous" | "nous-api" => std::env::var("NOUS_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "copilot" => std::env::var("COPILOT_GITHUB_TOKEN")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("GH_TOKEN").ok())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("GITHUB_COPILOT_TOKEN").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "ai-gateway" => std::env::var("AI_GATEWAY_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "arcee" => std::env::var("ARCEEAI_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("ARCEE_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        "deepseek" => std::env::var("DEEPSEEK_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "huggingface" => std::env::var("HF_TOKEN")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "gmi" => std::env::var("GMI_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "kilocode" => std::env::var("KILOCODE_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "nvidia" => std::env::var("NVIDIA_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "ollama-cloud" => std::env::var("OLLAMA_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "opencode-go" => std::env::var("OPENCODE_GO_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "opencode-zen" => std::env::var("OPENCODE_ZEN_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "xai" => std::env::var("XAI_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "xiaomi" => std::env::var("XIAOMI_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "tencent-tokenhub" => std::env::var("TOKENHUB_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
-        "zai" => std::env::var("GLM_API_KEY")
-            .ok()
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("ZAI_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty())
-            .or_else(|| std::env::var("Z_AI_API_KEY").ok())
-            .filter(|s| !s.trim().is_empty()),
-        _ => None,
-    }
 }
 
 pub fn build_provider(config: &GatewayConfig, model: &str) -> Arc<dyn LlmProvider> {
@@ -856,21 +691,12 @@ pub fn build_provider_with_auth_resolver(
         .or_else(|| provider_base_url_from_env(runtime_provider.as_str()))
         .or_else(|| default_base_url.map(ToString::to_string));
 
-    let api_key = provider_config
-        .and_then(|c| c.api_key.as_deref())
-        .and_then(resolve_api_key_literal_or_env_ref)
-        .or_else(|| {
-            provider_config
-                .and_then(|c| c.api_key_env.as_deref())
-                .map(str::trim)
-                .filter(|name| !name.is_empty())
-                .and_then(|name| std::env::var(name).ok())
-                .filter(|v| !v.trim().is_empty())
-        })
-        .or_else(|| provider_api_key_from_env(provider_name.as_str()))
-        .or_else(|| provider_api_key_from_env(runtime_provider.as_str()))
-        .or_else(|| oauth_token_resolver.and_then(|resolver| resolver(provider_name.as_str())))
-        .or_else(|| oauth_token_resolver.and_then(|resolver| resolver(runtime_provider.as_str())));
+    let api_key = resolve_provider_api_key(
+        &[provider_name.as_str(), runtime_provider.as_str()],
+        provider_config.and_then(|c| c.api_key.as_deref()),
+        provider_config.and_then(|c| c.api_key_env.as_deref()),
+        |name| oauth_token_resolver.and_then(|resolver| resolver(name)),
+    );
 
     let local_no_key_ok = allow_no_api_key(
         provider_name.as_str(),

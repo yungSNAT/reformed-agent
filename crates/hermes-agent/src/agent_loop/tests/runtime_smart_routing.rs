@@ -473,6 +473,11 @@
         use futures::stream::BoxStream;
         use std::time::{SystemTime, UNIX_EPOCH};
 
+        // The OAuth token is the last source, so no OpenAI key may be set.
+        let _env_lock = env_test_lock();
+        let _hermes_openai_key = EnvVarGuard::remove("HERMES_OPENAI_API_KEY");
+        let _openai_key = EnvVarGuard::remove("OPENAI_API_KEY");
+
         struct DummyProvider;
         #[async_trait::async_trait]
         impl LlmProvider for DummyProvider {
@@ -804,5 +809,73 @@
         assert!(
             agent.credential_pool_for_route(&cheap).is_none(),
             "a cheap route to another provider must not carry the primary's keys"
+        );
+    }
+
+    /// Writes an unexpired OAuth store entry for `provider` under `home`.
+    fn write_oauth_store_entry(home: &std::path::Path, provider: &str, token: &str) {
+        let auth_dir = home.join("auth");
+        std::fs::create_dir_all(&auth_dir).expect("create auth dir");
+        let store = serde_json::json!({
+            provider: {
+                "provider": provider,
+                "access_token": token,
+                "token_type": "bearer",
+                "refresh_token": null,
+                "scope": null,
+                "expires_at": "2099-01-01T00:00:00Z"
+            }
+        });
+        std::fs::write(auth_dir.join("tokens.json"), store.to_string()).expect("write token store");
+    }
+
+    #[test]
+    fn test_route_prefers_configured_key_over_stored_oauth_token() {
+        let home = tempfile::tempdir().expect("tempdir");
+        write_oauth_store_entry(home.path(), "openai", "stored-chatgpt-oauth-token");
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "openai".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("configured-openai-key".to_string()),
+                base_url: Some("http://127.0.0.1:9/v1".to_string()),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:gpt-4o".to_string(),
+                hermes_home: Some(home.path().to_string_lossy().to_string()),
+                runtime_providers,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        // The primary builder uses the configured key first, so a route to
+        // the same provider (and its custom base URL) must too.
+        assert_eq!(
+            agent.resolve_runtime_api_key("openai", None, None).as_deref(),
+            Some("configured-openai-key")
+        );
+    }
+
+    #[test]
+    fn test_route_prefers_provider_env_key_over_stored_oauth_token() {
+        let _env_lock = env_test_lock();
+        let _qwen_key = EnvVarGuard::set("HERMES_QWEN_OAUTH_API_KEY", "qwen-env-key");
+        let home = tempfile::tempdir().expect("tempdir");
+        write_oauth_store_entry(home.path(), "qwen-oauth", "stored-qwen-oauth-token");
+        let agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_string_lossy().to_string()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        assert_eq!(
+            agent.resolve_runtime_api_key("qwen-oauth", None, None).as_deref(),
+            Some("qwen-env-key")
         );
     }
