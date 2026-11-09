@@ -344,6 +344,11 @@ pub struct SecurityConfig {
     /// Website/domain blocklist used by web-facing tools.
     #[serde(default)]
     pub website_blocklist: WebsiteBlocklistConfig,
+
+    /// External guard that must allow each local terminal command, file write
+    /// and patch before it runs. Typed so that config rewrites keep it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_guard: Option<ToolGuardConfig>,
 }
 
 impl Default for SecurityConfig {
@@ -351,8 +356,30 @@ impl Default for SecurityConfig {
         Self {
             allow_private_urls: false,
             website_blocklist: WebsiteBlocklistConfig::default(),
+            tool_guard: None,
         }
     }
+}
+
+/// `security.tool_guard`: a program speaking Claude Code's PreToolUse hook
+/// format, such as `guard.exe`. See [`crate::tool_guard`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolGuardConfig {
+    /// The guard program.
+    pub command: String,
+
+    /// Arguments placed before the guard's own (`--codex` for file edits).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub args: Vec<String>,
+
+    /// Seconds to wait for an answer before refusing the call.
+    #[serde(default = "default_tool_guard_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_tool_guard_timeout_secs() -> u64 {
+    15
 }
 
 /// Website/domain blocklist configuration.

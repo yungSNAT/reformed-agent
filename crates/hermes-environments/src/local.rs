@@ -417,6 +417,7 @@ impl TerminalBackend for LocalBackend {
     ) -> Result<CommandOutput, AgentError> {
         let timeout_secs = timeout.unwrap_or(self.default_timeout);
         let rewritten_command = rewrite_compound_background(command);
+        let workdir = guard_command(&rewritten_command, workdir).await?;
         let subprocess_home = subprocess_home_for_mode(self.home_mode);
         let command_with_profiles = with_login_profile_sources(
             &rewritten_command,
@@ -445,8 +446,8 @@ impl TerminalBackend for LocalBackend {
                 scrub_subprocess_env(&mut pty_cmd, &self.env_passthrough);
                 apply_subprocess_home_policy(&mut pty_cmd, subprocess_home.as_ref());
 
-                if let Some(dir) = workdir {
-                    pty_cmd.current_dir(resolve_path(dir)?);
+                if let Some(dir) = &workdir {
+                    pty_cmd.current_dir(dir);
                 }
                 pty_cmd.suppress_windows_console();
 
@@ -497,8 +498,8 @@ impl TerminalBackend for LocalBackend {
         apply_subprocess_home_policy(&mut cmd, subprocess_home.as_ref());
         cmd.suppress_windows_console();
 
-        if let Some(dir) = workdir {
-            cmd.current_dir(resolve_path(dir)?);
+        if let Some(dir) = &workdir {
+            cmd.current_dir(dir);
         }
 
         if background {
@@ -636,6 +637,7 @@ impl TerminalBackend for LocalBackend {
             return Ok(started);
         }
 
+        let workdir = guard_command(&rewritten_command, workdir).await?;
         let timeout_secs = timeout.unwrap_or(self.default_timeout);
         let stdin_owned = stdin_data.to_string();
         if pty {
@@ -653,8 +655,8 @@ impl TerminalBackend for LocalBackend {
                 scrub_subprocess_env(&mut pty_cmd, &self.env_passthrough);
                 apply_subprocess_home_policy(&mut pty_cmd, subprocess_home.as_ref());
 
-                if let Some(dir) = workdir {
-                    pty_cmd.current_dir(resolve_path(dir)?);
+                if let Some(dir) = &workdir {
+                    pty_cmd.current_dir(dir);
                 }
                 pty_cmd.suppress_windows_console();
 
@@ -685,8 +687,8 @@ impl TerminalBackend for LocalBackend {
             .stdin(Stdio::piped());
         scrub_subprocess_env(&mut cmd, &self.env_passthrough);
         apply_subprocess_home_policy(&mut cmd, subprocess_home.as_ref());
-        if let Some(dir) = workdir {
-            cmd.current_dir(resolve_path(dir)?);
+        if let Some(dir) = &workdir {
+            cmd.current_dir(dir);
         }
         cmd.suppress_windows_console();
 
@@ -730,6 +732,9 @@ impl TerminalBackend for LocalBackend {
 
     async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
         let resolved = resolve_path(path)?;
+        hermes_config::tool_guard::check_write(&resolved)
+            .await
+            .map_err(AgentError::ToolExecution)?;
 
         // Ensure parent directory exists
         if let Some(parent) = resolved.parent() {

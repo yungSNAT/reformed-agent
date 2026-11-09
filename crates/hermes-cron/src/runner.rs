@@ -637,6 +637,11 @@ impl CronRunner {
         script: &str,
         workdir: Option<&Path>,
     ) -> Result<ScriptRun, CronError> {
+        // A model can schedule a script through the cronjob tool, so it asks the
+        // profile's tool guard as a terminal command would.
+        hermes_config::tool_guard::check_command(script, workdir.unwrap_or(Path::new(".")))
+            .await
+            .map_err(CronError::Scheduler)?;
         let mut command = if let Some(script_path) = resolve_cron_script_path(script)? {
             command_for_script_path(&script_path)
         } else {

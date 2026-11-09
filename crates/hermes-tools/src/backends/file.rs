@@ -454,6 +454,9 @@ impl PatchBackend for LocalPatchBackend {
         new_string: &str,
         replace_all: bool,
     ) -> Result<String, ToolError> {
+        hermes_config::tool_guard::check_write(std::path::Path::new(path))
+            .await
+            .map_err(ToolError::ExecutionFailed)?;
         let content = tokio::fs::read_to_string(path)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
