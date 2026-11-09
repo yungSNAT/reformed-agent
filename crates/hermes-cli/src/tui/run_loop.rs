@@ -100,6 +100,7 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
         if let Some(theme_name) = app.take_pending_theme_change() {
             let applied = crate::skin_engine::resolve_theme(&theme_name);
             tui.set_theme(applied);
+            state.transcript_cache = TranscriptCache::default();
             needs_redraw = true;
         }
 

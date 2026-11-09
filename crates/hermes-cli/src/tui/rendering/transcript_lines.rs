@@ -197,7 +197,7 @@ fn build_transcript_lines(
                 styles.assistant_response.add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "HERMES (streaming)",
+                "REFORMED (streaming)",
                 styles.assistant_response.add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -223,42 +223,20 @@ fn build_transcript_lines(
     }
 
     if lines.is_empty() {
-        let neon = Style::default()
-            .fg(colors.status_bar_strong)
+        let title = Style::default()
+            .fg(colors.status_bar_text)
             .bg(colors.background)
             .add_modifier(Modifier::BOLD);
-        let dim = Style::default()
-            .fg(colors.status_bar_dim)
-            .bg(colors.background);
-        let accent = Style::default().fg(colors.accent).bg(colors.background);
-        let hero = [
-            " ╔══════════════════════════════════════════════════════════════════╗",
-            " ║  ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗          ║",
-            " ║  ██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝          ║",
-            " ║  ███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗          ║",
-            " ║  ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║          ║",
-            " ║  ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║          ║",
-            " ║  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝          ║",
-            " ║                                                                  ║",
-            " ║       AGENT ULTRA  //  SUNBURST OPS  //  LIVE EXECUTION         ║",
-            " ║       YELLOW SIGNAL • REDLINE DRIVE • RUST-NATIVE CONTROL       ║",
-            " ╚══════════════════════════════════════════════════════════════════╝",
-        ];
-        for (idx, row) in hero.iter().enumerate() {
-            let style = if idx == 0 || idx == hero.len() - 1 {
-                accent
-            } else if row.contains("AGENT ULTRA") || row.contains("YELLOW SIGNAL") {
-                neon
-            } else {
-                dim
-            };
-            lines.push(Line::from(vec![Span::styled((*row).to_string(), style)]));
-        }
-        lines.push(Line::from(String::new()));
+        let mark = Style::default().fg(colors.accent).bg(colors.background);
+        lines.push(Line::from(vec![
+            Span::styled(" ▤ ", mark),
+            Span::styled("Printing press 2.0", title),
+        ]));
+        lines.push(Line::from(Span::styled(" ──────────────────", mark)));
         lines.push(Line::from(vec![Span::styled(
-            " Start chatting — your messages and Hermes replies will appear here.",
+            " Start chatting.",
             Style::default()
-                .fg(colors.status_bar_dim)
+                .fg(colors.foreground)
                 .bg(colors.background)
                 .add_modifier(Modifier::ITALIC),
         )]));

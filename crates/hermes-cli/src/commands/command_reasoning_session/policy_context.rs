@@ -546,8 +546,7 @@ fn handle_runtime_ui_mode_command(
         "/skin" => {
             let first = args.first().copied().unwrap_or("status");
             if first.eq_ignore_ascii_case("list") {
-                let active = std::env::var("HERMES_THEME").unwrap_or_else(|_| "ultra-neon".to_string());
-                let active_canonical = canonical_skin_name(&active).unwrap_or("ultra-neon");
+                let active_canonical = crate::skin_engine::active_skin_name();
                 let mut out = String::new();
                 let _ = writeln!(out, "Built-in skins (active: {}):", active_canonical);
                 for (name, detail) in BUILTIN_SKINS {
@@ -560,8 +559,7 @@ fn handle_runtime_ui_mode_command(
                 );
                 out.trim_end().to_string()
             } else if first.eq_ignore_ascii_case("status") || first.eq_ignore_ascii_case("show") {
-                let active = std::env::var("HERMES_THEME").unwrap_or_else(|_| "ultra-neon".to_string());
-                let active_canonical = canonical_skin_name(&active).unwrap_or("ultra-neon");
+                let active_canonical = crate::skin_engine::active_skin_name();
                 format!(
                     "Current skin: {}\nUse `/skin list` to browse options.\nUse `/skin <name>` to switch now.",
                     active_canonical

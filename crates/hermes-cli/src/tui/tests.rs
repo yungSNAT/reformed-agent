@@ -64,6 +64,30 @@ mod tests {
     }
 
     #[test]
+    fn test_reformation_skin_renders_black_canvas() {
+        use ratatui::backend::TestBackend;
+
+        let _guard = env_test_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let app = build_test_app(temp.path());
+        let theme = crate::skin_engine::resolve_theme("unrecognised");
+        assert_eq!(crate::skin_engine::resolve_theme("reformation"), theme);
+
+        for (width, height) in [(24, 8), (96, 24)] {
+            let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height))
+                .expect("create terminal");
+            let mut state = TuiState::default();
+            terminal
+                .draw(|frame| render(frame, &app, &mut state, &theme))
+                .expect("draw TUI");
+            let cells = terminal.backend().buffer().content();
+            assert!(cells.iter().all(|cell| cell.bg == Color::Rgb(0, 0, 0)));
+            let header: String = cells[..width as usize].iter().map(|cell| cell.symbol()).collect();
+            assert!(header.contains("Reformed Agent"), "header: {header}");
+        }
+    }
+
+    #[test]
     fn test_spinner_char() {
         let mut state = TuiState::default();
         let c1 = state.spinner_char();
@@ -751,7 +775,7 @@ mod tests {
         assert!(!rendered_text.contains("SYSTEM"));
         assert!(!rendered_text.contains("internal system payload"));
         assert!(rendered_text.contains("USER"));
-        assert!(rendered_text.contains("HERMES"));
+        assert!(rendered_text.contains("REFORMED"));
         assert!(rendered_text.contains("reply with 1"));
         assert!(rendered_text.contains("1"));
     }
@@ -768,6 +792,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(rendered_text.contains("Printing press 2.0"));
         assert!(rendered_text.contains("Start chatting"));
     }
 

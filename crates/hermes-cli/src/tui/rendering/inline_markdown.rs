@@ -17,8 +17,10 @@ fn role_visuals(
         ),
         hermes_core::MessageRole::Assistant => (
             "●",
-            "HERMES",
-            styles.assistant_response.bg(role_bg),
+            "REFORMED",
+            styles
+                .assistant_response
+                .bg(styles.assistant_response.bg.unwrap_or(role_bg)),
             styles.assistant_response.bg(role_bg),
         ),
         hermes_core::MessageRole::System => (
@@ -30,7 +32,7 @@ fn role_visuals(
         hermes_core::MessageRole::Tool => (
             "◈",
             "TOOL",
-            styles.tool_call.bg(role_bg),
+            styles.tool_call.bg(styles.tool_call.bg.unwrap_or(role_bg)),
             Style::default().fg(colors.status_bar_text).bg(role_bg),
         ),
     }
@@ -157,9 +159,7 @@ fn render_highlighted_code_line(
             let tok_style = if keywords.iter().any(|kw| kw.eq_ignore_ascii_case(&tok)) {
                 style
             } else if tok.chars().all(|ch| ch.is_ascii_digit()) {
-                Style::default()
-                    .fg(Color::Cyan)
-                    .bg(style.bg.unwrap_or(Color::Reset))
+                number_style
             } else {
                 default_style
             };
@@ -188,9 +188,7 @@ fn render_highlighted_code_line(
             continue;
         }
         flush_token(&mut spans, &mut token, keyword_style, keywords);
-        if ch.is_ascii_digit() {
-            spans.push(Span::styled(ch.to_string(), number_style));
-        } else if ch.is_whitespace() {
+        if ch.is_whitespace() {
             spans.push(Span::styled(ch.to_string(), default_style));
         } else {
             spans.push(Span::styled(ch.to_string(), punctuation_style));

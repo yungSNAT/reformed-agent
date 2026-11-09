@@ -297,15 +297,14 @@ impl Tui {
         let terminal = ratatui::Terminal::new(backend)?;
         let (event_sender, event_receiver) = mpsc::unbounded_channel();
         let (stream_sender, stream_receiver) = mpsc::unbounded_channel();
-        let requested_theme =
-            std::env::var("HERMES_THEME").unwrap_or_else(|_| "ultra-sunburst".to_string());
+        let requested_theme = crate::skin_engine::active_skin_name();
         Ok(Self {
             terminal,
             events: event_receiver,
             stream_events: stream_receiver,
             event_sender,
             stream_sender,
-            theme: crate::skin_engine::resolve_theme(requested_theme.as_str()),
+            theme: crate::skin_engine::resolve_theme(requested_theme),
             restored: false,
             mouse_capture_enabled: false,
         })

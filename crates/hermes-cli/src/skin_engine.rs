@@ -1,6 +1,9 @@
 use crate::theme::Theme;
 
+pub const DEFAULT_SKIN: &str = "reformation";
+
 pub const BUILTIN_SKINS: &[(&str, &str)] = &[
+    (DEFAULT_SKIN, "Reformation palette on pure black"),
     (
         "ultra-sunburst",
         "Futuristic 8-bit yellow/red profile for Hermes Ultra",
@@ -17,7 +20,7 @@ pub const BUILTIN_SKINS: &[(&str, &str)] = &[
         "ultra-64bit",
         "Sharper 64-bit chrome profile with richer color depth and calmer contrast",
     ),
-    ("ultra-neon", "Default Ultra neon profile (magenta/cyan)"),
+    ("ultra-neon", "Ultra neon profile (magenta/cyan)"),
     (
         "neon-glow",
         "Extra glow and contrast for low-light terminals",
@@ -44,6 +47,7 @@ pub const BUILTIN_SKINS: &[(&str, &str)] = &[
 
 pub fn canonical_skin_name(name: &str) -> Option<&'static str> {
     match name.trim().to_ascii_lowercase().as_str() {
+        DEFAULT_SKIN => Some(DEFAULT_SKIN),
         "ultra-sunburst" | "sunburst" | "desert-neon" => Some("ultra-sunburst"),
         "ultra-cyberpunk" | "cyberpunk" | "cyber" | "night-city" => Some("ultra-cyberpunk"),
         "ultra-32bit" | "32-bit" | "32bit" | "bit32" | "retro32" => Some("ultra-32bit"),
@@ -65,8 +69,16 @@ pub fn canonical_skin_name(name: &str) -> Option<&'static str> {
     }
 }
 
+pub fn active_skin_name() -> &'static str {
+    std::env::var("HERMES_THEME")
+        .ok()
+        .as_deref()
+        .and_then(canonical_skin_name)
+        .unwrap_or(DEFAULT_SKIN)
+}
+
 pub fn resolve_theme(name: &str) -> Theme {
-    match canonical_skin_name(name).unwrap_or("ultra-sunburst") {
+    match canonical_skin_name(name).unwrap_or(DEFAULT_SKIN) {
         "ultra-sunburst" => crate::theme::ultra_sunburst_theme(),
         "ultra-cyberpunk" => crate::theme::ultra_cyberpunk_theme(),
         "ultra-32bit" => crate::theme::ultra_32bit_theme(),
@@ -82,7 +94,7 @@ pub fn resolve_theme(name: &str) -> Theme {
         "ultra-hc" => crate::theme::ultra_hc_theme(),
         "light" => crate::theme::light_theme(),
         "dark" => crate::theme::default_theme(),
-        _ => crate::theme::ultra_sunburst_theme(),
+        _ => crate::theme::reformation_theme(),
     }
 }
 

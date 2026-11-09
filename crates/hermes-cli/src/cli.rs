@@ -883,13 +883,13 @@ pub enum CliCommand {
 // Cli
 // ---------------------------------------------------------------------------
 
-/// Hermes Agent CLI.
+/// Reformed Agent CLI.
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "hermes-agent-ultra",
     version,
-    about = "Hermes Agent Ultra — autonomous AI agent with tool use",
-    long_about = "Hermes Agent Ultra is an autonomous AI agent that can use tools, execute code, \
+    about = "Reformed Agent · Printing press 2.0",
+    long_about = "Reformed Agent is an autonomous AI agent that can use tools, execute code, \
                   and interact with various platforms. Start an interactive session with \
                   `hermes-agent-ultra` (or legacy alias `hermes`) or use subcommands for \
                   specific tasks."

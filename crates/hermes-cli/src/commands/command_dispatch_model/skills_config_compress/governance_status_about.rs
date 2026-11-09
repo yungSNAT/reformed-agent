@@ -328,7 +328,8 @@ fn yes_no(flag: bool) -> &'static str {
 
 fn handle_about_command(app: &mut App) -> Result<CommandResult, AgentError> {
     let mut out = String::new();
-    let _ = writeln!(out, "Hermes Agent Ultra — About");
+    let _ = writeln!(out, "{} · About", crate::banner::startup_banner());
+    let _ = writeln!(out, "  Printing press 2.0 · Soli Deo Gloria");
     let _ = writeln!(out, "  Version:         {}", env!("CARGO_PKG_VERSION"));
     let _ = writeln!(out, "  Session model:   {}", app.current_model);
     let _ = writeln!(

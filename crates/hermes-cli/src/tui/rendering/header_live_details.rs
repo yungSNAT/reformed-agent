@@ -1,22 +1,23 @@
 fn render_header(frame: &mut Frame, app: &App, area: Rect, colors: &crate::theme::RatatuiColors) {
     let session_short = &app.session_id[..8.min(app.session_id.len())];
     let chrome = format!(
-        "  •  session {}  •  Enter send  •  Shift+Enter/Ctrl+J newline  •  / commands  •  Ctrl+L lane  •  Ctrl+O cockpit  •  Ctrl+G refresh-tail",
+        "  ·  Printing press 2.0  ·  session {}  ·  Enter send  ·  Shift+Enter/Ctrl+J newline  ·  / commands  ·  Ctrl+L lane  ·  Ctrl+O cockpit  ·  Ctrl+G refresh-tail",
         session_short
     );
-    let available = area.width.saturating_sub(28) as usize;
+    let name = crate::banner::startup_banner();
+    let available = (area.width as usize).saturating_sub(name.len() + 3);
     let text = Text::from(vec![Line::from(vec![
         Span::styled(
-            " ▓ HERMES ",
+            " ▤ ",
             Style::default()
                 .fg(colors.status_bar_strong)
                 .bg(colors.status_bar_bg)
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(
-            "AGENT ULTRA",
+            name,
             Style::default()
-                .fg(colors.accent)
+                .fg(colors.foreground)
                 .bg(colors.status_bar_bg)
                 .add_modifier(Modifier::BOLD),
         ),
