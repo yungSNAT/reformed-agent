@@ -557,7 +557,7 @@
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/banner.rs",
-          "name": "startup_banner_names_ultra_runtime"
+          "name": "startup_banner_names_reformed_agent"
         },
         {
           "file": "crates/hermes-tool-planning/src/lib.rs",
