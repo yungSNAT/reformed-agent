@@ -3,21 +3,16 @@
 // ---------------------------------------------------------------------------
 
 /// Which backend to use for terminal/command execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalBackendType {
+    #[default]
     Local,
     Docker,
     Ssh,
     Daytona,
     Modal,
     Singularity,
-}
-
-impl Default for TerminalBackendType {
-    fn default() -> Self {
-        Self::Local
-    }
 }
 
 impl TerminalBackendType {
@@ -35,22 +30,17 @@ impl TerminalBackendType {
 }
 
 /// HOME policy for host subprocesses spawned by terminal/code tools.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum TerminalHomeMode {
     /// Keep host subprocesses on the real OS-user HOME; container runtimes may
     /// still use profile-scoped HOME when they own a persistent data volume.
+    #[default]
     Auto,
     /// Force subprocesses to the real OS-user HOME.
     Real,
     /// Force subprocesses to `$HERMES_HOME/home`.
     Profile,
-}
-
-impl Default for TerminalHomeMode {
-    fn default() -> Self {
-        Self::Auto
-    }
 }
 
 impl TerminalHomeMode {
@@ -300,7 +290,7 @@ pub struct WebConfig {
 // ---------------------------------------------------------------------------
 
 /// Approval / safety-gate settings for dangerous operations.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ApprovalConfig {
     /// Whether the approval gate is enabled.
     #[serde(default)]
@@ -319,19 +309,8 @@ pub struct ApprovalConfig {
     pub whitelist_commands: Vec<String>,
 }
 
-impl Default for ApprovalConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            dangerous_commands: Vec::new(),
-            require_approval: false,
-            whitelist_commands: Vec::new(),
-        }
-    }
-}
-
 /// Security toggles aligned with Python config shape.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SecurityConfig {
     /// Allow private/internal URL resolution globally.
     ///
@@ -349,16 +328,6 @@ pub struct SecurityConfig {
     /// and patch before it runs. Typed so that config rewrites keep it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool_guard: Option<ToolGuardConfig>,
-}
-
-impl Default for SecurityConfig {
-    fn default() -> Self {
-        Self {
-            allow_private_urls: false,
-            website_blocklist: WebsiteBlocklistConfig::default(),
-            tool_guard: None,
-        }
-    }
 }
 
 /// `security.tool_guard`: a program speaking Claude Code's PreToolUse hook
@@ -448,7 +417,7 @@ pub struct ProfileConfig {
 // ---------------------------------------------------------------------------
 
 /// HTTP/SOCKS proxy settings.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ProxyConfig {
     /// HTTP proxy URL (e.g. "http://proxy:8080").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -457,15 +426,6 @@ pub struct ProxyConfig {
     /// SOCKS5 proxy URL (e.g. "socks5://proxy:1080").
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socks_proxy: Option<String>,
-}
-
-impl Default for ProxyConfig {
-    fn default() -> Self {
-        Self {
-            http_proxy: None,
-            socks_proxy: None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------

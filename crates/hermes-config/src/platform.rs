@@ -9,19 +9,14 @@ use serde::{Deserialize, Serialize};
 // ---------------------------------------------------------------------------
 
 /// How to handle unauthorized direct messages.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum UnauthorizedDmBehavior {
     /// Pair the user with the bot (create a session).
     Pair,
     /// Silently ignore the message.
+    #[default]
     Ignore,
-}
-
-impl Default for UnauthorizedDmBehavior {
-    fn default() -> Self {
-        Self::Ignore
-    }
 }
 
 // ---------------------------------------------------------------------------

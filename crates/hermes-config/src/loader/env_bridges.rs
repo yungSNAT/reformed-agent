@@ -494,7 +494,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
         config
             .llm_providers
             .entry("openai".to_string())
-            .or_insert_with(LlmProviderConfig::default)
+            .or_default()
             .api_key = Some(v);
     }
     let mut env_overridden_providers = std::collections::HashSet::new();
@@ -538,7 +538,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
             config
                 .llm_providers
                 .entry(provider_name.to_string())
-                .or_insert_with(LlmProviderConfig::default)
+                .or_default()
                 .api_key = Some(v);
         }
     }
@@ -568,7 +568,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
             config
                 .llm_providers
                 .entry(provider_name.to_string())
-                .or_insert_with(LlmProviderConfig::default)
+                .or_default()
                 .base_url = Some(v);
         }
     }

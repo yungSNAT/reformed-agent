@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub use hermes_core::ConfigError;
 
 use crate::config::{
-    DisplayConfig, GatewayConfig, LlmProviderConfig, ProxyConfig, TerminalBackendType,
-    TerminalConfig, TerminalHomeMode, WebConfig,
+    DisplayConfig, GatewayConfig, ProxyConfig, TerminalBackendType, TerminalConfig,
+    TerminalHomeMode, WebConfig,
 };
 use crate::merge::{deep_merge, merge_configs};
 use crate::paths;

@@ -118,10 +118,12 @@ mod tests {
 
     #[test]
     fn test_session_config_custom() {
-        let mut config = SessionConfig::default();
-        config.reset_policy = SessionResetPolicy::Daily { at_hour: 5 };
-        config.compression_enabled = true;
-        config.max_context_messages = Some(100);
+        let config = SessionConfig {
+            reset_policy: SessionResetPolicy::Daily { at_hour: 5 },
+            compression_enabled: true,
+            max_context_messages: Some(100),
+            ..SessionConfig::default()
+        };
         assert_json_roundtrip(&config);
         assert_yaml_roundtrip(&config);
     }
@@ -215,10 +217,12 @@ mod tests {
 
     #[test]
     fn test_gateway_config_with_platforms() {
-        let mut config = GatewayConfig::default();
-        config.model = Some("gpt-4o".to_string());
-        config.personality = Some("helpful".to_string());
-        config.max_turns = 25;
+        let mut config = GatewayConfig {
+            model: Some("gpt-4o".to_string()),
+            personality: Some("helpful".to_string()),
+            max_turns: 25,
+            ..GatewayConfig::default()
+        };
 
         let platform = PlatformConfig {
             enabled: true,
