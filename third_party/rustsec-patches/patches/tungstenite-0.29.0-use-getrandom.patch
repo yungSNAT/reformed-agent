@@ -48,3 +48,25 @@
  }
  
  #[cfg(test)]
+--- a/src/protocol/frame/mod.rs
++++ b/src/protocol/frame/mod.rs
+@@ -165,7 +165,7 @@
+         unmask: bool,
+         accept_unmasked: bool,
+     ) -> Result<Option<Frame>> {
+-        let max_size = max_size.unwrap_or_else(usize::max_value);
++        let max_size = max_size.unwrap_or(usize::MAX);
+ 
+         let mut payload = loop {
+             if self.header.is_none() {
+--- a/src/protocol/message.rs
++++ b/src/protocol/message.rs
+@@ -114,7 +114,7 @@
+     pub fn extend<T: AsRef<[u8]>>(&mut self, tail: T, size_limit: Option<usize>) -> Result<()> {
+         // Always have a max size. This ensures an error in case of concatenating two buffers
+         // of more than `usize::max_value()` bytes in total.
+-        let max_size = size_limit.unwrap_or_else(usize::max_value);
++        let max_size = size_limit.unwrap_or(usize::MAX);
+         let my_size = self.len();
+         let portion_size = tail.as_ref().len();
+         // Be careful about integer overflows here.
