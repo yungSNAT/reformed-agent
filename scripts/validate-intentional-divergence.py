@@ -26,6 +26,14 @@ REQUIRED_FIELDS = (
 )
 
 
+def repo_relative(path: Path, repo_root: Path) -> str:
+    """Name a path inside the repository without the checkout's location."""
+    try:
+        return path.relative_to(repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+
 def run_git(repo_root: Path, args: list[str], check: bool = True) -> str:
     proc = subprocess.run(
         ["git", *args], cwd=repo_root, text=True, capture_output=True
@@ -232,7 +240,7 @@ def main() -> int:
 
     payload = {
         "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
-        "divergence_file": str(div_path),
+        "divergence_file": repo_relative(div_path, repo_root),
         "summary": {
             "items": len(rows),
             "errors": errors,
