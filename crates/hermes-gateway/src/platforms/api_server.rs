@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
 use hermes_core::errors::GatewayError;
-use hermes_core::traits::{ParseMode, PlatformAdapter};
+use hermes_core::traits::{ParseMode, PlatformAdapter, SendMessageOptions};
 use hermes_cron::{
     verify_nas_fire_token, ChronosConfig, CronError, CronJob, CronScheduler, DeliverConfig,
     DeliverTarget, JobStatus,
@@ -609,6 +609,24 @@ impl PlatformAdapter for ApiServerAdapter {
             debug!(chat_id = chat_id, "No pending API request for chat_id");
         }
         Ok(())
+    }
+
+    async fn send_message_with_options(
+        &self,
+        chat_id: &str,
+        text: &str,
+        parse_mode: Option<ParseMode>,
+        options: SendMessageOptions,
+    ) -> Result<(), GatewayError> {
+        if options.non_conversational {
+            debug!(
+                chat_id = chat_id,
+                text = text,
+                "API server non-conversational message kept out of HTTP response mailbox"
+            );
+            return Ok(());
+        }
+        self.send_message(chat_id, text, parse_mode).await
     }
 
     async fn send_or_update_status(

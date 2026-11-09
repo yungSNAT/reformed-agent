@@ -585,6 +585,105 @@ async fn status_updates_do_not_complete_pending_http_mailbox() {
     assert_eq!(final_reply.as_deref(), Some("final assistant reply"));
 }
 
+/// Sends one non-streaming chat completion through a gateway whose turn
+/// optionally emits a tool progress note before its final reply, and returns
+/// the assistant content the HTTP client receives.
+async fn chat_completion_content_through_gateway(progress_note: Option<&'static str>) -> String {
+    use crate::dm::DmManager;
+    use crate::gateway::{Gateway, GatewayConfig, IncomingMessage};
+    use crate::session::SessionManager;
+
+    let adapter = Arc::new(ApiServerAdapter::new(ApiServerConfig::default()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("api-client");
+    let gateway = Arc::new(Gateway::new(
+        Arc::new(SessionManager::new(
+            hermes_config::session::SessionConfig::default(),
+        )),
+        dm_manager,
+        GatewayConfig::default(),
+    ));
+    gateway
+        .register_adapter("api_server", adapter.clone())
+        .await;
+    let gateway_for_turn = Arc::downgrade(&gateway);
+    gateway
+        .set_message_handler_with_context(Arc::new(move |_messages, ctx| {
+            let gateway = gateway_for_turn.clone();
+            Box::pin(async move {
+                if let Some(note) = progress_note {
+                    let gateway = gateway.upgrade().expect("gateway alive during turn");
+                    gateway
+                        .send_non_conversational_message(&ctx.platform, &ctx.chat_id, note, None)
+                        .await?;
+                }
+                Ok("final assistant reply".to_string())
+            })
+        }))
+        .await;
+
+    let (tx, mut rx) = mpsc::channel(1);
+    let (addr, handle) = spawn_one_request_server(
+        Arc::clone(&adapter.mailbox),
+        Arc::clone(&adapter.response_store),
+        Arc::clone(&adapter.run_cancels),
+        Arc::clone(&adapter.run_store),
+        throwaway_cron_scheduler(),
+        Arc::new(RwLock::new(Some(tx))),
+        None,
+    )
+    .await;
+    let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    client
+        .write_all(
+            json_request(
+                "POST",
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "messages": [{"role": "user", "content": "list the files"}],
+                    "stream": false,
+                }),
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("write request");
+
+    let inbound = rx.recv().await.expect("inbound request");
+    gateway
+        .route_message(&IncomingMessage {
+            platform: "api_server".to_string(),
+            chat_id: inbound.session_id.clone(),
+            user_id: inbound.user_id.clone(),
+            text: inbound.prompt.clone(),
+            message_id: Some(inbound.request_id.clone()),
+            thread_id: None,
+            is_dm: true,
+        })
+        .await
+        .expect("route api request");
+
+    let response = read_http_response(client).await;
+    handle.await.expect("server task");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    json_body(&response)["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("assistant content")
+        .to_string()
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_after_tool_progress_note() {
+    let content = chat_completion_content_through_gateway(Some("💻 terminal: \"ls\"")).await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_without_tool_use() {
+    let content = chat_completion_content_through_gateway(None).await;
+    assert_eq!(content, "final assistant reply");
+}
+
 #[tokio::test]
 async fn api_jobs_endpoint_crud_filters_and_actions() {
     let (tx, _rx) = mpsc::channel(1);

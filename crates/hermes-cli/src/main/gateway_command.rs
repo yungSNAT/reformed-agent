@@ -362,7 +362,7 @@ async fn run_gateway(
                                             gateway_tool_progress_parse_mode(&platform, &message);
                                         tokio::spawn(async move {
                                             let _ = gw
-                                                .send_message(
+                                                .send_non_conversational_message(
                                                     &platform, &chat_id, &message, parse_mode,
                                                 )
                                                 .await;
@@ -650,7 +650,7 @@ async fn run_gateway(
                                             gateway_tool_progress_parse_mode(&platform, &message);
                                         tokio::spawn(async move {
                                             let _ = gw
-                                                .send_message(
+                                                .send_non_conversational_message(
                                                     &platform, &chat_id, &message, parse_mode,
                                                 )
                                                 .await;

@@ -839,6 +839,25 @@ impl Gateway {
         .await
     }
 
+    /// Send a status note, such as tool progress, that is not part of the
+    /// conversation. Adapters may keep it out of history or out of a reply.
+    pub async fn send_non_conversational_message(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        text: &str,
+        parse_mode: Option<ParseMode>,
+    ) -> Result<(), GatewayError> {
+        self.send_message_with_options(
+            platform,
+            chat_id,
+            text,
+            parse_mode,
+            SendMessageOptions::non_conversational_threaded(None),
+        )
+        .await
+    }
+
     /// Send a message to a caller-supplied platform chat/topic.
     ///
     /// This keeps explicit tool targets distinct from gateway-origin replies
