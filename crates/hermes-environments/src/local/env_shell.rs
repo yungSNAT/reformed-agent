@@ -190,6 +190,21 @@ fn subprocess_home_for_mode(mode: TerminalHomeMode) -> Option<PathBuf> {
     }
 }
 
+/// Asks the profile's tool guard about a command before it runs. Returns the
+/// folder it was judged in, which the caller must run it in: `workdir`
+/// resolved once, or None for this process's folder.
+async fn guard_command(
+    command: &str,
+    workdir: Option<&str>,
+) -> Result<Option<PathBuf>, AgentError> {
+    let workdir = workdir.map(resolve_path).transpose()?;
+    let cwd = workdir.clone().unwrap_or_else(|| PathBuf::from("."));
+    hermes_config::tool_guard::check_command(command, &cwd)
+        .await
+        .map_err(AgentError::ToolExecution)?;
+    Ok(workdir)
+}
+
 fn resolve_path(input: &str) -> Result<PathBuf, AgentError> {
     if !input.starts_with('~') {
         let path = PathBuf::from(input);
