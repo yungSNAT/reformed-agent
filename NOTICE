@@ -19,3 +19,11 @@ This NOTICE is attribution metadata only and does not grant new rights for
 upstream-authored material.
 
 See LICENSE and UPSTREAM_ATTRIBUTION.md for licensing scope and provenance.
+
+Reformed Agent
+--------------
+
+Reformed Agent (https://github.com/yungSNAT/reformed-agent) is a fork of
+Hermes Agent Ultra (https://github.com/sheawinkler/hermes-agent-ultra). The
+notice above is Ultra's and is kept unchanged. Credit for work written before
+the fork stays with its authors.

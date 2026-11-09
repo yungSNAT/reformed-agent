@@ -1,6 +1,6 @@
 # Upstream Attribution and Ownership
 
-This repository is an independent Rust implementation and product line:
+This repository, `yungSNAT/reformed-agent`, is a fork of Hermes Agent Ultra at `v0.22.0` (commit `c002f8c4`). The rest of this file is Ultra's statement, and 'this repository' in it means Ultra unless it says otherwise:
 
 - Product repository: `sheawinkler/hermes-agent-ultra`
 - Canonical upstream reference: `NousResearch/hermes-agent`
@@ -11,6 +11,7 @@ This repository is an independent Rust implementation and product line:
 2. Ultra-specific Rust implementation and operations layers remain credited to this repository's contributors.
 3. Feature parity work is tracked through explicit parity artifacts and sync workflows rather than silent code copy.
 4. Intentional divergences are documented in `docs/parity/intentional-divergence.json`.
+5. Changes made after the fork are credited to Reformed Agent's contributors and recorded in this repository's Git history.
 
 ## Current Sync Snapshot
 

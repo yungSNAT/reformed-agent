@@ -9,16 +9,17 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 README = REPO_ROOT / "README.md"
 
 
-def test_readme_points_to_ultra_installer() -> None:
+def test_readme_installs_from_this_fork() -> None:
     text = README.read_text()
 
-    assert (
-        "https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh"
-        in text
-    )
-    assert "cargo install --git https://github.com/sheawinkler/hermes-agent-ultra" in text
+    assert "cargo install --git https://github.com/yungSNAT/reformed-agent" in text
+    assert "git clone https://github.com/yungSNAT/reformed-agent.git" in text
+    assert "bash scripts/install.sh" in text
     assert "--bin hermes-agent-ultra --bin hermes-ultra" in text
     assert "--bin hermes\n" not in text
+    # Ultra's installer and source URL would install Ultra, not this fork.
+    assert "sheawinkler/hermes-agent-ultra/main/scripts/install.sh" not in text
+    assert "cargo install --git https://github.com/sheawinkler" not in text
 
 
 def test_readme_documents_rust_primary_runtime() -> None:
