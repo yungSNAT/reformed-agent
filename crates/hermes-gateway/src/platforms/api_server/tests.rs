@@ -1,4 +1,7 @@
 use super::*;
+use crate::dm::DmManager;
+use crate::gateway::{Gateway, GatewayConfig, IncomingMessage};
+use crate::session::SessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 async fn spawn_one_request_server(
@@ -585,14 +588,7 @@ async fn status_updates_do_not_complete_pending_http_mailbox() {
     assert_eq!(final_reply.as_deref(), Some("final assistant reply"));
 }
 
-/// Sends one non-streaming chat completion through a gateway whose turn
-/// optionally emits a tool progress note before its final reply, and returns
-/// the assistant content the HTTP client receives.
-async fn chat_completion_content_through_gateway(progress_note: Option<&'static str>) -> String {
-    use crate::dm::DmManager;
-    use crate::gateway::{Gateway, GatewayConfig, IncomingMessage};
-    use crate::session::SessionManager;
-
+async fn api_gateway(config: GatewayConfig) -> (Arc<ApiServerAdapter>, Arc<Gateway>) {
     let adapter = Arc::new(ApiServerAdapter::new(ApiServerConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("api-client");
@@ -601,11 +597,18 @@ async fn chat_completion_content_through_gateway(progress_note: Option<&'static 
             hermes_config::session::SessionConfig::default(),
         )),
         dm_manager,
-        GatewayConfig::default(),
+        config,
     ));
     gateway
         .register_adapter("api_server", adapter.clone())
         .await;
+    (adapter, gateway)
+}
+
+/// Runs a non-streaming gateway turn that optionally emits a tool progress
+/// note before its final reply, and returns what the HTTP client receives.
+async fn chat_completion_content_through_gateway(progress_note: Option<&'static str>) -> String {
+    let (adapter, gateway) = api_gateway(GatewayConfig::default()).await;
     let gateway_for_turn = Arc::downgrade(&gateway);
     gateway
         .set_message_handler_with_context(Arc::new(move |_messages, ctx| {
@@ -621,7 +624,12 @@ async fn chat_completion_content_through_gateway(progress_note: Option<&'static 
             })
         }))
         .await;
+    chat_completion_through_gateway(&adapter, &gateway).await
+}
 
+/// Sends one non-streaming chat completion, routes it through `gateway` and
+/// returns the assistant content the HTTP client receives.
+async fn chat_completion_through_gateway(adapter: &ApiServerAdapter, gateway: &Gateway) -> String {
     let (tx, mut rx) = mpsc::channel(1);
     let (addr, handle) = spawn_one_request_server(
         Arc::clone(&adapter.mailbox),
@@ -681,6 +689,26 @@ async fn chat_completion_returns_final_reply_after_tool_progress_note() {
 #[tokio::test]
 async fn chat_completion_returns_final_reply_without_tool_use() {
     let content = chat_completion_content_through_gateway(None).await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_when_gateway_streams() {
+    let mut config = GatewayConfig::default();
+    config.streaming_enabled = true;
+    let (adapter, gateway) = api_gateway(config).await;
+    gateway
+        .set_streaming_handler_with_context(Arc::new(|_messages, _ctx, on_chunk| {
+            Box::pin(async move {
+                on_chunk("partial preview text long enough to flush the stream buffer".to_string());
+                // Let the spawned preview send reach the adapter before the
+                // turn ends, as it would during a real streamed turn.
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok("final assistant reply".to_string())
+            })
+        }))
+        .await;
+    let content = chat_completion_through_gateway(&adapter, &gateway).await;
     assert_eq!(content, "final assistant reply");
 }
 

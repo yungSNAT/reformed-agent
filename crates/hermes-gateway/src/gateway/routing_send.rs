@@ -123,14 +123,15 @@ impl Gateway {
             .inject_runtime_hints(session_key, messages.clone())
             .await;
 
-        // Send an initial streaming anchor message.
+        // Send an initial streaming anchor message. The anchor and the partial
+        // stream sends below preview the reply; the final send is the reply.
         let reply_thread_id = Self::reply_thread_id(incoming).map(str::to_string);
-        self.send_message_threaded(
+        self.send_message_with_options(
             &incoming.platform,
             &incoming.chat_id,
             "...",
             None,
-            reply_thread_id.as_deref(),
+            SendMessageOptions::non_conversational_threaded(reply_thread_id.as_deref()),
         )
         .await?;
 
@@ -168,7 +169,9 @@ impl Gateway {
                                         &chat_id,
                                         &content,
                                         None,
-                                        SendMessageOptions::threaded(thread_id.as_deref()),
+                                        SendMessageOptions::non_conversational_threaded(
+                                            thread_id.as_deref(),
+                                        ),
                                     )
                                     .await;
                             }
