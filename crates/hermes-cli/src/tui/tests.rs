@@ -110,16 +110,20 @@ mod tests {
 
     #[test]
     fn test_tui_state_completions_update() {
-        let mut state = TuiState::default();
-        state.input = "/mod".to_string();
+        let mut state = TuiState {
+            input: "/mod".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(state.completions.contains(&"/model".to_string()));
     }
 
     #[test]
     fn test_completion_popup_hidden_when_slash_deleted() {
-        let mut state = TuiState::default();
-        state.input = "/model".to_string();
+        let mut state = TuiState {
+            input: "/model".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(should_render_completions_popup(&state));
 
@@ -131,8 +135,10 @@ mod tests {
 
     #[test]
     fn test_completion_popup_hidden_when_modal_or_processing_active() {
-        let mut state = TuiState::default();
-        state.input = "/model".to_string();
+        let mut state = TuiState {
+            input: "/model".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(should_render_completions_popup(&state));
 
@@ -494,9 +500,11 @@ mod tests {
     fn test_bracketed_paste_inserts_multiline_text_without_submit_shortcut() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let mut state = TuiState::default();
-        state.input = "before  after".to_string();
-        state.cursor_position = "before ".len();
+        let mut state = TuiState {
+            input: "before  after".to_string(),
+            cursor_position: "before ".len(),
+            ..Default::default()
+        };
 
         state.insert_paste_at_cursor("line1\r\nline2\rline3");
 
@@ -609,9 +617,11 @@ mod tests {
 
     #[test]
     fn test_insert_newline_at_cursor_updates_input_and_cursor() {
-        let mut state = TuiState::default();
-        state.input = "hello".to_string();
-        state.cursor_position = 5;
+        let mut state = TuiState {
+            input: "hello".to_string(),
+            cursor_position: 5,
+            ..Default::default()
+        };
         state.insert_newline_at_cursor();
         assert_eq!(state.input, "hello\n");
         assert_eq!(state.cursor_position, 6);
@@ -619,9 +629,11 @@ mod tests {
 
     #[test]
     fn test_insert_newline_at_cursor_clamps_non_char_boundary() {
-        let mut state = TuiState::default();
-        state.input = "éx".to_string();
-        state.cursor_position = 1; // interior byte of 'é'
+        let mut state = TuiState {
+            input: "éx".to_string(),
+            cursor_position: 1, // interior byte of 'é'
+            ..Default::default()
+        };
         state.insert_newline_at_cursor();
         assert_eq!(state.input, "\néx");
         assert_eq!(state.cursor_position, 1);
@@ -637,9 +649,11 @@ mod tests {
     fn test_native_editor_input_inserts_and_deletes_at_cursor() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let mut state = TuiState::default();
-        state.input = "helo".to_string();
-        state.cursor_position = 2;
+        let mut state = TuiState {
+            input: "helo".to_string(),
+            cursor_position: 2,
+            ..Default::default()
+        };
 
         state.apply_editor_input(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
         assert_eq!(state.input, "hello");
@@ -689,8 +703,10 @@ mod tests {
 
     #[test]
     fn test_scroll_history_offset_not_capped_to_u16() {
-        let mut state = TuiState::default();
-        state.scroll_offset = (u16::MAX as usize).saturating_sub(1);
+        let mut state = TuiState {
+            scroll_offset: (u16::MAX as usize).saturating_sub(1),
+            ..Default::default()
+        };
         state.scroll_history_up(8);
         assert_eq!(state.scroll_offset, (u16::MAX as usize).saturating_add(7));
         assert!(!state.auto_follow_transcript);

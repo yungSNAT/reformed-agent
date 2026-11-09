@@ -139,8 +139,8 @@ fn render_picker_modal(
     if area.width < 20 || area.height < 8 {
         return;
     }
-    let width = (area.width.saturating_sub(6)).min(110).max(48);
-    let height = (area.height.saturating_sub(4)).min(22).max(10);
+    let width = area.width.saturating_sub(6).clamp(48, 110);
+    let height = area.height.saturating_sub(4).clamp(10, 22);
     let popup = Rect {
         x: area.x + (area.width.saturating_sub(width)) / 2,
         y: area.y + (area.height.saturating_sub(height)) / 2,

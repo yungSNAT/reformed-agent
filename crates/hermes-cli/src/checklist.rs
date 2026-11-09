@@ -13,6 +13,9 @@ use crossterm::event::{self, Event, KeyCode, KeyEvent};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute, terminal};
 
+/// Optional callback that renders a status line for the current selection.
+type StatusFn<'a> = Option<&'a dyn Fn(&HashSet<usize>) -> String>;
+
 /// True while an embedded picker owns terminal key input.
 ///
 /// The TUI event pump must pause reads during this interval to avoid
@@ -71,7 +74,7 @@ pub fn curses_checklist(
     title: &str,
     items: &[String],
     selected: &HashSet<usize>,
-    status_fn: Option<&dyn Fn(&HashSet<usize>) -> String>,
+    status_fn: StatusFn<'_>,
 ) -> ChecklistResult {
     // If not a TTY, fall back to numbered text input
     if !atty_is_tty() {
@@ -178,7 +181,7 @@ fn curses_checklist_inner(
     title: &str,
     items: &[String],
     initial_selected: &HashSet<usize>,
-    status_fn: Option<&dyn Fn(&HashSet<usize>) -> String>,
+    status_fn: StatusFn<'_>,
 ) -> Result<ChecklistResult, io::Error> {
     if items.is_empty() {
         return Ok(ChecklistResult {
@@ -326,7 +329,7 @@ fn numbered_fallback(
     title: &str,
     items: &[String],
     initial_selected: &HashSet<usize>,
-    status_fn: Option<&dyn Fn(&HashSet<usize>) -> String>,
+    status_fn: StatusFn<'_>,
 ) -> ChecklistResult {
     let mut chosen = initial_selected.clone();
 

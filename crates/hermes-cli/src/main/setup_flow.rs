@@ -750,7 +750,7 @@ fn maybe_import_legacy_env(
     let imported = merge_missing_env_keys(
         source,
         env_path,
-        &source
+        source
             .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("legacy source"),

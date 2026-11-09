@@ -276,11 +276,11 @@ impl Theme {
             }
             _ => {
                 // Try JSON first, then TOML
-                serde_json::from_str(&content).or_else(|_| {
-                    Err(ThemeError::Parse(format!(
+                serde_json::from_str(&content).map_err(|_| {
+                    ThemeError::Parse(format!(
                         "Unsupported theme file format: {}. Use .json or .toml",
                         ext
-                    )))
+                    ))
                 })
             }
         }

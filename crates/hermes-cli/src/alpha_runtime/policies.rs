@@ -74,35 +74,36 @@ pub fn build_objective_dag_from_contract() -> Result<ObjectiveDag, AgentError> {
             "objective contract is not initialized; run `/objective <text>` first".to_string(),
         )
     })?;
-    let mut nodes = Vec::new();
-    nodes.push(ObjectiveDagNode {
-        id: "discover".to_string(),
-        title: "Discover facts and gather constraints".to_string(),
-        status: "pending".to_string(),
-        depends_on: vec![],
-        rollback: "narrow_scope_and_reprobe".to_string(),
-    });
-    nodes.push(ObjectiveDagNode {
-        id: "design".to_string(),
-        title: "Design targeted patch strategy".to_string(),
-        status: "pending".to_string(),
-        depends_on: vec!["discover".to_string()],
-        rollback: "re-open alternatives".to_string(),
-    });
-    nodes.push(ObjectiveDagNode {
-        id: "implement".to_string(),
-        title: "Implement smallest reversible change-set".to_string(),
-        status: "pending".to_string(),
-        depends_on: vec!["design".to_string()],
-        rollback: "git_revert_candidate".to_string(),
-    });
-    nodes.push(ObjectiveDagNode {
-        id: "verify".to_string(),
-        title: "Verify with objective-linked tests".to_string(),
-        status: "pending".to_string(),
-        depends_on: vec!["implement".to_string()],
-        rollback: "re-open_implementation".to_string(),
-    });
+    let mut nodes = vec![
+        ObjectiveDagNode {
+            id: "discover".to_string(),
+            title: "Discover facts and gather constraints".to_string(),
+            status: "pending".to_string(),
+            depends_on: vec![],
+            rollback: "narrow_scope_and_reprobe".to_string(),
+        },
+        ObjectiveDagNode {
+            id: "design".to_string(),
+            title: "Design targeted patch strategy".to_string(),
+            status: "pending".to_string(),
+            depends_on: vec!["discover".to_string()],
+            rollback: "re-open alternatives".to_string(),
+        },
+        ObjectiveDagNode {
+            id: "implement".to_string(),
+            title: "Implement smallest reversible change-set".to_string(),
+            status: "pending".to_string(),
+            depends_on: vec!["design".to_string()],
+            rollback: "git_revert_candidate".to_string(),
+        },
+        ObjectiveDagNode {
+            id: "verify".to_string(),
+            title: "Verify with objective-linked tests".to_string(),
+            status: "pending".to_string(),
+            depends_on: vec!["implement".to_string()],
+            rollback: "re-open_implementation".to_string(),
+        },
+    ];
     if contract.trading_sensitive {
         nodes.push(ObjectiveDagNode {
             id: "shadow".to_string(),

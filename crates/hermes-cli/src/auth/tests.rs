@@ -338,7 +338,7 @@ fn discover_existing_anthropic_oauth_reads_claude_credentials_file() {
     let _guard = test_env_lock::lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let cred_path = tmp.path().join(".credentials.json");
-    let expires_at = Utc::now().timestamp_millis() + 3600_000;
+    let expires_at = Utc::now().timestamp_millis() + 3_600_000;
     let raw = serde_json::json!({
         "claudeAiOauth": {
             "accessToken": "ant-access",

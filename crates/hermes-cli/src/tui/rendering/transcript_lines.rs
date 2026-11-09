@@ -1,3 +1,6 @@
+// The transcript renderer threads its output buffer, render state and styles
+// through each call; bundling them into a struct would be a redesign.
+#[allow(clippy::too_many_arguments)]
 fn append_transcript_message_lines(
     lines: &mut Vec<Line<'static>>,
     msg: &hermes_core::Message,
@@ -131,7 +134,7 @@ fn append_transcript_message_lines(
         if let Some(tool_calls) = msg.tool_calls.as_ref() {
             for tc in tool_calls {
                 let args = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
+                    .unwrap_or(serde_json::Value::Null);
                 let preview =
                     build_tool_preview_from_value(&tc.function.name, &args, 44).unwrap_or_default();
                 let emoji = tool_emoji(&tc.function.name);

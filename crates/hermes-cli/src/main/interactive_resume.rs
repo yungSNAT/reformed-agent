@@ -551,7 +551,7 @@ fn resolve_latest_nonempty_session_file(
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         candidates.push((path, modified));
     }
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
     // Prefer canonical snapshots: file stem == session_info.session_id.
     for (path, _) in candidates {
         if let Some(summary) = session_file_summary(&path) {
@@ -718,7 +718,7 @@ fn resolve_resume_session_file(
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             candidates.push((path, modified));
         }
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
         // 1) newest canonical non-empty snapshot
         for (path, _) in &candidates {
             if let Some(summary) = session_file_summary(path) {

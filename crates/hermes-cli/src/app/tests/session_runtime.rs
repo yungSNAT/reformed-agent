@@ -353,8 +353,10 @@
 
     #[test]
     fn test_apply_cli_runtime_overrides_applies_provider_to_prefixed_model() {
-        let mut cfg = GatewayConfig::default();
-        cfg.model = Some("openai:dynamic".to_string());
+        let mut cfg = GatewayConfig {
+            model: Some("openai:dynamic".to_string()),
+            ..Default::default()
+        };
         let cli = Cli {
             command: None,
             verbose: false,
@@ -374,8 +376,10 @@
 
     #[test]
     fn test_apply_cli_runtime_overrides_applies_provider_to_bare_model() {
-        let mut cfg = GatewayConfig::default();
-        cfg.model = Some("moonshotai/kimi-k2.6".to_string());
+        let mut cfg = GatewayConfig {
+            model: Some("moonshotai/kimi-k2.6".to_string()),
+            ..Default::default()
+        };
         let cli = Cli {
             command: None,
             verbose: false,
@@ -454,8 +458,10 @@
             .mount(&server)
             .await;
 
-        let mut config = GatewayConfig::default();
-        config.model = Some("openai:gpt-live-cron".to_string());
+        let mut config = GatewayConfig {
+            model: Some("openai:gpt-live-cron".to_string()),
+            ..Default::default()
+        };
         config.llm_providers.insert(
             "openai".to_string(),
             LlmProviderConfig {
@@ -632,8 +638,10 @@
         }
         std::env::set_var("HERMES_INFERENCE_PROVIDER", "openrouter");
 
-        let mut cfg = GatewayConfig::default();
-        cfg.model = Some("anthropic:claude-sonnet-4-6".to_string());
+        let mut cfg = GatewayConfig {
+            model: Some("anthropic:claude-sonnet-4-6".to_string()),
+            ..Default::default()
+        };
         cfg.llm_providers
             .insert("anthropic".to_string(), LlmProviderConfig::default());
 

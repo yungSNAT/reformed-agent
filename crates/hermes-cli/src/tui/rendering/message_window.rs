@@ -99,11 +99,10 @@ fn render_messages(
             let new_visual_rows = approximate_visual_rows(&new_lines, wrap_width);
             if let Some((anchor_text, old_start, old_len)) = prev_anchor_line {
                 let new_len = new_lines.len();
-                let expected_idx = if old_len > 0 {
-                    old_start.saturating_mul(new_len) / old_len
-                } else {
-                    0
-                };
+                let expected_idx = old_start
+                    .saturating_mul(new_len)
+                    .checked_div(old_len)
+                    .unwrap_or(0);
                 if let Some(new_idx) =
                     find_anchor_line_index(&new_lines, &anchor_text, expected_idx)
                 {

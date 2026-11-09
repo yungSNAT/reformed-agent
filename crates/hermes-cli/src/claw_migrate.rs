@@ -380,7 +380,7 @@ fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
         if !content.is_empty() && !content.ends_with('\n') {
             content.push('\n');
         }
-        content.push_str(&format!("# Imported from OpenClaw\n"));
+        content.push_str("# Imported from OpenClaw\n");
         content.push_str(&new_lines.join("\n"));
         content.push('\n');
 

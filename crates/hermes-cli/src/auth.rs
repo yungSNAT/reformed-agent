@@ -213,12 +213,10 @@ fn openai_oauth_discovery_paths(extra_env_vars: &[&str]) -> Vec<PathBuf> {
 
 fn hermes_auth_store_discovery_paths() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    for env_name in ["HERMES_AUTH_FILE"] {
-        if let Ok(path) = std::env::var(env_name) {
-            let trimmed = path.trim();
-            if !trimmed.is_empty() {
-                candidates.push(PathBuf::from(trimmed));
-            }
+    if let Ok(path) = std::env::var("HERMES_AUTH_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
         }
     }
     candidates.push(auth_json_path());
@@ -256,7 +254,7 @@ fn load_openai_oauth_import_from_path(path: &Path, base_url: &str) -> Option<Ope
     let expires_in = tokens
         .id_token
         .as_deref()
-        .and_then(|jwt| decode_jwt_exp_seconds(jwt))
+        .and_then(decode_jwt_exp_seconds)
         .map(|exp| exp - now_secs)
         .filter(|remaining| *remaining > 0);
     let state = CodexAuthState {
@@ -592,12 +590,10 @@ fn discover_existing_anthropic_oauth_with_keychain(
 
 fn nous_oauth_discovery_paths() -> Vec<PathBuf> {
     let mut candidates: Vec<PathBuf> = Vec::new();
-    for env_name in ["HERMES_NOUS_OAUTH_FILE"] {
-        if let Ok(path) = std::env::var(env_name) {
-            let trimmed = path.trim();
-            if !trimmed.is_empty() {
-                candidates.push(PathBuf::from(trimmed));
-            }
+    if let Ok(path) = std::env::var("HERMES_NOUS_OAUTH_FILE") {
+        let trimmed = path.trim();
+        if !trimmed.is_empty() {
+            candidates.push(PathBuf::from(trimmed));
         }
     }
     if let Some(home) = dirs::home_dir() {
@@ -608,9 +604,7 @@ fn nous_oauth_discovery_paths() -> Vec<PathBuf> {
 
 fn parse_nous_oauth_state(value: Value) -> Option<NousAuthState> {
     let state: NousAuthState = serde_json::from_value(value).ok()?;
-    if state.runtime_api_key().is_none() {
-        return None;
-    }
+    state.runtime_api_key()?;
     Some(state)
 }
 
@@ -642,13 +636,7 @@ pub fn read_nous_auth_state() -> Result<Option<NousAuthState>, AgentError> {
 }
 
 pub fn read_valid_nous_auth_state() -> Result<Option<NousAuthState>, AgentError> {
-    Ok(read_nous_auth_state()?.and_then(|state| {
-        if nous_auth_state_is_runtime_viable(&state) {
-            Some(state)
-        } else {
-            None
-        }
-    }))
+    Ok(read_nous_auth_state()?.filter(nous_auth_state_is_runtime_viable))
 }
 
 fn load_nous_oauth_import_from_path(path: &Path) -> Option<NousOAuthImport> {
@@ -689,8 +677,8 @@ fn parse_iso_timestamp_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
     if trimmed.is_empty() {
         return None;
     }
-    let normalized = if trimmed.ends_with('Z') {
-        format!("{}+00:00", &trimmed[..trimmed.len() - 1])
+    let normalized = if let Some(without_z) = trimmed.strip_suffix('Z') {
+        format!("{without_z}+00:00")
     } else {
         trimmed.to_string()
     };
@@ -978,7 +966,7 @@ async fn refresh_nous_access_token(
     });
 
     state.access_token = access_token;
-    state.refresh_token = payload.refresh_token.or_else(|| Some(refresh_token));
+    state.refresh_token = payload.refresh_token.or(Some(refresh_token));
     state.token_type = payload.token_type.unwrap_or_else(|| "Bearer".to_string());
     state.scope = payload.scope.or_else(|| state.scope.clone());
     state.obtained_at = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);

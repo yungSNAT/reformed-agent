@@ -60,5 +60,5 @@ use crate::tui::StreamHandle;
 include!("app/app_types.rs");
 include!("app/app_impl.rs");
 include!("app/runtime_overrides.rs");
-include!("app/tests.rs");
 include!("app/tool_runtime.rs");
+include!("app/tests.rs");

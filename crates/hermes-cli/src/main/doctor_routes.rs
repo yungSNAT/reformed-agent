@@ -740,7 +740,7 @@ fn parse_provenance_key_material(raw: &str) -> Result<Vec<u8>, AgentError> {
             "empty provenance key material".to_string(),
         ));
     }
-    let is_hex = s.len() % 2 == 0 && s.chars().all(|c| c.is_ascii_hexdigit());
+    let is_hex = s.len().is_multiple_of(2) && s.chars().all(|c| c.is_ascii_hexdigit());
     if is_hex {
         return hex::decode(s)
             .map_err(|e| AgentError::Config(format!("decode provenance hex key: {e}")));
