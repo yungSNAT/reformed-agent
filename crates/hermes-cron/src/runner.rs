@@ -621,10 +621,8 @@ impl CronRunner {
             cleaned_stdout
         };
 
-        let mut messages = Vec::new();
-        messages.push(Message::assistant(final_text));
         Ok(AgentResult {
-            messages,
+            messages: vec![Message::assistant(final_text)],
             finished_naturally: true,
             total_turns: 1,
             ..AgentResult::default()
