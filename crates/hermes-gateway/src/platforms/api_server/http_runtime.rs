@@ -42,7 +42,12 @@ async fn handle_connection(
     let auth_header = header_text
         .lines()
         .find(|l| l.to_lowercase().starts_with("authorization:"))
-        .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string());
+        .map(|l| {
+            l.split_once(':')
+                .map_or("", |(_, value)| value)
+                .trim()
+                .to_string()
+        });
     let chronos_fire_route = method == "POST" && path == "/api/cron/fire";
 
     if let Some(ref expected) = auth_token.filter(|_| !chronos_fire_route) {
@@ -539,7 +544,7 @@ async fn handle_connection(
                 Ok(req) => {
                     let request_id = format!(
                         "resp_{}",
-                        uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+                        &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
                     );
                     let model = req.model.as_deref().unwrap_or("hermes").to_string();
                     let mut messages = response_input_messages(req.input);

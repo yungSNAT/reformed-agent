@@ -1492,8 +1492,10 @@ async fn gateway_streaming_flushes_deferred_after_stream_finishes() {
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("user1");
-    let mut cfg = GatewayConfig::default();
-    cfg.streaming_enabled = true;
+    let cfg = GatewayConfig {
+        streaming_enabled: true,
+        ..Default::default()
+    };
     let gw = Arc::new(Gateway::new(session_mgr, dm_manager, cfg));
     gw.register_adapter("test", adapter).await;
 
@@ -1549,8 +1551,10 @@ async fn gateway_streaming_releases_handle_on_handler_error() {
     let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm_manager = DmManager::with_pair_behavior();
     dm_manager.authorize_user("user1");
-    let mut cfg = GatewayConfig::default();
-    cfg.streaming_enabled = true;
+    let cfg = GatewayConfig {
+        streaming_enabled: true,
+        ..Default::default()
+    };
     let gateway = Gateway::new(session_mgr, dm_manager, cfg);
     gateway.register_adapter("test", adapter).await;
     gateway

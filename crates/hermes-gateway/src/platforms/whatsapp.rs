@@ -584,250 +584,6 @@ fn build_uploaded_media_body(
     })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use wiremock::matchers::{body_json, header, method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    fn config() -> WhatsAppConfig {
-        WhatsAppConfig {
-            token: "token".to_string(),
-            phone_number_id: Some("phone-1".to_string()),
-            business_account_id: None,
-            api_base_url: None,
-            verify_token: None,
-            reply_prefix: None,
-            require_mention: false,
-            mention_patterns: Vec::new(),
-            free_response_chats: Vec::new(),
-            dm_policy: "open".to_string(),
-            allow_from: Vec::new(),
-            group_policy: "open".to_string(),
-            group_allow_from: Vec::new(),
-            proxy: AdapterProxyConfig::default(),
-        }
-    }
-
-    #[test]
-    fn build_link_media_body_with_caption() {
-        let body = build_link_media_body(
-            "+1 (555) 123-4567",
-            "image",
-            "https://example.com/preview.png",
-            Some("Status update"),
-        );
-
-        assert_eq!(body["messaging_product"], "whatsapp");
-        assert_eq!(body["to"], "15551234567");
-        assert_eq!(body["type"], "image");
-        assert_eq!(body["image"]["link"], "https://example.com/preview.png");
-        assert_eq!(body["image"]["caption"], "Status update");
-    }
-
-    #[test]
-    fn build_link_media_body_omits_blank_caption() {
-        let body = build_link_media_body(
-            "15551234567",
-            "image",
-            "https://example.com/preview.png",
-            Some("   "),
-        );
-
-        assert_eq!(body["type"], "image");
-        assert_eq!(body["image"]["link"], "https://example.com/preview.png");
-        assert!(body["image"]["caption"].is_null());
-    }
-
-    #[test]
-    fn outbound_payload_builders_normalize_cloud_recipients() {
-        let text = build_text_body("+1 555 123 4567", "hello");
-        assert_eq!(text["to"], "15551234567");
-        assert_eq!(text["text"]["body"], "hello");
-
-        let reaction = build_reaction_body("15551234567:7@s.whatsapp.net", "wamid.1", "👍");
-        assert_eq!(reaction["to"], "15551234567");
-        assert_eq!(reaction["reaction"]["message_id"], "wamid.1");
-
-        let uploaded = build_uploaded_media_body(
-            "+1 (555) 123-4567",
-            "document",
-            serde_json::json!({"id": "media-1"}),
-        );
-        assert_eq!(uploaded["to"], "15551234567");
-        assert_eq!(uploaded["document"]["id"], "media-1");
-    }
-
-    #[test]
-    fn normalize_cloud_recipient_accepts_phone_like_values() {
-        assert_eq!(
-            normalize_cloud_recipient(" +1 (555) 123-4567 "),
-            "15551234567"
-        );
-        assert_eq!(normalize_cloud_recipient("1555.123.4567"), "15551234567");
-    }
-
-    #[test]
-    fn normalize_cloud_recipient_converts_user_jids_to_cloud_phone() {
-        assert_eq!(
-            normalize_cloud_recipient("15551234567:11@s.whatsapp.net"),
-            "15551234567"
-        );
-        assert_eq!(
-            normalize_cloud_recipient("+15551234567@s.whatsapp.net"),
-            "15551234567"
-        );
-    }
-
-    #[test]
-    fn normalize_cloud_recipient_preserves_non_cloud_group_targets() {
-        assert_eq!(
-            normalize_cloud_recipient("120363001234567890@g.us"),
-            "120363001234567890@g.us"
-        );
-        assert_eq!(
-            normalize_cloud_recipient("status@broadcast"),
-            "status@broadcast"
-        );
-    }
-
-    #[test]
-    fn format_message_converts_markdown_without_touching_code() {
-        let text =
-            "## Title\nbefore **bold** and ~~gone~~ [docs](https://example.com) `**raw**`\n```python\n**raw**\n```";
-        let formatted = WhatsAppAdapter::format_message(text);
-
-        assert!(formatted.starts_with("*Title*"));
-        assert!(formatted.contains("*bold*"));
-        assert!(formatted.contains("~gone~"));
-        assert!(formatted.contains("docs (https://example.com)"));
-        assert!(formatted.contains("`**raw**`"));
-        assert!(formatted.contains("```python\n**raw**\n```"));
-    }
-
-    #[test]
-    fn formatted_outbound_text_applies_reply_prefix() {
-        let cfg = WhatsAppConfig {
-            reply_prefix: Some("Hermes Bot".to_string()),
-            ..config()
-        };
-        let adapter = WhatsAppAdapter::new(cfg).expect("adapter");
-
-        assert_eq!(
-            adapter.formatted_outbound_text("**hello**"),
-            "Hermes Bot\n*hello*"
-        );
-    }
-
-    #[test]
-    fn split_message_chunks_respects_char_boundary_limit() {
-        let chunks = WhatsAppAdapter::split_message_chunks("ååååå", 2);
-        assert_eq!(chunks, vec!["åå", "åå", "å"]);
-    }
-
-    #[test]
-    fn should_process_message_applies_dm_and_group_policies() {
-        let adapter = WhatsAppAdapter::new(WhatsAppConfig {
-            require_mention: true,
-            dm_policy: "allowlist".to_string(),
-            allow_from: vec!["6281234567890".to_string()],
-            group_policy: "allowlist".to_string(),
-            group_allow_from: vec!["120363001234567890@g.us".to_string()],
-            mention_patterns: vec![r"^\s*chompy\b".to_string()],
-            ..config()
-        })
-        .expect("adapter");
-
-        assert!(adapter.should_process_message(&serde_json::json!({
-            "isGroup": false,
-            "senderId": "6281234567890@s.whatsapp.net",
-            "body": "hello"
-        })));
-        assert!(!adapter.should_process_message(&serde_json::json!({
-            "isGroup": false,
-            "senderId": "6289999999999@s.whatsapp.net",
-            "body": "hello"
-        })));
-        assert!(adapter.should_process_message(&serde_json::json!({
-            "isGroup": true,
-            "chatId": "120363001234567890@g.us",
-            "body": "chompy status",
-            "mentionedIds": [],
-            "botIds": ["15551230000@s.whatsapp.net"]
-        })));
-        assert!(!adapter.should_process_message(&serde_json::json!({
-            "isGroup": true,
-            "chatId": "999999@g.us",
-            "body": "chompy status",
-            "mentionedIds": [],
-            "botIds": ["15551230000@s.whatsapp.net"]
-        })));
-    }
-
-    #[test]
-    fn clean_bot_mention_text_removes_configured_bot_phone() {
-        let adapter = WhatsAppAdapter::new(config()).expect("adapter");
-        let cleaned = adapter.clean_bot_mention_text(
-            "@15551230000 what is the weather?",
-            &serde_json::json!({"botIds": ["15551230000@s.whatsapp.net"]}),
-        );
-        assert_eq!(cleaned, "what is the weather?");
-    }
-
-    #[tokio::test]
-    async fn send_file_uploads_then_sends_native_image_payload() {
-        let server = MockServer::start().await;
-        Mock::given(method("POST"))
-            .and(path("/phone-1/media"))
-            .and(header("authorization", "Bearer token"))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "id": "media-123"
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-        Mock::given(method("POST"))
-            .and(path("/phone-1/messages"))
-            .and(header("authorization", "Bearer token"))
-            .and(body_json(serde_json::json!({
-                "messaging_product": "whatsapp",
-                "to": "15551234567",
-                "type": "image",
-                "image": {
-                    "id": "media-123",
-                    "caption": "native caption"
-                }
-            })))
-            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-                "messages": [{"id": "wamid.1"}]
-            })))
-            .expect(1)
-            .mount(&server)
-            .await;
-
-        let dir = tempfile::tempdir().expect("tempdir");
-        let image_path = dir.path().join("photo.png");
-        tokio::fs::write(&image_path, b"fake-png")
-            .await
-            .expect("write image");
-        let adapter = WhatsAppAdapter::new(WhatsAppConfig {
-            api_base_url: Some(server.uri()),
-            ..config()
-        })
-        .expect("adapter");
-
-        adapter
-            .send_file(
-                "+1 (555) 123-4567",
-                image_path.to_str().expect("utf8 path"),
-                Some("native caption"),
-            )
-            .await
-            .expect("send native image");
-        server.verify().await;
-    }
-}
-
 #[async_trait]
 impl PlatformAdapter for WhatsAppAdapter {
     async fn start(&self) -> Result<(), GatewayError> {
@@ -1084,4 +840,248 @@ fn contains_normalized_whatsapp_id(list: &[String], candidate: &str) -> bool {
     list.iter()
         .map(|entry| normalize_whatsapp_id(entry))
         .any(|entry| entry == candidate)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use wiremock::matchers::{body_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn config() -> WhatsAppConfig {
+        WhatsAppConfig {
+            token: "token".to_string(),
+            phone_number_id: Some("phone-1".to_string()),
+            business_account_id: None,
+            api_base_url: None,
+            verify_token: None,
+            reply_prefix: None,
+            require_mention: false,
+            mention_patterns: Vec::new(),
+            free_response_chats: Vec::new(),
+            dm_policy: "open".to_string(),
+            allow_from: Vec::new(),
+            group_policy: "open".to_string(),
+            group_allow_from: Vec::new(),
+            proxy: AdapterProxyConfig::default(),
+        }
+    }
+
+    #[test]
+    fn build_link_media_body_with_caption() {
+        let body = build_link_media_body(
+            "+1 (555) 123-4567",
+            "image",
+            "https://example.com/preview.png",
+            Some("Status update"),
+        );
+
+        assert_eq!(body["messaging_product"], "whatsapp");
+        assert_eq!(body["to"], "15551234567");
+        assert_eq!(body["type"], "image");
+        assert_eq!(body["image"]["link"], "https://example.com/preview.png");
+        assert_eq!(body["image"]["caption"], "Status update");
+    }
+
+    #[test]
+    fn build_link_media_body_omits_blank_caption() {
+        let body = build_link_media_body(
+            "15551234567",
+            "image",
+            "https://example.com/preview.png",
+            Some("   "),
+        );
+
+        assert_eq!(body["type"], "image");
+        assert_eq!(body["image"]["link"], "https://example.com/preview.png");
+        assert!(body["image"]["caption"].is_null());
+    }
+
+    #[test]
+    fn outbound_payload_builders_normalize_cloud_recipients() {
+        let text = build_text_body("+1 555 123 4567", "hello");
+        assert_eq!(text["to"], "15551234567");
+        assert_eq!(text["text"]["body"], "hello");
+
+        let reaction = build_reaction_body("15551234567:7@s.whatsapp.net", "wamid.1", "👍");
+        assert_eq!(reaction["to"], "15551234567");
+        assert_eq!(reaction["reaction"]["message_id"], "wamid.1");
+
+        let uploaded = build_uploaded_media_body(
+            "+1 (555) 123-4567",
+            "document",
+            serde_json::json!({"id": "media-1"}),
+        );
+        assert_eq!(uploaded["to"], "15551234567");
+        assert_eq!(uploaded["document"]["id"], "media-1");
+    }
+
+    #[test]
+    fn normalize_cloud_recipient_accepts_phone_like_values() {
+        assert_eq!(
+            normalize_cloud_recipient(" +1 (555) 123-4567 "),
+            "15551234567"
+        );
+        assert_eq!(normalize_cloud_recipient("1555.123.4567"), "15551234567");
+    }
+
+    #[test]
+    fn normalize_cloud_recipient_converts_user_jids_to_cloud_phone() {
+        assert_eq!(
+            normalize_cloud_recipient("15551234567:11@s.whatsapp.net"),
+            "15551234567"
+        );
+        assert_eq!(
+            normalize_cloud_recipient("+15551234567@s.whatsapp.net"),
+            "15551234567"
+        );
+    }
+
+    #[test]
+    fn normalize_cloud_recipient_preserves_non_cloud_group_targets() {
+        assert_eq!(
+            normalize_cloud_recipient("120363001234567890@g.us"),
+            "120363001234567890@g.us"
+        );
+        assert_eq!(
+            normalize_cloud_recipient("status@broadcast"),
+            "status@broadcast"
+        );
+    }
+
+    #[test]
+    fn format_message_converts_markdown_without_touching_code() {
+        let text =
+            "## Title\nbefore **bold** and ~~gone~~ [docs](https://example.com) `**raw**`\n```python\n**raw**\n```";
+        let formatted = WhatsAppAdapter::format_message(text);
+
+        assert!(formatted.starts_with("*Title*"));
+        assert!(formatted.contains("*bold*"));
+        assert!(formatted.contains("~gone~"));
+        assert!(formatted.contains("docs (https://example.com)"));
+        assert!(formatted.contains("`**raw**`"));
+        assert!(formatted.contains("```python\n**raw**\n```"));
+    }
+
+    #[test]
+    fn formatted_outbound_text_applies_reply_prefix() {
+        let cfg = WhatsAppConfig {
+            reply_prefix: Some("Hermes Bot".to_string()),
+            ..config()
+        };
+        let adapter = WhatsAppAdapter::new(cfg).expect("adapter");
+
+        assert_eq!(
+            adapter.formatted_outbound_text("**hello**"),
+            "Hermes Bot\n*hello*"
+        );
+    }
+
+    #[test]
+    fn split_message_chunks_respects_char_boundary_limit() {
+        let chunks = WhatsAppAdapter::split_message_chunks("ååååå", 2);
+        assert_eq!(chunks, vec!["åå", "åå", "å"]);
+    }
+
+    #[test]
+    fn should_process_message_applies_dm_and_group_policies() {
+        let adapter = WhatsAppAdapter::new(WhatsAppConfig {
+            require_mention: true,
+            dm_policy: "allowlist".to_string(),
+            allow_from: vec!["6281234567890".to_string()],
+            group_policy: "allowlist".to_string(),
+            group_allow_from: vec!["120363001234567890@g.us".to_string()],
+            mention_patterns: vec![r"^\s*chompy\b".to_string()],
+            ..config()
+        })
+        .expect("adapter");
+
+        assert!(adapter.should_process_message(&serde_json::json!({
+            "isGroup": false,
+            "senderId": "6281234567890@s.whatsapp.net",
+            "body": "hello"
+        })));
+        assert!(!adapter.should_process_message(&serde_json::json!({
+            "isGroup": false,
+            "senderId": "6289999999999@s.whatsapp.net",
+            "body": "hello"
+        })));
+        assert!(adapter.should_process_message(&serde_json::json!({
+            "isGroup": true,
+            "chatId": "120363001234567890@g.us",
+            "body": "chompy status",
+            "mentionedIds": [],
+            "botIds": ["15551230000@s.whatsapp.net"]
+        })));
+        assert!(!adapter.should_process_message(&serde_json::json!({
+            "isGroup": true,
+            "chatId": "999999@g.us",
+            "body": "chompy status",
+            "mentionedIds": [],
+            "botIds": ["15551230000@s.whatsapp.net"]
+        })));
+    }
+
+    #[test]
+    fn clean_bot_mention_text_removes_configured_bot_phone() {
+        let adapter = WhatsAppAdapter::new(config()).expect("adapter");
+        let cleaned = adapter.clean_bot_mention_text(
+            "@15551230000 what is the weather?",
+            &serde_json::json!({"botIds": ["15551230000@s.whatsapp.net"]}),
+        );
+        assert_eq!(cleaned, "what is the weather?");
+    }
+
+    #[tokio::test]
+    async fn send_file_uploads_then_sends_native_image_payload() {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/phone-1/media"))
+            .and(header("authorization", "Bearer token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "media-123"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/phone-1/messages"))
+            .and(header("authorization", "Bearer token"))
+            .and(body_json(serde_json::json!({
+                "messaging_product": "whatsapp",
+                "to": "15551234567",
+                "type": "image",
+                "image": {
+                    "id": "media-123",
+                    "caption": "native caption"
+                }
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "messages": [{"id": "wamid.1"}]
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let image_path = dir.path().join("photo.png");
+        tokio::fs::write(&image_path, b"fake-png")
+            .await
+            .expect("write image");
+        let adapter = WhatsAppAdapter::new(WhatsAppConfig {
+            api_base_url: Some(server.uri()),
+            ..config()
+        })
+        .expect("adapter");
+
+        adapter
+            .send_file(
+                "+1 (555) 123-4567",
+                image_path.to_str().expect("utf8 path"),
+                Some("native caption"),
+            )
+            .await
+            .expect("send native image");
+        server.verify().await;
+    }
 }

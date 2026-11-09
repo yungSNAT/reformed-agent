@@ -72,8 +72,10 @@ impl MixerChild {
 
         Some(
             chunk
-                .chunks_exact(2)
-                .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]) as f32 * effective_gain)
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|bytes| i16::from_le_bytes(*bytes) as f32 * effective_gain)
                 .collect(),
         )
     }
@@ -324,8 +326,10 @@ mod tests {
 
     fn max_abs_i16(frame: &[u8]) -> i16 {
         frame
-            .chunks_exact(2)
-            .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]).unsigned_abs())
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| i16::from_le_bytes(*bytes).unsigned_abs())
             .max()
             .unwrap_or(0)
             .min(i16::MAX as u16) as i16
@@ -390,8 +394,10 @@ mod tests {
         mixer.play_speech(&loud, None, 0);
         let out = mixer.read();
         let samples: Vec<i16> = out
-            .chunks_exact(2)
-            .map(|bytes| i16::from_le_bytes([bytes[0], bytes[1]]))
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|bytes| i16::from_le_bytes(*bytes))
             .collect();
         assert_eq!(samples.iter().copied().max(), Some(i16::MAX));
         assert!(samples.iter().all(|s| *s >= 0));

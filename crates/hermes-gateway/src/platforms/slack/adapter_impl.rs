@@ -212,7 +212,7 @@ impl SlackAdapter {
 
         let resp = self
             .client
-            .post(&format!("{}/apps.connections.open", SLACK_API_BASE))
+            .post(format!("{}/apps.connections.open", SLACK_API_BASE))
             .header("Authorization", format!("Bearer {}", app_token))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send()
@@ -251,7 +251,7 @@ impl SlackAdapter {
     ) -> Result<SlackAuthHealthWarnings, GatewayError> {
         let resp = self
             .client
-            .post(&format!("{}/auth.test", base_url.trim_end_matches('/')))
+            .post(format!("{}/auth.test", base_url.trim_end_matches('/')))
             .header("Authorization", format!("Bearer {}", self.config.token))
             .header("Content-Type", "application/x-www-form-urlencoded")
             .send()

@@ -432,7 +432,7 @@ impl ApiServerAdapter {
     fn make_completion_id() -> String {
         format!(
             "chatcmpl-{}",
-            uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+            &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
         )
     }
 
@@ -768,12 +768,9 @@ async fn wait_for_run_event_snapshot(
         let notified = notifier.notified();
         tokio::pin!(notified);
 
-        if let Some(latest) = run_store.read().await.get(run_id) {
-            if latest.is_terminal() {
-                return Some(latest);
-            }
-        } else {
-            return None;
+        let latest = run_store.read().await.get(run_id)?;
+        if latest.is_terminal() {
+            return Some(latest);
         }
 
         if tokio::time::timeout(Duration::from_secs(120), &mut notified)
@@ -788,7 +785,7 @@ async fn wait_for_run_event_snapshot(
 fn make_run_id() -> String {
     format!(
         "run_{}",
-        uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+        &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
     )
 }
 

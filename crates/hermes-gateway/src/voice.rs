@@ -506,8 +506,8 @@ impl VoiceManager {
         if audio_data.len().is_multiple_of(2) {
             let mut sum_sq = 0.0_f64;
             let mut n = 0usize;
-            for frame in audio_data.chunks_exact(2) {
-                let sample = i16::from_le_bytes([frame[0], frame[1]]) as f64 / 32768.0;
+            for frame in audio_data.as_chunks::<2>().0 {
+                let sample = i16::from_le_bytes(*frame) as f64 / 32768.0;
                 sum_sq += sample * sample;
                 n += 1;
             }
@@ -1051,8 +1051,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_voice_join_leave_lifecycle() {
-        let mut config = VoiceConfig::default();
-        config.state = VoiceState::FullDuplex;
+        let config = VoiceConfig {
+            state: VoiceState::FullDuplex,
+            ..Default::default()
+        };
         let mgr = VoiceManager::new(config);
 
         mgr.join_voice_channel("discord", "room-1")
@@ -1075,8 +1077,10 @@ mod tests {
 
     #[tokio::test]
     async fn voice_fx_installs_mixer_on_join_and_removes_on_leave() {
-        let mut config = VoiceConfig::default();
-        config.state = VoiceState::FullDuplex;
+        let mut config = VoiceConfig {
+            state: VoiceState::FullDuplex,
+            ..Default::default()
+        };
         config.voice_fx.enabled = true;
         config.voice_fx.ack_phrases = vec!["One moment.".to_string()];
         let mgr = VoiceManager::new(config);
@@ -1105,8 +1109,10 @@ mod tests {
 
     #[tokio::test]
     async fn voice_fx_ack_phrases_rotate_and_skip_empty_values() {
-        let mut config = VoiceConfig::default();
-        config.state = VoiceState::FullDuplex;
+        let mut config = VoiceConfig {
+            state: VoiceState::FullDuplex,
+            ..Default::default()
+        };
         config.voice_fx.enabled = true;
         config.voice_fx.ack_phrases = vec![
             " ".to_string(),
@@ -1134,8 +1140,10 @@ mod tests {
 
     #[tokio::test]
     async fn voice_fx_speech_layers_and_can_stop() {
-        let mut config = VoiceConfig::default();
-        config.state = VoiceState::FullDuplex;
+        let mut config = VoiceConfig {
+            state: VoiceState::FullDuplex,
+            ..Default::default()
+        };
         config.voice_fx.enabled = true;
         config.voice_fx.ambient_enabled = false;
         let mgr = VoiceManager::new(config);
@@ -1160,8 +1168,10 @@ mod tests {
 
     #[tokio::test]
     async fn leave_all_channels_cleans_voice_mixers() {
-        let mut config = VoiceConfig::default();
-        config.state = VoiceState::FullDuplex;
+        let mut config = VoiceConfig {
+            state: VoiceState::FullDuplex,
+            ..Default::default()
+        };
         config.voice_fx.enabled = true;
         let mgr = VoiceManager::new(config);
         mgr.join_voice_channel("discord", "voice-a").await.unwrap();
@@ -1193,8 +1203,10 @@ mod tests {
 
     #[test]
     fn test_vad_detects_rms_energy() {
-        let mut cfg = VoiceConfig::default();
-        cfg.auto_detect_voice = true;
+        let cfg = VoiceConfig {
+            auto_detect_voice: true,
+            ..Default::default()
+        };
         let mgr = VoiceManager::new(cfg);
 
         // 200ms at 16 kHz sine wave with moderate amplitude.
@@ -1265,16 +1277,20 @@ mod tests {
     async fn gateway_groq_and_mistral_stt_report_provider_credentials() {
         let _g = EnvGuard::new();
 
-        let mut cfg = VoiceConfig::default();
-        cfg.stt_provider = SttProvider::GroqWhisper;
+        let cfg = VoiceConfig {
+            stt_provider: SttProvider::GroqWhisper,
+            ..Default::default()
+        };
         let groq = VoiceManager::new(cfg)
             .transcribe(&[1, 2, 3, 4], "wav")
             .await
             .unwrap_err();
         assert!(groq.to_string().contains("GROQ_API_KEY"));
 
-        let mut cfg = VoiceConfig::default();
-        cfg.stt_provider = SttProvider::MistralVoxtral;
+        let cfg = VoiceConfig {
+            stt_provider: SttProvider::MistralVoxtral,
+            ..Default::default()
+        };
         let mistral = VoiceManager::new(cfg)
             .transcribe(&[1, 2, 3, 4], "wav")
             .await
