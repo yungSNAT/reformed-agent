@@ -602,11 +602,24 @@ impl PlatformAdapter for ApiServerAdapter {
         text: &str,
         _parse_mode: Option<ParseMode>,
     ) -> Result<(), GatewayError> {
+        // The pending request reads one message, so never wait for channel
+        // space: waiting here would hold the read lock that cleanup needs.
         let mailbox = self.mailbox.read().await;
-        if let Some(tx) = mailbox.pending.get(chat_id) {
-            let _ = tx.send(text.to_string()).await;
-        } else {
-            debug!(chat_id = chat_id, "No pending API request for chat_id");
+        match mailbox
+            .pending
+            .get(chat_id)
+            .map(|tx| tx.try_send(text.to_string()))
+        {
+            Some(Ok(())) => {}
+            Some(Err(mpsc::error::TrySendError::Full(_))) => {
+                debug!(
+                    chat_id = chat_id,
+                    "API response already queued; dropping later message"
+                );
+            }
+            Some(Err(mpsc::error::TrySendError::Closed(_))) | None => {
+                debug!(chat_id = chat_id, "No pending API request for chat_id");
+            }
         }
         Ok(())
     }

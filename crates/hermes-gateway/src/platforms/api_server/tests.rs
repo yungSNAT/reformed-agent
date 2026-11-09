@@ -595,6 +595,67 @@ async fn streamed_chat_completion_deltas_preserve_multibyte_reply() {
 }
 
 #[tokio::test]
+async fn concurrent_sends_do_not_block_api_request_cleanup() {
+    let adapter = Arc::new(ApiServerAdapter::new(ApiServerConfig::default()));
+    let (tx, mut rx) = mpsc::channel(1);
+    let (addr, handle) = spawn_one_request_server(
+        Arc::clone(&adapter.mailbox),
+        Arc::clone(&adapter.response_store),
+        Arc::clone(&adapter.run_cancels),
+        Arc::clone(&adapter.run_store),
+        throwaway_cron_scheduler(),
+        Arc::new(RwLock::new(Some(tx))),
+        None,
+    )
+    .await;
+    let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    client
+        .write_all(
+            json_request(
+                "POST",
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "stream": false,
+                }),
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("write request");
+    let inbound = rx.recv().await.expect("inbound request");
+
+    // Three sends race for the one-message reply mailbox, as spawned gateway
+    // sends can during a turn.
+    let sends: Vec<_> = ["first reply", "second message", "third message"]
+        .into_iter()
+        .map(|text| {
+            let adapter = Arc::clone(&adapter);
+            let chat_id = inbound.session_id.clone();
+            tokio::spawn(async move { adapter.send_message(&chat_id, text, None).await })
+        })
+        .collect();
+
+    let response = tokio::time::timeout(Duration::from_secs(5), read_http_response(client))
+        .await
+        .expect("API request should finish instead of waiting on the mailbox lock");
+    for send in sends {
+        tokio::time::timeout(Duration::from_secs(5), send)
+            .await
+            .expect("send should finish")
+            .expect("send task")
+            .expect("send result");
+    }
+    handle.await.expect("server task");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert_eq!(
+        json_body(&response)["choices"][0]["message"]["content"],
+        "first reply"
+    );
+    assert!(adapter.mailbox.read().await.pending.is_empty());
+}
+
+#[tokio::test]
 async fn status_updates_do_not_complete_pending_http_mailbox() {
     let adapter = ApiServerAdapter::new(ApiServerConfig::default());
     let (reply_tx, mut reply_rx) = mpsc::channel(1);
