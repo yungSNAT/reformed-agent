@@ -237,7 +237,7 @@ mod tests {
         );
         assert!(
             actual.contains("openai"),
-            "OpenAI OAuth capability should be enabled for Hermes Ultra"
+            "OpenAI OAuth capability should be enabled for Reformed Agent"
         );
     }
 

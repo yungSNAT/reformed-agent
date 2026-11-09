@@ -52,7 +52,7 @@ impl ToolHandler for ExecuteCodeHandler {
             .and_then(|v| v.as_str())
             .ok_or_else(|| {
                 ToolError::InvalidParams(
-                    "Missing 'language' parameter; Python is not a default in Hermes Agent Ultra"
+                    "Missing 'language' parameter; Python is not a default in Reformed Agent"
                         .into(),
                 )
             })?;
@@ -74,7 +74,7 @@ impl ToolHandler for ExecuteCodeHandler {
             "language".into(),
             json!({
                 "type": "string",
-                "description": "Programming language. Python execution is disabled in Hermes Agent Ultra's Rust-only runtime.",
+                "description": "Programming language. Python execution is disabled in Reformed Agent's Rust-only runtime.",
                 "enum": ["javascript", "typescript", "bash", "sh"]
             }),
         );
@@ -89,7 +89,7 @@ impl ToolHandler for ExecuteCodeHandler {
 
         tool_schema(
             "execute_code",
-            "Execute code in a sandboxed environment. Supports JavaScript, TypeScript, and shell snippets; Python execution is disabled in Hermes Agent Ultra's Rust-only runtime.",
+            "Execute code in a sandboxed environment. Supports JavaScript, TypeScript, and shell snippets; Python execution is disabled in Reformed Agent's Rust-only runtime.",
             JsonSchema::object(props, vec!["code".into(), "language".into()]),
         )
     }

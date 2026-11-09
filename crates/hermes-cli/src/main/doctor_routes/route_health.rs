@@ -711,7 +711,7 @@ async fn run_route_autotune(
                 .map_err(|e| AgentError::Io(format!("mkdir {}: {}", parent.display(), e)))?;
         }
         let mut body = String::new();
-        body.push_str("# Hermes Agent Ultra route-autotune overrides\n");
+        body.push_str("# Reformed Agent route-autotune overrides\n");
         body.push_str(&format!("# generated_at={}\n", plan.generated_at));
         for (key, value) in &plan.overrides {
             body.push_str(&format!("{key}={value}\n"));

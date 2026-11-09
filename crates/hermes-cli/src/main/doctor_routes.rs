@@ -97,7 +97,7 @@ async fn run_doctor(
     snapshot_path: Option<String>,
     bundle: bool,
 ) -> Result<(), AgentError> {
-    println!("Hermes Agent Ultra — System Check");
+    println!("Reformed Agent — System Check");
     println!("===========================\n");
 
     let mut checks: Vec<serde_json::Value> = Vec::new();

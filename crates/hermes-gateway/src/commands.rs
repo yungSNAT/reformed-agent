@@ -268,7 +268,7 @@ pub fn all_commands() -> Vec<CommandInfo> {
         CommandInfo {
             name: "/version",
             aliases: &[],
-            description: "Show Hermes Agent Ultra version and build label",
+            description: "Show Reformed Agent version and build label",
             usage: "/version",
         },
         CommandInfo {

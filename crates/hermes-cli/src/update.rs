@@ -3,7 +3,7 @@
 use hermes_core::AgentError;
 use serde::Deserialize;
 
-const DEFAULT_REPO: &str = "sheawinkler/hermes-agent-ultra";
+const DEFAULT_REPO: &str = "yungSNAT/reformed-agent";
 
 #[derive(Debug, Deserialize)]
 struct GitHubRelease {

@@ -772,7 +772,7 @@ fn maybe_import_legacy_env(
 async fn run_setup(cli: Cli) -> Result<(), AgentError> {
     use std::io::{self, Write};
 
-    println!("Hermes Agent Ultra — Setup Wizard");
+    println!("Reformed Agent — Setup Wizard");
     println!("===========================\n");
 
     let config_dir = hermes_state_root(&cli);

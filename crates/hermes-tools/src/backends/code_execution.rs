@@ -78,7 +78,7 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
     ) -> Result<String, ToolError> {
         let Some(lang) = language else {
             return Err(ToolError::InvalidParams(
-                "Missing language parameter; Hermes Agent Ultra does not default to Python in the Rust-only runtime".into(),
+                "Missing language parameter; Reformed Agent does not default to Python in the Rust-only runtime".into(),
             ));
         };
         let timeout_secs = timeout.unwrap_or(self.default_timeout_secs);
@@ -86,7 +86,7 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
         let (interpreter, flag) = match lang {
             "python" | "python3" => {
                 return Err(ToolError::InvalidParams(
-                    "Python execution is disabled in Hermes Agent Ultra's Rust-only runtime".into(),
+                    "Python execution is disabled in Reformed Agent's Rust-only runtime".into(),
                 ))
             }
             "javascript" | "js" | "node" => ("node", "-e"),

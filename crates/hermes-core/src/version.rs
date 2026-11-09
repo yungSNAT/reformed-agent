@@ -21,8 +21,8 @@ pub fn build_git_sha() -> Option<&'static str> {
 /// Human-readable version line for chat and CLI slash surfaces.
 pub fn version_label() -> String {
     match build_git_sha() {
-        Some(sha) => format!("Hermes Agent Ultra v{PACKAGE_VERSION} ({sha})"),
-        None => format!("Hermes Agent Ultra v{PACKAGE_VERSION}"),
+        Some(sha) => format!("Reformed Agent v{PACKAGE_VERSION} ({sha})"),
+        None => format!("Reformed Agent v{PACKAGE_VERSION}"),
     }
 }
 
@@ -33,7 +33,7 @@ mod tests {
     #[test]
     fn version_label_contains_product_and_version() {
         let label = version_label();
-        assert!(label.starts_with("Hermes Agent Ultra v"));
+        assert!(label.starts_with("Reformed Agent v"));
         assert!(label.contains(PACKAGE_VERSION));
     }
 

@@ -1,6 +1,6 @@
 /// Handle `hermes status`.
 async fn run_status(cli: Cli) -> Result<(), AgentError> {
-    println!("Hermes Agent Ultra — Status");
+    println!("Reformed Agent — Status");
     println!("=====================\n");
 
     println!("Version: {}", env!("CARGO_PKG_VERSION"));

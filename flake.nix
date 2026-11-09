@@ -19,7 +19,7 @@
       in {
         packages.default = pkgs.rustPlatform.buildRustPackage {
           pname = "hermes-agent";
-          version = "0.16.0";
+          version = "0.22.0";
           src = ./.;
           cargoLock.lockFile = ./Cargo.lock;
 
@@ -38,7 +38,7 @@
 
           meta = with pkgs.lib; {
             description = "Hermes Agent – an AI agent framework";
-            homepage = "https://github.com/sheawinkler/hermes-agent-ultra";
+            homepage = "https://github.com/yungSNAT/reformed-agent";
             license = licenses.mit;
             mainProgram = "hermes";
           };

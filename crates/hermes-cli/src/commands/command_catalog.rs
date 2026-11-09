@@ -103,7 +103,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ),
     ("/profile", "Show active profile and Hermes home path"),
     ("/whoami", "Alias for /profile"),
-    ("/version", "Show Hermes Agent Ultra version and build label"),
+    ("/version", "Show Reformed Agent version and build label"),
     ("/v", "Alias for /version"),
     ("/fast", "Toggle fast-mode hints"),
     (

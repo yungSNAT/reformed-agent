@@ -882,7 +882,7 @@ pub enum CliCommand {
 
     /// Reserved external command surface.
     ///
-    /// Hermes Agent Ultra is Rust-only at runtime, so external Python plugin
+    /// Reformed Agent is Rust-only at runtime, so external Python plugin
     /// command bridges are rejected instead of being executed dynamically.
     #[command(external_subcommand)]
     PluginExternal(Vec<String>),

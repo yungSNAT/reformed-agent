@@ -423,7 +423,7 @@ pub fn default_theme() -> Theme {
     }
 }
 
-/// Built-in hyper-saturated theme used by Hermes Agent Ultra.
+/// Built-in hyper-saturated theme used by Reformed Agent.
 pub fn ultra_neon_theme() -> Theme {
     let mut theme = default_theme();
     theme.name = "ultra-neon".to_string();

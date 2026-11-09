@@ -285,7 +285,7 @@ impl CodexProvider {
     }
 
     fn default_instructions() -> &'static str {
-        "You are Hermes Agent Ultra. Follow the user's instructions exactly."
+        "You are Reformed Agent. Follow the user's instructions exactly."
     }
 
     fn should_forward_extra_body_key(key: &str) -> bool {

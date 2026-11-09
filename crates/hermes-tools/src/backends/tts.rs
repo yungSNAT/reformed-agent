@@ -35,7 +35,7 @@ const BUILTIN_TTS_PROVIDERS: &[&str] = &[
     "openai",
     "minimax",
     "piper",
-    // Reserved upstream/Python provider names. Hermes Agent Ultra must not
+    // Reserved upstream/Python provider names. Reformed Agent must not
     // let a command provider silently shadow names that are built in upstream
     // or intentionally unsupported by the Rust-only runtime.
     "edge",

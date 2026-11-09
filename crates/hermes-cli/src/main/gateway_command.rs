@@ -996,7 +996,7 @@ fn run_sessions_db_auto_maintenance(config: &GatewayConfig) {
 /// support, it still prints the gateway service/status contract so operators
 /// know the fallback command.
 async fn run_up(force: bool, dry_run: bool) -> Result<(), AgentError> {
-    println!("Hermes Agent Ultra up");
+    println!("Reformed Agent up");
     if dry_run {
         install_gateway_service(force, true)?;
         if let Some(service_state) = gateway_service_status()? {

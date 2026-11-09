@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPO="${REPO:-sheawinkler/hermes-agent-ultra}"
+REPO="${REPO:-yungSNAT/reformed-agent}"
 VERSION="${VERSION:-v0.22.0}"
 KEEP_TMP="${KEEP_TMP:-false}"
 RUN_SETUP_HELP="${RUN_SETUP_HELP:-true}"

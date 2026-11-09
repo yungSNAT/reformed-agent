@@ -331,7 +331,7 @@ pub async fn handle_cli_external_plugin_subcommand(raw: Vec<String>) -> Result<(
     }
     let command_name = raw[0].trim().to_string();
     Err(AgentError::Config(format!(
-        "Unknown command '{}'. Run `hermes --help` for Rust-native commands. Python plugin command dispatch is disabled in Hermes Agent Ultra's Rust-only runtime.",
+        "Unknown command '{}'. Run `hermes --help` for Rust-native commands. Python plugin command dispatch is disabled in Reformed Agent's Rust-only runtime.",
         command_name
     )))
 }

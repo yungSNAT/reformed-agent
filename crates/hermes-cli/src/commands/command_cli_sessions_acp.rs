@@ -587,7 +587,7 @@ fn render_sessions_html(sessions: &[SessionExportSnapshot]) -> String {
     let mut body = String::new();
     for session in sessions {
         body.push_str(&format!(
-            "<section class=\"session\" id=\"session-{id}\"><header><p class=\"eyebrow\">Hermes Ultra session export</p><h1>{title}</h1><p class=\"session-id\">{id}</p></header>",
+            "<section class=\"session\" id=\"session-{id}\"><header><p class=\"eyebrow\">Reformed Agent session export</p><h1>{title}</h1><p class=\"session-id\">{id}</p></header>",
             id = html_escape(&session.id),
             title = html_escape(&session_title_or_id(session))
         ));

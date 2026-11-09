@@ -898,7 +898,7 @@
         );
         assert!(
             actual.contains("openai"),
-            "OpenAI OAuth should be enabled in Hermes Ultra"
+            "OpenAI OAuth should be enabled in Reformed Agent"
         );
     }
 

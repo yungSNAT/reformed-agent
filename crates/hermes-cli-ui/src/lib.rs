@@ -207,7 +207,7 @@ pub fn render_command_catalog(
     let query = filter.unwrap_or("").trim();
     let mut seen = HashSet::new();
     let mut out = String::new();
-    out.push_str("Hermes Agent Ultra — Slash Command Palette\n");
+    out.push_str("Reformed Agent — Slash Command Palette\n");
     out.push_str("==========================================\n");
     if query.is_empty() {
         out.push_str(
