@@ -265,60 +265,32 @@ impl AgentLoop {
             .filter(|s| !s.is_empty())
             .or_else(|| crate::provider_profiles::provider_base_url_from_env(provider))
             .or_else(|| {
+                // Only routes the shared default table leaves out, and Kimi,
+                // whose key picks the host in `resolve_kimi_runtime_base_url_for_key`.
                 if provider == "copilot-acp" {
                     std::env::var("COPILOT_ACP_BASE_URL")
                         .ok()
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .or_else(|| Some("acp://copilot".to_string()))
-                } else if provider == "openai-codex" || provider == "codex" {
-                    Some(OPENAI_CODEX_BASE_URL.to_string())
                 } else if provider == "qwen-oauth" {
                     Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string())
-                } else if provider == "google-gemini-cli" {
-                    Some("cloudcode-pa://google".to_string())
                 } else if matches!(
                     provider,
                     "bedrock" | "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon"
                 ) {
                     Some(bedrock_runtime_base_url(&resolve_bedrock_region()))
-                } else if matches!(
-                    provider,
-                    "nous-api" | "nous_api" | "nousapi" | "nous-portal-api"
-                ) {
-                    Some("https://inference-api.nousresearch.com/v1".to_string())
-                } else if provider == "stepfun" {
-                    Some("https://api.stepfun.ai/step_plan/v1".to_string())
                 } else if matches!(provider, "kimi" | "moonshot" | "kimi-coding") {
                     Some(crate::provider_profiles::KIMI_LEGACY_BASE_URL.to_string())
-                } else if provider == "kimi-coding-cn" {
-                    Some(crate::provider_profiles::KIMI_CN_BASE_URL.to_string())
-                } else if provider == "minimax-cn" || provider == "minimax_cn" {
-                    Some("https://api.minimaxi.com/anthropic".to_string())
-                } else if provider == "copilot" {
-                    Some("https://api.githubcopilot.com".to_string())
-                } else if matches!(
-                    provider,
-                    "gemini" | "google" | "google-gemini" | "google-ai-studio"
-                ) {
-                    Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string())
-                } else if matches!(provider, "gmi" | "gmi-cloud" | "gmicloud") {
-                    Some("https://api.gmi-serving.com/v1".to_string())
-                } else if matches!(provider, "arcee" | "arcee-ai" | "arceeai") {
-                    Some("https://api.arcee.ai/api/v1".to_string())
-                } else if matches!(provider, "xiaomi" | "mimo" | "xiaomi-mimo") {
-                    Some("https://api.xiaomimimo.com/v1".to_string())
-                } else if matches!(
-                    provider,
-                    "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas"
-                ) {
-                    Some("https://tokenhub.tencentmaas.com/v1".to_string())
-                } else if matches!(provider, "zai" | "glm" | "z-ai" | "z_ai" | "zhipu") {
-                    Some("https://api.z.ai/api/paas/v4".to_string())
-                } else if crate::local_backends::is_local_backend_provider(provider) {
-                    crate::local_backends::local_backend_resolved_base_url(provider)
                 } else {
-                    None
+                    // The primary provider builder's lookup: alias, then canonical name.
+                    let normalized =
+                        crate::provider_profiles::normalize_runtime_provider_name(provider);
+                    crate::provider_profiles::provider_default_base_url(provider)
+                        .or_else(|| {
+                            crate::provider_profiles::provider_default_base_url(&normalized)
+                        })
+                        .map(str::to_string)
                 }
             })
     }

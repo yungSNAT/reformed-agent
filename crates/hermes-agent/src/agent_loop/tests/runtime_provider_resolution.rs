@@ -825,3 +825,33 @@
             Some("https://api.z.ai/api/paas/v4")
         );
     }
+
+    #[test]
+    fn test_runtime_routes_use_the_primary_default_host() {
+        let _env_lock = env_test_lock();
+        let _deepseek = EnvVarGuard::remove("DEEPSEEK_BASE_URL");
+        let _xai = EnvVarGuard::remove("XAI_BASE_URL");
+        let _nvidia = EnvVarGuard::remove("NVIDIA_BASE_URL");
+        let _novita = EnvVarGuard::remove("NOVITA_BASE_URL");
+        let _kilocode = EnvVarGuard::remove("KILOCODE_BASE_URL");
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        // With no configured or environment URL, a route must reach the
+        // provider's own default host, never the generic OpenAI default.
+        for (provider, host) in [
+            ("deepseek", "https://api.deepseek.com/v1"),
+            ("xai", "https://api.x.ai/v1"),
+            ("nvidia", "https://integrate.api.nvidia.com/v1"),
+            ("novita", "https://api.novita.ai/openai/v1"),
+            ("kilo", "https://api.kilo.ai/api/gateway"),
+        ] {
+            assert_eq!(
+                agent.resolve_runtime_base_url(provider, None).as_deref(),
+                Some(host),
+                "default host for {provider}"
+            );
+        }
+    }

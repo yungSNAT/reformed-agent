@@ -16,6 +16,28 @@ pub const KIMI_CN_BASE_URL: &str = "https://api.moonshot.cn/v1";
 pub const KIMI_CODE_USER_AGENT: &str = "KimiCLI/1.0";
 pub const GEMINI_NATIVE_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 pub const GEMINI_OPENAI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+pub const DEFAULT_NOUS_INFERENCE_URL: &str = "https://inference-api.nousresearch.com/v1";
+pub const STEPFUN_BASE_URL: &str = "https://api.stepfun.ai/step_plan/v1";
+pub const QWEN_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+pub const ALIBABA_CODING_PLAN_BASE_URL: &str = "https://coding-intl.dashscope.aliyuncs.com/v1";
+pub const GOOGLE_GEMINI_CLI_BASE_URL: &str = "cloudcode-pa://google";
+pub const AI_GATEWAY_BASE_URL: &str = "https://ai-gateway.vercel.sh/v1";
+pub const MINIMAX_CN_BASE_URL: &str = "https://api.minimaxi.com/anthropic";
+pub const NOVITA_BASE_URL: &str = "https://api.novita.ai/openai/v1";
+pub const XAI_BASE_URL: &str = "https://api.x.ai/v1";
+pub const NVIDIA_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
+pub const COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";
+pub const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+pub const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
+pub const KILOCODE_BASE_URL: &str = "https://api.kilo.ai/api/gateway";
+pub const HUGGINGFACE_BASE_URL: &str = "https://router.huggingface.co/v1";
+pub const GMI_BASE_URL: &str = "https://api.gmi-serving.com/v1";
+pub const XIAOMI_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
+pub const ZAI_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
+pub const ARCEE_BASE_URL: &str = "https://api.arcee.ai/api/v1";
+pub const TENCENT_TOKENHUB_BASE_URL: &str = "https://tokenhub.tencentmaas.com/v1";
+pub const OLLAMA_CLOUD_BASE_URL: &str = "https://ollama.com/v1";
+pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
 
 pub fn is_kimi_code_base_url(base_url: &str) -> bool {
     base_url
@@ -245,6 +267,47 @@ pub fn provider_base_url_from_env(provider: &str) -> Option<String> {
         .ok()
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
+}
+
+/// Default base URL for a provider with no configured or environment URL.
+/// The primary provider builder and the agent loop's runtime routes share it,
+/// so a route never falls back to another provider's host.
+pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "openai-codex" | "codex" => Some(crate::provider::OPENAI_CODEX_BASE_URL),
+        "nous-api" | "nous_api" | "nousapi" | "nous-portal-api" => Some(DEFAULT_NOUS_INFERENCE_URL),
+        "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => Some(GOOGLE_GEMINI_CLI_BASE_URL),
+        "gemini" | "google" | "google-gemini" | "google-ai-studio" => Some(GEMINI_OPENAI_BASE_URL),
+        "qwen" | "alibaba" => Some(QWEN_BASE_URL),
+        "alibaba-coding-plan" => Some(ALIBABA_CODING_PLAN_BASE_URL),
+        "stepfun" | "step" | "step-plan" => Some(STEPFUN_BASE_URL),
+        "ai-gateway" | "aigateway" | "vercel" => Some(AI_GATEWAY_BASE_URL),
+        "kimi-coding" => Some(KIMI_CODE_BASE_URL),
+        "kimi" | "moonshot" => Some(KIMI_LEGACY_BASE_URL),
+        "kimi-coding-cn" => Some(KIMI_CN_BASE_URL),
+        "minimax-cn" | "minimax_cn" => Some(MINIMAX_CN_BASE_URL),
+        "novita" | "novita-ai" | "novitaai" => Some(NOVITA_BASE_URL),
+        "xai" => Some(XAI_BASE_URL),
+        "nvidia" => Some(NVIDIA_BASE_URL),
+        "copilot" | "github-copilot" | "github-models" => Some(COPILOT_BASE_URL),
+        "opencode-go" => Some(OPENCODE_GO_BASE_URL),
+        "opencode-zen" | "opencode" => Some(OPENCODE_ZEN_BASE_URL),
+        "kilocode" | "kilo" => Some(KILOCODE_BASE_URL),
+        "huggingface" | "hf" | "hugging-face" | "huggingface-hub" => Some(HUGGINGFACE_BASE_URL),
+        "gmi" | "gmi-cloud" | "gmicloud" => Some(GMI_BASE_URL),
+        "xiaomi" | "mimo" | "xiaomi-mimo" => Some(XIAOMI_BASE_URL),
+        "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => Some(ZAI_BASE_URL),
+        "arcee" | "arcee-ai" | "arceeai" => Some(ARCEE_BASE_URL),
+        "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
+            Some(TENCENT_TOKENHUB_BASE_URL)
+        }
+        "ollama-cloud" => Some(OLLAMA_CLOUD_BASE_URL),
+        "deepseek" => Some(DEEPSEEK_BASE_URL),
+        local if local_backends::local_backend_spec(local).is_some() => {
+            local_backends::local_backend_default_base_url(local)
+        }
+        _ => None,
+    }
 }
 
 pub fn hermes_client_tag() -> String {

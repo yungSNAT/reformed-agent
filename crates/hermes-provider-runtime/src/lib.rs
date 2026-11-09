@@ -28,35 +28,18 @@ use serde_json::Value;
 
 pub use hermes_agent::local_backends::LocalBackendSpec;
 pub use hermes_agent::provider_profiles::{
-    normalize_runtime_provider_name, provider_base_url_from_env,
+    normalize_runtime_provider_name, provider_base_url_from_env, provider_default_base_url,
+    AI_GATEWAY_BASE_URL, ALIBABA_CODING_PLAN_BASE_URL, ARCEE_BASE_URL, COPILOT_BASE_URL,
+    DEEPSEEK_BASE_URL, DEFAULT_NOUS_INFERENCE_URL, GMI_BASE_URL, GOOGLE_GEMINI_CLI_BASE_URL,
+    HUGGINGFACE_BASE_URL, KILOCODE_BASE_URL, MINIMAX_CN_BASE_URL, NOVITA_BASE_URL, NVIDIA_BASE_URL,
+    OLLAMA_CLOUD_BASE_URL, OPENCODE_GO_BASE_URL, OPENCODE_ZEN_BASE_URL, QWEN_BASE_URL,
+    STEPFUN_BASE_URL, TENCENT_TOKENHUB_BASE_URL, XAI_BASE_URL, XIAOMI_BASE_URL, ZAI_BASE_URL,
 };
 
-pub const DEFAULT_NOUS_INFERENCE_URL: &str = "https://inference-api.nousresearch.com/v1";
-pub const STEPFUN_BASE_URL: &str = "https://api.stepfun.ai/step_plan/v1";
-pub const QWEN_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
-pub const ALIBABA_CODING_PLAN_BASE_URL: &str = "https://coding-intl.dashscope.aliyuncs.com/v1";
-pub const GOOGLE_GEMINI_CLI_BASE_URL: &str = "cloudcode-pa://google";
 pub const GEMINI_BASE_URL: &str = provider_profiles::GEMINI_OPENAI_BASE_URL;
-pub const AI_GATEWAY_BASE_URL: &str = "https://ai-gateway.vercel.sh/v1";
 pub const KIMI_CODING_BASE_URL: &str = provider_profiles::KIMI_CODE_BASE_URL;
 pub const KIMI_LEGACY_BASE_URL: &str = provider_profiles::KIMI_LEGACY_BASE_URL;
 pub const KIMI_CODING_CN_BASE_URL: &str = provider_profiles::KIMI_CN_BASE_URL;
-pub const MINIMAX_CN_BASE_URL: &str = "https://api.minimaxi.com/anthropic";
-pub const NOVITA_BASE_URL: &str = "https://api.novita.ai/openai/v1";
-pub const XAI_BASE_URL: &str = "https://api.x.ai/v1";
-pub const NVIDIA_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
-pub const COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";
-pub const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
-pub const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
-pub const KILOCODE_BASE_URL: &str = "https://api.kilo.ai/api/gateway";
-pub const HUGGINGFACE_BASE_URL: &str = "https://router.huggingface.co/v1";
-pub const GMI_BASE_URL: &str = "https://api.gmi-serving.com/v1";
-pub const XIAOMI_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
-pub const ZAI_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
-pub const ARCEE_BASE_URL: &str = "https://api.arcee.ai/api/v1";
-pub const TENCENT_TOKENHUB_BASE_URL: &str = "https://tokenhub.tencentmaas.com/v1";
-pub const OLLAMA_CLOUD_BASE_URL: &str = "https://ollama.com/v1";
-pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
 pub const OLLAMA_LOCAL_BASE_URL: &str = local_backends::OLLAMA_LOCAL_BASE_URL;
 pub const LLAMA_CPP_BASE_URL: &str = local_backends::LLAMA_CPP_BASE_URL;
 pub const VLLM_BASE_URL: &str = local_backends::VLLM_BASE_URL;
@@ -630,44 +613,6 @@ pub fn active_llm_provider_config<'a>(
                 }
             })
         })
-}
-
-pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "openai-codex" | "codex" => Some(OPENAI_CODEX_BASE_URL),
-        "nous-api" | "nous_api" | "nousapi" | "nous-portal-api" => Some(DEFAULT_NOUS_INFERENCE_URL),
-        "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => Some(GOOGLE_GEMINI_CLI_BASE_URL),
-        "gemini" | "google" | "google-gemini" | "google-ai-studio" => Some(GEMINI_BASE_URL),
-        "qwen" | "alibaba" => Some(QWEN_BASE_URL),
-        "alibaba-coding-plan" => Some(ALIBABA_CODING_PLAN_BASE_URL),
-        "stepfun" | "step" | "step-plan" => Some(STEPFUN_BASE_URL),
-        "ai-gateway" | "aigateway" | "vercel" => Some(AI_GATEWAY_BASE_URL),
-        "kimi-coding" => Some(KIMI_CODING_BASE_URL),
-        "kimi" | "moonshot" => Some(KIMI_LEGACY_BASE_URL),
-        "kimi-coding-cn" => Some(KIMI_CODING_CN_BASE_URL),
-        "minimax-cn" | "minimax_cn" => Some(MINIMAX_CN_BASE_URL),
-        "novita" | "novita-ai" | "novitaai" => Some(NOVITA_BASE_URL),
-        "xai" => Some(XAI_BASE_URL),
-        "nvidia" => Some(NVIDIA_BASE_URL),
-        "copilot" | "github-copilot" | "github-models" => Some(COPILOT_BASE_URL),
-        "opencode-go" => Some(OPENCODE_GO_BASE_URL),
-        "opencode-zen" | "opencode" => Some(OPENCODE_ZEN_BASE_URL),
-        "kilocode" | "kilo" => Some(KILOCODE_BASE_URL),
-        "huggingface" | "hf" | "hugging-face" | "huggingface-hub" => Some(HUGGINGFACE_BASE_URL),
-        "gmi" | "gmi-cloud" | "gmicloud" => Some(GMI_BASE_URL),
-        "xiaomi" | "mimo" | "xiaomi-mimo" => Some(XIAOMI_BASE_URL),
-        "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => Some(ZAI_BASE_URL),
-        "arcee" | "arcee-ai" | "arceeai" => Some(ARCEE_BASE_URL),
-        "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
-            Some(TENCENT_TOKENHUB_BASE_URL)
-        }
-        "ollama-cloud" => Some(OLLAMA_CLOUD_BASE_URL),
-        "deepseek" => Some(DEEPSEEK_BASE_URL),
-        local if local_backends::local_backend_spec(local).is_some() => {
-            local_backends::local_backend_default_base_url(local)
-        }
-        _ => None,
-    }
 }
 
 pub fn resolve_provider_and_model(config: &GatewayConfig, model: &str) -> (String, String) {
