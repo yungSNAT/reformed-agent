@@ -867,10 +867,16 @@ fn extract_candidate_paths(tool_name: &str, params: &Value, output: &str) -> Vec
     candidates
 }
 
+#[cfg(not(windows))]
+const ABSOLUTE_LIKE_PATH_PATTERN: &str = r#"(?m)(?:^|\s)(/[^\s'"`]+|~/[^\s'"`]+)"#;
+// Windows commands and their output also name drive paths (`C:\x`, `C:/x`).
+#[cfg(windows)]
+const ABSOLUTE_LIKE_PATH_PATTERN: &str =
+    r#"(?m)(?:^|\s)(/[^\s'"`]+|~/[^\s'"`]+|[A-Za-z]:[\\/][^\s'"`]+)"#;
+
 fn extract_absolute_like_paths(text: &str) -> Vec<String> {
     static PATH_RE: OnceLock<Regex> = OnceLock::new();
-    let regex =
-        PATH_RE.get_or_init(|| Regex::new(r#"(?m)(?:^|\s)(/[^\s'"`]+|~/[^\s'"`]+)"#).unwrap());
+    let regex = PATH_RE.get_or_init(|| Regex::new(ABSOLUTE_LIKE_PATH_PATTERN).unwrap());
     regex
         .captures_iter(text)
         .filter_map(|caps| caps.get(1).map(|m| trim_path_token(m.as_str()).to_string()))
@@ -1207,6 +1213,15 @@ mod tests {
         let tracked = cleaner.load_tracked();
         assert_eq!(tracked.len(), 1);
         assert_eq!(tracked[0].category, "test");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn terminal_path_extraction_reads_windows_drive_paths_only() {
+        assert_eq!(
+            extract_absolute_like_paths(r"rm C:\h\tmp_a.log; touch D:/h/tmp_b.log C:rel\tmp_c.log"),
+            [r"C:\h\tmp_a.log", "D:/h/tmp_b.log"]
+        );
     }
 
     #[tokio::test]

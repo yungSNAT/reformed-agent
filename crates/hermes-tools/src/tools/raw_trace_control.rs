@@ -562,10 +562,13 @@ mod tests {
     #[tokio::test]
     async fn export_rejects_absolute_paths_outside_rtk_dir() {
         let (_dir, handler) = handler_with_temp_home();
+        // `/tmp/...` is not absolute on Windows, so use the platform's own
+        // absolute temp path; the Windows-only forms are tested below.
+        let outside = std::env::temp_dir().join("hermes-raw-trace-export.json");
         let err = handler
             .execute(json!({
                 "action": "export",
-                "output_path": "/tmp/hermes-raw-trace-export.json"
+                "output_path": outside.display().to_string()
             }))
             .await
             .expect_err("absolute escape should fail");
@@ -598,6 +601,34 @@ mod tests {
                 }
                 other => panic!("unexpected error: {other:?}"),
             }
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn export_rejects_windows_rooted_drive_unc_and_verbatim_paths() {
+        let (_dir, handler) = handler_with_temp_home();
+        for output_path in [
+            r"\hermes-escape\out.json",
+            "/hermes-escape/out.json",
+            r"Q:hermes-escape\out.json",
+            r"Q:\hermes-escape\out.json",
+            r"\\hermes-escape.invalid\share\out.json",
+            r"\\?\Q:\hermes-escape\out.json",
+            r"\\.\Q:\hermes-escape\out.json",
+            r"\\?\UNC\hermes-escape.invalid\share\out.json",
+        ] {
+            let err = handler
+                .execute(json!({
+                    "action": "export",
+                    "output_path": output_path
+                }))
+                .await
+                .expect_err(output_path);
+            assert!(
+                matches!(&err, ToolError::InvalidParams(message) if message.contains("output_path")),
+                "{output_path}: {err:?}"
+            );
         }
     }
 }

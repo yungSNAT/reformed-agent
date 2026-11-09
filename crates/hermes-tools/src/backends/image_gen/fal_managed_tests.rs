@@ -110,6 +110,23 @@ fn image_request(prompt: &str) -> ImageGenerateRequest {
     }
 }
 
+/// Asserts `image` is a file in the image cache whose name starts with
+/// `prefix`, comparing path components so Windows separators also match.
+fn assert_cached_image(image: &str, prefix: &str) {
+    let path = std::path::Path::new(image);
+    assert!(
+        path.parent()
+            .is_some_and(|dir| dir.ends_with(std::path::Path::new("cache").join("images"))),
+        "not in cache/images: {image}"
+    );
+    assert!(
+        path.file_name()
+            .and_then(|name| name.to_str())
+            .is_some_and(|name| name.starts_with(prefix)),
+        "name does not start with {prefix}: {image}"
+    );
+}
+
 #[test]
 fn from_env_or_managed_prefers_direct_key() {
     let _g = EnvScope::new();
@@ -756,7 +773,7 @@ async fn codex_image_generate_posts_responses_and_saves_png() {
     assert_eq!(payload["modality"], "text");
     assert_eq!(payload["source_images"], 0);
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/openai_codex_gpt_image_2_high_"));
+    assert_cached_image(image, "openai_codex_gpt_image_2_high_");
     assert_eq!(std::fs::read(image).unwrap(), b"\x89PNG\r\n\x1a\n");
 }
 
@@ -876,7 +893,7 @@ async fn openai_image_generate_posts_images_api_and_saves_b64() {
         "paint a direct provider, polished"
     );
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/openai_gen_"));
+    assert_cached_image(image, "openai_gen_");
     assert_eq!(std::fs::read(image).unwrap(), b"openai-image-data");
 
     let runtime: ImageGenRuntimeBackend = backend.into();
@@ -989,7 +1006,7 @@ async fn openrouter_image_generate_posts_chat_completions_and_saves_data_uri() {
     assert_eq!(payload["model"], "google/gemini-2.5-flash-image");
     assert_eq!(payload["aspect_ratio"], "1:1");
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/openrouter_gen_"));
+    assert_cached_image(image, "openrouter_gen_");
     assert_eq!(std::fs::read(image).unwrap(), b"test-image-data");
 }
 
@@ -1038,7 +1055,7 @@ async fn xai_image_generate_posts_json_and_saves_b64() {
     assert_eq!(payload["resolution"], "2k");
     assert_eq!(payload["usage"]["input_tokens"], 7);
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/xai_gen_"));
+    assert_cached_image(image, "xai_gen_");
     assert_eq!(std::fs::read(image).unwrap(), b"xai-image-data");
 
     let runtime: ImageGenRuntimeBackend = backend.into();
@@ -1141,7 +1158,7 @@ async fn nous_image_generate_posts_to_resolved_base_url_and_downloads_remote_ima
     assert_eq!(payload["provider"], "nous");
     assert_eq!(payload["aspect_ratio"], "16:9");
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/nous_gen_"));
+    assert_cached_image(image, "nous_gen_");
     assert_eq!(std::fs::read(image).unwrap(), b"downloaded-image");
 }
 
@@ -1207,7 +1224,7 @@ async fn krea_image_generate_submits_polls_and_saves_data_uri() {
     assert_eq!(payload["modality"], "image");
     assert_eq!(payload["source_images"], 1);
     let image = payload["image"].as_str().expect("image path");
-    assert!(image.contains("cache/images/krea_gen_"));
+    assert_cached_image(image, "krea_gen_");
     assert_eq!(std::fs::read(image).unwrap(), b"krea-image-data");
 }
 

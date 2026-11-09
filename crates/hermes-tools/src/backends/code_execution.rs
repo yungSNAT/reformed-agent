@@ -195,10 +195,12 @@ mod tests {
             .enable_all()
             .build()
             .expect("test runtime");
+        // An MSYS bash on Windows prints HOME in its POSIX form, so prove
+        // which directory HOME names by writing a file through it.
         let raw = runtime.block_on(async {
             backend
                 .execute(
-                    "printf '%s|%s' \"$HOME\" \"$HERMES_REAL_HOME\"",
+                    "printf home-probe > \"$HOME/home-probe\" && printf '%s' \"$HERMES_REAL_HOME\"",
                     Some("bash"),
                     Some(5),
                 )
@@ -208,11 +210,12 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
         assert_eq!(
             payload["stdout"].as_str().unwrap(),
-            format!(
-                "{}|{}",
-                hermes.path().join("home").display(),
-                real.path().display()
-            )
+            real.path().display().to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(hermes.path().join("home").join("home-probe"))
+                .expect("probe written through HOME"),
+            "home-probe"
         );
     }
 

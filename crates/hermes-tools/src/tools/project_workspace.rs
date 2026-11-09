@@ -606,7 +606,7 @@ mod tests {
         assert_eq!(tree["status"], "ok");
         assert!(paths.contains(&"Cargo.toml".to_string()));
         assert!(paths.contains(&"src".to_string()));
-        assert!(paths.contains(&"src/lib.rs".to_string()));
+        assert!(paths.contains(&Path::new("src").join("lib.rs").display().to_string()));
         assert!(!paths.iter().any(|path| path.starts_with("target")));
     }
 }
