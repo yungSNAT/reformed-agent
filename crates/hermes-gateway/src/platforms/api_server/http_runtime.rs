@@ -482,13 +482,15 @@ async fn handle_connection(
                         let data = format!("data: {}\n\n", serde_json::to_string(&role_chunk)?);
                         writer.write_all(data.as_bytes()).await?;
 
-                        // Content chunks
-                        for chunk in reply.as_bytes().chunks(20) {
-                            let text = String::from_utf8_lossy(chunk);
+                        // Content chunks of at most 20 bytes, split on character boundaries
+                        let mut rest = reply.as_str();
+                        while !rest.is_empty() {
+                            let (text, tail) = rest.split_at(rest.floor_char_boundary(20));
+                            rest = tail;
                             let sc = ApiServerAdapter::make_stream_chunk(
                                 &request_id,
                                 &model,
-                                Some(&text),
+                                Some(text),
                                 false,
                             );
                             let data = format!("data: {}\n\n", serde_json::to_string(&sc)?);

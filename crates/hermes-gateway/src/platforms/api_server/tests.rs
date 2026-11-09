@@ -551,6 +551,50 @@ async fn responses_endpoint_accepts_input_and_quoted_false_without_storing() {
 }
 
 #[tokio::test]
+async fn streamed_chat_completion_deltas_preserve_multibyte_reply() {
+    let reply = "Done 🎉🎉 文件已经整理好了，共有十二个文件。✅ 好的";
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let request = json_request(
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "messages": [{"role": "user", "content": "tidy the files"}],
+            "stream": true,
+        }),
+    );
+    let mailbox = Arc::clone(&state.mailbox);
+    let answer = tokio::spawn(async move {
+        let inbound = rx.recv().await.expect("inbound request");
+        let sender = mailbox
+            .read()
+            .await
+            .pending
+            .get(&inbound.session_id)
+            .cloned()
+            .expect("pending response sender");
+        sender.send(reply.to_string()).await.expect("send reply");
+    });
+
+    let response = state.roundtrip(request, None).await;
+    answer.await.expect("answer task");
+
+    assert!(response.contains("text/event-stream"), "{response}");
+    let streamed: String = response
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| {
+            let chunk: serde_json::Value = serde_json::from_str(data).expect("chunk json");
+            chunk["choices"][0]["delta"]["content"]
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(streamed, reply);
+}
+
+#[tokio::test]
 async fn status_updates_do_not_complete_pending_http_mailbox() {
     let adapter = ApiServerAdapter::new(ApiServerConfig::default());
     let (reply_tx, mut reply_rx) = mpsc::channel(1);
