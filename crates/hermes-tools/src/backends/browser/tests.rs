@@ -803,3 +803,225 @@ async fn configured_browserbase_without_credentials_fails_at_runtime() {
         .to_string()
         .contains("BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID"));
 }
+
+/// What the loopback WebSocket in [`spawn_cdp_fixture`] does after it
+/// receives a command.
+enum CdpFixtureReply {
+    Result(Value),
+    Error(Value),
+    Silent,
+}
+
+/// Loopback stand-in for Chrome's DevTools endpoints. `/json` lists a
+/// service worker before the page, as Chrome can. The page's WebSocket
+/// accepts one connection, hands back the first command it reads, sends an
+/// unrelated event and a reply to another id, then answers the command.
+async fn spawn_cdp_fixture(
+    reply: CdpFixtureReply,
+) -> (wiremock::MockServer, tokio::sync::oneshot::Receiver<Value>) {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind websocket");
+    let ws_addr = listener.local_addr().expect("websocket addr");
+    let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+    tokio::spawn(async move {
+        let (stream, _) = listener.accept().await.expect("accept websocket");
+        let mut socket = tokio_tungstenite::accept_async(stream)
+            .await
+            .expect("websocket handshake");
+        let frame = socket
+            .next()
+            .await
+            .expect("command frame")
+            .expect("readable frame");
+        let command: Value =
+            serde_json::from_str(frame.to_text().expect("text frame")).expect("command json");
+        let id = command["id"].clone();
+        command_tx.send(command).expect("test awaits the command");
+        let answer = match reply {
+            CdpFixtureReply::Result(result) => json!({"id": id, "result": result}),
+            CdpFixtureReply::Error(error) => json!({"id": id, "error": error}),
+            CdpFixtureReply::Silent => return std::future::pending::<()>().await,
+        };
+        for message in [
+            json!({"method": "Page.frameNavigated", "params": {"frame": {"id": "F1"}}}),
+            json!({"id": 9_999, "result": {"stale": true}}),
+            answer,
+        ] {
+            socket
+                .send(Message::text(message.to_string()))
+                .await
+                .expect("send reply");
+        }
+        while let Some(Ok(frame)) = socket.next().await {
+            if frame.is_close() {
+                break;
+            }
+        }
+    });
+
+    let http = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"type": "service_worker", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/SW"},
+            {"type": "page", "webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/page/P1")},
+        ])))
+        .mount(&http)
+        .await;
+    (http, command_rx)
+}
+
+#[tokio::test]
+async fn cdp_command_sends_over_websocket_and_returns_matching_result() {
+    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+        json!({"result": {"type": "number", "value": 2}}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let result = backend
+        .cdp_command("Runtime.evaluate", json!({"expression": "1 + 1"}))
+        .await
+        .expect("cdp result");
+
+    assert_eq!(result, json!({"result": {"type": "number", "value": 2}}));
+    let command = command_rx.await.expect("command reached the browser");
+    assert_eq!(command["method"], "Runtime.evaluate");
+    assert_eq!(command["params"], json!({"expression": "1 + 1"}));
+    assert!(command["id"].is_u64());
+}
+
+#[tokio::test]
+async fn cdp_command_maps_protocol_error_to_tool_error() {
+    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Error(
+        json!({"code": -32_000, "message": "Cannot navigate to invalid URL"}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .cdp_command("Page.navigate", json!({"url": "nonsense"}))
+        .await
+        .expect_err("cdp error");
+    let rendered = err.to_string();
+
+    assert!(rendered.contains("Cannot navigate to invalid URL"));
+    assert!(rendered.contains("-32000"));
+    assert!(rendered.contains("Page.navigate"));
+}
+
+#[tokio::test]
+async fn cdp_command_without_page_target_fails() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let http = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/json"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+            {"type": "service_worker", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/SW"},
+        ])))
+        .mount(&http)
+        .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .cdp_command("Runtime.evaluate", json!({"expression": "1"}))
+        .await
+        .expect_err("no page target");
+
+    assert!(err.to_string().contains("No Chrome page target found"));
+}
+
+#[tokio::test]
+async fn cdp_command_times_out_when_browser_never_answers() {
+    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Silent).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .cdp_command_with_timeout(
+            "Runtime.evaluate",
+            json!({"expression": "1"}),
+            std::time::Duration::from_millis(500),
+        )
+        .await
+        .expect_err("silent browser");
+
+    assert!(err.to_string().contains("timed out after 0.500 seconds"));
+    let command = command_rx.await.expect("command reached the browser");
+    assert_eq!(command["method"], "Runtime.evaluate");
+}
+
+#[tokio::test]
+async fn cdp_navigate_reports_page_navigation_error_text() {
+    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+        json!({"frameId": "F1", "loaderId": "L1", "errorText": "net::ERR_NAME_NOT_RESOLVED"}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .navigate("https://missing.invalid/")
+        .await
+        .expect_err("failed navigation");
+    let rendered = err.to_string();
+
+    assert!(rendered.contains("Failed to open https://missing.invalid/"));
+    assert!(rendered.contains("net::ERR_NAME_NOT_RESOLVED"));
+}
+
+#[tokio::test]
+async fn cdp_click_reports_script_exception() {
+    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(json!({
+        "result": {"type": "object", "subtype": "error"},
+        "exceptionDetails": {
+            "text": "Uncaught",
+            "exception": {"description": "SyntaxError: '##' is not a valid selector"},
+        },
+    })))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend.click("##").await.expect_err("script exception");
+
+    assert!(err.to_string().contains("'##' is not a valid selector"));
+}
+
+#[tokio::test]
+async fn cdp_click_reports_missing_element() {
+    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+        json!({"result": {"type": "string", "value": "not found"}}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend.click("#absent").await.expect_err("missing element");
+
+    assert!(matches!(err, ToolError::NotFound(_)));
+    assert!(err.to_string().contains("#absent"));
+    let command = command_rx.await.expect("command reached the browser");
+    let expression = command["params"]["expression"]
+        .as_str()
+        .expect("expression");
+    assert!(expression.contains("document.querySelector('#absent')"));
+}
+
+#[tokio::test]
+async fn cdp_vision_returns_captured_screenshot_data() {
+    let (http, command_rx) =
+        spawn_cdp_fixture(CdpFixtureReply::Result(json!({"data": "iVBORw0KGgo="}))).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let raw = backend.vision("describe").await.expect("screenshot");
+    let value: Value = serde_json::from_str(&raw).expect("vision json");
+
+    assert_eq!(value["screenshot"]["data"], "iVBORw0KGgo=");
+    let command = command_rx.await.expect("command reached the browser");
+    assert_eq!(command["method"], "Page.captureScreenshot");
+}

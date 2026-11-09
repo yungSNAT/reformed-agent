@@ -4,6 +4,7 @@
 //! and provides browser automation capabilities.
 
 use async_trait::async_trait;
+use futures::{SinkExt, StreamExt};
 use hermes_config::{
     cli_config_path, config_path, is_managed_tool_gateway_ready, managed_nous_tools_enabled,
     resolve_managed_tool_gateway, ManagedToolGatewayConfig, ResolveOptions,
@@ -19,6 +20,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 use uuid::Uuid;
 
