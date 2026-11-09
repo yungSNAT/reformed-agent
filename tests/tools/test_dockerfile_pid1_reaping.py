@@ -111,8 +111,13 @@ def test_dockerfile_builds_rust_workspace_binary(dockerfile_text):
     assert "FROM rust:" in dockerfile_text
     assert "COPY --link Cargo.toml Cargo.lock ./" in dockerfile_text
     assert "COPY --link crates crates" in dockerfile_text
+    # The workspace patches crates from third_party, so the build needs them.
+    assert "COPY --link third_party third_party" in dockerfile_text
+    # hermes-cli's default features enable every gateway adapter. The workspace
+    # root accepts no --features flag, so the build names the package instead.
     assert any(
-        "cargo build --release" in step and "telegram,discord,slack" in step
+        "cargo build --release --locked -p hermes-cli" in step
+        and "--features" not in step
         for step in _run_steps(dockerfile_text)
     )
 

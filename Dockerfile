@@ -12,7 +12,8 @@ COPY --link crates crates
 COPY --link third_party third_party
 
 # hermes-cli's default features enable every gateway platform adapter.
-RUN cargo build --release --locked -p hermes-cli --bin hermes
+# `hermes` is a launcher that runs `hermes-agent-ultra` from its own directory.
+RUN cargo build --release --locked -p hermes-cli --bin hermes --bin hermes-agent-ultra
 
 # ----- Runtime stage -----
 FROM debian:bookworm-slim
@@ -24,6 +25,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --link --from=builder --chmod=0755 /app/target/release/hermes /usr/local/bin/hermes
+COPY --link --from=builder --chmod=0755 /app/target/release/hermes-agent-ultra /usr/local/bin/hermes-agent-ultra
 COPY --link --chmod=0755 docker/entrypoint.sh /usr/local/bin/hermes-entrypoint
 COPY --link LICENSE NOTICE /usr/share/doc/hermes-agent-ultra/
 RUN chmod 0644 /usr/share/doc/hermes-agent-ultra/LICENSE /usr/share/doc/hermes-agent-ultra/NOTICE \
