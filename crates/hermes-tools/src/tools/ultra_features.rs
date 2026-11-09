@@ -1678,9 +1678,28 @@ async fn stream_rule_guard(params: Value, state: &UltraFeatureState) -> Result<S
 
 fn default_stream_rules() -> Vec<StreamRule> {
     vec![
-        StreamRule { id: "no-fake-passed-tests".into(), pattern: r"(?i)\b(passed|green|verified)\b".into(), effect: "warn".into(), message: "Only claim tests passed when command evidence is present.".into() },
-        StreamRule { id: "no-python-runtime-default".into(), pattern: r"(?i)\bpython\b.*\b(default|required)\b".into(), effect: "inject".into(), message: "Reformed Agent core runtime is Rust-only; keep Python optional and policy-gated.".into() },
-        StreamRule { id: "no-status-only-completion".into(), pattern: r"(?i)\bwill implement\b|\bnext I will\b".into(), effect: "warn".into(), message: "For proceed requests, execute implementation work instead of stopping at intent.".into() },
+        StreamRule {
+            id: "no-fake-passed-tests".into(),
+            pattern: r"(?i)\b(passed|green|verified)\b".into(),
+            effect: "warn".into(),
+            message: "Only claim tests passed when command evidence is present.".into(),
+        },
+        StreamRule {
+            id: "no-python-runtime-default".into(),
+            pattern: r"(?i)\bpython\b.*\b(default|required)\b".into(),
+            effect: "inject".into(),
+            message:
+                "Reformed Agent core runtime is Rust-only; keep Python optional and policy-gated."
+                    .into(),
+        },
+        StreamRule {
+            id: "no-status-only-completion".into(),
+            pattern: r"(?i)\bwill implement\b|\bnext I will\b".into(),
+            effect: "warn".into(),
+            message:
+                "For proceed requests, execute implementation work instead of stopping at intent."
+                    .into(),
+        },
     ]
 }
 

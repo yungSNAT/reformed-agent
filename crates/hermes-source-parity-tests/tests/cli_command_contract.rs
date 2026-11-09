@@ -140,8 +140,9 @@ fn normalize_variant_command_name(variant: &str) -> String {
 }
 
 fn extract_top_level_commands_from_cli_source(source: &str) -> BTreeSet<String> {
+    // A variant is `Name,`, `Name {`, `Name(` or `Name(NameArgs),`.
     let variant_re =
-        Regex::new(r"^    ([A-Z][A-Za-z0-9_]*)(?:\s*[,{(]|,)$").expect("variant regex");
+        Regex::new(r"^    ([A-Z][A-Za-z0-9_]*)(?:\s*[,{(]|\([^)]*\),)$").expect("variant regex");
     let command_name_re =
         Regex::new(r#"#\[command\(name\s*=\s*"([^"]+)""#).expect("command name regex");
     let mut in_enum = false;
