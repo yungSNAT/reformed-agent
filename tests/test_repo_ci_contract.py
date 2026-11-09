@@ -4,6 +4,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 SCRIPT = REPO_ROOT / "scripts" / "run-repo-ci.sh"
 README = REPO_ROOT / "README.md"
 CI = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+UPSTREAM_REFERENCE = REPO_ROOT / "docs" / "parity" / "upstream-reference.txt"
 
 
 def test_repo_ci_runner_exists_and_declares_authority() -> None:
@@ -11,8 +12,23 @@ def test_repo_ci_runner_exists_and_declares_authority() -> None:
     assert SCRIPT.exists()
     assert "repository-local CI contract" in text
     assert "hosted GitHub Actions are a convenience mirror" in text
-    assert "+refs/heads/main:refs/remotes/${UPSTREAM_REMOTE}/main" in text
+    assert "+${UPSTREAM_REVISION}:refs/remotes/${UPSTREAM_REF}" in text
     assert "[repo-ci] PASS" in text
+
+
+def test_parity_gates_use_the_pinned_upstream_revision() -> None:
+    revision = UPSTREAM_REFERENCE.read_text().strip()
+    assert len(revision) == 40
+    assert set(revision) <= set("0123456789abcdef")
+
+    script = SCRIPT.read_text()
+    workflow = CI.read_text()
+    assert "docs/parity/upstream-reference.txt" in script
+    assert "docs/parity/upstream-reference.txt" in workflow
+    # A gate that fetched or named upstream's live main would move with it.
+    assert "refs/heads/main" not in script
+    assert "upstream/main" not in workflow
+    assert "upstream main" not in workflow
 
 
 def test_repo_ci_runner_covers_workflow_test_job_gates() -> None:
