@@ -107,6 +107,7 @@ impl AgentLoop {
         let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
         let (advertised_tool_names, advertised_tool_names_display) =
             advertised_tool_name_index(&tool_schemas);
+        self.refresh_code_index().await;
         let (system_content, restored_system) =
             self.resolve_initial_system_prompt(&task_hint, &tool_schemas);
         ctx.add_message(Message::system(&system_content));

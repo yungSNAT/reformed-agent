@@ -196,8 +196,9 @@ impl AgentLoop {
         if !workspace_root.exists() {
             return None;
         }
-        let mut index = CodeIndex::default_for_workspace(workspace_root);
-        let _ = index.ensure_fresh();
+        // No scan here: constructors run on async workers, and a full scan can
+        // take seconds. `run` and `run_stream` refresh it on the blocking pool.
+        let index = CodeIndex::default_for_workspace(workspace_root);
         Some(Arc::new(Mutex::new(index)))
     }
 

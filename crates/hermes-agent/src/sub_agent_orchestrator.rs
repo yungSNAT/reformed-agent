@@ -22,7 +22,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -32,6 +32,7 @@ use serde_json::json;
 use tokio::time::timeout;
 
 use crate::agent_loop::{AgentConfig, AgentLoop, ToolRegistry};
+use crate::code_index::CodeIndex;
 use crate::credential_pool::CredentialPool;
 use crate::interrupt::InterruptController;
 
@@ -129,6 +130,9 @@ pub struct SubAgentOrchestratorConfig {
     pub parent_session_id: Option<String>,
     pub timeout: Duration,
     pub background_delegation_callback: Option<BackgroundDelegationCallback>,
+    /// Parent's code index, shared with every child so a delegation never
+    /// scans the workspace again. `None` gives children no repo map.
+    pub code_index: Option<Arc<Mutex<CodeIndex>>>,
 }
 
 /// In-process executor for `delegate_task` tool calls.
@@ -162,6 +166,7 @@ impl SubAgentOrchestrator {
                     .background_delegation_callback
                     .clone()
                     .or_else(|| parent.callbacks.background_review_callback.clone()),
+                code_index: parent.code_index.clone(),
             },
         }
     }
@@ -351,6 +356,7 @@ impl SubAgentOrchestrator {
             None
         };
         let initial = initial_messages(&req.task, req.context.as_deref());
+        let code_index = self.cfg.code_index.clone();
 
         // Run the child on its own tokio task so that its `impl Future` type is
         // fully erased behind a `JoinHandle`, breaking async recursion with the
@@ -359,13 +365,14 @@ impl SubAgentOrchestrator {
         // `AgentLoop::run` to already be Send — this is also what the existing
         // `spawn_background_review` relies on.
         let join = tokio::spawn(async move {
-            let child_agent = AgentLoop::with_interrupt(
+            let mut child_agent = AgentLoop::with_interrupt(
                 child_config,
                 tool_registry,
                 child_provider,
                 child_interrupt_for_spawn,
             )
             .with_delegate_depth(child_depth);
+            child_agent.code_index = code_index;
             child_agent.run(initial, inherited_tools).await
         });
 
@@ -703,6 +710,7 @@ mod tests {
             parent_session_id: Some("parent".into()),
             timeout: Duration::from_secs(2),
             background_delegation_callback: None,
+            code_index: None,
         }));
 
         let out = orch
@@ -723,6 +731,102 @@ mod tests {
         assert_eq!(parsed["status"], "completed");
         let seen = seen_tools.lock().expect("seen tools lock");
         assert_eq!(seen.as_slice(), &[vec!["terminal".to_string()]]);
+    }
+
+    #[tokio::test]
+    async fn child_uses_parent_code_index_instead_of_scanning_its_own() {
+        struct SystemPromptProvider {
+            system_prompts: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for SystemPromptProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<LlmResponse, AgentError> {
+                let system = messages
+                    .iter()
+                    .find(|m| matches!(m.role, hermes_core::MessageRole::System))
+                    .and_then(|m| m.content.clone())
+                    .unwrap_or_default();
+                self.system_prompts
+                    .lock()
+                    .expect("system prompts lock")
+                    .push(system);
+                Ok(LlmResponse {
+                    message: Message::assistant("done"),
+                    usage: None,
+                    model: "system-prompt".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        // The parent's index covers a workspace that is not the test's working
+        // directory, so its marker reaches the child's repo map only if the
+        // child reuses this index rather than scanning a workspace itself.
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(
+            workspace.path().join("parent.rs"),
+            "pub fn parent_index_marker_fn() {}\n",
+        )
+        .unwrap();
+        let mut index = CodeIndex::new(
+            workspace.path(),
+            crate::code_index::CodeIndexConfig::default(),
+        );
+        index.refresh_full();
+
+        let system_prompts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut parent = AgentLoop::new(
+            AgentConfig {
+                max_turns: 2,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(SystemPromptProvider {
+                system_prompts: system_prompts.clone(),
+            }),
+        );
+        parent.code_index = Some(Arc::new(Mutex::new(index)));
+        let tmp = tempfile::tempdir().unwrap();
+        let orch = Arc::new(SubAgentOrchestrator::from_parent(
+            &parent,
+            tmp.path().to_path_buf(),
+        ));
+
+        let out = orch
+            .execute(SubAgentRequest {
+                task: "child task".into(),
+                child_depth: 1,
+                max_depth: 4,
+                ..Default::default()
+            })
+            .await;
+
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["status"], "completed");
+        let prompts = system_prompts.lock().expect("system prompts lock");
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("parent_index_marker_fn"));
     }
 
     #[tokio::test]
@@ -776,6 +880,7 @@ mod tests {
             parent_session_id: Some("parent".into()),
             timeout: Duration::from_millis(50),
             background_delegation_callback: None,
+            code_index: None,
         }));
         let out = orch
             .execute(SubAgentRequest {
@@ -825,6 +930,7 @@ mod tests {
                     .expect("completion lock")
                     .push(text.to_string());
             })),
+            code_index: None,
         }));
 
         let out = orch
@@ -878,6 +984,7 @@ mod tests {
             parent_session_id: None,
             timeout: Duration::from_secs(2),
             background_delegation_callback: None,
+            code_index: None,
         }));
         let out = orch
             .execute(SubAgentRequest {
@@ -914,6 +1021,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
         let child = orch.build_child_config(
             &SubAgentRequest {
@@ -958,6 +1066,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -999,6 +1108,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -1038,6 +1148,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -1079,6 +1190,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         }));
 
         let out = orch

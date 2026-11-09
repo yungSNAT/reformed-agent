@@ -327,6 +327,27 @@ impl AgentLoop {
         mm.on_session_end(&as_values);
     }
 
+    /// Bring the code index up to date on the blocking pool. A full workspace
+    /// scan can take seconds; on an async worker it would stall timers and
+    /// every other task scheduled there.
+    ///
+    /// shortcut: the scan holds the index lock, so a sibling sharing this
+    /// index that locks it on a worker (repo map, LSP note) waits for the scan.
+    /// Scanning outside the lock and swapping the result in would remove that.
+    async fn refresh_code_index(&self) {
+        let Some(idx) = self.code_index.clone() else {
+            return;
+        };
+        let refresh = tokio::task::spawn_blocking(move || {
+            if let Ok(mut idx) = idx.lock() {
+                idx.ensure_fresh();
+            }
+        });
+        if let Err(err) = refresh.await {
+            tracing::warn!(error = %err, "code index refresh task failed");
+        }
+    }
+
     fn code_index_repo_map_block(&self) -> Option<String> {
         let Some(ref idx) = self.code_index else {
             return None;

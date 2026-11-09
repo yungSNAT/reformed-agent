@@ -48,6 +48,7 @@ impl AgentLoop {
         let (advertised_tool_names, advertised_tool_names_display) =
             advertised_tool_name_index(&tool_schemas);
 
+        self.refresh_code_index().await;
         // Build and inject system prompt (or reuse SQLite-cached prompt for session continuity)
         let (system_content, restored_system) =
             self.resolve_initial_system_prompt(&task_hint, &tool_schemas);

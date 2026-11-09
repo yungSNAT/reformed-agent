@@ -25,8 +25,9 @@ pub struct AgentLoop {
     /// tool calls are executed by the orchestrator (spawn/timeout/cancel/
     /// lineage) instead of simply returning a signal envelope.
     sub_agent_orchestrator: Option<Arc<crate::sub_agent_orchestrator::SubAgentOrchestrator>>,
-    /// Always-on workspace code index + repo-map source.
-    code_index: Option<Arc<Mutex<CodeIndex>>>,
+    /// Always-on workspace code index + repo-map source. Delegated children
+    /// share their parent's index rather than scanning the workspace again.
+    pub(crate) code_index: Option<Arc<Mutex<CodeIndex>>>,
     /// LSP-style context injection controls.
     lsp_context: LspContextConfig,
     /// Rolling per-route performance state for online smart-routing adaptation.
