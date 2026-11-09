@@ -59,6 +59,14 @@ static CRON_PROMPT_BLOCK_PATTERNS: LazyLock<Vec<(&'static str, Regex)>> = LazyLo
 });
 
 const DEFAULT_SCRIPT_TIMEOUT_SECS: u64 = 120;
+/// Runs inline scripts and `.sh`/`.bash` files when no shell is configured.
+#[cfg(not(windows))]
+const DEFAULT_SCRIPT_SHELL: &str = "/bin/bash";
+/// Windows has no `/bin/bash`, and it searches its system folder before PATH,
+/// where WSL can install a `bash.exe`; so take `sh` from PATH (Git for Windows
+/// or MSYS2), as the local terminal backend does.
+#[cfg(windows)]
+const DEFAULT_SCRIPT_SHELL: &str = "sh";
 const MAX_SCRIPT_OUTPUT_CHARS: usize = 64_000;
 const CRON_PLATFORM: &str = "cron";
 const CRON_DEFAULT_TOOLSET: &str = "hermes-cron";
@@ -180,7 +188,7 @@ fn shell_for_inline_script(job: &CronJob) -> String {
                 .ok()
                 .filter(|v| !v.trim().is_empty())
         })
-        .unwrap_or_else(|| "/bin/bash".to_string())
+        .unwrap_or_else(|| DEFAULT_SCRIPT_SHELL.to_string())
 }
 
 fn has_invisible_unicode(text: &str) -> bool {
@@ -287,7 +295,13 @@ fn resolve_cron_script_path(raw: &str) -> Result<Option<PathBuf>, CronError> {
         ));
     }
 
-    Ok(Some(canonical_candidate))
+    // `canonicalize` gives `\\?\C:\x` on Windows, which MSYS shells cannot
+    // open; the joined path names the same file.
+    #[cfg(windows)]
+    let runnable = candidate;
+    #[cfg(not(windows))]
+    let runnable = canonical_candidate;
+    Ok(Some(runnable))
 }
 
 fn command_for_script_path(script_path: &Path) -> Command {
@@ -297,7 +311,7 @@ fn command_for_script_path(script_path: &Path) -> Command {
         .map(|v| v.to_ascii_lowercase())
         .unwrap_or_default();
     if ext == "sh" || ext == "bash" {
-        let mut command = Command::new("/bin/bash");
+        let mut command = Command::new(DEFAULT_SCRIPT_SHELL);
         command.arg(script_path);
         command.suppress_windows_console();
         command

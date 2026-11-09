@@ -5,7 +5,7 @@
 //! agent's tool call immediately creates / lists / pauses / resumes / removes
 //! / runs real cron jobs instead of returning a "pending" envelope.
 
-use std::path::Path;
+use std::path::{Component, Path};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -126,16 +126,23 @@ fn validate_tool_script_reference(script: &str) -> Result<(), ToolError> {
     if trimmed.is_empty() || trimmed.chars().any(char::is_whitespace) {
         return Ok(());
     }
+    let path = Path::new(trimmed);
+    // A root or prefix leaves scripts/. On Windows this covers `\x`, `/x`,
+    // `C:x`, `C:\x`, UNC and `\\?\` forms; `is_absolute` misses `\x`, `/x`
+    // and `C:x`.
     if trimmed.starts_with('~')
         || windows_absolute_path(trimmed)
-        || Path::new(trimmed).is_absolute()
+        || path
+            .components()
+            .any(|c| matches!(c, Component::Prefix(_) | Component::RootDir))
     {
         return Err(ToolError::InvalidParams(
             "cron script must be an inline script or a relative path under Hermes scripts/"
                 .to_string(),
         ));
     }
-    if trimmed.contains("../") || trimmed.contains("..\\") {
+    // `..\` is checked as text because a backslash is no separator on Unix.
+    if path.components().any(|c| matches!(c, Component::ParentDir)) || trimmed.contains("..\\") {
         return Err(ToolError::InvalidParams(
             "cron script path traversal escapes Hermes scripts/".to_string(),
         ));
@@ -543,5 +550,36 @@ mod tests {
             .await
             .expect_err("reject absolute");
         assert!(err.to_string().contains("relative path"));
+    }
+
+    #[test]
+    fn tool_script_reference_rejects_paths_that_leave_scripts_dir() {
+        for script in ["/tmp/evil.py", "~/evil.py", r"C:\evil.py", "C:/evil.py"] {
+            let err = validate_tool_script_reference(script).expect_err(script);
+            assert!(err.to_string().contains("relative path"), "{script}: {err}");
+        }
+        for script in ["..", "../evil.py", "nested/../../evil.py", r"..\evil.py"] {
+            let err = validate_tool_script_reference(script).expect_err(script);
+            assert!(err.to_string().contains("traversal"), "{script}: {err}");
+        }
+        for script in ["watchdog.py", "nested/watchdog.sh", "echo ok"] {
+            validate_tool_script_reference(script).expect(script);
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn tool_script_reference_rejects_windows_rooted_drive_unc_and_verbatim_paths() {
+        for script in [
+            r"\evil.py",
+            "C:evil.py",
+            r"\\server\share\evil.py",
+            r"\\?\C:\evil.py",
+            r"\\.\C:\evil.py",
+            r"\\?\UNC\server\share\evil.py",
+        ] {
+            let err = validate_tool_script_reference(script).expect_err(script);
+            assert!(err.to_string().contains("relative path"), "{script}: {err}");
+        }
     }
 }
