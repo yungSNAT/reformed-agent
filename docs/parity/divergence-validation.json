@@ -1,19 +1,19 @@
 {
-  "divergence_file": "/Volumes/wd_black/hermes-agent-ultra/repo/docs/parity/intentional-divergence.json",
-  "generated_at_utc": "2026-07-08T09:23:42.769078+00:00",
+  "divergence_file": "E:\\reformed-finish-wt\\divergence\\docs\\parity\\intentional-divergence.json",
+  "generated_at_utc": "2026-11-09T19:38:14.435572+00:00",
   "items": [
     {
       "errors": [],
       "id": "ultra-contextlattice-memory-plugin",
-      "last_reviewed": "2026-04-21",
+      "last_reviewed": "2026-11-10",
       "matched_files": 2,
       "matched_sample": [
         "crates/hermes-agent/src/memory_plugins/contextlattice.rs",
         "crates/hermes-agent/src/memory_plugins/mod.rs"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-07-21",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 23,
       "warnings": []
@@ -21,7 +21,7 @@
     {
       "errors": [],
       "id": "ultra-webhook-queue-backends",
-      "last_reviewed": "2026-04-21",
+      "last_reviewed": "2026-11-10",
       "matched_files": 4,
       "matched_sample": [
         "docs/upstream-webhook-sync.md",
@@ -30,8 +30,8 @@
         "scripts/upstream_webhook_sync.py"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-07-21",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 26,
       "warnings": []
@@ -39,7 +39,7 @@
     {
       "errors": [],
       "id": "ultra-launchd-webhook-lifecycle",
-      "last_reviewed": "2026-04-21",
+      "last_reviewed": "2026-11-10",
       "matched_files": 4,
       "matched_sample": [
         "scripts/install-upstream-webhook-launchd.sh",
@@ -48,8 +48,8 @@
         "scripts/uninstall-upstream-webhook-launchd.sh"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-07-21",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 26,
       "warnings": []
@@ -81,17 +81,19 @@
         "optional-skills/creative/baoyu-article-illustrator/SKILL.md",
         "optional-skills/creative/baoyu-article-illustrator/prompts/system.md"
       ],
-      "overdue": false,
+      "overdue": true,
       "owner": "sheawinkler",
       "review_date": "2026-10-02",
       "status": "approved",
       "ticket": 21,
-      "warnings": []
+      "warnings": [
+        "review_date is overdue"
+      ]
     },
     {
       "errors": [],
       "id": "rust-gateway-platform-plugin-parity",
-      "last_reviewed": "2026-06-30",
+      "last_reviewed": "2026-11-10",
       "matched_files": 41,
       "matched_sample": [
         "plugins/platforms/dingtalk/__init__.py",
@@ -116,8 +118,8 @@
         "plugins/platforms/ntfy/adapter.py"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-09-30",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 7,
       "warnings": []
@@ -125,7 +127,7 @@
     {
       "errors": [],
       "id": "rust-chronos-managed-cron-provider",
-      "last_reviewed": "2026-06-30",
+      "last_reviewed": "2026-11-10",
       "matched_files": 5,
       "matched_sample": [
         "plugins/cron_providers/__init__.py",
@@ -135,8 +137,8 @@
         "plugins/cron_providers/chronos/verify.py"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-09-30",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 570,
       "warnings": []
@@ -144,7 +146,7 @@
     {
       "errors": [],
       "id": "rust-runtime-no-raft-platform-plugin",
-      "last_reviewed": "2026-06-20",
+      "last_reviewed": "2026-11-10",
       "matched_files": 3,
       "matched_sample": [
         "plugins/platforms/raft/__init__.py",
@@ -152,8 +154,8 @@
         "plugins/platforms/raft/plugin.yaml"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-07-20",
+      "owner": "yungSNAT",
+      "review_date": "2026-12-10",
       "status": "temporary",
       "ticket": 570,
       "warnings": []
@@ -161,7 +163,7 @@
     {
       "errors": [],
       "id": "upstream-python-plugin-backend-drift-20260527",
-      "last_reviewed": "2026-06-30",
+      "last_reviewed": "2026-11-10",
       "matched_files": 10,
       "matched_sample": [
         "plugins/dashboard_auth/drain/__init__.py",
@@ -176,8 +178,8 @@
         "plugins/security-guidance/plugin.yaml"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-07-30",
+      "owner": "yungSNAT",
+      "review_date": "2026-12-10",
       "status": "temporary",
       "ticket": 319,
       "warnings": []
@@ -185,13 +187,13 @@
     {
       "errors": [],
       "id": "upstream-s6-plan-doc-archive",
-      "last_reviewed": "2026-05-26",
+      "last_reviewed": "2026-11-10",
       "matched_files": 0,
       "matched_sample": [],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-08-26",
-      "status": "approved",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
+      "status": "deprecated",
       "ticket": 26,
       "warnings": [
         "no paths currently matched in local/upstream trees"
@@ -206,17 +208,19 @@
         "plugins/model-providers/vertex/__init__.py",
         "plugins/model-providers/vertex/plugin.yaml"
       ],
-      "overdue": false,
+      "overdue": true,
       "owner": "sheawinkler",
       "review_date": "2026-10-02",
       "status": "approved",
       "ticket": 700,
-      "warnings": []
+      "warnings": [
+        "review_date is overdue"
+      ]
     },
     {
       "errors": [],
       "id": "rust-cli-tui-primary-ux-surface",
-      "last_reviewed": "2026-07-02",
+      "last_reviewed": "2026-11-10",
       "matched_files": 1278,
       "matched_sample": [
         "ui-tui/.gitignore",
@@ -241,8 +245,8 @@
         "ui-tui/packages/hermes-ink/src/ink/app-stdin-recovery.test.ts"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-10-02",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 22,
       "warnings": []
@@ -250,7 +254,7 @@
     {
       "errors": [],
       "id": "rust-memory-provider-plugin-parity",
-      "last_reviewed": "2026-06-30",
+      "last_reviewed": "2026-11-10",
       "matched_files": 14,
       "matched_sample": [
         "plugins/memory/honcho/README.md",
@@ -269,8 +273,8 @@
         "plugins/memory/mem0/plugin.yaml"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-09-30",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 700,
       "warnings": []
@@ -278,7 +282,7 @@
     {
       "errors": [],
       "id": "rust-image-provider-plugin-parity",
-      "last_reviewed": "2026-06-30",
+      "last_reviewed": "2026-11-10",
       "matched_files": 4,
       "matched_sample": [
         "plugins/image_gen/krea/__init__.py",
@@ -287,8 +291,8 @@
         "plugins/image_gen/openrouter/plugin.yaml"
       ],
       "overdue": false,
-      "owner": "sheawinkler",
-      "review_date": "2026-09-30",
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 700,
       "warnings": []
@@ -297,10 +301,10 @@
   "summary": {
     "errors": 0,
     "items": 13,
-    "local_paths": 4074,
-    "review_overdue": 0,
+    "local_paths": 4077,
+    "review_overdue": 2,
     "unowned": 0,
     "upstream_paths": 6177,
-    "warnings": 1
+    "warnings": 3
   }
 }
