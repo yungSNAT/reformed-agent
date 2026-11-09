@@ -1,8 +1,35 @@
-#[tokio::main]
-async fn main() {
+/// Stack size for the thread that runs the async runtime's main future.
+///
+/// Windows gives the main thread 1 MiB of stack; Linux and macOS give it 8 MiB.
+/// A debug build of this binary needs more than 1 MiB for ordinary commands, so
+/// every platform runs the runtime on a thread with the Linux and macOS size.
+const MAIN_RUNTIME_STACK_BYTES: usize = 8 * 1024 * 1024;
+
+fn main() {
+    let runtime_thread = std::thread::Builder::new()
+        .name("hermes-main".to_string())
+        .stack_size(MAIN_RUNTIME_STACK_BYTES)
+        .spawn(|| {
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .expect("Failed building the Runtime")
+                .block_on(run_main())
+        })
+        .expect("failed to spawn the main runtime thread");
+    if let Err(panic) = runtime_thread.join() {
+        std::panic::resume_unwind(panic);
+    }
+}
+
+async fn run_main() {
     let cli = Cli::parse();
     let effective_command = cli.effective_command();
-    if let CliCommand::ImportHermesSessions { export, profile_dir } = &effective_command {
+    if let CliCommand::ImportHermesSessions(ImportHermesSessionsArgs {
+        export,
+        profile_dir,
+    }) = &effective_command
+    {
         match hermes_cli::commands::import_hermes_sessions(export, profile_dir) {
             Ok(summary) => println!(
                 "Imported {} sessions with {} active messages into {}. Excluded {} inactive or metadata rows.",
@@ -39,7 +66,7 @@ async fn main() {
         cli.verbose,
         matches!(
             effective_command,
-            CliCommand::Hermes | CliCommand::Resume { .. }
+            CliCommand::Hermes | CliCommand::Resume(_)
         ),
     );
     if let Err(err) = hydrate_provider_env_from_vault_for_cli(&cli).await {
@@ -211,11 +238,11 @@ async fn main() {
 
     let result = match effective_command {
         CliCommand::Hermes => run_interactive(cli).await,
-        CliCommand::Chat {
+        CliCommand::Chat(ChatArgs {
             query,
             preload_skill,
             yolo,
-        } => {
+        }) => {
             if let Some(prompt) = query.clone() {
                 match handle_local_slash_query(cli.clone(), &prompt).await {
                     Ok(true) => Ok(()),
@@ -244,31 +271,33 @@ async fn main() {
                 .await
             }
         }
-        CliCommand::Model {
+        CliCommand::Model(ModelArgs {
             completion_values,
             completion_providers,
             provider_model,
-        } => {
+        }) => {
             if completion_values || completion_providers {
                 run_model_completion_values(cli, completion_providers).await
             } else {
                 run_model(cli, provider_model).await
             }
         }
-        CliCommand::Tools {
+        CliCommand::Tools(ToolsArgs {
             action,
             name,
             platform,
             summary,
-        } => run_tools(cli, action, name, platform, summary).await,
-        CliCommand::ComputerUse {
+        }) => run_tools(cli, action, name, platform, summary).await,
+        CliCommand::ComputerUse(ComputerUseArgs {
             action,
             json,
             include,
             skip,
-        } => run_computer_use(action, json, include, skip).await,
-        CliCommand::Config { action, key, value } => run_config(cli, action, key, value).await,
-        CliCommand::Gateway {
+        }) => run_computer_use(action, json, include, skip).await,
+        CliCommand::Config(ConfigArgs { action, key, value }) => {
+            run_config(cli, action, key, value).await
+        }
+        CliCommand::Gateway(GatewayArgs {
             action,
             platform,
             system,
@@ -279,7 +308,7 @@ async fn main() {
             dry_run,
             yes,
             deep,
-        } => {
+        }) => {
             run_gateway(
                 cli,
                 action,
@@ -295,26 +324,28 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Up { force, dry_run } => run_up(force, dry_run).await,
-        CliCommand::Setup { portal } => {
+        CliCommand::Up(UpArgs { force, dry_run }) => run_up(force, dry_run).await,
+        CliCommand::Setup(SetupArgs { portal }) => {
             if portal {
                 run_portal(cli, Some("setup".to_string())).await
             } else {
                 run_setup(cli).await
             }
         }
-        CliCommand::Portal { action } => run_portal(cli, action).await,
-        CliCommand::Billing { args } => run_billing(args).await,
-        CliCommand::Doctor {
+        CliCommand::Portal(PortalArgs { action }) => run_portal(cli, action).await,
+        CliCommand::Billing(BillingArgs { args }) => run_billing(args).await,
+        CliCommand::Doctor(DoctorArgs {
             deep,
             self_heal,
             snapshot,
             snapshot_path,
             bundle,
-        } => run_doctor(cli, deep, self_heal, snapshot, snapshot_path, bundle).await,
-        CliCommand::Update { check } => run_update(check).await,
-        CliCommand::EliteCheck { json, strict } => run_elite_check(cli, json, strict).await,
-        CliCommand::Systems {
+        }) => run_doctor(cli, deep, self_heal, snapshot, snapshot_path, bundle).await,
+        CliCommand::Update(UpdateArgs { check }) => run_update(check).await,
+        CliCommand::EliteCheck(EliteCheckArgs { json, strict }) => {
+            run_elite_check(cli, json, strict).await
+        }
+        CliCommand::Systems(SystemsArgs {
             action,
             topic,
             json,
@@ -322,7 +353,7 @@ async fn main() {
             host,
             port,
             once,
-        } => {
+        }) => {
             hermes_cli::systems::handle_cli_systems(hermes_cli::systems::SystemsCliOptions {
                 config_dir: cli.config_dir.clone(),
                 action,
@@ -335,49 +366,55 @@ async fn main() {
             })
             .await
         }
-        CliCommand::VerifyProvenance {
+        CliCommand::VerifyProvenance(VerifyProvenanceArgs {
             path,
             signature,
             strict,
             json,
-        } => run_verify_provenance(cli, path, signature, strict, json).await,
-        CliCommand::RotateProvenanceKey { json } => run_rotate_provenance_key(cli, json).await,
-        CliCommand::RouteLearning { action, json } => run_route_learning(cli, action, json).await,
-        CliCommand::RouteHealth { action, json } => run_route_health(cli, action, json).await,
-        CliCommand::RouteAutotune {
+        }) => run_verify_provenance(cli, path, signature, strict, json).await,
+        CliCommand::RotateProvenanceKey(RotateProvenanceKeyArgs { json }) => {
+            run_rotate_provenance_key(cli, json).await
+        }
+        CliCommand::RouteLearning(RouteLearningArgs { action, json }) => {
+            run_route_learning(cli, action, json).await
+        }
+        CliCommand::RouteHealth(RouteHealthArgs { action, json }) => {
+            run_route_health(cli, action, json).await
+        }
+        CliCommand::RouteAutotune(RouteAutotuneArgs {
             action,
             apply,
             strict,
             json,
-        } => run_route_autotune(cli, action, apply, strict, json).await,
-        CliCommand::IncidentPack {
+        }) => run_route_autotune(cli, action, apply, strict, json).await,
+        CliCommand::IncidentPack(IncidentPackArgs {
             snapshot,
             output,
             json,
-        } => run_incident_pack(cli, snapshot, output, json).await,
+        }) => run_incident_pack(cli, snapshot, output, json).await,
         CliCommand::Status => run_status(cli).await,
-        CliCommand::Kanban { args } => run_kanban(args),
-        CliCommand::Dashboard {
+        CliCommand::Kanban(KanbanArgs { args }) => run_kanban(args),
+        CliCommand::Dashboard(DashboardArgs {
             host,
             port,
             no_open,
             insecure,
-        }
-        | CliCommand::Serve {
+        })
+        | CliCommand::Serve(DashboardArgs {
             host,
             port,
             no_open,
             insecure,
-        } => run_dashboard(cli, host, port, no_open, insecure).await,
-        CliCommand::Debug {
+        }) => run_dashboard(cli, host, port, no_open, insecure).await,
+        CliCommand::Debug(DebugArgs {
             action,
             url,
             lines,
             expire,
             local,
-        } => run_debug(cli, action, url, lines, expire, local).await,
-        CliCommand::Logs { lines, follow } => run_logs(cli, lines, follow).await,
-        CliCommand::Profile {
+        }) => run_debug(cli, action, url, lines, expire, local).await,
+        CliCommand::Logs(LogsArgs { lines, follow }) => run_logs(cli, lines, follow).await,
+        CliCommand::Profile(ProfileArgs {
             action,
             name,
             secondary,
@@ -391,7 +428,7 @@ async fn main() {
             clone_from,
             no_alias,
             no_skills,
-        } => {
+        }) => {
             run_profile(
                 cli,
                 action,
@@ -410,7 +447,7 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Auth {
+        CliCommand::Auth(AuthArgs {
             action,
             provider,
             target,
@@ -418,27 +455,27 @@ async fn main() {
             label,
             api_key,
             qr,
-        } => run_auth(cli, action, provider, target, auth_type, label, api_key, qr).await,
-        CliCommand::Secrets {
+        }) => run_auth(cli, action, provider, target, auth_type, label, api_key, qr).await,
+        CliCommand::Secrets(SecretsArgs {
             action,
             provider,
             value,
             show,
-        } => run_secrets(cli, action, provider, value, show).await,
-        CliCommand::Skills {
+        }) => run_secrets(cli, action, provider, value, show).await,
+        CliCommand::Skills(SkillsArgs {
             action,
             name,
             extra,
             remove,
             yes,
             sync,
-        } => hermes_cli::commands::handle_cli_skills(action, name, extra, remove, yes, sync).await,
-        CliCommand::Plugins {
+        }) => hermes_cli::commands::handle_cli_skills(action, name, extra, remove, yes, sync).await,
+        CliCommand::Plugins(PluginsArgs {
             action,
             name,
             git_ref,
             allow_untrusted_git_host,
-        } => {
+        }) => {
             hermes_cli::commands::handle_cli_plugins(
                 action,
                 name,
@@ -447,7 +484,7 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Memory {
+        CliCommand::Memory(MemoryArgs {
             action,
             target,
             yes,
@@ -455,7 +492,7 @@ async fn main() {
             host,
             api_key,
             dry_run,
-        } => {
+        }) => {
             hermes_cli::commands::handle_cli_memory(
                 action,
                 target,
@@ -469,18 +506,18 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Mcp {
+        CliCommand::Mcp(McpArgs {
             action,
             name,
             server,
             url,
             command,
             parallel_tools,
-        } => {
+        }) => {
             hermes_cli::commands::handle_cli_mcp(action, name, server, url, command, parallel_tools)
                 .await
         }
-        CliCommand::Sessions {
+        CliCommand::Sessions(SessionsArgs {
             action,
             session,
             id,
@@ -493,7 +530,7 @@ async fn main() {
             yes,
             source,
             older_than,
-        } => {
+        }) => {
             hermes_cli::commands::handle_cli_sessions(hermes_cli::commands::CliSessionsOptions {
                 action,
                 session,
@@ -510,11 +547,11 @@ async fn main() {
             })
             .await
         }
-        CliCommand::Resume { session_id } => run_resume(cli, session_id).await,
-        CliCommand::Insights { days, source } => {
+        CliCommand::Resume(ResumeArgs { session_id }) => run_resume(cli, session_id).await,
+        CliCommand::Insights(InsightsArgs { days, source }) => {
             hermes_cli::commands::handle_cli_insights(days, source).await
         }
-        CliCommand::Login { provider } => {
+        CliCommand::Login(LoginArgs { provider }) => {
             run_auth(
                 cli,
                 Some("login".to_string()),
@@ -527,7 +564,7 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Logout { provider } => {
+        CliCommand::Logout(LogoutArgs { provider }) => {
             run_auth(
                 cli,
                 Some("logout".to_string()),
@@ -540,19 +577,23 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Whatsapp { action } => hermes_cli::commands::handle_cli_whatsapp(action).await,
-        CliCommand::Pairing { action, device_id } => {
+        CliCommand::Whatsapp(WhatsappArgs { action }) => {
+            hermes_cli::commands::handle_cli_whatsapp(action).await
+        }
+        CliCommand::Pairing(PairingArgs { action, device_id }) => {
             hermes_cli::commands::handle_cli_pairing(action, device_id).await
         }
-        CliCommand::Claw { action } => hermes_cli::commands::handle_cli_claw(action).await,
-        CliCommand::Acp {
+        CliCommand::Claw(ClawArgs { action }) => {
+            hermes_cli::commands::handle_cli_claw(action).await
+        }
+        CliCommand::Acp(AcpArgs {
             action,
             check,
             setup,
             setup_browser,
             version,
             yes,
-        } => {
+        }) => {
             let action = acp_action_from_flags(action, check, setup, setup_browser, version);
             if action.as_deref() == Some("setup") {
                 let mut result = run_model(cli, None).await;
@@ -583,11 +624,15 @@ async fn main() {
                 hermes_cli::commands::handle_cli_acp(action, yes).await
             }
         }
-        CliCommand::Backup { output } => hermes_cli::commands::handle_cli_backup(output).await,
-        CliCommand::Import { path } => hermes_cli::commands::handle_cli_import(path).await,
-        CliCommand::ImportHermesSessions { .. } => unreachable!("offline import already handled"),
+        CliCommand::Backup(BackupArgs { output }) => {
+            hermes_cli::commands::handle_cli_backup(output).await
+        }
+        CliCommand::Import(ImportArgs { path }) => {
+            hermes_cli::commands::handle_cli_import(path).await
+        }
+        CliCommand::ImportHermesSessions(_) => unreachable!("offline import already handled"),
         CliCommand::Version => hermes_cli::commands::handle_cli_version(),
-        CliCommand::Cron {
+        CliCommand::Cron(CronArgs {
             action,
             job_id,
             id,
@@ -608,7 +653,7 @@ async fn main() {
             script_shell,
             workdir,
             all,
-        } => {
+        }) => {
             run_cron(
                 cli,
                 action,
@@ -634,7 +679,7 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Webhook {
+        CliCommand::Webhook(WebhookArgs {
             action,
             name,
             url,
@@ -648,7 +693,7 @@ async fn main() {
             secret,
             deliver_only,
             payload,
-        } => {
+        }) => {
             run_webhook(
                 cli,
                 action,
@@ -667,10 +712,10 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Cloudflare { action, selftest } => {
+        CliCommand::Cloudflare(CloudflareArgs { action, selftest }) => {
             hermes_cli::cloudflare::handle_cli_cloudflare(action, selftest).await
         }
-        CliCommand::TeamsPipeline {
+        CliCommand::TeamsPipeline(TeamsPipelineArgs {
             action,
             id,
             limit,
@@ -691,7 +736,7 @@ async fn main() {
             renew_within_hours,
             extend_hours,
             dry_run,
-        } => {
+        }) => {
             hermes_cli::teams_pipeline_cli::handle_cli_teams_pipeline(
                 hermes_cli::teams_pipeline_cli::TeamsPipelineCliOptions {
                     config_dir: cli.config_dir.clone(),
@@ -719,10 +764,10 @@ async fn main() {
             )
             .await
         }
-        CliCommand::Dump { session, output } => run_dump(cli, session, output).await,
-        CliCommand::Completion { shell } => run_completion(shell),
-        CliCommand::Uninstall { yes } => run_uninstall(yes).await,
-        CliCommand::Lumio { action, model } => run_lumio(action, model).await,
+        CliCommand::Dump(DumpArgs { session, output }) => run_dump(cli, session, output).await,
+        CliCommand::Completion(CompletionArgs { shell }) => run_completion(shell),
+        CliCommand::Uninstall(UninstallArgs { yes }) => run_uninstall(yes).await,
+        CliCommand::Lumio(LumioArgs { action, model }) => run_lumio(action, model).await,
         CliCommand::PluginExternal(raw) => {
             hermes_cli::commands::handle_cli_external_plugin_subcommand(raw).await
         }

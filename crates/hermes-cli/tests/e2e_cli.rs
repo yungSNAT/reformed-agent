@@ -297,3 +297,23 @@ fn e2e_cli_systems_replay_reports_existing_trace() {
     assert_eq!(report.get("log_count").and_then(|v| v.as_u64()), Some(1));
     assert_eq!(report.get("passed").and_then(|v| v.as_bool()), Some(true));
 }
+
+#[cfg(unix)]
+#[test]
+fn e2e_cli_runs_with_one_mib_main_thread_stack() {
+    // Windows gives the main thread 1 MiB of stack; `ulimit -s` gives Linux the same.
+    let dir = tempfile::tempdir().expect("tempdir");
+    let output = std::process::Command::new("sh")
+        .arg("-c")
+        .arg("ulimit -s 1024 && exec \"$0\" version")
+        .arg(env!("CARGO_BIN_EXE_hermes-agent-ultra"))
+        .env("HERMES_HOME", dir.path())
+        .output()
+        .expect("run hermes-agent-ultra");
+    assert!(
+        output.status.success(),
+        "status: {:?}\nstderr: {}",
+        output.status,
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
