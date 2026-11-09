@@ -481,7 +481,25 @@ impl SubAgentOrchestrator {
             self.cfg.llm_provider.clone(),
             InterruptController::new(),
         );
-        if let Some(pool) = self.cfg.parent_credential_pool.as_ref() {
+        // The parent's pool holds the parent provider's keys; a child on
+        // another provider uses its own credential.
+        let parent = &self.cfg.parent_config;
+        let parent_provider = parent
+            .model
+            .split_once(':')
+            .map(|(p, _)| p.trim())
+            .filter(|p| !p.is_empty())
+            .or_else(|| clean_config_string(parent.provider.as_deref()))
+            .unwrap_or("openai");
+        let same_provider =
+            crate::provider_profiles::normalize_runtime_provider_name(parent_provider)
+                == crate::provider_profiles::normalize_runtime_provider_name(provider.as_str());
+        if let Some(pool) = self
+            .cfg
+            .parent_credential_pool
+            .as_ref()
+            .filter(|_| same_provider)
+        {
             resolver = resolver.with_primary_credential_pool(pool.clone());
         }
 
@@ -1208,5 +1226,95 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("definitely-missing-provider"));
+    }
+
+    #[tokio::test]
+    async fn delegated_child_provider_does_not_carry_parent_credential_pool() {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback fixture");
+        let base_url = format!(
+            "http://{}/v1",
+            listener.local_addr().expect("fixture address")
+        );
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("read timeout");
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                if let Some(header_end) = text.find("\r\n\r\n") {
+                    let body_len = text[..header_end]
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + body_len {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"id":"fixture","object":"chat.completion","created":1,"model":"local-model","choices":[{"index":0,"message":{"role":"assistant","content":"loopback"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(reply.as_bytes());
+            let _ = request_tx.send(String::from_utf8_lossy(&request).to_string());
+        });
+
+        let tmp = tempfile::tempdir().unwrap();
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("custom".into()),
+            delegation_base_url: Some(base_url),
+            delegation_api_key: Some("delegation-key".into()),
+            ..AgentConfig::default()
+        };
+        let orch = SubAgentOrchestrator::new(SubAgentOrchestratorConfig {
+            parent_config: parent_config.clone(),
+            tool_registry: Arc::new(ToolRegistry::new()),
+            llm_provider: Arc::new(NoopProvider),
+            parent_credential_pool: Some(Arc::new(CredentialPool::single("parent-pool-key"))),
+            parent_interrupt: InterruptController::new(),
+            hermes_home: tmp.path().to_path_buf(),
+            parent_session_id: None,
+            timeout: Duration::from_secs(5),
+            background_delegation_callback: None,
+        });
+        let child_config = AgentConfig {
+            model: "custom:local-model".into(),
+            provider: Some("custom".into()),
+            ..parent_config
+        };
+
+        let provider = orch
+            .child_llm_provider(&child_config)
+            .unwrap_or_else(|_| panic!("child provider builds"));
+        let _ = provider
+            .chat_completion(&[Message::user("hi")], &[], None, None, None, None)
+            .await;
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the child must address the delegation endpoint");
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer delegation-key"),
+            "the child must send the delegation key, not the parent's pool: {request}"
+        );
     }
 }
