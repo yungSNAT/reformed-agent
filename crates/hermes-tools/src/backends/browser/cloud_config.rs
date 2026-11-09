@@ -90,8 +90,8 @@ impl UnavailableBrowserBackend {
     }
 }
 
-impl CloudFallbackBrowserBackend {
-    fn new(provider: &'static str, cloud: Arc<dyn BrowserBackend>) -> Self {
+impl<C> CloudFallbackBrowserBackend<C> {
+    fn new(provider: &'static str, cloud: C) -> Self {
         Self {
             provider,
             cloud,
@@ -108,6 +108,20 @@ impl CloudFallbackBrowserBackend {
 
     fn mark_fallback(&self, local_result: String, cloud_err: &ToolError) -> String {
         browser_fallback_response(local_result, self.provider, &cloud_err.to_string())
+    }
+
+    /// Run `local` in place of a command the unavailable cloud browser could
+    /// not take, and mark its result as a fallback.
+    async fn fall_back(
+        &self,
+        cloud_err: ToolError,
+        local: impl std::future::Future<Output = Result<String, ToolError>>,
+    ) -> Result<String, ToolError> {
+        tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser unavailable; using local CDP");
+        let local = local
+            .await
+            .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
+        Ok(self.mark_fallback(local, &cloud_err))
     }
 }
 

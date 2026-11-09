@@ -52,6 +52,13 @@ impl CdpConnection {
         })
     }
 
+    /// Open a browser-level endpoint and attach to its first page.
+    async fn open_attached(ws_url: &str) -> Result<Self, CdpFailure> {
+        let mut connection = Self::open(ws_url).await?;
+        connection.attach_to_first_page().await?;
+        Ok(connection)
+    }
+
     /// Attach to the browser's first page so that later commands reach it.
     async fn attach_to_first_page(&mut self) -> Result<(), CdpFailure> {
         let (targets, _) = self.call("Target.getTargets", json!({}), &[]).await?;
@@ -154,6 +161,15 @@ struct CloudCdpConnection {
 }
 
 impl CloudCdpConnection {
+    /// Open and attach the connection within `timeout` unless it is open.
+    async fn connect(&self, cdp_url: &str, timeout: Duration) -> Result<(), CdpFailure> {
+        let mut guard = self.connection.lock().await;
+        if guard.is_none() {
+            *guard = Some(within(timeout, CdpConnection::open_attached(cdp_url)).await?);
+        }
+        Ok(())
+    }
+
     /// Run one command on the browser at `cdp_url` within `timeout`. A
     /// [`CdpFailure::Lost`] result means the connection was dropped.
     async fn call(
@@ -169,11 +185,7 @@ impl CloudCdpConnection {
             // Taken out so that a failure or timeout drops it.
             let mut connection = match guard.take() {
                 Some(connection) => connection,
-                None => {
-                    let mut connection = CdpConnection::open(cdp_url).await?;
-                    connection.attach_to_first_page().await?;
-                    connection
-                }
+                None => CdpConnection::open_attached(cdp_url).await?,
             };
             let outcome = connection.call(method, params, collect).await;
             if !matches!(outcome, Err(CdpFailure::Lost(_))) {
@@ -181,13 +193,7 @@ impl CloudCdpConnection {
             }
             outcome
         };
-        match tokio::time::timeout(timeout, attempt).await {
-            Ok(outcome) => outcome,
-            Err(_) => Err(CdpFailure::Lost(format!(
-                "timed out after {}",
-                duration_label(timeout)
-            ))),
-        }
+        within(timeout, attempt).await
     }
 
     async fn disconnect(&self) {
@@ -195,6 +201,81 @@ impl CloudCdpConnection {
             connection.close().await;
         }
     }
+}
+
+/// Run `attempt` within `timeout`; running out of time loses the connection.
+async fn within<T>(
+    timeout: Duration,
+    attempt: impl std::future::Future<Output = Result<T, CdpFailure>>,
+) -> Result<T, CdpFailure> {
+    tokio::time::timeout(timeout, attempt)
+        .await
+        .unwrap_or_else(|_| {
+            Err(CdpFailure::Lost(format!(
+                "timed out after {}",
+                duration_label(timeout)
+            )))
+        })
+}
+
+/// A cloud browser vendor whose sessions carry a CDP URL.
+trait CloudBrowserSession: Send + Sync {
+    /// Vendor name for logs and errors.
+    const PROVIDER: &'static str;
+
+    fn cdp(&self) -> &CloudCdpConnection;
+
+    /// The current session's CDP URL, creating a session when there is none.
+    fn session_cdp_url(
+        &self,
+    ) -> impl std::future::Future<Output = Result<String, ToolError>> + Send;
+
+    /// End the current session with the vendor.
+    fn release_session(&self) -> impl std::future::Future<Output = Result<bool, ToolError>> + Send;
+}
+
+impl<T: CloudBrowserSession> CdpChannel for T {
+    async fn cdp_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
+        let cdp_url = self.session_cdp_url().await?;
+        let outcome = self
+            .cdp()
+            .call(&cdp_url, method, params, collect, timeout)
+            .await;
+        if matches!(outcome, Err(CdpFailure::Lost(_))) {
+            release_lost_session(self).await;
+        }
+        outcome.map_err(|failure| cloud_cdp_error(T::PROVIDER, method, failure))
+    }
+}
+
+/// Release a session whose connection was lost: the vendor may already have
+/// ended it, and the next command should start a new one.
+async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
+    if let Err(err) = cloud.release_session().await {
+        tracing::warn!("releasing {} session failed: {err}", T::PROVIDER);
+    }
+}
+
+/// Make sure the cloud browser can take commands: a session exists and its
+/// CDP connection is open and attached to a page. An error here means the
+/// provider is unavailable, unlike an error from a command the page ran.
+async fn cloud_connect<T: CloudBrowserSession>(cloud: &T) -> Result<(), ToolError> {
+    let cdp_url = cloud.session_cdp_url().await?;
+    if let Err(failure) = cloud.cdp().connect(&cdp_url, cdp_command_timeout()).await {
+        release_lost_session(cloud).await;
+        return Err(ToolError::ExecutionFailed(format!(
+            "{} browser connection failed: {}",
+            T::PROVIDER,
+            failure.message()
+        )));
+    }
+    Ok(())
 }
 
 /// Error for a failed cloud CDP command.

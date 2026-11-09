@@ -72,7 +72,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "browser-use" => match BrowserUseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserUseProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_browser_use_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -82,7 +82,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "browserbase" => match BrowserbaseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserbaseProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_browserbase_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -92,7 +92,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "firecrawl" => match FirecrawlBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "FirecrawlBrowserProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_firecrawl_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -587,9 +587,9 @@ pub struct CamoFoxBrowserBackend {
     profile: String,
 }
 
-struct CloudFallbackBrowserBackend {
+struct CloudFallbackBrowserBackend<C> {
     provider: &'static str,
-    cloud: Arc<dyn BrowserBackend>,
+    cloud: C,
     local: CdpBrowserBackend,
 }
 
@@ -643,155 +643,94 @@ impl BrowserBackend for UnavailableBrowserBackend {
     }
 }
 
+/// Falls back to the local browser only when the cloud provider is
+/// unavailable: no session, or no CDP connection to it. A command the cloud
+/// browser ran keeps its own result or error, since the local browser holds a
+/// different page. This matches upstream, which falls back when creating the
+/// cloud session fails.
 #[async_trait]
-impl BrowserBackend for CloudFallbackBrowserBackend {
+impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBrowserBackend<C> {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
-        match self.cloud.navigate(url).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser command failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .navigate(url)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        // Reject the URL before a cloud session is created for it.
+        validate_url_does_not_exfiltrate_secret(url)?;
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.navigate(url).await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.navigate(url)).await,
         }
     }
 
     async fn snapshot(&self) -> Result<String, ToolError> {
-        match self.cloud.snapshot().await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser snapshot failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .snapshot()
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.snapshot().await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.snapshot()).await,
         }
     }
 
     async fn click(&self, selector: &str) -> Result<String, ToolError> {
-        match self.cloud.click(selector).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser click failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .click(selector)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.click(selector).await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.click(selector)).await,
         }
     }
 
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError> {
-        match self.cloud.r#type(selector, text).await {
-            Ok(result) => Ok(result),
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.r#type(selector, text).await,
             Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser type failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .r#type(selector, text)
+                self.fall_back(cloud_err, self.local.r#type(selector, text))
                     .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
             }
         }
     }
 
     async fn scroll(&self, direction: &str, amount: Option<u32>) -> Result<String, ToolError> {
-        match self.cloud.scroll(direction, amount).await {
-            Ok(result) => Ok(result),
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.scroll(direction, amount).await,
             Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser scroll failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .scroll(direction, amount)
+                self.fall_back(cloud_err, self.local.scroll(direction, amount))
                     .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
             }
         }
     }
 
     async fn go_back(&self) -> Result<String, ToolError> {
-        match self.cloud.go_back().await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser back failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .go_back()
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.go_back().await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.go_back()).await,
         }
     }
 
     async fn press(&self, key: &str) -> Result<String, ToolError> {
-        match self.cloud.press(key).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser key press failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .press(key)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.press(key).await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.press(key)).await,
         }
     }
 
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
-        match self.cloud.get_images(selector).await {
-            Ok(result) => Ok(result),
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.get_images(selector).await,
             Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser images failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .get_images(selector)
+                self.fall_back(cloud_err, self.local.get_images(selector))
                     .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
             }
         }
     }
 
     async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        match self.cloud.vision(instruction).await {
-            Ok(result) => Ok(result),
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.vision(instruction).await,
             Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser vision failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .vision(instruction)
+                self.fall_back(cloud_err, self.local.vision(instruction))
                     .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
             }
         }
     }
 
     async fn console(&self, action: &str) -> Result<String, ToolError> {
-        match self.cloud.console(action).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser console failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .console(action)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
+        match cloud_connect(&self.cloud).await {
+            Ok(()) => self.cloud.console(action).await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.console(action)).await,
         }
     }
 }

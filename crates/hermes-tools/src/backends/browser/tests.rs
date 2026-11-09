@@ -1365,3 +1365,74 @@ async fn cloud_wss_endpoint_attempts_a_tls_handshake() {
     assert!(rendered.contains("Failed to open the CDP WebSocket"));
     assert!(!rendered.contains("TLS support not compiled in"));
 }
+
+#[tokio::test]
+async fn cloud_fallback_returns_cloud_page_error_without_touching_local() {
+    let (ws_addr, _cloud_commands) = spawn_cdp_websocket(remote_browser(
+        |_| json!({"result": {"type": "string", "value": "not found"}}),
+    ))
+    .await;
+    let api = vendor_api("/v2/browser", format!("ws://{ws_addr}/devtools/browser/B")).await;
+    let (local_http, mut local_commands) = spawn_local_cdp(answer_all(
+        json!({"result": {"type": "string", "value": "clicked"}}),
+    ))
+    .await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "FirecrawlBrowserProvider",
+        cloud: FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+            api_key: "fc-key".into(),
+            base_url: api.uri(),
+            ttl_secs: 300,
+            task_id: "task-fallback-page-error".into(),
+        }),
+        local: CdpBrowserBackend::new(local_http.uri()),
+    };
+
+    let err = backend
+        .click("#absent")
+        .await
+        .expect_err("cloud page error");
+
+    assert!(matches!(err, ToolError::NotFound(_)), "{err}");
+    assert!(drain_commands(&mut local_commands).is_empty());
+    let local_requests = local_http.received_requests().await.expect("recorded");
+    assert!(local_requests.is_empty());
+}
+
+#[tokio::test]
+async fn cloud_fallback_uses_local_when_cloud_connection_fails() {
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let closed_addr = closed.local_addr().expect("addr");
+    drop(closed);
+    let api = vendor_api(
+        "/v2/browser",
+        format!("ws://{closed_addr}/devtools/browser/B"),
+    )
+    .await;
+    let (local_http, mut local_commands) = spawn_local_cdp(answer_all(
+        json!({"result": {"type": "string", "value": "clicked"}}),
+    ))
+    .await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "FirecrawlBrowserProvider",
+        cloud: FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+            api_key: "fc-key".into(),
+            base_url: api.uri(),
+            ttl_secs: 300,
+            task_id: "task-fallback-connection".into(),
+        }),
+        local: CdpBrowserBackend::new(local_http.uri()),
+    };
+
+    let raw = backend.click("#ok").await.expect("local fallback");
+    let value: Value = serde_json::from_str(&raw).expect("fallback json");
+
+    assert_eq!(value["status"], "clicked");
+    assert_eq!(value["fallback_from_cloud"], true);
+    assert_eq!(value["fallback_provider"], "FirecrawlBrowserProvider");
+    let sent = drain_commands(&mut local_commands);
+    assert_eq!(sent.len(), 1);
+    assert_eq!(sent[0]["method"], "Runtime.evaluate");
+}

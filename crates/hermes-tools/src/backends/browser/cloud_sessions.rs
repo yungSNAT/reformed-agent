@@ -138,27 +138,19 @@ impl BrowserbaseBrowserBackend {
     }
 }
 
-impl CdpChannel for BrowserbaseBrowserBackend {
-    async fn cdp_call(
-        &self,
-        method: &str,
-        params: Value,
-        collect: &[&str],
-        timeout: Duration,
-    ) -> Result<(Value, Vec<Value>), ToolError> {
-        let session = self.ensure_session().await?;
-        let outcome = self
-            .cdp
-            .call(&session.cdp_url, method, params, collect, timeout)
-            .await;
-        if matches!(outcome, Err(CdpFailure::Lost(_))) {
-            // The vendor may already have ended the session with its
-            // connection; release it so the next command starts a new one.
-            if let Err(err) = self.close_active_session().await {
-                tracing::warn!("releasing Browserbase session failed: {err}");
-            }
-        }
-        outcome.map_err(|failure| cloud_cdp_error("Browserbase", method, failure))
+impl CloudBrowserSession for BrowserbaseBrowserBackend {
+    const PROVIDER: &'static str = "Browserbase";
+
+    fn cdp(&self) -> &CloudCdpConnection {
+        &self.cdp
+    }
+
+    async fn session_cdp_url(&self) -> Result<String, ToolError> {
+        Ok(self.ensure_session().await?.cdp_url)
+    }
+
+    async fn release_session(&self) -> Result<bool, ToolError> {
+        self.close_active_session().await
     }
 }
 
@@ -321,27 +313,19 @@ impl BrowserUseBrowserBackend {
     }
 }
 
-impl CdpChannel for BrowserUseBrowserBackend {
-    async fn cdp_call(
-        &self,
-        method: &str,
-        params: Value,
-        collect: &[&str],
-        timeout: Duration,
-    ) -> Result<(Value, Vec<Value>), ToolError> {
-        let session = self.ensure_session().await?;
-        let outcome = self
-            .cdp
-            .call(&session.cdp_url, method, params, collect, timeout)
-            .await;
-        if matches!(outcome, Err(CdpFailure::Lost(_))) {
-            // The vendor may already have ended the session with its
-            // connection; release it so the next command starts a new one.
-            if let Err(err) = self.close_active_session().await {
-                tracing::warn!("releasing Browser Use session failed: {err}");
-            }
-        }
-        outcome.map_err(|failure| cloud_cdp_error("Browser Use", method, failure))
+impl CloudBrowserSession for BrowserUseBrowserBackend {
+    const PROVIDER: &'static str = "Browser Use";
+
+    fn cdp(&self) -> &CloudCdpConnection {
+        &self.cdp
+    }
+
+    async fn session_cdp_url(&self) -> Result<String, ToolError> {
+        Ok(self.ensure_session().await?.cdp_url)
+    }
+
+    async fn release_session(&self) -> Result<bool, ToolError> {
+        self.close_active_session().await
     }
 }
 
@@ -457,27 +441,19 @@ impl FirecrawlBrowserBackend {
     }
 }
 
-impl CdpChannel for FirecrawlBrowserBackend {
-    async fn cdp_call(
-        &self,
-        method: &str,
-        params: Value,
-        collect: &[&str],
-        timeout: Duration,
-    ) -> Result<(Value, Vec<Value>), ToolError> {
-        let session = self.ensure_session().await?;
-        let outcome = self
-            .cdp
-            .call(&session.cdp_url, method, params, collect, timeout)
-            .await;
-        if matches!(outcome, Err(CdpFailure::Lost(_))) {
-            // The vendor may already have ended the session with its
-            // connection; release it so the next command starts a new one.
-            if let Err(err) = self.close_active_session().await {
-                tracing::warn!("releasing Firecrawl session failed: {err}");
-            }
-        }
-        outcome.map_err(|failure| cloud_cdp_error("Firecrawl", method, failure))
+impl CloudBrowserSession for FirecrawlBrowserBackend {
+    const PROVIDER: &'static str = "Firecrawl";
+
+    fn cdp(&self) -> &CloudCdpConnection {
+        &self.cdp
+    }
+
+    async fn session_cdp_url(&self) -> Result<String, ToolError> {
+        Ok(self.ensure_session().await?.cdp_url)
+    }
+
+    async fn release_session(&self) -> Result<bool, ToolError> {
+        self.close_active_session().await
     }
 }
 
