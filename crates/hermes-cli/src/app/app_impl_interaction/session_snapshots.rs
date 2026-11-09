@@ -240,6 +240,7 @@ impl App {
                     "content": m.content.as_deref().unwrap_or(""),
                     "tool_call_id": m.tool_call_id,
                     "tool_calls": m.tool_calls,
+                    "name": m.name,
                     "reasoning_content": m.reasoning_content,
                 })
             }).collect::<Vec<_>>(),

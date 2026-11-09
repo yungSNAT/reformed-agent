@@ -85,6 +85,9 @@ use crate::providers::canonical_provider_id;
 use crate::skin_engine::{canonical_skin_name, BUILTIN_SKINS};
 use hermes_config::{find_node_executable, set_user_config_value, GatewayConfig};
 
+mod hermes_history;
+pub use hermes_history::{import_hermes_sessions, HermesHistorySummary};
+
 // The command surface is intentionally split by subsystem. These files are
 // included in the original item order so this refactor changes layout only;
 // follow-up passes can promote stable shards into stricter Rust submodules.

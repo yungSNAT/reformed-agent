@@ -1,6 +1,20 @@
 #[tokio::main]
 async fn main() {
     let cli = Cli::parse();
+    let effective_command = cli.effective_command();
+    if let CliCommand::ImportHermesSessions { export, profile_dir } = &effective_command {
+        match hermes_cli::commands::import_hermes_sessions(export, profile_dir) {
+            Ok(summary) => println!(
+                "Imported {} sessions with {} active messages into {}. Excluded {} inactive or metadata rows.",
+                summary.sessions, summary.messages, profile_dir.display(), summary.excluded_rows,
+            ),
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if let Some(config_dir) = cli.config_dir.as_deref() {
         std::env::set_var("HERMES_HOME", config_dir);
     }
@@ -11,7 +25,6 @@ async fn main() {
         std::env::set_var("HERMES_IGNORE_RULES", "1");
         std::env::set_var("HERMES_AGENT_SKIP_CONTEXT_FILES", "1");
     }
-    let effective_command = cli.effective_command();
     let global_model_override = cli.model.clone();
     let global_provider_override = cli.provider.clone();
     let global_allow_tools_override = cli.allow_tools;
@@ -572,6 +585,7 @@ async fn main() {
         }
         CliCommand::Backup { output } => hermes_cli::commands::handle_cli_backup(output).await,
         CliCommand::Import { path } => hermes_cli::commands::handle_cli_import(path).await,
+        CliCommand::ImportHermesSessions { .. } => unreachable!("offline import already handled"),
         CliCommand::Version => hermes_cli::commands::handle_cli_version(),
         CliCommand::Cron {
             action,

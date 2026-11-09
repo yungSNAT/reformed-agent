@@ -832,6 +832,15 @@ pub enum CliCommand {
         path: String,
     },
 
+    /// Convert a Hermes JSONL session export into resumable snapshots in a new profile.
+    ImportHermesSessions {
+        /// JSONL file created by Hermes sessions export.
+        export: std::path::PathBuf,
+        /// New profile directory under an existing private directory.
+        #[arg(long)]
+        profile_dir: std::path::PathBuf,
+    },
+
     /// Show version information.
     Version,
 
