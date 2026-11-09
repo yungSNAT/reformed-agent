@@ -61,6 +61,9 @@ pub struct AgentLoopBehaviorConfig {
         alias = "apiMaxRetries"
     )]
     pub api_max_retries: Option<u32>,
+    /// Total lifetime of each streaming response attempt in seconds. Zero disables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_max_lifetime: Option<f64>,
     /// Legacy location for `prefill_messages_file`.
     ///
     /// The top-level key is canonical; this field is retained so older CLI and
@@ -130,6 +133,7 @@ impl Default for AgentLoopBehaviorConfig {
             preflight_context_compress: default_agent_preflight_context_compress(),
             service_tier: None,
             api_max_retries: None,
+            stream_max_lifetime: None,
             prefill_messages_file: None,
         }
     }

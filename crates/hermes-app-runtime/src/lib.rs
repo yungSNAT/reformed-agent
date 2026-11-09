@@ -170,6 +170,7 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
         hermes_home: config.home_dir.clone(),
         provider: Some(resolved_provider),
         stream: config.streaming.enabled,
+        stream_max_lifetime: config.agent.stream_max_lifetime,
         max_tokens,
         max_delegate_depth,
         delegation_model: config

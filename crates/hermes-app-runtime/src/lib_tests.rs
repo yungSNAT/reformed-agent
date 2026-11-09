@@ -455,6 +455,14 @@ mod tests {
     }
 
     #[test]
+    fn test_build_agent_config_maps_stream_max_lifetime() {
+        let mut config = GatewayConfig::default();
+        assert_eq!(build_agent_config(&config, "openai:gpt-4o").stream_max_lifetime, None);
+        config.agent.stream_max_lifetime = Some(1.5);
+        assert_eq!(build_agent_config(&config, "openai:gpt-4o").stream_max_lifetime, Some(1.5));
+    }
+
+    #[test]
     fn resolve_cli_chat_provider_model_defaults_to_config_when_no_overrides() {
         let _lock = env_test_lock();
         let _env = EnvSnapshot::capture(&["HERMES_INFERENCE_MODEL"]);

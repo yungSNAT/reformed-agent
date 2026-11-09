@@ -123,13 +123,6 @@ impl Gateway {
             .inject_runtime_hints(session_key, messages.clone())
             .await;
 
-        // Start a stream
-        let stream_handle = self
-            .stream_manager
-            .start_stream(&incoming.platform, &incoming.chat_id)
-            .await;
-        let stream_id = stream_handle.id.clone();
-
         // Send an initial streaming anchor message.
         let reply_thread_id = Self::reply_thread_id(incoming).map(str::to_string);
         self.send_message_threaded(
@@ -140,6 +133,12 @@ impl Gateway {
             reply_thread_id.as_deref(),
         )
         .await?;
+
+        let stream_handle = self
+            .stream_manager
+            .start_stream(&incoming.platform, &incoming.chat_id)
+            .await;
+        let stream_id = stream_handle.id;
 
         // Set up the chunk callback that updates the stream and edits the message
         let stream_manager = self.stream_manager.clone();
@@ -184,11 +183,12 @@ impl Gateway {
             handler(messages, runtime_context, on_chunk).await
         } else {
             let handler = self.streaming_handler.read().await;
-            let handler = handler
-                .as_ref()
-                .ok_or_else(|| GatewayError::Platform("No streaming handler configured".into()))?;
-            handler(legacy_messages, on_chunk).await
+            match handler.as_ref() {
+                Some(handler) => handler(legacy_messages, on_chunk).await,
+                None => Err(GatewayError::Platform("No streaming handler configured".into())),
+            }
         };
+        self.stream_manager.finish_stream(&stream_id).await;
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
@@ -208,9 +208,6 @@ impl Gateway {
                 return Err(e);
             }
         };
-
-        // Finish the stream
-        self.stream_manager.finish_stream(&stream_id).await;
 
         // Add assistant response to session
         self.session_manager

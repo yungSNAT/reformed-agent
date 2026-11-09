@@ -476,6 +476,10 @@ pub struct AgentConfig {
     #[serde(default = "default_stream_read_max_retries")]
     pub stream_read_max_retries: u32,
 
+    /// Maximum elapsed seconds for one streaming attempt. Absent or zero disables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_max_lifetime: Option<f64>,
+
     /// Run one compression pass before the first LLM call if context is already over threshold.
     #[serde(default = "default_preflight_context_compress")]
     pub preflight_context_compress: bool,
@@ -733,6 +737,7 @@ impl Default for AgentConfig {
             empty_content_max_retries: default_empty_content_max_retries(),
             thinking_prefill_max_retries: default_thinking_prefill_max_retries(),
             stream_read_max_retries: default_stream_read_max_retries(),
+            stream_max_lifetime: None,
             preflight_context_compress: default_preflight_context_compress(),
             persist_user_message: None,
             invalid_tool_call_max_retries: default_invalid_tool_call_max_retries(),

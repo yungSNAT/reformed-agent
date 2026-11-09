@@ -430,6 +430,12 @@ impl AgentLoop {
                         .await
                     {
                         Ok(StreamCollectOutcome::Complete(resp)) => resp,
+                        Ok(StreamCollectOutcome::LifetimeExceeded(cap)) => {
+                            return Err(AgentError::Timeout(format!(
+                                "Response still streaming after {}s. Raise agent.stream_max_lifetime or set it to 0 to disable the cap.",
+                                cap.as_secs_f64()
+                            )));
+                        }
                         Ok(StreamCollectOutcome::Interrupted(partial)) => {
                             if let Some(ref u) = partial.usage {
                                 accumulated_usage = Some(merge_usage(accumulated_usage.clone(), u));
@@ -451,6 +457,7 @@ impl AgentLoop {
                                 prefill_range.clone(),
                             ));
                         }
+                        Err(e @ AgentError::Config(_)) => return Err(e),
                         Err(e) => {
                             let api_elapsed = api_start.elapsed().as_millis() as u64;
                             self.update_route_learning(

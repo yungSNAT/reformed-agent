@@ -1540,3 +1540,37 @@ async fn gateway_streaming_flushes_deferred_after_stream_finishes() {
         ]
     );
 }
+
+#[tokio::test]
+async fn gateway_streaming_releases_handle_on_handler_error() {
+    let adapter = Arc::new(TestAdapter {
+        messages: Arc::new(Mutex::new(Vec::new())),
+    });
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("user1");
+    let mut cfg = GatewayConfig::default();
+    cfg.streaming_enabled = true;
+    let gateway = Gateway::new(session_mgr, dm_manager, cfg);
+    gateway.register_adapter("test", adapter).await;
+    gateway
+        .set_streaming_handler_with_context(Arc::new(|_, _, _| {
+            Box::pin(async { Err(GatewayError::Platform("stream timed out".into())) })
+        }))
+        .await;
+    let incoming = IncomingMessage {
+        platform: "test".into(),
+        chat_id: "chat1".into(),
+        user_id: "user1".into(),
+        text: "hello".into(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+
+    assert!(matches!(
+        gateway.route_message(&incoming).await,
+        Err(GatewayError::Platform(message)) if message == "stream timed out"
+    ));
+    assert_eq!(gateway.stream_manager().active_stream_count().await, 0);
+}

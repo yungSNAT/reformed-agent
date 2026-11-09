@@ -307,10 +307,11 @@ fn advertised_tool_name_index(tool_schemas: &[ToolSchema]) -> (HashSet<&str>, St
     (names.into_iter().collect(), display)
 }
 
-/// Result of collecting one streaming completion (may end with user interrupt).
+/// Result of collecting one streaming completion.
 enum StreamCollectOutcome {
     Complete(LlmResponse),
     Interrupted(LlmResponse),
+    LifetimeExceeded(Duration),
 }
 
 #[derive(Debug, Clone, Copy)]

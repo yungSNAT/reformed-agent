@@ -986,8 +986,25 @@ impl AgentLoop {
             .and_then(|v| v.parse::<u32>().ok())
             .map(|v| v.min(10))
             .unwrap_or(self.config.stream_read_max_retries.min(10));
+        let stream_lifetime = self
+            .config
+            .stream_max_lifetime
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map(Duration::try_from_secs_f64)
+            .transpose()
+            .map_err(|_| AgentError::Config("agent.stream_max_lifetime is too large".into()))?;
 
         'stream_attempt: for stream_attempt in 0..=max_stream_retries {
+            let lifetime_deadline = stream_lifetime
+                .map(|cap| {
+                    tokio::time::Instant::now()
+                        .checked_add(cap)
+                        .map(|deadline| (cap, deadline))
+                        .ok_or_else(|| {
+                            AgentError::Config("agent.stream_max_lifetime is too large".into())
+                        })
+                })
+                .transpose()?;
             let mut stream = if let Some(rt) = route {
                 let (provider_name, model_name) = self.extract_provider_and_model(active_model);
                 let runtime_provider_name = rt.provider.as_deref().unwrap_or(provider_name.as_str());
@@ -1058,7 +1075,19 @@ impl AgentLoop {
             let mut deltas_were_sent = false;
             let mut stream_scrubber = StreamingContextScrubber::new();
 
-            while let Some(chunk_result) = stream.next().await {
+            loop {
+                let chunk_result = match lifetime_deadline {
+                    Some((cap, deadline)) => {
+                        match tokio::time::timeout_at(deadline, stream.next()).await {
+                            Ok(chunk) if tokio::time::Instant::now() < deadline => chunk,
+                            _ => return Ok(StreamCollectOutcome::LifetimeExceeded(cap)),
+                        }
+                    }
+                    None => stream.next().await,
+                };
+                let Some(chunk_result) = chunk_result else {
+                    break;
+                };
                 if self.interrupt.take_interrupt_graceful().is_some() {
                     let message = Self::assemble_stream_assistant_message(
                         &content,

@@ -857,6 +857,8 @@
         TextOnlyDrop,
         MemoryContextLeak,
         MalformedToolArgs,
+        SlowStream,
+        SlowRetry,
     }
 
     struct StreamRetryProvider {
@@ -901,6 +903,19 @@
             let attempt = *calls;
 
             let events: Vec<Result<StreamChunk, AgentError>> = match self.scenario {
+                StreamRetryScenario::SlowStream => vec![
+                    Ok(stream_chunk_content("first ")),
+                    Ok(stream_chunk_content("second ")),
+                    Ok(stream_chunk_content("third")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
+                StreamRetryScenario::SlowRetry if attempt == 1 => vec![Err(AgentError::LlmApi(
+                    "Stream read error: connection lost".into(),
+                ))],
+                StreamRetryScenario::SlowRetry => vec![
+                    Ok(stream_chunk_content("retried response")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
                 StreamRetryScenario::RecoverOnSecondAttempt => {
                     if attempt == 1 {
                         vec![
@@ -954,8 +969,75 @@
                 ],
             };
 
-            futures::stream::iter(events).boxed()
+            let events = futures::stream::iter(events);
+            if matches!(self.scenario, StreamRetryScenario::SlowStream | StreamRetryScenario::SlowRetry) {
+                return events
+                    .then(|event| async {
+                        tokio::time::sleep(Duration::from_millis(40)).await;
+                        event
+                    })
+                    .boxed();
+            }
+            events.boxed()
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_lifetime_caps_a_trickling_response_without_retry() {
+        for cap in [Some(0.1), Some(0.0), None] {
+            let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowStream));
+            let config = AgentConfig {
+                stream_max_lifetime: cap,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+            let delivered = Arc::new(Mutex::new(String::new()));
+            let captured = delivered.clone();
+            let result = agent
+                .run_stream(vec![Message::user("run")], None, Some(Box::new(move |chunk| {
+                    if let Some(content) = chunk.delta.and_then(|delta| delta.content) {
+                        captured.lock().expect("delivered stream").push_str(&content);
+                    }
+                })))
+                .await;
+
+            if cap == Some(0.1) {
+                assert!(matches!(
+                    result,
+                    Err(AgentError::Timeout(message))
+                        if message.contains("agent.stream_max_lifetime")
+                ), "expected the configured stream timeout");
+                assert_eq!(*delivered.lock().expect("delivered stream"), "first second ");
+            } else {
+                let result = result.expect("uncapped stream should finish");
+                assert!(result.messages.iter().any(|message| {
+                    message.content.as_deref() == Some("first second third")
+                }));
+            }
+            assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_lifetime_resets_on_transport_retry() {
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowRetry));
+        let config = AgentConfig {
+            stream_max_lifetime: Some(0.1),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(vec![Message::user("run")], None, Some(Box::new(|_| {})))
+            .await
+            .expect("retry has its own deadline");
+        assert!(result.messages.iter().any(|message| {
+            message.content.as_deref() == Some("retried response")
+        }));
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 2);
     }
 
     #[test]

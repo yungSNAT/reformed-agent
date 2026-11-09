@@ -914,6 +914,7 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
         hermes_home: config.home_dir.clone(),
         provider: provider_from_model,
         stream: config.streaming.enabled,
+        stream_max_lifetime: config.agent.stream_max_lifetime,
         delegation_model: config
             .delegation
             .model
@@ -1143,6 +1144,20 @@ mod tests {
                 .get("openai")
                 .and_then(|cfg| cfg.request_timeout_seconds),
             Some(45.5)
+        );
+    }
+
+    #[test]
+    fn build_agent_config_maps_stream_max_lifetime() {
+        let mut config = GatewayConfig::default();
+        assert_eq!(
+            build_agent_config(&config, "openai:dynamic").stream_max_lifetime,
+            None
+        );
+        config.agent.stream_max_lifetime = Some(1.5);
+        assert_eq!(
+            build_agent_config(&config, "openai:dynamic").stream_max_lifetime,
+            Some(1.5)
         );
     }
 
