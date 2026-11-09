@@ -904,7 +904,7 @@
 
     #[tokio::test]
     async fn hydrate_provider_env_from_vault_overrides_oauth_provider_env() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -950,7 +950,7 @@
 
     #[tokio::test]
     async fn hydrate_provider_env_prefers_current_nous_oauth_over_stale_vault() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1024,7 +1024,7 @@
 
     #[tokio::test]
     async fn hydrate_provider_env_rejects_stale_nous_vault_when_oauth_state_is_unusable() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1175,7 +1175,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_ignores_malformed_global_fallback_state() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let prev_home = std::env::var("HOME").ok();
         let prev_hermes_home = std::env::var("HERMES_HOME").ok();
@@ -1261,7 +1261,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_does_not_persist_vault_token_when_live_probe_fails() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let auth_path = tmp.path().join("auth.json");
         let vault_path = tmp.path().join("tokens.json");
@@ -1339,7 +1339,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_repairs_stale_singleton_from_vault_invoke_jwt() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let auth_path = tmp.path().join("auth.json");
         let vault_path = tmp.path().join("tokens.json");

@@ -11,7 +11,7 @@ mod tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }
 

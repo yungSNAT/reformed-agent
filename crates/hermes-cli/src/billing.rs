@@ -1132,9 +1132,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn handle_billing_overview_fails_open_when_logged_out() {
-        let _guard = test_env_lock::lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
         let _home = EnvVarGuard::set("HOME", tmp.path());
@@ -1146,9 +1145,8 @@ mod tests {
     }
 
     #[tokio::test]
-    #[allow(clippy::await_holding_lock)]
     async fn handle_charge_requires_explicit_confirmation() {
-        let _guard = test_env_lock::lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
         let _home = EnvVarGuard::set("HOME", tmp.path());

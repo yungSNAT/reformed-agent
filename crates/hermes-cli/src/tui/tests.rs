@@ -7,7 +7,7 @@ mod tests {
     use std::path::Path;
     use unicode_width::UnicodeWidthStr;
 
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }
 

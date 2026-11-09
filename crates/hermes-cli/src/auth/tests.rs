@@ -120,7 +120,7 @@ fn nous_invoke_jwt_selection_mirrors_access_token_to_agent_key_fields() {
 
 #[tokio::test]
 async fn resolve_nous_runtime_credentials_selects_invoke_jwt_without_mint() {
-    let _guard = test_env_lock::lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("auth.json");
     let prev_auth_file = std::env::var("HERMES_AUTH_FILE").ok();
@@ -170,7 +170,7 @@ async fn resolve_nous_runtime_credentials_selects_invoke_jwt_without_mint() {
 
 #[tokio::test]
 async fn resolve_nous_runtime_credentials_rejects_missing_invoke_scope() {
-    let _guard = test_env_lock::lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("auth.json");
     let prev_auth_file = std::env::var("HERMES_AUTH_FILE").ok();
@@ -715,7 +715,7 @@ fn read_valid_nous_auth_state_accepts_refreshable_access_state() {
 
 #[tokio::test]
 async fn resolve_nous_runtime_credentials_ignores_malformed_fallback_store() {
-    let _guard = test_env_lock::lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let prev_home = std::env::var("HOME").ok();
     let prev_hermes_home = std::env::var("HERMES_HOME").ok();
@@ -960,7 +960,7 @@ fn gemini_state_read_write_roundtrip() {
 
 #[tokio::test]
 async fn resolve_qwen_runtime_credentials_reads_qwen_cli_auth_file() {
-    let _guard = test_env_lock::lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("oauth_creds.json");
     let expiry_date = Utc::now().timestamp_millis() + 5 * 60 * 1000;
