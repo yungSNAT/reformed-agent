@@ -4,6 +4,7 @@ impl BrowserbaseBrowserBackend {
             config,
             client: reqwest::Client::new(),
             session: Mutex::new(None),
+            cdp: CloudCdpConnection::default(),
         }
     }
 
@@ -71,23 +72,17 @@ impl BrowserbaseBrowserBackend {
             .to_string();
         let suffix = Uuid::new_v4().simple().to_string();
         let session_name = format!("hermes_{}_{}", self.config.task_id, &suffix[..8]);
-        let features = BrowserbaseFeatures {
-            basic_stealth: true,
-            proxies: self.config.proxies && !proxies_fallback,
-            advanced_stealth: self.config.advanced_stealth,
-            keep_alive: self.config.keep_alive && !keepalive_fallback,
-            custom_timeout: self.config.session_timeout_secs.is_some(),
-        };
         tracing::info!(
             session_id = %bb_session_id,
             session_name = %session_name,
+            keep_alive = self.config.keep_alive && !keepalive_fallback,
+            proxies = self.config.proxies && !proxies_fallback,
+            advanced_stealth = self.config.advanced_stealth,
             "created Browserbase session"
         );
         Ok(BrowserbaseSession {
-            session_name,
             bb_session_id,
             cdp_url,
-            features,
         })
     }
 
@@ -114,6 +109,7 @@ impl BrowserbaseBrowserBackend {
 
     pub async fn close_active_session(&self) -> Result<bool, ToolError> {
         let mut guard = self.session.lock().await;
+        self.cdp.disconnect().await;
         let Some(session) = guard.take() else {
             return Ok(false);
         };
@@ -140,26 +136,29 @@ impl BrowserbaseBrowserBackend {
                 | reqwest::StatusCode::NO_CONTENT
         ))
     }
+}
 
-    async fn browserbase_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
+impl CdpChannel for BrowserbaseBrowserBackend {
+    async fn cdp_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
         let session = self.ensure_session().await?;
-        Ok(json!({
-            "method": method,
-            "params": params,
-            "target": session.cdp_url,
-            "status": "sent",
-            "browserbase": {
-                "session_name": session.session_name,
-                "bb_session_id": session.bb_session_id,
-                "features": {
-                    "basic_stealth": session.features.basic_stealth,
-                    "proxies": session.features.proxies,
-                    "advanced_stealth": session.features.advanced_stealth,
-                    "keep_alive": session.features.keep_alive,
-                    "custom_timeout": session.features.custom_timeout,
-                }
+        let outcome = self
+            .cdp
+            .call(&session.cdp_url, method, params, collect, timeout)
+            .await;
+        if matches!(outcome, Err(CdpFailure::Lost(_))) {
+            // The vendor may already have ended the session with its
+            // connection; release it so the next command starts a new one.
+            if let Err(err) = self.close_active_session().await {
+                tracing::warn!("releasing Browserbase session failed: {err}");
             }
-        }))
+        }
+        outcome.map_err(|failure| cloud_cdp_error("Browserbase", method, failure))
     }
 }
 
@@ -170,6 +169,7 @@ impl BrowserUseBrowserBackend {
             client: reqwest::Client::new(),
             session: Mutex::new(None),
             pending_create_key: Mutex::new(None),
+            cdp: CloudCdpConnection::default(),
         }
     }
 
@@ -241,7 +241,9 @@ impl BrowserUseBrowserBackend {
             .get("cdpUrl")
             .or_else(|| data.get("connectUrl"))
             .and_then(|v| v.as_str())
-            .unwrap_or_default()
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed("Browser Use response missing cdpUrl".into())
+            })?
             .to_string();
         let suffix = Uuid::new_v4().simple().to_string();
         let session_name = format!("hermes_{}_{}", self.config.task_id, &suffix[..8]);
@@ -249,13 +251,12 @@ impl BrowserUseBrowserBackend {
             session_id = %bb_session_id,
             session_name = %session_name,
             managed = self.config.managed_mode,
+            external_call_id = external_call_id.as_deref(),
             "created Browser Use session"
         );
         Ok(BrowserUseSession {
-            session_name,
             bb_session_id,
             cdp_url,
-            external_call_id,
         })
     }
 
@@ -292,6 +293,7 @@ impl BrowserUseBrowserBackend {
 
     pub async fn close_active_session(&self) -> Result<bool, ToolError> {
         let mut guard = self.session.lock().await;
+        self.cdp.disconnect().await;
         let Some(session) = guard.take() else {
             return Ok(false);
         };
@@ -317,22 +319,29 @@ impl BrowserUseBrowserBackend {
                 | reqwest::StatusCode::NO_CONTENT
         ))
     }
+}
 
-    async fn browser_use_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
+impl CdpChannel for BrowserUseBrowserBackend {
+    async fn cdp_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
         let session = self.ensure_session().await?;
-        Ok(json!({
-            "method": method,
-            "params": params,
-            "target": session.cdp_url,
-            "status": "sent",
-            "browser_use": {
-                "session_name": session.session_name,
-                "bb_session_id": session.bb_session_id,
-                "features": {"browser_use": true},
-                "managed_mode": self.config.managed_mode,
-                "external_call_id": session.external_call_id,
+        let outcome = self
+            .cdp
+            .call(&session.cdp_url, method, params, collect, timeout)
+            .await;
+        if matches!(outcome, Err(CdpFailure::Lost(_))) {
+            // The vendor may already have ended the session with its
+            // connection; release it so the next command starts a new one.
+            if let Err(err) = self.close_active_session().await {
+                tracing::warn!("releasing Browser Use session failed: {err}");
             }
-        }))
+        }
+        outcome.map_err(|failure| cloud_cdp_error("Browser Use", method, failure))
     }
 }
 
@@ -342,6 +351,7 @@ impl FirecrawlBrowserBackend {
             config,
             client: reqwest::Client::new(),
             session: Mutex::new(None),
+            cdp: CloudCdpConnection::default(),
         }
     }
 
@@ -397,13 +407,12 @@ impl FirecrawlBrowserBackend {
         tracing::info!(
             session_id = %bb_session_id,
             session_name = %session_name,
+            ttl_secs = self.config.ttl_secs,
             "created Firecrawl browser session"
         );
         Ok(FirecrawlBrowserSession {
-            session_name,
             bb_session_id,
             cdp_url,
-            ttl_secs: self.config.ttl_secs,
         })
     }
 
@@ -422,6 +431,7 @@ impl FirecrawlBrowserBackend {
 
     pub async fn close_active_session(&self) -> Result<bool, ToolError> {
         let mut guard = self.session.lock().await;
+        self.cdp.disconnect().await;
         let Some(session) = guard.take() else {
             return Ok(false);
         };
@@ -445,21 +455,29 @@ impl FirecrawlBrowserBackend {
                 | reqwest::StatusCode::NO_CONTENT
         ))
     }
+}
 
-    async fn firecrawl_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
+impl CdpChannel for FirecrawlBrowserBackend {
+    async fn cdp_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
         let session = self.ensure_session().await?;
-        Ok(json!({
-            "method": method,
-            "params": params,
-            "target": session.cdp_url,
-            "status": "sent",
-            "firecrawl": {
-                "session_name": session.session_name,
-                "bb_session_id": session.bb_session_id,
-                "features": {"firecrawl": true},
-                "ttl": session.ttl_secs,
+        let outcome = self
+            .cdp
+            .call(&session.cdp_url, method, params, collect, timeout)
+            .await;
+        if matches!(outcome, Err(CdpFailure::Lost(_))) {
+            // The vendor may already have ended the session with its
+            // connection; release it so the next command starts a new one.
+            if let Err(err) = self.close_active_session().await {
+                tracing::warn!("releasing Firecrawl session failed: {err}");
             }
-        }))
+        }
+        outcome.map_err(|failure| cloud_cdp_error("Firecrawl", method, failure))
     }
 }
 
@@ -530,4 +548,3 @@ fn browserbase_session_payload(
     }
     payload
 }
-

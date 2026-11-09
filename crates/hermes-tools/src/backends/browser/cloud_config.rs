@@ -11,20 +11,9 @@ pub struct BrowserbaseConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserbaseFeatures {
-    basic_stealth: bool,
-    proxies: bool,
-    advanced_stealth: bool,
-    keep_alive: bool,
-    custom_timeout: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct BrowserbaseSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    features: BrowserbaseFeatures,
 }
 
 /// Browserbase cloud browser backend.
@@ -35,6 +24,7 @@ pub struct BrowserbaseBrowserBackend {
     config: BrowserbaseConfig,
     client: reqwest::Client,
     session: Mutex<Option<BrowserbaseSession>>,
+    cdp: CloudCdpConnection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,10 +37,8 @@ pub struct BrowserUseConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BrowserUseSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    external_call_id: Option<String>,
 }
 
 /// Browser Use cloud browser backend.
@@ -63,6 +51,7 @@ pub struct BrowserUseBrowserBackend {
     client: reqwest::Client,
     session: Mutex<Option<BrowserUseSession>>,
     pending_create_key: Mutex<Option<String>>,
+    cdp: CloudCdpConnection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,10 +64,8 @@ pub struct FirecrawlBrowserConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FirecrawlBrowserSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    ttl_secs: u64,
 }
 
 /// Firecrawl cloud browser backend.
@@ -90,6 +77,7 @@ pub struct FirecrawlBrowserBackend {
     config: FirecrawlBrowserConfig,
     client: reqwest::Client,
     session: Mutex<Option<FirecrawlBrowserSession>>,
+    cdp: CloudCdpConnection,
 }
 
 impl UnavailableBrowserBackend {

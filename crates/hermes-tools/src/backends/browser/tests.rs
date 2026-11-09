@@ -379,10 +379,6 @@ async fn browser_use_create_session_sends_managed_gateway_contract() {
     assert!(request.contains(r#""proxycountrycode":"us""#));
     assert_eq!(session.bb_session_id, "bu_local_session_1");
     assert_eq!(session.cdp_url, "wss://browser-use.example/session");
-    assert_eq!(
-        session.external_call_id.as_deref(),
-        Some("call-browser-use-1")
-    );
 }
 
 #[tokio::test]
@@ -544,10 +540,6 @@ async fn firecrawl_browser_create_session_sends_v2_browser_contract() {
     assert!(request.contains(r#""ttl":450"#));
     assert_eq!(session.bb_session_id, "fc_session_1");
     assert_eq!(session.cdp_url, "wss://firecrawl.example/session");
-    assert_eq!(session.ttl_secs, 450);
-    assert!(session
-        .session_name
-        .starts_with("hermes_task-firecrawl-create_"));
 }
 
 #[tokio::test]
@@ -741,9 +733,10 @@ async fn browser_cdp_timeout_path_surfaces_endpoint_and_hints() {
 
     let backend = CdpBrowserBackend::new(format!("http://{addr}"));
     let err = backend
-        .cdp_command_with_timeout(
+        .cdp_call(
             "Page.navigate",
             json!({"url": "https://example.com"}),
+            &[],
             std::time::Duration::from_millis(25),
         )
         .await
@@ -804,67 +797,94 @@ async fn configured_browserbase_without_credentials_fails_at_runtime() {
         .contains("BROWSERBASE_API_KEY and BROWSERBASE_PROJECT_ID"));
 }
 
-/// What the loopback WebSocket in [`spawn_cdp_fixture`] does after it
-/// receives a command.
-enum CdpFixtureReply {
-    Result(Value),
-    Error(Value),
-    Silent,
+/// Frames a fixture WebSocket sends back for one command, after an unrelated
+/// event and a reply to another id. `None` leaves the command unanswered.
+type CdpResponder = std::sync::Arc<dyn Fn(&Value) -> Option<Vec<Value>> + Send + Sync>;
+
+/// The response to `command` carrying `result`, routed back to the same
+/// flattened session.
+fn cdp_result(command: &Value, result: Value) -> Value {
+    let mut reply = json!({"id": command["id"], "result": result});
+    if let Some(session_id) = command.get("sessionId") {
+        reply["sessionId"] = session_id.clone();
+    }
+    reply
 }
 
-/// Loopback stand-in for Chrome's DevTools endpoints. `/json` lists a
-/// service worker before the page, as Chrome can. The page's WebSocket
-/// accepts one connection, hands back the first command it reads, sends an
-/// unrelated event and a reply to another id, then answers the command.
-async fn spawn_cdp_fixture(
-    reply: CdpFixtureReply,
-) -> (wiremock::MockServer, tokio::sync::oneshot::Receiver<Value>) {
+fn answer_all(result: Value) -> CdpResponder {
+    std::sync::Arc::new(move |command| Some(vec![cdp_result(command, result.clone())]))
+}
+
+/// Loopback WebSocket that accepts any number of connections and records
+/// each command it receives with the index of its connection.
+async fn spawn_cdp_websocket(
+    responder: CdpResponder,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) {
     use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
         .await
         .expect("bind websocket");
-    let ws_addr = listener.local_addr().expect("websocket addr");
-    let (command_tx, command_rx) = tokio::sync::oneshot::channel();
+    let addr = listener.local_addr().expect("websocket addr");
+    let (command_tx, command_rx) = tokio::sync::mpsc::unbounded_channel();
     tokio::spawn(async move {
-        let (stream, _) = listener.accept().await.expect("accept websocket");
-        let mut socket = tokio_tungstenite::accept_async(stream)
-            .await
-            .expect("websocket handshake");
-        let frame = socket
-            .next()
-            .await
-            .expect("command frame")
-            .expect("readable frame");
-        let command: Value =
-            serde_json::from_str(frame.to_text().expect("text frame")).expect("command json");
-        let id = command["id"].clone();
-        command_tx.send(command).expect("test awaits the command");
-        let answer = match reply {
-            CdpFixtureReply::Result(result) => json!({"id": id, "result": result}),
-            CdpFixtureReply::Error(error) => json!({"id": id, "error": error}),
-            CdpFixtureReply::Silent => return std::future::pending::<()>().await,
-        };
-        for message in [
-            json!({"method": "Page.frameNavigated", "params": {"frame": {"id": "F1"}}}),
-            json!({"id": 9_999, "result": {"stale": true}}),
-            answer,
-        ] {
-            socket
-                .send(Message::text(message.to_string()))
-                .await
-                .expect("send reply");
-        }
-        while let Some(Ok(frame)) = socket.next().await {
-            if frame.is_close() {
-                break;
-            }
+        let mut next_index = 0;
+        while let Ok((stream, _)) = listener.accept().await {
+            let index = next_index;
+            next_index += 1;
+            let responder = responder.clone();
+            let command_tx = command_tx.clone();
+            tokio::spawn(async move {
+                let mut socket = tokio_tungstenite::accept_async(stream)
+                    .await
+                    .expect("websocket handshake");
+                while let Some(Ok(frame)) = socket.next().await {
+                    let text = match frame {
+                        Message::Text(text) => text,
+                        Message::Close(_) => break,
+                        _ => continue,
+                    };
+                    let command: Value = serde_json::from_str(text.as_str()).expect("command json");
+                    let _ = command_tx.send((index, command.clone()));
+                    let Some(frames) = responder(&command) else {
+                        continue;
+                    };
+                    let preamble = [
+                        json!({"method": "Page.frameNavigated", "params": {"frame": {"id": "F1"}}}),
+                        json!({"id": 9_999, "result": {"stale": true}}),
+                    ];
+                    for message in preamble.into_iter().chain(frames) {
+                        if socket
+                            .send(Message::text(message.to_string()))
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                }
+            });
         }
     });
+    (addr, command_rx)
+}
 
+/// Loopback stand-in for a local Chrome: `/json` lists a service worker
+/// before the page, as Chrome can, and the page's WebSocket uses `responder`.
+async fn spawn_local_cdp(
+    responder: CdpResponder,
+) -> (
+    wiremock::MockServer,
+    tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let (ws_addr, commands) = spawn_cdp_websocket(responder).await;
     let http = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/json"))
@@ -874,12 +894,19 @@ async fn spawn_cdp_fixture(
         ])))
         .mount(&http)
         .await;
-    (http, command_rx)
+    (http, commands)
+}
+
+/// Every command recorded so far, without its connection index.
+fn drain_commands(
+    commands: &mut tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) -> Vec<Value> {
+    std::iter::from_fn(|| commands.try_recv().ok().map(|(_, command)| command)).collect()
 }
 
 #[tokio::test]
 async fn cdp_command_sends_over_websocket_and_returns_matching_result() {
-    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+    let (http, mut commands) = spawn_local_cdp(answer_all(
         json!({"result": {"type": "number", "value": 2}}),
     ))
     .await;
@@ -891,7 +918,7 @@ async fn cdp_command_sends_over_websocket_and_returns_matching_result() {
         .expect("cdp result");
 
     assert_eq!(result, json!({"result": {"type": "number", "value": 2}}));
-    let command = command_rx.await.expect("command reached the browser");
+    let (_, command) = commands.recv().await.expect("command reached the browser");
     assert_eq!(command["method"], "Runtime.evaluate");
     assert_eq!(command["params"], json!({"expression": "1 + 1"}));
     assert!(command["id"].is_u64());
@@ -899,9 +926,12 @@ async fn cdp_command_sends_over_websocket_and_returns_matching_result() {
 
 #[tokio::test]
 async fn cdp_command_maps_protocol_error_to_tool_error() {
-    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Error(
-        json!({"code": -32_000, "message": "Cannot navigate to invalid URL"}),
-    ))
+    let (http, _commands) = spawn_local_cdp(std::sync::Arc::new(|command: &Value| {
+        Some(vec![json!({
+            "id": command["id"],
+            "error": {"code": -32_000, "message": "Cannot navigate to invalid URL"},
+        })])
+    }))
     .await;
     let backend = CdpBrowserBackend::new(http.uri());
 
@@ -941,26 +971,27 @@ async fn cdp_command_without_page_target_fails() {
 
 #[tokio::test]
 async fn cdp_command_times_out_when_browser_never_answers() {
-    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Silent).await;
+    let (http, mut commands) = spawn_local_cdp(std::sync::Arc::new(|_: &Value| None)).await;
     let backend = CdpBrowserBackend::new(http.uri());
 
     let err = backend
-        .cdp_command_with_timeout(
+        .cdp_call(
             "Runtime.evaluate",
             json!({"expression": "1"}),
+            &[],
             std::time::Duration::from_millis(500),
         )
         .await
         .expect_err("silent browser");
 
     assert!(err.to_string().contains("timed out after 0.500 seconds"));
-    let command = command_rx.await.expect("command reached the browser");
+    let (_, command) = commands.recv().await.expect("command reached the browser");
     assert_eq!(command["method"], "Runtime.evaluate");
 }
 
 #[tokio::test]
 async fn cdp_navigate_reports_page_navigation_error_text() {
-    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+    let (http, _commands) = spawn_local_cdp(answer_all(
         json!({"frameId": "F1", "loaderId": "L1", "errorText": "net::ERR_NAME_NOT_RESOLVED"}),
     ))
     .await;
@@ -978,7 +1009,7 @@ async fn cdp_navigate_reports_page_navigation_error_text() {
 
 #[tokio::test]
 async fn cdp_click_reports_script_exception() {
-    let (http, _command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(json!({
+    let (http, _commands) = spawn_local_cdp(answer_all(json!({
         "result": {"type": "object", "subtype": "error"},
         "exceptionDetails": {
             "text": "Uncaught",
@@ -995,7 +1026,7 @@ async fn cdp_click_reports_script_exception() {
 
 #[tokio::test]
 async fn cdp_click_reports_missing_element() {
-    let (http, command_rx) = spawn_cdp_fixture(CdpFixtureReply::Result(
+    let (http, mut commands) = spawn_local_cdp(answer_all(
         json!({"result": {"type": "string", "value": "not found"}}),
     ))
     .await;
@@ -1005,23 +1036,332 @@ async fn cdp_click_reports_missing_element() {
 
     assert!(matches!(err, ToolError::NotFound(_)));
     assert!(err.to_string().contains("#absent"));
-    let command = command_rx.await.expect("command reached the browser");
+    let (_, command) = commands.recv().await.expect("command reached the browser");
     let expression = command["params"]["expression"]
         .as_str()
         .expect("expression");
-    assert!(expression.contains("document.querySelector('#absent')"));
+    assert!(expression.contains(r##"document.querySelector("#absent")"##));
 }
 
 #[tokio::test]
 async fn cdp_vision_returns_captured_screenshot_data() {
-    let (http, command_rx) =
-        spawn_cdp_fixture(CdpFixtureReply::Result(json!({"data": "iVBORw0KGgo="}))).await;
+    let (http, mut commands) = spawn_local_cdp(answer_all(json!({"data": "iVBORw0KGgo="}))).await;
     let backend = CdpBrowserBackend::new(http.uri());
 
     let raw = backend.vision("describe").await.expect("screenshot");
     let value: Value = serde_json::from_str(&raw).expect("vision json");
 
     assert_eq!(value["screenshot"]["data"], "iVBORw0KGgo=");
-    let command = command_rx.await.expect("command reached the browser");
+    let (_, command) = commands.recv().await.expect("command reached the browser");
     assert_eq!(command["method"], "Page.captureScreenshot");
+}
+
+#[tokio::test]
+async fn cdp_vision_accepts_a_reply_larger_than_16_mib() {
+    let data = "A".repeat(17 * 1024 * 1024);
+    let (http, _commands) = spawn_local_cdp(answer_all(json!({"data": data}))).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let raw = backend.vision("describe").await.expect("large screenshot");
+    let value: Value = serde_json::from_str(&raw).expect("vision json");
+
+    assert_eq!(
+        value["screenshot"]["data"].as_str().map(str::len),
+        Some(data.len())
+    );
+}
+
+#[tokio::test]
+async fn cdp_selector_and_text_are_spliced_as_string_literals() {
+    let (http, mut commands) = spawn_local_cdp(answer_all(
+        json!({"result": {"type": "string", "value": "typed"}}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+    let selector = "a[title='it\\'s']\n>b";
+    let text = "say \"hi\"\\n'\nbye";
+
+    backend.r#type(selector, text).await.expect("typed");
+    backend.get_images(Some(selector)).await.expect("images");
+
+    let sent = drain_commands(&mut commands);
+    let expressions: Vec<&str> = sent
+        .iter()
+        .map(|command| {
+            command["params"]["expression"]
+                .as_str()
+                .expect("expression")
+        })
+        .collect();
+    let selector_literal = serde_json::to_string(selector).expect("selector literal");
+    let text_literal = serde_json::to_string(text).expect("text literal");
+    assert_eq!(expressions.len(), 2);
+    assert!(expressions[0].contains(&format!("document.querySelector({selector_literal})")));
+    assert!(expressions[0].contains(&format!("el.value = {text_literal};")));
+    assert!(expressions[1].contains(&format!("document.querySelectorAll({selector_literal})")));
+    assert!(expressions
+        .iter()
+        .all(|expression| !expression.contains('\n')));
+}
+
+#[tokio::test]
+async fn cdp_press_sends_key_down_then_key_up() {
+    let (http, mut commands) = spawn_local_cdp(answer_all(json!({}))).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    for key in ["Enter", "Tab", "ArrowDown", "a"] {
+        backend.press(key).await.expect("key press");
+    }
+    let err = backend.press("NoSuchKey").await.expect_err("unknown key");
+
+    assert!(matches!(err, ToolError::InvalidParams(_)));
+    let sent: Vec<Value> = drain_commands(&mut commands)
+        .into_iter()
+        .inspect(|command| assert_eq!(command["method"], "Input.dispatchKeyEvent"))
+        .map(|command| command["params"].clone())
+        .collect();
+    assert_eq!(
+        sent,
+        vec![
+            json!({"type": "keyDown", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13, "text": "\r"}),
+            json!({"type": "keyUp", "key": "Enter", "code": "Enter", "windowsVirtualKeyCode": 13}),
+            json!({"type": "rawKeyDown", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9}),
+            json!({"type": "keyUp", "key": "Tab", "code": "Tab", "windowsVirtualKeyCode": 9}),
+            json!({"type": "rawKeyDown", "key": "ArrowDown", "code": "ArrowDown", "windowsVirtualKeyCode": 40}),
+            json!({"type": "keyUp", "key": "ArrowDown", "code": "ArrowDown", "windowsVirtualKeyCode": 40}),
+            json!({"type": "keyDown", "key": "a", "text": "a"}),
+            json!({"type": "keyUp", "key": "a"}),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn cdp_console_read_returns_replayed_messages() {
+    let (http, mut commands) = spawn_local_cdp(std::sync::Arc::new(|command: &Value| {
+        let mut frames = Vec::new();
+        if command["method"] == "Runtime.enable" {
+            frames.push(json!({
+                "method": "Runtime.executionContextCreated",
+                "params": {"context": {"id": 1}},
+            }));
+            frames.push(json!({
+                "method": "Runtime.consoleAPICalled",
+                "params": {
+                    "type": "log",
+                    "args": [{"type": "string", "value": "hello"}, {"type": "number", "value": 2}],
+                },
+            }));
+            frames.push(json!({
+                "method": "Runtime.exceptionThrown",
+                "params": {
+                    "exceptionDetails": {"text": "Uncaught", "exception": {"description": "Error: boom"}},
+                },
+            }));
+        }
+        frames.push(cdp_result(command, json!({})));
+        Some(frames)
+    }))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let raw = backend.console("read").await.expect("console read");
+    let value: Value = serde_json::from_str(&raw).expect("console json");
+
+    assert_eq!(value["status"], "console_read");
+    assert_eq!(
+        value["messages"],
+        json!([
+            {"type": "log", "text": "hello 2"},
+            {"type": "exception", "text": "Error: boom"},
+        ])
+    );
+    let methods: Vec<Value> = drain_commands(&mut commands)
+        .into_iter()
+        .map(|command| command["method"].clone())
+        .collect();
+    assert_eq!(
+        methods,
+        vec![json!("Runtime.enable"), json!("Runtime.disable")]
+    );
+}
+
+/// A remote browser endpoint with one page target that answers through its
+/// flattened session; `page` gives each page command's result.
+fn remote_browser(page: fn(&Value) -> Value) -> CdpResponder {
+    std::sync::Arc::new(move |command: &Value| {
+        let result = match command["method"].as_str() {
+            Some("Target.getTargets") => json!({"targetInfos": [
+                {"targetId": "SW", "type": "service_worker"},
+                {"targetId": "P1", "type": "page"},
+            ]}),
+            Some("Target.attachToTarget") => json!({"sessionId": "S1"}),
+            _ if command["sessionId"] == "S1" => page(command),
+            _ => {
+                return Some(vec![json!({
+                    "id": command["id"],
+                    "error": {"code": -32_601, "message": "not attached to a page"},
+                })])
+            }
+        };
+        Some(vec![cdp_result(command, result)])
+    })
+}
+
+/// Vendor API stub that creates one session whose CDP URL is `cdp_url`.
+async fn vendor_api(route: &str, cdp_url: String) -> wiremock::MockServer {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let api = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path(route))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"id": "vendor_session_1", "connectUrl": cdp_url, "cdpUrl": cdp_url}),
+        ))
+        .mount(&api)
+        .await;
+    api
+}
+
+#[tokio::test]
+async fn browserbase_commands_share_one_attached_connection() {
+    let (ws_addr, mut commands) =
+        spawn_cdp_websocket(remote_browser(|command| match command["method"].as_str() {
+            Some("Page.captureScreenshot") => json!({"data": "iVBORw0KGgo="}),
+            _ => json!({"nodes": []}),
+        }))
+        .await;
+    let api = vendor_api("/v1/sessions", format!("ws://{ws_addr}/devtools/browser/B")).await;
+    let mut cfg = BrowserbaseConfig::new("bb-key".into(), "proj".into());
+    cfg.base_url = api.uri();
+    let backend = BrowserbaseBrowserBackend::new(cfg);
+
+    let raw = backend.vision("describe").await.expect("screenshot");
+    backend.snapshot().await.expect("snapshot");
+
+    let value: Value = serde_json::from_str(&raw).expect("vision json");
+    assert_eq!(value["screenshot"]["data"], "iVBORw0KGgo=");
+    let mut summary = Vec::new();
+    while let Ok((index, command)) = commands.try_recv() {
+        assert_eq!(index, 0, "every command uses the first connection");
+        summary.push((
+            command["method"].clone(),
+            command["params"].clone(),
+            command["sessionId"].clone(),
+        ));
+    }
+    assert_eq!(
+        summary,
+        vec![
+            (json!("Target.getTargets"), json!({}), Value::Null),
+            (
+                json!("Target.attachToTarget"),
+                json!({"targetId": "P1", "flatten": true}),
+                Value::Null
+            ),
+            (
+                json!("Page.captureScreenshot"),
+                json!({"format": "png"}),
+                json!("S1")
+            ),
+            (json!("Accessibility.getFullAXTree"), json!({}), json!("S1")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn browser_use_navigate_reports_page_navigation_error_text() {
+    let (ws_addr, _commands) = spawn_cdp_websocket(remote_browser(
+        |_| json!({"frameId": "F1", "errorText": "net::ERR_CONNECTION_REFUSED"}),
+    ))
+    .await;
+    let api = vendor_api("/browsers", format!("ws://{ws_addr}/devtools/browser/B")).await;
+    let mut cfg = BrowserUseConfig::new_direct("bu-key".into());
+    cfg.base_url = api.uri();
+    let backend = BrowserUseBrowserBackend::new(cfg);
+
+    let err = backend
+        .navigate("https://example.com/")
+        .await
+        .expect_err("failed navigation");
+
+    let rendered = err.to_string();
+    assert!(rendered.contains("Failed to open https://example.com/"));
+    assert!(rendered.contains("net::ERR_CONNECTION_REFUSED"));
+}
+
+#[tokio::test]
+async fn firecrawl_click_reports_missing_element() {
+    let (ws_addr, _commands) = spawn_cdp_websocket(remote_browser(
+        |_| json!({"result": {"type": "string", "value": "not found"}}),
+    ))
+    .await;
+    let api = vendor_api("/v2/browser", format!("ws://{ws_addr}/devtools/browser/B")).await;
+    let backend = FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+        api_key: "fc-key".into(),
+        base_url: api.uri(),
+        ttl_secs: 300,
+        task_id: "task-firecrawl-click".into(),
+    });
+
+    let err = backend.click("#absent").await.expect_err("missing element");
+
+    assert!(matches!(err, ToolError::NotFound(_)));
+}
+
+#[tokio::test]
+async fn browserbase_lost_connection_releases_the_session() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    let closed = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let closed_addr = closed.local_addr().expect("addr");
+    drop(closed);
+    let api = vendor_api(
+        "/v1/sessions",
+        format!("ws://{closed_addr}/devtools/browser/B"),
+    )
+    .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions/vendor_session_1"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&api)
+        .await;
+    let mut cfg = BrowserbaseConfig::new("bb-key".into(), "proj".into());
+    cfg.base_url = api.uri();
+    let backend = BrowserbaseBrowserBackend::new(cfg);
+
+    let err = backend.snapshot().await.expect_err("unreachable browser");
+
+    assert!(err.to_string().contains("Browserbase browser CDP command"));
+    assert!(backend.session.lock().await.is_none());
+    api.verify().await;
+}
+
+#[tokio::test]
+async fn cloud_wss_endpoint_attempts_a_tls_handshake() {
+    // A TCP listener that drops each connection: the handshake fails, but
+    // only after the client has tried TLS.
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let addr = listener.local_addr().expect("addr");
+    tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            drop(stream);
+        }
+    });
+    let api = vendor_api("/v1/sessions", format!("wss://{addr}/devtools/browser/B")).await;
+    let mut cfg = BrowserbaseConfig::new("bb-key".into(), "proj".into());
+    cfg.base_url = api.uri();
+    let backend = BrowserbaseBrowserBackend::new(cfg);
+
+    let err = backend.snapshot().await.expect_err("no TLS server");
+
+    let rendered = err.to_string();
+    assert!(rendered.contains("Failed to open the CDP WebSocket"));
+    assert!(!rendered.contains("TLS support not compiled in"));
 }

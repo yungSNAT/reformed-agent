@@ -33,12 +33,15 @@ impl CdpBrowserBackend {
         Self::new(endpoint)
     }
 
-    /// Send one CDP command to the first page target and return its `result`.
-    ///
-    /// Each command opens its own WebSocket. None of the commands this
-    /// backend sends needs an enabled domain or events, so no session state
-    /// has to outlive a command.
-    async fn cdp_command_ws(&self, method: &str, params: Value) -> Result<Value, ToolError> {
+    /// Send one CDP command to the first page target. Each call opens its own
+    /// WebSocket to the page; a local Chrome keeps the page whether or not a
+    /// client is connected, so no state has to outlive a call.
+    async fn page_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+    ) -> Result<(Value, Vec<Value>), ToolError> {
         let targets_resp = self
             .client
             .get(format!("{}/json", self.endpoint))
@@ -62,252 +65,71 @@ impl CdpBrowserBackend {
             .find_map(|t| t.get("webSocketDebuggerUrl").and_then(Value::as_str))
             .ok_or_else(|| ToolError::ExecutionFailed("No Chrome page target found. Is Chrome running with --remote-debugging-port=9222?".into()))?;
 
-        let (mut socket, _) = tokio_tungstenite::connect_async(ws_url)
+        let mut connection = CdpConnection::open(ws_url)
             .await
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to open CDP WebSocket {ws_url}: {e}"))
-            })?;
-        let result = cdp_exchange(&mut socket, method, params).await;
-        if let Err(e) = socket.close(None).await {
-            tracing::debug!("closing CDP WebSocket {ws_url} failed: {e}");
-        }
-        result
+            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
+        let outcome = connection.call(method, params, collect).await;
+        connection.close().await;
+        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
     }
+}
 
-    /// Run `Runtime.evaluate` and fail when the page script throws.
-    async fn evaluate(&self, params: Value) -> Result<Value, ToolError> {
-        let result = self.cdp_command("Runtime.evaluate", params).await?;
-        if let Some(details) = result.get("exceptionDetails") {
-            let message = details
-                .pointer("/exception/description")
-                .or_else(|| details.get("text"))
-                .and_then(Value::as_str)
-                .unwrap_or("unknown exception");
-            return Err(ToolError::ExecutionFailed(format!(
-                "Page script threw: {message}"
-            )));
-        }
-        Ok(result)
-    }
-
-    async fn cdp_command_with_timeout(
+impl CdpChannel for CdpBrowserBackend {
+    async fn cdp_call(
         &self,
         method: &str,
         params: Value,
-        timeout_duration: Duration,
-    ) -> Result<Value, ToolError> {
-        match tokio::time::timeout(timeout_duration, self.cdp_command_ws(method, params)).await {
-            Ok(Ok(value)) => Ok(value),
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
+        match tokio::time::timeout(timeout, self.page_call(method, params, collect)).await {
+            Ok(Ok(outcome)) => Ok(outcome),
             Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
             Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
                 method,
                 &self.endpoint,
-                timeout_duration,
+                timeout,
             ))),
         }
     }
 
-    async fn cdp_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
-        self.cdp_command_with_timeout(method, params, cdp_command_timeout())
-            .await
+    /// The first navigation gets a longer allowance for Chrome's cold start.
+    fn next_navigate_timeout(&self) -> Duration {
+        cdp_open_timeout(self.first_navigation.swap(false, Ordering::SeqCst))
     }
-}
-
-/// Fail when a selector script reported that no element matched.
-fn ensure_element_found(evaluation: &Value, selector: &str) -> Result<(), ToolError> {
-    if evaluation.pointer("/result/value").and_then(Value::as_str) == Some("not found") {
-        return Err(ToolError::NotFound(format!(
-            "No element matches selector {selector}"
-        )));
-    }
-    Ok(())
-}
-
-/// Id of the single command sent on each CDP connection.
-const CDP_COMMAND_ID: u64 = 1;
-
-/// Send one command on an open CDP socket and wait for its response,
-/// skipping events and replies to other ids.
-async fn cdp_exchange(
-    socket: &mut tokio_tungstenite::WebSocketStream<
-        tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
-    >,
-    method: &str,
-    params: Value,
-) -> Result<Value, ToolError> {
-    let command = json!({"id": CDP_COMMAND_ID, "method": method, "params": params});
-    socket
-        .send(Message::text(command.to_string()))
-        .await
-        .map_err(|e| ToolError::ExecutionFailed(format!("Failed to send CDP command: {e}")))?;
-
-    while let Some(frame) = socket.next().await {
-        let frame = frame
-            .map_err(|e| ToolError::ExecutionFailed(format!("CDP WebSocket read failed: {e}")))?;
-        let Message::Text(text) = frame else {
-            continue;
-        };
-        let reply: Value = serde_json::from_str(text.as_str())
-            .map_err(|e| ToolError::ExecutionFailed(format!("Failed to parse CDP message: {e}")))?;
-        if reply.get("id").and_then(Value::as_u64) != Some(CDP_COMMAND_ID) {
-            continue;
-        }
-        if let Some(error) = reply.get("error") {
-            let message = error["message"].as_str().unwrap_or("unknown error");
-            let mut detail = format!("CDP error {}: {message}", error["code"]);
-            if let Some(data) = error["data"].as_str() {
-                detail.push_str(&format!(" ({data})"));
-            }
-            return Err(ToolError::ExecutionFailed(detail));
-        }
-        return reply.get("result").cloned().ok_or_else(|| {
-            ToolError::ExecutionFailed("CDP response has neither result nor error".into())
-        });
-    }
-    Err(ToolError::ExecutionFailed(
-        "CDP WebSocket closed before the command's response arrived".into(),
-    ))
 }
 
 #[async_trait]
 impl BrowserBackend for CdpBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
-        validate_url_does_not_exfiltrate_secret(url)?;
-        let first_open = self.first_navigation.swap(false, Ordering::SeqCst);
-        let result = self
-            .cdp_command_with_timeout(
-                "Page.navigate",
-                json!({"url": url}),
-                cdp_open_timeout(first_open),
-            )
-            .await
-            .map_err(|err| {
-                ToolError::ExecutionFailed(format!(
-                    "Failed to open {url}: {}",
-                    tool_error_message(err)
-                ))
-            })?;
-        // Chrome answers a failed navigation with `errorText` rather than a
-        // protocol error.
-        if let Some(error_text) = result.get("errorText").and_then(Value::as_str) {
-            return Err(ToolError::ExecutionFailed(format!(
-                "Failed to open {url}: {error_text}"
-            )));
-        }
-        Ok(json!({"status": "navigated", "url": url, "cdp": result}).to_string())
+        cdp_navigate(self, url).await
     }
-
     async fn snapshot(&self) -> Result<String, ToolError> {
-        let result = self
-            .cdp_command("Accessibility.getFullAXTree", json!({}))
-            .await?;
-        Ok(redact_browser_observation(
-            &json!({"status": "snapshot", "cdp": result}).to_string(),
-        ))
+        cdp_snapshot(self).await
     }
-
     async fn click(&self, selector: &str) -> Result<String, ToolError> {
-        // Use Runtime.evaluate to find and click the element. The block keeps
-        // `el` out of the page's global scope, where a second `let el` throws.
-        let js = format!(
-            "{{ let el = document.querySelector('{}'); if(el) {{ el.click(); 'clicked' }} else {{ 'not found' }} }}",
-            selector.replace('\'', "\\'")
-        );
-        let result = self.evaluate(json!({"expression": js})).await?;
-        ensure_element_found(&result, selector)?;
-        Ok(json!({"status": "clicked", "selector": selector, "cdp": result}).to_string())
+        cdp_click(self, selector).await
     }
-
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError> {
-        let js = format!(
-            "{{ let el = document.querySelector('{}'); if(el) {{ el.value = '{}'; el.dispatchEvent(new Event('input')); 'typed' }} else {{ 'not found' }} }}",
-            selector.replace('\'', "\\'"),
-            text.replace('\'', "\\'")
-        );
-        let result = self.evaluate(json!({"expression": js})).await?;
-        ensure_element_found(&result, selector)?;
-        Ok(
-            json!({"status": "typed", "selector": selector, "text": text, "cdp": result})
-                .to_string(),
-        )
+        cdp_type(self, selector, text).await
     }
-
     async fn scroll(&self, direction: &str, amount: Option<u32>) -> Result<String, ToolError> {
-        let px = amount.unwrap_or(500) as i32;
-        let (x, y) = match direction {
-            "up" => (0, -px),
-            "down" => (0, px),
-            "left" => (-px, 0),
-            "right" => (px, 0),
-            _ => (0, px),
-        };
-        let js = format!("window.scrollBy({}, {}); 'scrolled'", x, y);
-        let result = self.evaluate(json!({"expression": js})).await?;
-        Ok(
-            json!({"status": "scrolled", "direction": direction, "amount": px, "cdp": result})
-                .to_string(),
-        )
+        cdp_scroll(self, direction, amount).await
     }
-
     async fn go_back(&self) -> Result<String, ToolError> {
-        let result = self
-            .evaluate(json!({"expression": "history.back(); 'back'"}))
-            .await?;
-        Ok(json!({"status": "navigated_back", "cdp": result}).to_string())
+        cdp_go_back(self).await
     }
-
     async fn press(&self, key: &str) -> Result<String, ToolError> {
-        let result = self
-            .cdp_command(
-                "Input.dispatchKeyEvent",
-                json!({
-                    "type": "keyDown",
-                    "key": key,
-                }),
-            )
-            .await?;
-        Ok(json!({"status": "key_pressed", "key": key, "cdp": result}).to_string())
+        cdp_press(self, key).await
     }
-
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
-        let sel = selector.unwrap_or("img");
-        let js = format!(
-            "JSON.stringify(Array.from(document.querySelectorAll('{}')).map(img => ({{src: img.src, alt: img.alt, width: img.width, height: img.height}})))",
-            sel.replace('\'', "\\'")
-        );
-        let result = self
-            .evaluate(json!({"expression": js, "returnByValue": true}))
-            .await?;
-        Ok(json!({"status": "images_found", "selector": sel, "cdp": result}).to_string())
+        cdp_get_images(self, selector).await
     }
-
     async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        // Take a screenshot and analyze with vision model
-        let result = self
-            .cdp_command("Page.captureScreenshot", json!({"format": "png"}))
-            .await?;
-        Ok(browser_vision_payload(instruction, result))
+        cdp_vision(self, instruction).await
     }
-
     async fn console(&self, action: &str) -> Result<String, ToolError> {
-        match action {
-            "read" => {
-                let result = self.evaluate(json!({
-                    "expression": "'Console messages require Runtime.consoleAPICalled event listener'"
-                })).await?;
-                Ok(json!({"status": "console_read", "cdp": result}).to_string())
-            }
-            "clear" => {
-                let result = self
-                    .evaluate(json!({"expression": "console.clear(); 'cleared'"}))
-                    .await?;
-                Ok(json!({"status": "console_cleared", "cdp": result}).to_string())
-            }
-            other => Err(ToolError::InvalidParams(format!(
-                "Unknown console action: {}",
-                other
-            ))),
-        }
+        cdp_console(self, action).await
     }
 }
 

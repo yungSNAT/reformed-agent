@@ -12,7 +12,7 @@ hermes-config = { workspace = true }
 hermes-intelligence = { workspace = true }
 hermes-skills = { workspace = true }
 tokio = { workspace = true }
-tokio-tungstenite = { workspace = true }
+tokio-tungstenite = { workspace = true, features = ["rustls-tls-webpki-roots"] }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

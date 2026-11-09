@@ -796,6 +796,8 @@ impl BrowserBackend for CloudFallbackBrowserBackend {
     }
 }
 
+include!("browser/cdp_client.rs");
+
 include!("browser/cloud_backend_impls.rs");
 
 include!("browser/local_backends.rs");
