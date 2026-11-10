@@ -994,9 +994,9 @@ async fn closed_addr() -> std::net::SocketAddr {
     listener.local_addr().expect("addr")
 }
 
-/// Fail when `rendered` quotes the user info or query of a CDP endpoint.
+/// Fail when `rendered` quotes the user info, path or query of a CDP endpoint.
 fn assert_no_endpoint_secret(rendered: &str) {
-    for secret in ["cdp-user", "cdp-pass", "cdp-secret"] {
+    for secret in ["cdp-user", "cdp-pass", "cdp-path-secret", "cdp-secret"] {
         assert!(!rendered.contains(secret), "{rendered}");
     }
 }
@@ -1005,7 +1005,7 @@ fn assert_no_endpoint_secret(rendered: &str) {
 async fn local_cdp_http_endpoint_secret_stays_out_of_errors() {
     let closed = closed_addr().await;
     let backend = CdpBrowserBackend::new(format!(
-        "http://cdp-user:cdp-pass@{closed}/?token=cdp-secret"
+        "http://cdp-user:cdp-pass@{closed}/cdp-path-secret?token=cdp-secret"
     ));
     let err = backend
         .navigate("https://example.com")
@@ -1024,7 +1024,7 @@ async fn local_cdp_http_endpoint_secret_stays_out_of_errors() {
         tokio::time::sleep(std::time::Duration::from_secs(1)).await;
     });
     let backend = CdpBrowserBackend::new(format!(
-        "http://cdp-user:cdp-pass@{silent_addr}/?token=cdp-secret"
+        "http://cdp-user:cdp-pass@{silent_addr}/cdp-path-secret?token=cdp-secret"
     ));
     let err = backend
         .cdp_call(
@@ -1047,7 +1047,7 @@ async fn local_cdp_http_endpoint_secret_stays_out_of_errors() {
 async fn local_cdp_websocket_endpoint_secret_stays_out_of_errors() {
     let closed = closed_addr().await;
     let backend = CdpBrowserBackend::new(format!(
-        "ws://cdp-user:cdp-pass@{closed}/devtools/browser/B?token=cdp-secret"
+        "ws://cdp-user:cdp-pass@{closed}/devtools/browser/cdp-path-secret?token=cdp-secret"
     ));
 
     let err = backend.snapshot().await.expect_err("closed CDP endpoint");
@@ -1651,7 +1651,7 @@ async fn cloud_fallback_returns_cloud_page_error_without_touching_local() {
             task_id: "task-fallback-page-error".into(),
         }),
         local: CdpBrowserBackend::new(local_http.uri()),
-        fallback_reason: OnceLock::new(),
+        fallback_reason: Mutex::new(None),
     };
 
     let err = backend
@@ -1690,7 +1690,7 @@ async fn cloud_fallback_uses_local_when_cloud_connection_fails() {
             task_id: "task-fallback-connection".into(),
         }),
         local: CdpBrowserBackend::new(local_http.uri()),
-        fallback_reason: OnceLock::new(),
+        fallback_reason: Mutex::new(None),
     };
 
     let raw = backend.click("#ok").await.expect("local fallback");
@@ -1721,7 +1721,7 @@ async fn cloud_fallback_stays_local_after_the_cloud_connection_fails() {
             task_id: "task-fallback-sticks".into(),
         }),
         local: CdpBrowserBackend::new(local_http.uri()),
-        fallback_reason: OnceLock::new(),
+        fallback_reason: Mutex::new(None),
     };
 
     for _ in 0..2 {
@@ -1730,6 +1730,44 @@ async fn cloud_fallback_stays_local_after_the_cloud_connection_fails() {
         assert_eq!(value["fallback_from_cloud"], true, "{raw}");
     }
 
+    assert_eq!(session_creations(&api, "/v2/browser").await, 1);
+    assert_eq!(drain_commands(&mut local_commands).len(), 2);
+}
+
+#[tokio::test]
+async fn concurrent_browser_actions_share_one_cloud_failure() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let api = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/v2/browser"))
+        .respond_with(ResponseTemplate::new(503))
+        .mount(&api)
+        .await;
+    let (local_http, mut local_commands) = spawn_local_cdp(answer_all(
+        json!({"result": {"type": "string", "value": "clicked"}}),
+    ))
+    .await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "FirecrawlBrowserProvider",
+        cloud: FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+            api_key: "fc-key".into(),
+            base_url: api.uri(),
+            ttl_secs: 300,
+            task_id: "task-parallel-fallback".into(),
+        }),
+        local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: Mutex::new(None),
+    };
+
+    let (first, second) = tokio::join!(backend.click("#first"), backend.click("#second"));
+
+    for result in [first, second] {
+        let raw = result.expect("local fallback");
+        let value: Value = serde_json::from_str(&raw).expect("fallback json");
+        assert_eq!(value["fallback_from_cloud"], true, "{raw}");
+    }
     assert_eq!(session_creations(&api, "/v2/browser").await, 1);
     assert_eq!(drain_commands(&mut local_commands).len(), 2);
 }
@@ -1794,7 +1832,7 @@ async fn browser_use_failed_discovery_counts_as_unavailable() {
         provider: "BrowserUseProvider",
         cloud: BrowserUseBrowserBackend::new(cfg),
         local: CdpBrowserBackend::new(local_http.uri()),
-        fallback_reason: OnceLock::new(),
+        fallback_reason: Mutex::new(None),
     };
 
     let raw = backend.snapshot().await.expect("local fallback");
@@ -1823,7 +1861,7 @@ async fn browser_use_discovery_sends_the_url_query_and_keeps_it_out_of_the_failu
         provider: "BrowserUseProvider",
         cloud: BrowserUseBrowserBackend::new(cfg),
         local: CdpBrowserBackend::new(local_http.uri()),
-        fallback_reason: OnceLock::new(),
+        fallback_reason: Mutex::new(None),
     };
 
     let raw = backend.snapshot().await.expect("local fallback");

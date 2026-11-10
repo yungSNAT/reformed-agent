@@ -96,7 +96,7 @@ impl<C> CloudFallbackBrowserBackend<C> {
             provider,
             cloud,
             local: CdpBrowserBackend::from_env(),
-            fallback_reason: OnceLock::new(),
+            fallback_reason: Mutex::new(None),
         }
     }
 
@@ -128,14 +128,15 @@ impl<C: CloudBrowserSession> CloudFallbackBrowserBackend<C> {
     /// create a billable session per action and split the task between a
     /// blank cloud page and the local one.
     async fn connect_cloud(&self) -> Result<(), String> {
-        if let Some(reason) = self.fallback_reason.get() {
+        let mut fallback_reason = self.fallback_reason.lock().await;
+        if let Some(reason) = fallback_reason.as_ref() {
             return Err(reason.clone());
         }
         cloud_connect(&self.cloud).await.map_err(|cloud_err| {
             tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser unavailable; using local CDP from now on");
-            self.fallback_reason
-                .get_or_init(|| cloud_err.to_string())
-                .clone()
+            let reason = cloud_err.to_string();
+            *fallback_reason = Some(reason.clone());
+            reason
         })
     }
 }

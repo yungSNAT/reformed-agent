@@ -194,7 +194,6 @@ pub fn generate_request(mut request: Request) -> Result<(Vec<u8>, String)> {
     }
 
     req.extend_from_slice(b"\r\n");
-    trace!("Request: {:?}", String::from_utf8_lossy(&req));
     Ok((req, key))
 }
 

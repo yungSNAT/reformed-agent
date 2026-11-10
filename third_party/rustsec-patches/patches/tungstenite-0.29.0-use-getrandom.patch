@@ -36,7 +36,11 @@
  /// Mask/unmask a frame.
 --- a/src/handshake/client.rs
 +++ b/src/handshake/client.rs
-@@ -329,8 +329,9 @@
+@@ -196,3 +196,2 @@
+     req.extend_from_slice(b"\r\n");
+-    trace!("Request: {:?}", String::from_utf8_lossy(&req));
+     Ok((req, key))
+@@ -329,8 +328,9 @@
  pub fn generate_key() -> String {
      // a base64-encoded (see Section 4 of [RFC4648]) value that,
      // when decoded, is 16 bytes in length (RFC 6455)

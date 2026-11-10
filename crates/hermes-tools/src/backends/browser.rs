@@ -658,8 +658,8 @@ struct CloudFallbackBrowserBackend<C> {
     provider: &'static str,
     cloud: C,
     local: CdpBrowserBackend,
-    /// Why the cloud browser was unavailable, once an action has fallen back.
-    fallback_reason: OnceLock<String>,
+    /// Serialises connection attempts and retains the first fallback reason.
+    fallback_reason: Mutex<Option<String>>,
 }
 
 struct UnavailableBrowserBackend {
