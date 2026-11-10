@@ -9,8 +9,8 @@
 //! when they are within 5 minutes of expiry, and once more after a 401.
 //!
 //! Settings, all optional:
-//! - `VERTEX_CREDENTIALS_PATH`, then `GOOGLE_APPLICATION_CREDENTIALS`: path to
-//!   a service-account key file (a secret pointer; lives in `.env`);
+//! - `VERTEX_CREDENTIALS_PATH` selects a service-account key.
+//!   `GOOGLE_APPLICATION_CREDENTIALS` selects an ADC file.
 //! - `VERTEX_PROJECT_ID` and `VERTEX_REGION`: routing overrides. The
 //!   `vertex.project_id` and `vertex.region` keys in `config.yaml` are bridged
 //!   to these variables by `hermes-config`, so the environment wins.
@@ -49,7 +49,6 @@ pub const VERTEX_CREDENTIALS_UNRESOLVED: &str = "Vertex AI credentials could not
      in config.yaml if they aren't embedded in the credentials.";
 
 const REFRESH_MARGIN: Duration = Duration::from_secs(300);
-const ADC_CACHE_KEY: &str = "__adc__";
 
 /// Environment lookup, injectable so tests never touch the process
 /// environment.
@@ -64,7 +63,7 @@ fn env_value(env: &EnvLookup, key: &str) -> Option<String> {
 /// OpenAI-compatible base URL for a project and region. The `global`
 /// location uses the bare `aiplatform.googleapis.com` host; other regions use
 /// `{region}-aiplatform.googleapis.com`.
-pub fn build_vertex_base_url(project_id: &str, region: &str) -> String {
+fn build_vertex_base_url(project_id: &str, region: &str) -> Result<String, String> {
     build_base_url_for_origin(&vertex_origin(region), project_id, region)
 }
 
@@ -76,8 +75,32 @@ fn vertex_origin(region: &str) -> String {
     }
 }
 
-fn build_base_url_for_origin(origin: &str, project_id: &str, region: &str) -> String {
-    format!("{origin}/v1beta1/projects/{project_id}/locations/{region}/endpoints/openapi")
+fn build_base_url_for_origin(
+    origin: &str,
+    project_id: &str,
+    region: &str,
+) -> Result<String, String> {
+    if region.is_empty()
+        || region.len() > 63 - "-aiplatform".len()
+        || region.starts_with('-')
+        || region.ends_with('-')
+        || !region
+            .bytes()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+    {
+        return Err("invalid Vertex region; expected a Google Cloud location name".to_string());
+    }
+    if project_id.is_empty()
+        || matches!(project_id, "." | "..")
+        || !project_id
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'-' | b'.' | b':'))
+    {
+        return Err("invalid Vertex project ID or project number".to_string());
+    }
+    Ok(format!(
+        "{origin}/v1beta1/projects/{project_id}/locations/{region}/endpoints/openapi"
+    ))
 }
 
 /// Fast check, with no network, for whether Vertex credentials appear
@@ -100,6 +123,12 @@ struct CachedCredentials {
     token: Option<credentials::AccessToken>,
 }
 
+#[derive(Clone, Eq, Hash, PartialEq)]
+enum CredentialSource {
+    ServiceAccount(PathBuf),
+    ApplicationDefault(Option<PathBuf>),
+}
+
 impl CachedCredentials {
     fn needs_refresh(&self) -> bool {
         match &self.token {
@@ -116,16 +145,25 @@ impl CachedCredentials {
 pub(crate) struct VertexAuth {
     env: EnvLookup,
     http: reqwest::Client,
+    metadata_http: reqwest::Client,
     google_token_endpoint: String,
     api_origin_override: Option<String>,
-    cache: Mutex<HashMap<String, CachedCredentials>>,
+    cache: Mutex<HashMap<CredentialSource, CachedCredentials>>,
 }
 
 impl VertexAuth {
     fn with_env(env: EnvLookup) -> Self {
         Self {
             env,
-            http: reqwest::Client::new(),
+            http: reqwest::Client::builder()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("build Vertex OAuth client"),
+            metadata_http: reqwest::Client::builder()
+                .no_proxy()
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .expect("build Vertex metadata client"),
             google_token_endpoint: GOOGLE_OAUTH2_TOKEN_ENDPOINT.to_string(),
             api_origin_override: None,
             cache: Mutex::new(HashMap::new()),
@@ -149,21 +187,28 @@ impl VertexAuth {
         env_value(&self.env, "VERTEX_PROJECT_ID")
     }
 
-    /// `VERTEX_CREDENTIALS_PATH`, then `GOOGLE_APPLICATION_CREDENTIALS`; each
-    /// counts only when the file exists.
-    fn credentials_path(&self) -> Option<PathBuf> {
-        ["VERTEX_CREDENTIALS_PATH", "GOOGLE_APPLICATION_CREDENTIALS"]
-            .into_iter()
-            .filter_map(|key| env_value(&self.env, key))
+    fn credential_source(&self) -> CredentialSource {
+        let service_account = env_value(&self.env, "VERTEX_CREDENTIALS_PATH")
             .map(PathBuf::from)
-            .find(|path| path.exists())
+            .filter(|path| path.is_file());
+        match service_account {
+            Some(path) => CredentialSource::ServiceAccount(path),
+            None => CredentialSource::ApplicationDefault(
+                env_value(&self.env, "GOOGLE_APPLICATION_CREDENTIALS").map(PathBuf::from),
+            ),
+        }
     }
 
     fn has_credentials(&self) -> bool {
-        self.credentials_path().is_some() || self.project_override().is_some()
+        self.project_override().is_some()
+            || match self.credential_source() {
+                CredentialSource::ServiceAccount(_) => true,
+                CredentialSource::ApplicationDefault(Some(path)) => path.is_file(),
+                CredentialSource::ApplicationDefault(None) => credentials::has_local_adc(&self.env),
+            }
     }
 
-    fn base_url(&self, project_id: &str, region: &str) -> String {
+    fn base_url(&self, project_id: &str, region: &str) -> Result<String, String> {
         match &self.api_origin_override {
             Some(origin) => build_base_url_for_origin(origin, project_id, region),
             None => build_vertex_base_url(project_id, region),
@@ -173,54 +218,42 @@ impl VertexAuth {
     /// Return a token that is not within 5 minutes of expiry, and the base URL
     /// for the resolved project and region.
     pub(crate) async fn access(&self) -> Result<VertexAccess, AgentError> {
-        let path = self.credentials_path();
-        let cache_key = path
-            .as_ref()
-            .map(|p| p.to_string_lossy().into_owned())
-            .unwrap_or_else(|| ADC_CACHE_KEY.to_string());
+        let source = self.credential_source();
         let mut cache = self.cache.lock().await;
-        let (token, embedded_project) = match self.fresh_token(&mut cache, &cache_key, path).await {
-            Ok(resolved) => resolved,
+        match self.fresh_access(&mut cache, &source).await {
+            Ok(access) => Ok(access),
             Err(detail) => {
-                cache.remove(&cache_key);
+                cache.remove(&source);
                 tracing::error!("Failed to resolve Vertex AI credentials: {detail}");
-                return Err(AgentError::AuthFailed(format!(
+                Err(AgentError::AuthFailed(format!(
                     "{VERTEX_CREDENTIALS_UNRESOLVED} Cause: {detail}"
-                )));
+                )))
             }
-        };
-        let Some(project_id) = self.project_override().or(embedded_project) else {
-            return Err(AgentError::AuthFailed(format!(
-                "{VERTEX_CREDENTIALS_UNRESOLVED} Cause: no GCP project ID was found; set \
-                 vertex.project_id in config.yaml or VERTEX_PROJECT_ID."
-            )));
-        };
-        Ok(VertexAccess {
-            token,
-            base_url: self.base_url(&project_id, &self.region()),
-        })
+        }
     }
 
-    async fn fresh_token(
+    async fn fresh_access(
         &self,
-        cache: &mut HashMap<String, CachedCredentials>,
-        cache_key: &str,
-        path: Option<PathBuf>,
-    ) -> Result<(String, Option<String>), String> {
-        if !cache.contains_key(cache_key) {
-            let (credentials, project_id) = match &path {
-                Some(path) => credentials::load_service_account_file(path)?,
-                None => {
+        cache: &mut HashMap<CredentialSource, CachedCredentials>,
+        source: &CredentialSource,
+    ) -> Result<VertexAccess, String> {
+        if !cache.contains_key(source) {
+            let (credentials, project_id) = match source {
+                CredentialSource::ServiceAccount(path) => {
+                    credentials::load_service_account_file(path)?
+                }
+                CredentialSource::ApplicationDefault(path) => {
                     credentials::application_default(
                         &self.env,
-                        &self.http,
+                        &self.metadata_http,
                         self.project_override().is_some(),
+                        path.as_deref(),
                     )
                     .await?
                 }
             };
             cache.insert(
-                cache_key.to_string(),
+                source.clone(),
                 CachedCredentials {
                     credentials,
                     project_id,
@@ -229,12 +262,16 @@ impl VertexAuth {
             );
         }
         let entry = cache
-            .get_mut(cache_key)
+            .get_mut(source)
             .ok_or_else(|| "credential cache entry vanished".to_string())?;
+        let project_id = self.project_override().or_else(|| entry.project_id.clone()).ok_or_else(|| {
+            "no GCP project ID was found; set vertex.project_id in config.yaml or VERTEX_PROJECT_ID.".to_string()
+        })?;
+        let base_url = self.base_url(&project_id, &self.region())?;
         if entry.needs_refresh() {
             let token = entry
                 .credentials
-                .mint(&self.http, &self.google_token_endpoint)
+                .mint(&self.http, &self.metadata_http, &self.google_token_endpoint)
                 .await?;
             tracing::debug!("minted a Vertex AI access token");
             entry.token = Some(token);
@@ -244,7 +281,7 @@ impl VertexAuth {
             .as_ref()
             .map(|token| token.value.clone())
             .ok_or_else(|| "no access token after refresh".to_string())?;
-        Ok((token, entry.project_id.clone()))
+        Ok(VertexAccess { token, base_url })
     }
 
     /// Drop cached tokens so the next [`Self::access`] mints a new one.

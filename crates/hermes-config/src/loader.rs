@@ -658,6 +658,14 @@ fn bridge_managed_overlay_to_env(config: &GatewayConfig, overlay: &serde_json::V
         overlay.get("display"),
         display_config_env_bridge_pairs(),
     );
+    bridge_managed_section_to_env(
+        &config.vertex,
+        overlay.get("vertex"),
+        &[
+            ("project_id", "VERTEX_PROJECT_ID"),
+            ("region", "VERTEX_REGION"),
+        ],
+    );
 }
 
 fn bridge_managed_section_to_env<T: serde::Serialize>(

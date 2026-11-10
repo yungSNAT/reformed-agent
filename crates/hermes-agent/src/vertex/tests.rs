@@ -164,7 +164,7 @@ const CHAT_PATH: &str =
 #[test]
 fn build_base_url_global() {
     assert_eq!(
-        build_vertex_base_url("proj", "global"),
+        build_vertex_base_url("proj", "global").unwrap(),
         "https://aiplatform.googleapis.com/v1beta1/projects/proj/locations/global/endpoints/openapi"
     );
 }
@@ -172,9 +172,93 @@ fn build_base_url_global() {
 #[test]
 fn build_base_url_regional() {
     assert_eq!(
-        build_vertex_base_url("proj", "us-central1"),
+        build_vertex_base_url("proj", "us-central1").unwrap(),
         "https://us-central1-aiplatform.googleapis.com/v1beta1/projects/proj/locations/us-central1/endpoints/openapi"
     );
+}
+
+#[tokio::test]
+async fn invalid_routing_is_rejected_before_an_oauth_exchange() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let server = MockServer::start().await;
+    let key = write_json(
+        &dir.path().join("sa.json"),
+        &service_account_json(Some("proj"), &format!("{}/token", server.uri())),
+    );
+    for (project, region) in [
+        ("proj", "collector.example/"),
+        ("proj", "user@collector.example"),
+        ("proj", "us-central1."),
+        ("other/locations/global", "us-central1"),
+        ("..", "us-central1"),
+    ] {
+        let mut vars = isolated_env(dir.path());
+        vars.insert(
+            "VERTEX_CREDENTIALS_PATH".into(),
+            key.to_string_lossy().into(),
+        );
+        vars.insert("VERTEX_PROJECT_ID".into(), project.into());
+        vars.insert("VERTEX_REGION".into(), region.into());
+        let error = auth_error_text(auth_for(vars, &server).access().await);
+        assert!(error.contains("invalid Vertex "), "{error}");
+    }
+    assert!(token_requests(&server).await.is_empty());
+}
+
+#[tokio::test]
+async fn explicit_authorized_user_adc_uses_the_configured_google_exchange() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let server = MockServer::start().await;
+    mount_token(&server, "ya29.explicit-adc", 3600).await;
+    let file = write_json(
+        &dir.path().join("adc.json"),
+        &json!({
+            "type": "authorized_user",
+            "client_id": "fixture-client",
+            "client_secret": "fixture-secret",
+            "refresh_token": "fixture-refresh",
+        }),
+    );
+    let mut vars = isolated_env(dir.path());
+    vars.insert(
+        "GOOGLE_APPLICATION_CREDENTIALS".into(),
+        file.to_string_lossy().into(),
+    );
+    vars.insert("GOOGLE_CLOUD_PROJECT".into(), "explicit-project".into());
+    let auth = auth_for(vars, &server);
+    assert!(auth.has_credentials());
+    assert_eq!(
+        auth.access().await.expect("ADC access").token,
+        "ya29.explicit-adc"
+    );
+    assert_eq!(
+        token_requests(&server).await[0]["grant_type"],
+        "refresh_token"
+    );
+}
+
+#[tokio::test]
+async fn service_account_assertions_ignore_the_credential_files_token_uri() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let server = MockServer::start().await;
+    let untrusted = MockServer::start().await;
+    mount_token(&server, "ya29.trusted-exchange", 3600).await;
+    let file = write_json(
+        &dir.path().join("sa.json"),
+        &service_account_json(Some("proj"), &format!("{}/token", untrusted.uri())),
+    );
+    let mut vars = isolated_env(dir.path());
+    vars.insert(
+        "VERTEX_CREDENTIALS_PATH".into(),
+        file.to_string_lossy().into(),
+    );
+    let auth = auth_for(vars, &server);
+    assert_eq!(
+        auth.access().await.expect("service account access").token,
+        "ya29.trusted-exchange"
+    );
+    assert_eq!(token_requests(&server).await.len(), 1);
+    assert!(token_requests(&untrusted).await.is_empty());
 }
 
 #[tokio::test]
@@ -197,6 +281,10 @@ async fn adc_authorized_user_mints_token_with_default_region() {
     vars.insert("GOOGLE_CLOUD_PROJECT".into(), "adc-project".into());
     let auth = auth_for(vars, &server);
 
+    assert!(
+        auth.has_credentials(),
+        "a well-known ADC file is discoverable"
+    );
     let access = auth.access().await.expect("ADC access");
     assert_eq!(access.token, "ya29.adc-token");
     assert_eq!(
@@ -423,7 +511,11 @@ async fn metadata_server_supplies_token_and_project() {
     Mock::given(method("GET"))
         .and(path("/computeMetadata/v1/project/project-id"))
         .and(header("metadata-flavor", "Google"))
-        .respond_with(ResponseTemplate::new(200).set_body_string("gce-project"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("metadata-flavor", "Google")
+                .set_body_string("gce-project"),
+        )
         .mount(&server)
         .await;
     Mock::given(method("GET"))
@@ -435,11 +527,15 @@ async fn metadata_server_supplies_token_and_project() {
             "https://www.googleapis.com/auth/cloud-platform",
         ))
         .and(header("metadata-flavor", "Google"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({
-            "access_token": "ya29.gce-token",
-            "expires_in": 3599,
-            "token_type": "Bearer",
-        })))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("metadata-flavor", "Google")
+                .set_body_json(json!({
+                    "access_token": "ya29.gce-token",
+                    "expires_in": 3599,
+                    "token_type": "Bearer",
+                })),
+        )
         .mount(&server)
         .await;
     let address = server.address().to_string();

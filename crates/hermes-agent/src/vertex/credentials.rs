@@ -4,8 +4,8 @@
 //! 2.55.1). This module performs the documented protocols that library uses
 //! for the credential kinds the Vertex adapter can reach:
 //!
-//! - service-account key: an RS256-signed JWT exchanged at the key's
-//!   `token_uri` (RFC 7523 JWT bearer grant);
+//! - service-account key: an RS256-signed JWT exchanged at Google's OAuth2
+//!   token endpoint (RFC 7523 JWT bearer grant);
 //! - authorised-user ADC (`gcloud auth application-default login`): a
 //!   refresh-token grant at Google's OAuth2 token endpoint;
 //! - Compute Engine metadata server: the instance service account's token.
@@ -23,9 +23,7 @@ use serde_json::{json, Value};
 use super::{env_value, EnvLookup};
 
 pub(super) const CLOUD_PLATFORM_SCOPE: &str = "https://www.googleapis.com/auth/cloud-platform";
-/// google-auth's `_GOOGLE_OAUTH2_TOKEN_ENDPOINT`. It is the JWT audience for
-/// every service-account assertion and the token endpoint for authorised-user
-/// credentials (google-auth ignores any `token_uri` in those files).
+/// The assertion audience and exchange endpoint for Google OAuth2 credentials.
 pub(super) const GOOGLE_OAUTH2_TOKEN_ENDPOINT: &str = "https://oauth2.googleapis.com/token";
 
 const JWT_BEARER_GRANT_TYPE: &str = "urn:ietf:params:oauth:grant-type:jwt-bearer";
@@ -68,7 +66,6 @@ pub(super) enum GoogleCredentials {
 
 pub(super) struct ServiceAccountKey {
     client_email: String,
-    token_uri: String,
     private_key_id: Option<String>,
     signing_key: EncodingKey,
 }
@@ -84,6 +81,7 @@ impl GoogleCredentials {
     pub(super) async fn mint(
         &mut self,
         http: &Client,
+        metadata_http: &Client,
         google_token_endpoint: &str,
     ) -> Result<AccessToken, String> {
         match self {
@@ -91,7 +89,7 @@ impl GoogleCredentials {
                 let assertion = key.signed_assertion()?;
                 let body = post_token_form(
                     http,
-                    &key.token_uri,
+                    google_token_endpoint,
                     &[
                         ("grant_type", JWT_BEARER_GRANT_TYPE),
                         ("assertion", assertion.as_str()),
@@ -124,7 +122,7 @@ impl GoogleCredentials {
                 let url = format!(
                     "{root}instance/service-accounts/default/token?scopes={CLOUD_PLATFORM_SCOPE}"
                 );
-                let (status, text) = metadata_get(http, &url, *timeout).await?;
+                let (status, text) = metadata_get(metadata_http, &url, *timeout).await?;
                 if status != StatusCode::OK {
                     return Err(format!(
                         "the Compute Engine metadata server returned HTTP {} for the access token",
@@ -187,7 +185,6 @@ fn service_account_from_info(info: &Value) -> Result<ServiceAccountKey, String> 
     })?;
     Ok(ServiceAccountKey {
         client_email: string_field(info, "client_email").unwrap_or_default(),
-        token_uri: string_field(info, "token_uri").unwrap_or_default(),
         private_key_id: string_field(info, "private_key_id"),
         signing_key,
     })
@@ -254,16 +251,16 @@ pub(super) async fn application_default(
     env: &EnvLookup,
     http: &Client,
     project_known: bool,
+    explicit_file: Option<&Path>,
 ) -> Result<(GoogleCredentials, Option<String>), String> {
     let explicit_project =
         env_value(env, "GOOGLE_CLOUD_PROJECT").or_else(|| env_value(env, "GCLOUD_PROJECT"));
     let skip_gcloud = project_known || explicit_project.is_some();
     let sdk_path = cloud_sdk_adc_path(env);
 
-    let explicit_file = env("GOOGLE_APPLICATION_CREDENTIALS").filter(|v| !v.is_empty());
     let (credentials, project) = match explicit_file {
-        Some(file) if sdk_path.as_deref() != Some(Path::new(&file)) => {
-            load_adc_file(Path::new(&file), "GOOGLE_APPLICATION_CREDENTIALS")?
+        Some(file) if sdk_path.as_deref() != Some(file) => {
+            load_adc_file(file, "GOOGLE_APPLICATION_CREDENTIALS")?
         }
         _ => match sdk_path.filter(|path| path.is_file()) {
             Some(path) => {
@@ -290,6 +287,15 @@ pub(super) async fn application_default(
         },
     };
     Ok((credentials, explicit_project.or(project)))
+}
+
+pub(super) fn has_local_adc(env: &EnvLookup) -> bool {
+    cloud_sdk_adc_path(env).is_some_and(|path| path.is_file())
+        || (env("NO_GCE_CHECK").as_deref() != Some("true")
+            && (["GCE_METADATA_HOST", "GCE_METADATA_ROOT", "GCE_METADATA_IP"]
+                .into_iter()
+                .any(|key| env_value(env, key).is_some())
+                || gce_product_name()))
 }
 
 /// `_cloud_sdk.get_application_default_credentials_path`.
@@ -398,12 +404,13 @@ async fn metadata_server_available(env: &EnvLookup, http: &Client) -> Result<boo
             }
         }
     }
-    if cfg!(windows) {
-        return Ok(false);
-    }
-    Ok(std::fs::read_to_string(GCE_PRODUCT_NAME_FILE)
-        .map(|name| name.trim().starts_with("Google"))
-        .unwrap_or(false))
+    Ok(gce_product_name())
+}
+
+fn gce_product_name() -> bool {
+    cfg!(target_os = "linux")
+        && std::fs::read_to_string(GCE_PRODUCT_NAME_FILE)
+            .is_ok_and(|name| name.trim().starts_with("Google"))
 }
 
 async fn metadata_project_id(http: &Client, root: &str, timeout: Duration) -> Option<String> {
@@ -431,6 +438,18 @@ async fn metadata_get(
         let retry_reason = match result {
             Ok(response) if !RETRYABLE_STATUS_CODES.contains(&response.status().as_u16()) => {
                 let status = response.status();
+                if status == StatusCode::OK
+                    && response
+                        .headers()
+                        .get(METADATA_FLAVOR_HEADER)
+                        .and_then(|value| value.to_str().ok())
+                        != Some(METADATA_FLAVOR_VALUE)
+                {
+                    return Err(
+                        "the Compute Engine metadata response omitted Metadata-Flavor: Google"
+                            .to_string(),
+                    );
+                }
                 let text = response.text().await.map_err(|err| {
                     format!("could not read the Compute Engine metadata response: {err}")
                 })?;
