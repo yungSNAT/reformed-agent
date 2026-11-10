@@ -189,7 +189,7 @@ impl SubdirectoryHintTracker {
                     let final_content = if scanned.len() > MAX_HINT_CHARS {
                         format!(
                             "{}\n\n[...truncated {}: {} chars total]",
-                            &scanned[..MAX_HINT_CHARS],
+                            &scanned[..scanned.floor_char_boundary(MAX_HINT_CHARS)],
                             filename,
                             scanned.len()
                         )

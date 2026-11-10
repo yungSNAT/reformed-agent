@@ -132,7 +132,7 @@ impl TitleGenerator {
                     hermes_core::types::MessageRole::Tool => "Tool",
                 };
                 let truncated_content = if content.len() > self.max_message_chars {
-                    &content[..self.max_message_chars]
+                    &content[..content.floor_char_boundary(self.max_message_chars)]
                 } else {
                     content
                 };

@@ -13,8 +13,11 @@ pub fn truncate_result(content: &str, max_chars: usize) -> String {
     if content.len() <= max_chars {
         return content.to_string();
     }
-    let truncated = &content[..max_chars];
-    let removed = content.len() - max_chars;
+    // Limits are in bytes; cut on a character boundary, as a cut inside a
+    // multi-byte character panics.
+    let cut = content.floor_char_boundary(max_chars);
+    let truncated = &content[..cut];
+    let removed = content.len() - cut;
     format!("{truncated}\n\n[... truncated {removed} characters ...]")
 }
 
@@ -70,6 +73,31 @@ mod tests {
         assert!(truncated.len() < 300); // original + suffix
         assert!(truncated.contains("truncated"));
         assert!(truncated.starts_with(&"a".repeat(100)));
+    }
+
+    #[test]
+    fn truncate_result_cuts_multi_byte_text_on_a_character_boundary() {
+        // 'é' is 2 bytes, so a 5-byte limit falls inside the third one.
+        let content = "é".repeat(10);
+        let truncated = truncate_result(&content, 5);
+        assert!(truncated.starts_with("éé\n"), "{truncated}");
+        assert!(truncated.contains("[... truncated 16 characters ...]"));
+    }
+
+    #[test]
+    fn enforce_budget_handles_multi_byte_results() {
+        let mut results = vec![ToolResult {
+            tool_call_id: "1".into(),
+            content: "日本語".repeat(500),
+            is_error: false,
+        }];
+        let budget = BudgetConfig {
+            max_result_size_chars: 1_001,
+            max_aggregate_chars: 401,
+        };
+        enforce_budget(&mut results, &budget);
+        assert!(results[0].content.starts_with('日'));
+        assert!(results[0].content.contains("truncated"));
     }
 
     #[test]

@@ -38,15 +38,20 @@ pub fn split_long_message(text: &str, max_len: usize) -> Vec<String> {
             break;
         }
 
-        let window = &remaining[..max_len];
+        // Cut on a character boundary; take at least one character.
+        let mut hard_cut = remaining.floor_char_boundary(max_len);
+        if hard_cut == 0 {
+            hard_cut = remaining.ceil_char_boundary(1);
+        }
+        let window = &remaining[..hard_cut];
 
         // Try sentence boundary first
         let break_at = find_last_sentence_break(window)
             .or_else(|| window.rfind('\n'))
             .or_else(|| window.rfind(' '))
-            .unwrap_or(max_len);
+            .unwrap_or(hard_cut);
 
-        let break_at = if break_at == 0 { max_len } else { break_at };
+        let break_at = if break_at == 0 { hard_cut } else { break_at };
 
         chunks.push(remaining[..break_at].trim_end().to_string());
         remaining = remaining[break_at..].trim_start();
@@ -411,6 +416,14 @@ mod tests {
         let chunks = split_long_message(text, 35);
         assert!(chunks.len() >= 2);
         assert!(chunks[0].ends_with('.'));
+    }
+
+    #[test]
+    fn split_long_message_multi_byte_text_cuts_on_character_boundaries() {
+        let text = "日本語".repeat(50);
+        let chunks = split_long_message(&text, 100);
+        assert_eq!(chunks.concat(), text);
+        assert!(chunks.iter().all(|c| c.len() <= 100));
     }
 
     #[test]

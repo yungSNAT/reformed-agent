@@ -256,7 +256,7 @@ pub fn format_tool_result(result: &str, max_len: usize) -> String {
     if max_len == 0 || result.len() <= max_len {
         result.to_string()
     } else {
-        format!("{}... ({} chars)", &result[..max_len], result.len())
+        format!("{}... ({} chars)", &result[..result.floor_char_boundary(max_len)], result.len())
     }
 }
 

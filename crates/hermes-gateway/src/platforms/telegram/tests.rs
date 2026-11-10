@@ -85,6 +85,15 @@ fn split_message_long() {
     assert_eq!(chunks[1].len(), 904);
 }
 
+#[test]
+fn split_message_multi_byte_text_cuts_on_character_boundaries() {
+    // 3-byte characters with no newline: 4096 falls inside a character.
+    let text = "日本語".repeat(2000);
+    let chunks = split_message(&text, 4096);
+    assert_eq!(chunks.concat(), text);
+    assert!(chunks.iter().all(|c| c.len() <= 4096));
+}
+
 #[tokio::test]
 async fn edit_text_clips_overflow_preview_instead_of_erroring() {
     let server = MockServer::start().await;
