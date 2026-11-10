@@ -325,7 +325,7 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation_api_key: Option<String>,
 
-    /// Flush memories every N turns.
+    /// Flush memories every N turns; 0 turns the periodic flush off.
     #[serde(default = "default_memory_flush_interval")]
     pub memory_flush_interval: u32,
 
