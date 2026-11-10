@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -69,6 +70,16 @@ def test_docker_image_ships_the_binary_the_launcher_runs() -> None:
         "COPY --link --from=builder --chmod=0755 "
         "/app/target/release/hermes-agent-ultra /usr/local/bin/hermes-agent-ultra"
     ) in text
+
+
+def test_docker_image_builds_with_the_pinned_toolchain() -> None:
+    channel = re.search(
+        r'^channel = "([^"]+)"$', (REPO_ROOT / "rust-toolchain.toml").read_text(), re.M
+    )
+    assert channel is not None
+
+    # One compiler for local builds, CI and the image.
+    assert f"FROM rust:{channel.group(1)}-bookworm AS builder" in DOCKERFILE.read_text()
 
 
 def test_docker_docs_match_ultra_image_and_data_volume() -> None:
