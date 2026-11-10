@@ -241,6 +241,42 @@ pub fn is_always_blocked_url(url: &str) -> bool {
     is_always_blocked_url_with_resolver(url, resolve_host_ips)
 }
 
+/// Refuses a URL the agent must not fetch: a private, internal or metadata
+/// address, as `is_safe_url` judges it, or a host on
+/// `security.website_blocklist`. Fails closed when either check cannot run.
+///
+/// shortcut: the address is resolved here and again by the HTTP client, so a
+/// DNS answer that changes in between (rebinding) is not caught; pinning the
+/// resolved address on the request would close that.
+pub async fn ensure_url_fetch_allowed(url: &str) -> Result<(), ToolError> {
+    let owned = url.to_string();
+    tokio::task::spawn_blocking(move || check_url_fetch_allowed(&owned))
+        .await
+        .unwrap_or_else(|e| {
+            Err(ToolError::ExecutionFailed(format!(
+                "Blocked: URL check did not complete: {e}"
+            )))
+        })
+}
+
+fn check_url_fetch_allowed(url: &str) -> Result<(), ToolError> {
+    if !is_safe_url(url) {
+        return Err(ToolError::ExecutionFailed(format!(
+            "Blocked: '{url}' targets a private, internal or invalid address"
+        )));
+    }
+    match crate::website_policy::check_website_access(url, None) {
+        Ok(None) => Ok(()),
+        Ok(Some(block)) => Err(ToolError::ExecutionFailed(format!(
+            "Blocked: '{}' matches website blocklist rule '{}'",
+            block.url, block.rule
+        ))),
+        Err(e) => Err(ToolError::ExecutionFailed(format!(
+            "Blocked: website blocklist could not be read: {e}"
+        ))),
+    }
+}
+
 #[async_trait]
 impl ToolHandler for UrlSafetyHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {

@@ -421,10 +421,64 @@ impl SimpleExtractBackend {
             client: Client::builder()
                 .timeout(std::time::Duration::from_secs(30))
                 .user_agent("hermes-agent/1.0")
+                // Redirects are followed by `get_with_checked_redirects`, which
+                // checks every hop before connecting to it.
+                .redirect(reqwest::redirect::Policy::none())
                 .build()
-                .unwrap_or_else(|_| Client::new()),
+                .unwrap_or_else(|_| {
+                    Client::builder()
+                        .redirect(reqwest::redirect::Policy::none())
+                        .build()
+                        .expect("default reqwest client")
+                }),
         }
     }
+}
+
+const MAX_EXTRACT_REDIRECTS: usize = 10;
+
+/// GETs `url`, following up to `MAX_EXTRACT_REDIRECTS` redirects by hand and
+/// running `check` on the first URL and on every redirect target before
+/// connecting to it. `client` must not follow redirects itself.
+async fn get_with_checked_redirects<F, Fut>(
+    client: &Client,
+    url: &str,
+    check: F,
+) -> Result<reqwest::Response, ToolError>
+where
+    F: Fn(String) -> Fut,
+    Fut: std::future::Future<Output = Result<(), ToolError>>,
+{
+    let mut current = url.to_string();
+    for _ in 0..=MAX_EXTRACT_REDIRECTS {
+        check(current.clone()).await?;
+        let resp = client.get(&current).send().await.map_err(|e| {
+            ToolError::ExecutionFailed(format!("Failed to fetch '{}': {}", current, e))
+        })?;
+        if !resp.status().is_redirection() {
+            return Ok(resp);
+        }
+        let Some(location) = resp
+            .headers()
+            .get(reqwest::header::LOCATION)
+            .and_then(|v| v.to_str().ok())
+        else {
+            return Ok(resp);
+        };
+        current = resp
+            .url()
+            .join(location)
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!(
+                    "Invalid redirect from '{}' to '{}': {}",
+                    current, location, e
+                ))
+            })?
+            .to_string();
+    }
+    Err(ToolError::ExecutionFailed(format!(
+        "Too many redirects fetching '{url}'"
+    )))
 }
 
 impl Default for SimpleExtractBackend {
@@ -437,10 +491,10 @@ impl Default for SimpleExtractBackend {
 impl WebExtractBackend for SimpleExtractBackend {
     async fn extract(&self, url: &str, _include_links: bool) -> Result<String, ToolError> {
         validate_url_does_not_exfiltrate_secret(url)?;
-        let resp =
-            self.client.get(url).send().await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to fetch '{}': {}", url, e))
-            })?;
+        let resp = get_with_checked_redirects(&self.client, url, |hop| async move {
+            crate::tools::url_safety::ensure_url_fetch_allowed(&hop).await
+        })
+        .await?;
 
         let status = resp.status();
         if !status.is_success() {
@@ -1655,3 +1709,106 @@ fn collect_duckduckgo_related(value: Option<&Value>, rows: &mut Vec<Value>) {
 include!("web/parallel_xai_firecrawl.rs");
 
 include!("web/web_search_env_tests.rs");
+
+#[cfg(test)]
+mod redirect_tests {
+    use super::*;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    async fn redirecting_server() -> MockServer {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/target"))
+            .mount(&server)
+            .await;
+        server
+    }
+
+    #[tokio::test]
+    async fn simple_extract_client_leaves_redirects_to_the_checked_loop() {
+        let server = redirecting_server().await;
+        Mock::given(method("GET"))
+            .and(path("/target"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("followed"))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let backend = SimpleExtractBackend::new();
+        let resp = backend
+            .client
+            .get(format!("{}/start", server.uri()))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(resp.status().as_u16(), 302);
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_refuse_a_blocked_hop_before_connecting() {
+        let server = redirecting_server().await;
+        Mock::given(method("GET"))
+            .and(path("/target"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("secret"))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        let err = get_with_checked_redirects(
+            &client,
+            &format!("{}/start", server.uri()),
+            |hop| async move {
+                if hop.ends_with("/target") {
+                    Err(ToolError::ExecutionFailed(format!("Blocked: {hop}")))
+                } else {
+                    Ok(())
+                }
+            },
+        )
+        .await
+        .expect_err("the redirect target must be refused");
+        assert!(err.to_string().contains("Blocked"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_follow_allowed_hops() {
+        let server = redirecting_server().await;
+        Mock::given(method("GET"))
+            .and(path("/target"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("followed"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        let seen = std::sync::Mutex::new(Vec::new());
+        let resp = get_with_checked_redirects(&client, &format!("{}/start", server.uri()), |hop| {
+            seen.lock().unwrap().push(hop);
+            async { Ok(()) }
+        })
+        .await
+        .unwrap();
+        assert_eq!(resp.text().await.unwrap(), "followed");
+        let seen = seen.into_inner().unwrap();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert!(seen[1].ends_with("/target"), "{seen:?}");
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_stop_after_the_limit() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/loop"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", "/loop"))
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        let err =
+            get_with_checked_redirects(&client, &format!("{}/loop", server.uri()), |_| async {
+                Ok(())
+            })
+            .await
+            .expect_err("a redirect loop must end");
+        assert!(err.to_string().contains("Too many redirects"), "{err}");
+    }
+}

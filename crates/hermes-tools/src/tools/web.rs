@@ -136,6 +136,7 @@ impl ToolHandler for WebCrawlHandler {
             .unwrap_or("basic");
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
+        crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
         self.backend.crawl(url, instructions, depth, limit).await
     }
 
@@ -209,6 +210,7 @@ impl ToolHandler for WebExtractHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(true);
 
+        crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
         self.backend.extract(url, include_links).await
     }
 
@@ -321,10 +323,10 @@ mod tests {
     async fn test_web_extract_execute() {
         let handler = WebExtractHandler::new(Box::new(MockExtractBackend));
         let result = handler
-            .execute(json!({"url": "https://example.com", "include_links": false}))
+            .execute(json!({"url": "https://93.184.215.14/page", "include_links": false}))
             .await
             .unwrap();
-        assert!(result.contains("example.com"));
+        assert!(result.contains("93.184.215.14"));
         assert!(result.contains("links=false"));
     }
 
@@ -340,14 +342,14 @@ mod tests {
         let handler = WebCrawlHandler::new(Box::new(MockCrawlBackend));
         let result = handler
             .execute(json!({
-                "url": "https://example.com",
+                "url": "https://93.184.215.14/",
                 "instructions": "docs only",
                 "depth": "advanced",
                 "limit": 7
             }))
             .await
             .unwrap();
-        assert!(result.contains("https://example.com"));
+        assert!(result.contains("https://93.184.215.14/"));
         assert!(result.contains("depth=advanced"));
         assert!(result.contains("limit=7"));
     }
@@ -357,6 +359,50 @@ mod tests {
         let handler = WebCrawlHandler::new(Box::new(MockCrawlBackend));
         let result = handler.execute(json!({})).await;
         assert!(result.is_err());
+    }
+
+    struct RecordingBackend(std::sync::Arc<std::sync::atomic::AtomicBool>);
+    #[async_trait]
+    impl WebExtractBackend for RecordingBackend {
+        async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok("fetched".into())
+        }
+    }
+    #[async_trait]
+    impl WebCrawlBackend for RecordingBackend {
+        async fn crawl(
+            &self,
+            _url: &str,
+            _instructions: Option<&str>,
+            _depth: &str,
+            _limit: usize,
+        ) -> Result<String, ToolError> {
+            self.0.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok("crawled".into())
+        }
+    }
+
+    #[tokio::test]
+    async fn web_extract_and_crawl_refuse_metadata_address_before_any_backend() {
+        let metadata = "http://169.254.169.254/latest/meta-data/";
+        let called = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let extract = WebExtractHandler::new(Box::new(RecordingBackend(called.clone())));
+        let err = extract
+            .execute(json!({"url": metadata}))
+            .await
+            .expect_err("metadata address must be refused");
+        assert!(err.to_string().contains("Blocked"), "{err}");
+        let crawl = WebCrawlHandler::new(Box::new(RecordingBackend(called.clone())));
+        let err = crawl
+            .execute(json!({"url": metadata}))
+            .await
+            .expect_err("metadata address must be refused");
+        assert!(err.to_string().contains("Blocked"), "{err}");
+        assert!(
+            !called.load(std::sync::atomic::Ordering::SeqCst),
+            "no backend may run for a refused URL"
+        );
     }
 
     #[tokio::test]
