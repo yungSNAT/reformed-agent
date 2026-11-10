@@ -13,3 +13,4 @@ plugins/**/*.py linguist-vendored
 
 # Shell scripts keep LF endings on every checkout; bash rejects CRLF.
 *.sh text eol=lf
+scripts/git-hooks/* text eol=lf
