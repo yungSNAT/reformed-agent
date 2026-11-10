@@ -162,8 +162,7 @@ impl AgentLoop {
             ctx.get_messages()
                 .iter()
                 .enumerate()
-                .filter(|(_, m)| m.role == MessageRole::User)
-                .next_back()
+                .rfind(|(_, m)| m.role == MessageRole::User)
                 .map(|(i, _)| i)
         } else {
             None
@@ -187,8 +186,7 @@ impl AgentLoop {
         let first_user = ctx
             .get_messages()
             .iter()
-            .filter(|m| matches!(m.role, hermes_core::MessageRole::User))
-            .next_back()
+            .rfind(|m| matches!(m.role, hermes_core::MessageRole::User))
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
         let mem_ctx_raw = self.memory_prefetch(&first_user, session_id);

@@ -1294,6 +1294,7 @@ mod tests {
             parent_session_id: None,
             timeout: Duration::from_secs(5),
             background_delegation_callback: None,
+            code_index: None,
         });
         let child_config = AgentConfig {
             model: "custom:local-model".into(),

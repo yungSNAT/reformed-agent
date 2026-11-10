@@ -686,6 +686,7 @@ impl AgentLoop {
         (command, args)
     }
 
+    #[allow(clippy::too_many_arguments)] // Keep endpoint, auth precedence and route overrides explicit.
     pub(crate) fn build_runtime_provider(
         &self,
         provider: &str,
