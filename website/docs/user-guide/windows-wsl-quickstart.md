@@ -102,7 +102,7 @@ The `metadata` mount option above is important — without it, files on `/mnt/c/
 Once you have a WSL2 shell open:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
 source ~/.bashrc
 hermes-ultra
 ```

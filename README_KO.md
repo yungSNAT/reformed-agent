@@ -2,7 +2,7 @@
 
 **[English](./README.md)** | **[中文](./README_ZH.md)** | **[日本語](./README_JA.md)** | **[한국어](./README_KO.md)**
 
-> 이 번역은 Reformed Agent 포크 이전에 작성되었으며 갱신되지 않았습니다. 최신 내용은 [영문 README](./README.md)를 참고하세요.
+> 이 번역은 Reformed Agent 포크 이전에 작성되었으며 갱신되지 않았습니다. 최신 내용은 [영문 README](./README.md)를 참고하세요. 아래 설치 명령은 다른 프로젝트의 것이며 Reformed Agent를 설치하지 않습니다.
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent)의 프로덕션 그레이드 Rust 재작성 — [Nous Research](https://nousresearch.com)의 자기 진화형 AI 에이전트.
 

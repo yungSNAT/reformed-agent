@@ -2,7 +2,7 @@
 set -euo pipefail
 
 VERSION="${1:-v0.13.0}"
-REPO="https://github.com/sheawinkler/hermes-agent-ultra"
+REPO="https://github.com/yungSNAT/reformed-agent"
 FORMULA_DIR="Formula"
 FORMULA_FILE="${FORMULA_DIR}/hermes-agent-ultra.rb"
 
@@ -19,7 +19,7 @@ mkdir -p "${FORMULA_DIR}"
 
 cat > "${FORMULA_FILE}" <<EOF
 class HermesAgentUltra < Formula
-  desc "Hermes Agent Ultra autonomous AI agent"
+  desc "Reformed Agent autonomous AI agent"
   homepage "${REPO}"
   version "${VERSION#v}"
   license "MIT"

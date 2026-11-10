@@ -13,7 +13,7 @@ used on Linux and macOS; on Termux it installs binaries into `$PREFIX/bin`.
 ## One-line Installer
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
 ```
 
 The installer detects Termux and:
@@ -38,8 +38,8 @@ Use this when you want to test a branch or debug release-asset issues.
 pkg update
 pkg install -y git rust clang make pkg-config openssl ripgrep ffmpeg
 
-git clone https://github.com/sheawinkler/hermes-agent-ultra.git
-cd hermes-agent-ultra
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
 cargo install --path crates/hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
 

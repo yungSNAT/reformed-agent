@@ -1,6 +1,6 @@
 # Contributing to Reformed Agent
 
-Reformed Agent is a fork of Hermes Agent Ultra, a Rust-first parity and reliability fork of `NousResearch/hermes-agent`. Contributions should preserve that contract: port upstream behavior intentionally, keep Ultra-only and Reformed-only extensions explicit, and avoid placeholder runtime paths.
+Reformed Agent is a fork of Hermes Agent Ultra, a Rust-first parity and reliability fork of `NousResearch/hermes-agent`. Contributions should preserve that contract: port upstream behaviour intentionally, keep Ultra-only and Reformed-only extensions explicit, and avoid placeholder runtime paths.
 
 ## Getting Started
 
@@ -47,7 +47,8 @@ cargo fmt --all --check
 bash scripts/clippy-warning-gate.sh --check
 bash scripts/check-runtime-placeholders.sh
 cargo test --workspace
-git fetch --no-tags --depth=1 upstream "+$(cat docs/parity/upstream-reference.txt):refs/remotes/upstream/parity-reference"
+git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/NousResearch/hermes-agent.git
+git fetch --no-tags --depth=1 upstream "+$(tr -d '[:space:]' < docs/parity/upstream-reference.txt):refs/remotes/upstream/parity-reference"
 python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref upstream/parity-reference
 python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
 ```

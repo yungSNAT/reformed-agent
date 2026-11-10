@@ -2,7 +2,7 @@
 
 **[English](./README.md)** | **[中文](./README_ZH.md)** | **[日本語](./README_JA.md)** | **[한국어](./README_KO.md)**
 
-> この翻訳は Reformed Agent フォークより前のもので、更新されていません。最新の情報は[英語版 README](./README.md) をご覧ください。
+> この翻訳は Reformed Agent フォークより前のもので、更新されていません。最新の情報は[英語版 README](./README.md) をご覧ください。以下のインストールコマンドは別のプロジェクトのもので、Reformed Agent はインストールされません。
 
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) のプロダクショングレード Rust 書き直し — [Nous Research](https://nousresearch.com) による自己進化型 AI エージェント。
 

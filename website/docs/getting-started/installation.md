@@ -13,7 +13,7 @@ Get Hermes Agent Ultra up and running in under two minutes with the one-line ins
 ### Linux / macOS / WSL2 / Android (Termux)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
 ```
 
 That installs `hermes-agent-ultra` plus the shorter `hermes-ultra` command.
@@ -30,7 +30,7 @@ hermes-ultra setup
 Or opt into setup during install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash -s -- --setup
+curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash -s -- --setup
 ```
 
 :::tip Windows users
@@ -110,7 +110,7 @@ If you want to clone the repo and install from source — for contributing,
 running from a specific branch, or auditing the full build — use Cargo:
 
 ```bash
-cargo install --git https://github.com/sheawinkler/hermes-agent-ultra hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
 
 For contributor workflows, see the [Development Setup](../developer-guide/contributing.md#development-setup) section in the Contributing guide.

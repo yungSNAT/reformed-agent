@@ -1,4 +1,4 @@
-"""Contracts for Hermes Agent Ultra install-facing documentation."""
+"""Contracts for install-facing documentation: it installs this fork, under Ultra's command names."""
 
 from __future__ import annotations
 
@@ -15,12 +15,17 @@ DOC_ROOTS = [
 ]
 PYTHON_LIBRARY_GUIDE = REPO_ROOT / "website" / "docs" / "guides" / "python-library.md"
 
+# Installers and clones of the projects this fork descends from: they install
+# a different program under the same command names.
 UPSTREAM_INSTALL_PATTERNS = (
     "raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh",
     "raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.ps1",
+    "raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/",
+    "github.com/sheawinkler/hermes-agent-ultra hermes-cli",
+    "github.com/sheawinkler/hermes-agent-ultra.git",
 )
-ULTRA_INSTALL_URL = (
-    "https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh"
+FORK_INSTALL_URL = (
+    "https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh"
 )
 
 PIP_APP_INSTALL_RE = re.compile(
@@ -71,9 +76,9 @@ def test_install_docs_use_ultra_commands_and_coexistence_contract() -> None:
     quickstart = (REPO_ROOT / "website" / "docs" / "getting-started" / "quickstart.md").read_text()
     llms_generator = (REPO_ROOT / "website" / "scripts" / "generate-llms-txt.py").read_text()
 
-    assert ULTRA_INSTALL_URL in install
-    assert ULTRA_INSTALL_URL in quickstart
+    assert FORK_INSTALL_URL in install
+    assert FORK_INSTALL_URL in quickstart
     assert "hermes-ultra setup" in install
     assert "hermes-ultra model" in quickstart
     assert "INSTALL_LEGACY_ALIAS=true" in install
-    assert "sheawinkler/hermes-agent-ultra" in llms_generator
+    assert "yungSNAT/reformed-agent" in llms_generator
