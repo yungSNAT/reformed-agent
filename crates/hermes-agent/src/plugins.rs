@@ -207,10 +207,12 @@ pub trait ContextEngine: Send + Sync {
 // PluginContext
 // ---------------------------------------------------------------------------
 
+type HookCallback = Arc<dyn Fn(&Value) -> HookResult + Send + Sync>;
+
 /// Plugin context provided to plugins during registration.
 /// Plugins use this to register hooks, tools, and CLI commands.
 pub struct PluginContext {
-    hooks: HashMap<HookType, Vec<Arc<dyn Fn(&Value) -> HookResult + Send + Sync>>>,
+    hooks: HashMap<HookType, Vec<HookCallback>>,
     tool_request_middleware: Vec<ToolRequestMiddleware>,
     tool_execution_middleware: Vec<ToolExecutionMiddleware>,
     tools: Vec<(ToolSchema, Arc<dyn ToolHandler>)>,

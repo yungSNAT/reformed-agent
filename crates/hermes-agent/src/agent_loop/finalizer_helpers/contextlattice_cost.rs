@@ -134,15 +134,6 @@ fn summarize_background_review_result(messages: &[Message]) -> Option<String> {
             if !label.is_empty() {
                 actions.push(format!("{label} updated"));
             }
-        } else if message.contains("Entry added") {
-            let label = match target.as_str() {
-                "memory" => "Memory",
-                "user" => "User profile",
-                _ => target.as_str(),
-            };
-            if !label.is_empty() {
-                actions.push(format!("{label} updated"));
-            }
         } else if lower.contains("removed") || lower.contains("replaced") {
             let label = match target.as_str() {
                 "memory" => "Memory",

@@ -430,8 +430,10 @@ fn test_route_learning_updates_after_outcomes() {
     }
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut cfg = AgentConfig::default();
-    cfg.hermes_home = Some(tmp.path().to_string_lossy().to_string());
+    let cfg = AgentConfig {
+        hermes_home: Some(tmp.path().to_string_lossy().to_string()),
+        ..AgentConfig::default()
+    };
     let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
     agent.update_route_learning(None, Some("openai:gpt-4o"), 2100, false);
     agent.update_route_learning(None, Some("openai:gpt-4o"), 900, true);
@@ -481,8 +483,10 @@ fn test_route_learning_persists_across_agent_restarts() {
     }
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut cfg = AgentConfig::default();
-    cfg.hermes_home = Some(tmp.path().to_string_lossy().to_string());
+    let cfg = AgentConfig {
+        hermes_home: Some(tmp.path().to_string_lossy().to_string()),
+        ..AgentConfig::default()
+    };
 
     let agent = AgentLoop::new(
         cfg.clone(),
@@ -544,8 +548,10 @@ fn test_route_learning_malformed_file_is_safe_fallback() {
     }
 
     let tmp = tempfile::tempdir().expect("tempdir");
-    let mut cfg = AgentConfig::default();
-    cfg.hermes_home = Some(tmp.path().to_string_lossy().to_string());
+    let cfg = AgentConfig {
+        hermes_home: Some(tmp.path().to_string_lossy().to_string()),
+        ..AgentConfig::default()
+    };
     let state_path = route_learning_state_path(&cfg);
     std::fs::create_dir_all(
         state_path

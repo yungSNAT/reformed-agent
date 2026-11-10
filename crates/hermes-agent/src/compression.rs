@@ -791,8 +791,8 @@ Write only the summary body. Do not include any preamble or prefix."
 
         // Phase 4: assemble the compressed message list.
         let mut compressed: Vec<Message> = Vec::with_capacity(messages.len());
-        for i in 0..compress_start {
-            let mut msg = messages[i].clone();
+        for (i, msg) in messages.iter().enumerate().take(compress_start) {
+            let mut msg = msg.clone();
             if i == 0 && msg.role == MessageRole::System && self.compression_count == 0 {
                 let extra = "\n\n[Note: Some earlier conversation turns have been compacted into a handoff summary to preserve context space. The current session state may still reflect earlier work, so build on that summary and state rather than re-doing work.]";
                 let new_content = msg.content.unwrap_or_default() + extra;
@@ -861,8 +861,8 @@ Write only the summary body. Do not include any preamble or prefix."
             });
         }
 
-        for i in compress_end..n_messages {
-            let mut msg = messages[i].clone();
+        for (i, msg) in messages.iter().enumerate().skip(compress_end) {
+            let mut msg = msg.clone();
             if merge_summary_into_tail && i == compress_end {
                 let original = msg.content.unwrap_or_default();
                 msg.content = Some(format!("{summary}\n\n{original}"));

@@ -289,6 +289,12 @@ pub struct ContextLatticeMemoryPlugin {
     pressure_cache: Arc<Mutex<Option<QueuePressureSnapshot>>>,
 }
 
+impl Default for ContextLatticeMemoryPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ContextLatticeMemoryPlugin {
     pub fn new() -> Self {
         Self {

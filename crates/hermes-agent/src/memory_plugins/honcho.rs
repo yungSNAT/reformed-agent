@@ -802,6 +802,12 @@ pub struct HonchoMemoryPlugin {
     recall_mode: Mutex<String>,
 }
 
+impl Default for HonchoMemoryPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl HonchoMemoryPlugin {
     pub fn new() -> Self {
         Self {
@@ -1088,7 +1094,7 @@ impl MemoryProviderPlugin for HonchoMemoryPlugin {
         let session_id = self.session_key.lock().unwrap().clone();
         let out = Arc::clone(&self.prefetch_result);
         let query = trimmed.to_string();
-        let max_tokens = config.context_tokens.unwrap_or(800).min(2000).max(64);
+        let max_tokens = config.context_tokens.unwrap_or(800).clamp(64, 2000);
         let peer = Self::resolve_user_peer_id(&config, &session_id, &runtime_user_ids_from_env());
         std::thread::spawn(move || {
             match Self::context_query(&config, &session_id, &query, max_tokens, &peer) {
@@ -1239,7 +1245,7 @@ impl MemoryProviderPlugin for HonchoMemoryPlugin {
                 if query_text.is_empty() {
                     return json!({"error": "Missing required parameter: query"}).to_string();
                 }
-                let max_tokens = config.context_tokens.unwrap_or(800).min(2000).max(64);
+                let max_tokens = config.context_tokens.unwrap_or(800).clamp(64, 2000);
                 match Self::context_query(&config, &session_id, query_text, max_tokens, &peer) {
                     Ok(v) => {
                         let text = Self::extract_text_result(&v).unwrap_or_default();

@@ -292,9 +292,7 @@ impl AgentLoop {
         if self.config.skip_memory {
             return None;
         }
-        let Some(ref mm) = self.memory_manager else {
-            return None;
-        };
+        let mm = self.memory_manager.as_ref()?;
         let Ok(mm) = mm.lock() else {
             return None;
         };
@@ -349,9 +347,7 @@ impl AgentLoop {
     }
 
     fn code_index_repo_map_block(&self) -> Option<String> {
-        let Some(ref idx) = self.code_index else {
-            return None;
-        };
+        let idx = self.code_index.as_ref()?;
         let Ok(mut idx) = idx.lock() else {
             return None;
         };
@@ -370,9 +366,7 @@ impl AgentLoop {
         if !self.lsp_context.enabled {
             return None;
         }
-        let Some(ref idx) = self.code_index else {
-            return None;
-        };
+        let idx = self.code_index.as_ref()?;
         let Ok(mut idx) = idx.lock() else {
             return None;
         };

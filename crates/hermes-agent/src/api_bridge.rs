@@ -307,6 +307,9 @@ impl CodexProvider {
             .collect()
     }
 
+    // The arguments are the provider chat methods' request fields plus the
+    // stream flag; grouping them would only repackage the trait's arguments.
+    #[allow(clippy::too_many_arguments)]
     fn build_body(
         &self,
         messages: &[Message],
@@ -336,14 +339,12 @@ impl CodexProvider {
         if !tools.is_empty() {
             body["tools"] = serde_json::json!(Self::convert_tools(tools));
         }
-        if let Some(eb) = extra_body {
-            if let Value::Object(map) = eb {
-                for (k, v) in map {
-                    if !Self::should_forward_extra_body_key(k) {
-                        continue;
-                    }
-                    body[k] = v.clone();
+        if let Some(Value::Object(map)) = extra_body {
+            for (k, v) in map {
+                if !Self::should_forward_extra_body_key(k) {
+                    continue;
                 }
+                body[k] = v.clone();
             }
         }
         if self.uses_chatgpt_codex_backend() {
@@ -403,15 +404,15 @@ impl CodexProvider {
             }
         }
 
-        let usage = json.get("usage").and_then(|u| {
+        let usage = json.get("usage").map(|u| {
             let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
             let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            Some(UsageStats {
+            UsageStats {
                 prompt_tokens: input,
                 completion_tokens: output,
                 total_tokens: input + output,
                 estimated_cost: None,
-            })
+            }
         });
 
         let model = json
@@ -717,15 +718,15 @@ impl LlmProvider for CodexProvider {
                             });
                         }
                         "response.completed" => {
-                            let usage = json.get("response").and_then(|r| r.get("usage")).and_then(|u| {
+                            let usage = json.get("response").and_then(|r| r.get("usage")).map(|u| {
                                 let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
                                 let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                Some(UsageStats {
+                                UsageStats {
                                     prompt_tokens: input,
                                     completion_tokens: output,
                                     total_tokens: input + output,
                                     estimated_cost: None,
-                                })
+                                }
                             });
                             yield Ok(StreamChunk {
                                 delta: None,

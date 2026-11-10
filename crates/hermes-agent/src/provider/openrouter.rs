@@ -440,16 +440,14 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
         .map(|s| s.to_string());
 
     // Usage may appear in the final chunk
-    let usage = json.get("usage").and_then(|u| {
-        Some(UsageStats {
-            prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            completion_tokens: u
-                .get("completion_tokens")
-                .and_then(|v| v.as_u64())
-                .unwrap_or(0),
-            total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
-            estimated_cost: None,
-        })
+    let usage = json.get("usage").map(|u| UsageStats {
+        prompt_tokens: u.get("prompt_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        completion_tokens: u
+            .get("completion_tokens")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0),
+        total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
+        estimated_cost: None,
     });
 
     Some(StreamChunk {
@@ -518,9 +516,9 @@ fn parse_openai_response(json: &Value) -> Result<LlmResponse, AgentError> {
     // Parse usage
     let usage = json.get("usage").and_then(|u| {
         Some(UsageStats {
-            prompt_tokens: u.get("prompt_tokens")?.as_u64()? as u64,
-            completion_tokens: u.get("completion_tokens")?.as_u64()? as u64,
-            total_tokens: u.get("total_tokens")?.as_u64()? as u64,
+            prompt_tokens: u.get("prompt_tokens")?.as_u64()?,
+            completion_tokens: u.get("completion_tokens")?.as_u64()?,
+            total_tokens: u.get("total_tokens")?.as_u64()?,
             estimated_cost: None,
         })
     });

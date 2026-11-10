@@ -253,6 +253,12 @@ pub struct SupermemoryMemoryPlugin {
     prefetch_result: Arc<Mutex<String>>,
 }
 
+impl Default for SupermemoryMemoryPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl SupermemoryMemoryPlugin {
     pub fn new() -> Self {
         Self {

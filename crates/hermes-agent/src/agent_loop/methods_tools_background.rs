@@ -675,6 +675,9 @@ impl AgentLoop {
     }
 
     /// Execute a batch of tool calls in parallel using a JoinSet.
+    // Each argument is separate per-turn state from the run loops; a one-use
+    // parameter struct would add a type without making the calls clearer.
+    #[allow(clippy::too_many_arguments)]
     async fn execute_tool_calls(
         &self,
         tool_calls: &[ToolCall],
@@ -800,9 +803,6 @@ impl AgentLoop {
             let raw_args = tc.function.arguments.clone();
             let registry = self.tool_registry.clone();
             let plugin_manager = self.plugin_manager.clone();
-            let max_delegate_depth = max_delegate_depth;
-            let current_delegate_depth = current_delegate_depth;
-            let parent_budget_remaining_usd = parent_budget_remaining_usd;
 
             join_set.spawn(async move {
                 let params: Value = match serde_json::from_str(&raw_args) {

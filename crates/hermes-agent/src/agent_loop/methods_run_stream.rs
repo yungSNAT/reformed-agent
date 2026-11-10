@@ -163,7 +163,7 @@ impl AgentLoop {
                 .iter()
                 .enumerate()
                 .filter(|(_, m)| m.role == MessageRole::User)
-                .last()
+                .next_back()
                 .map(|(i, _)| i)
         } else {
             None
@@ -188,7 +188,7 @@ impl AgentLoop {
             .get_messages()
             .iter()
             .filter(|m| matches!(m.role, hermes_core::MessageRole::User))
-            .last()
+            .next_back()
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
         let mem_ctx_raw = self.memory_prefetch(&first_user, session_id);
@@ -310,7 +310,7 @@ impl AgentLoop {
             self.memory_on_turn_start(total_turns, "");
 
             if self.config.checkpoint_interval_turns > 0
-                && (total_turns - 1) % self.config.checkpoint_interval_turns == 0
+                && (total_turns - 1).is_multiple_of(self.config.checkpoint_interval_turns)
             {
                 last_checkpoint_messages = Some(ctx.get_messages().to_vec());
             }
@@ -515,7 +515,7 @@ impl AgentLoop {
                     .message
                     .tool_calls
                     .as_ref()
-                    .map_or(false, |tc| !tc.is_empty());
+                    .is_some_and(|tc| !tc.is_empty());
                 if has_tools {
                     break r;
                 }
@@ -620,7 +620,7 @@ impl AgentLoop {
             let post_ctx = serde_json::json!({
                 "turn": total_turns,
                 "api_time_ms": _api_elapsed_ms,
-                "has_tool_calls": response.message.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()),
+                "has_tool_calls": response.message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()),
             });
             let post_results = self.invoke_hook(HookType::PostLlmCall, &post_ctx);
             self.inject_hook_context(&post_results, &mut ctx);
@@ -702,7 +702,7 @@ impl AgentLoop {
             if assistant_msg
                 .tool_calls
                 .as_ref()
-                .map_or(false, |v| !v.is_empty())
+                .is_some_and(|v| !v.is_empty())
                 && Self::assistant_visible_text_after_think_blocks(&assistant_msg)
             {
                 last_content_with_tools = assistant_msg
@@ -716,7 +716,7 @@ impl AgentLoop {
                 && assistant_msg
                     .tool_calls
                     .as_ref()
-                    .map_or(false, |calls| !calls.is_empty())
+                    .is_some_and(|calls| !calls.is_empty())
                 && truncated_tool_call_retries < self.config.truncated_tool_call_max_retries
             {
                 truncated_tool_call_retries = truncated_tool_call_retries.saturating_add(1);

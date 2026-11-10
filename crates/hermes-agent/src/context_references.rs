@@ -668,10 +668,7 @@ fn strip_trailing_punctuation(mut value: String) -> String {
     {
         value.pop();
     }
-    loop {
-        let Some(last) = value.chars().last() else {
-            break;
-        };
+    while let Some(last) = value.chars().last() {
         let opener = match last {
             ')' => '(',
             ']' => '[',

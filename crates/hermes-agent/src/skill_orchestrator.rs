@@ -194,11 +194,7 @@ pub struct SkillOrchestrator {
 }
 
 fn record_security_skip(skips: &mut HashMap<String, Vec<String>>, skill_name: &str, reason: &str) {
-    let reason = reason
-        .replace('\n', " ")
-        .replace('\r', " ")
-        .trim()
-        .to_string();
+    let reason = reason.replace(['\n', '\r'], " ").trim().to_string();
     skips
         .entry(reason)
         .or_default()

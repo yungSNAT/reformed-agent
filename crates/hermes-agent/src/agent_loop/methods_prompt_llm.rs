@@ -41,7 +41,7 @@ impl AgentLoop {
         messages
     }
 
-    fn apply_prompt_cache_markers(&self, messages: &mut Vec<Message>) {
+    fn apply_prompt_cache_markers(&self, messages: &mut [Message]) {
         use hermes_core::types::{CacheControl, CacheType, MessageRole};
         if messages.is_empty() {
             return;
@@ -484,13 +484,12 @@ impl AgentLoop {
         if !body.is_object() {
             return self.config.extra_body.clone();
         }
-        if !matches!(api_mode, ApiMode::CodexResponses) {
-            if body.get("strict_tool_calls").is_none()
-                && body.get("strict_api").is_none()
-                && body.get("provider_strict").is_none()
-            {
-                body["strict_api"] = Value::Bool(true);
-            }
+        if !matches!(api_mode, ApiMode::CodexResponses)
+            && body.get("strict_tool_calls").is_none()
+            && body.get("strict_api").is_none()
+            && body.get("provider_strict").is_none()
+        {
+            body["strict_api"] = Value::Bool(true);
         }
         Some(body)
     }

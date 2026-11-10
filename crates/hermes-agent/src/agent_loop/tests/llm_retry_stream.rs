@@ -51,8 +51,10 @@
         }
 
         let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:primary-model".to_string();
+        let mut cfg = AgentConfig {
+            model: "nous:primary-model".to_string(),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = 0;
         cfg.retry.fallback_model = Some("openrouter:backup-model".to_string());
 
@@ -108,7 +110,7 @@
             }
             let remaining = self
                 .primary_calls_before_success
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
                     |value| value.checked_sub(1),
@@ -147,9 +149,11 @@
         primary_failures_before_success: usize,
     ) -> Vec<String> {
         let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "primary-model".to_string();
-        cfg.provider = Some(provider.to_string());
+        let mut cfg = AgentConfig {
+            model: "primary-model".to_string(),
+            provider: Some(provider.to_string()),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = 3;
         cfg.retry.base_delay_ms = 0;
         cfg.retry.max_delay_ms = 0;
@@ -431,8 +435,10 @@
     }
 
     async fn run_chaos_harness_scenario(scenario: &ChaosHarnessScenario) -> ChaosHarnessRun {
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:primary-model".to_string();
+        let mut cfg = AgentConfig {
+            model: "nous:primary-model".to_string(),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = scenario.max_retries;
         cfg.retry.base_delay_ms = 0;
         cfg.retry.max_delay_ms = 0;
@@ -616,8 +622,10 @@
         }
 
         let seen_model = Arc::new(std::sync::Mutex::new(None::<String>));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:moonshotai/kimi-k2.6".to_string();
+        let cfg = AgentConfig {
+            model: "nous:moonshotai/kimi-k2.6".to_string(),
+            ..AgentConfig::default()
+        };
 
         let provider = Arc::new(RecordingProvider {
             seen_model: seen_model.clone(),

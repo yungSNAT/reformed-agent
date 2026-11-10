@@ -2,7 +2,7 @@
 //!
 //! - [`QwenProvider`]: Alibaba Tongyi Qianwen (通义千问)
 //! - [`KimiProvider`]: Moonshot AI (月之暗面)
-//! - [`MiniMaxProvider`]: MiniMax
+//! - [`MiniMaxProvider`]: MiniMax AI
 //! - [`NousProvider`]: Nous Research
 //! - [`CopilotProvider`]: GitHub Copilot ACP
 
