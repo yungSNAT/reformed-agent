@@ -1228,8 +1228,9 @@ mod tests {
             .contains("definitely-missing-provider"));
     }
 
-    #[tokio::test]
-    async fn delegated_child_provider_does_not_carry_parent_credential_pool() {
+    /// Loopback OpenAI-compatible endpoint that answers one request and hands
+    /// the raw request (headers and body) back through the channel.
+    fn loopback_chat_fixture() -> (String, std::sync::mpsc::Receiver<String>) {
         use std::io::{Read, Write};
 
         let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback fixture");
@@ -1275,6 +1276,12 @@ mod tests {
             let _ = request_tx.send(String::from_utf8_lossy(&request).to_string());
         });
 
+        (base_url, request_rx)
+    }
+
+    #[tokio::test]
+    async fn delegated_child_provider_does_not_carry_parent_credential_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
         let tmp = tempfile::tempdir().unwrap();
         let parent_config = AgentConfig {
             model: "openai:gpt-4o".into(),
@@ -1316,6 +1323,89 @@ mod tests {
                 .to_ascii_lowercase()
                 .contains("authorization: bearer delegation-key"),
             "the child must send the delegation key, not the parent's pool: {request}"
+        );
+    }
+
+    /// Orchestrator whose parent runs on `openai:gpt-4o` with a one-key pool.
+    fn openai_parent_orchestrator(
+        parent_config: AgentConfig,
+        hermes_home: &std::path::Path,
+    ) -> SubAgentOrchestrator {
+        SubAgentOrchestrator::new(SubAgentOrchestratorConfig {
+            parent_config,
+            tool_registry: Arc::new(ToolRegistry::new()),
+            llm_provider: Arc::new(NoopProvider),
+            parent_credential_pool: Some(Arc::new(CredentialPool::single("parent-pool-key"))),
+            parent_interrupt: InterruptController::new(),
+            hermes_home: hermes_home.to_path_buf(),
+            parent_session_id: None,
+            timeout: Duration::from_secs(5),
+            background_delegation_callback: None,
+            code_index: None,
+        })
+    }
+
+    async fn child_request(
+        orch: &SubAgentOrchestrator,
+        child_config: &AgentConfig,
+        rx: std::sync::mpsc::Receiver<String>,
+    ) -> String {
+        let provider = orch
+            .child_llm_provider(child_config)
+            .unwrap_or_else(|_| panic!("child provider builds"));
+        let _ = provider
+            .chat_completion(&[Message::user("hi")], &[], None, None, None, None)
+            .await;
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("the child must address the fixture endpoint")
+            .to_ascii_lowercase()
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_with_own_endpoint_and_key_skips_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("openai".into()),
+            delegation_base_url: Some(base_url),
+            delegation_api_key: Some("delegation-key".into()),
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer delegation-key"),
+            "a child with its own endpoint and key must not send the parent's pool: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_without_override_shares_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut runtime_providers = std::collections::HashMap::new();
+        runtime_providers.insert(
+            "openai".to_string(),
+            crate::agent_loop::RuntimeProviderConfig {
+                api_key: Some("parent-config-key".to_string()),
+                base_url: Some(base_url),
+                ..Default::default()
+            },
+        );
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("openai".into()),
+            runtime_providers,
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer parent-pool-key"),
+            "a plain same-provider child shares the parent's pool: {request}"
         );
     }
 }

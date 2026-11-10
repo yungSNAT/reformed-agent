@@ -888,7 +888,9 @@ impl AgentLoop {
             None,
             explicit_api_key,
             api_mode.as_ref(),
-            self.primary_credential_pool.as_ref(),
+            self.primary_credential_pool
+                .as_ref()
+                .filter(|_| !Self::is_runtime_override(route_base_url, explicit_api_key)),
         )
     }
 

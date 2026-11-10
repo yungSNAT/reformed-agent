@@ -175,6 +175,16 @@ impl AgentLoop {
         }
     }
 
+    /// A route or child that brings its own base URL or key is a runtime
+    /// override (Python's openrouter pool skip): the primary's credential pool
+    /// must not replace that key or go to that endpoint.
+    fn is_runtime_override(base_url: Option<&str>, api_key: Option<&str>) -> bool {
+        [base_url, api_key]
+            .into_iter()
+            .flatten()
+            .any(|s| !s.trim().is_empty())
+    }
+
     fn try_build_cheap_runtime(
         &self,
         cheap: &CheapModelRouteConfig,
@@ -196,15 +206,8 @@ impl AgentLoop {
             .and_then(detect_api_mode_for_url)
             .unwrap_or(ApiMode::ChatCompletions);
 
-        let has_runtime_override = explicit_api_key
-            .as_ref()
-            .map(|s| !s.trim().is_empty())
-            .is_some()
-            || cheap
-                .base_url
-                .as_ref()
-                .map(|s| !s.trim().is_empty())
-                .unwrap_or(false);
+        let has_runtime_override =
+            Self::is_runtime_override(cheap.base_url.as_deref(), explicit_api_key.as_deref());
         let pool_ref = if has_runtime_override {
             None
         } else {
