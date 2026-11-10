@@ -54,15 +54,9 @@
  #[cfg(test)]
 --- a/src/protocol/frame/mod.rs
 +++ b/src/protocol/frame/mod.rs
-@@ -165,7 +165,7 @@
-         unmask: bool,
-         accept_unmasked: bool,
-     ) -> Result<Option<Frame>> {
+@@ -168 +168 @@
 -        let max_size = max_size.unwrap_or_else(usize::max_value);
 +        let max_size = max_size.unwrap_or(usize::MAX);
- 
-         let mut payload = loop {
-             if self.header.is_none() {
 --- a/src/protocol/message.rs
 +++ b/src/protocol/message.rs
 @@ -114,7 +114,7 @@
