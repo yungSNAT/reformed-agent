@@ -156,7 +156,7 @@ pub async fn run_oneshot_with_client(
     }
     messages.push(Message::user(request.user_input));
 
-    let mut aux_request = AuxiliaryRequest::new(AuxiliaryTask::from_str(&request.task), messages)
+    let mut aux_request = AuxiliaryRequest::new(AuxiliaryTask::from_name(&request.task), messages)
         .with_max_tokens(request.max_tokens);
     if let Some(temperature) = request.temperature {
         aux_request = aux_request.with_temperature(temperature);

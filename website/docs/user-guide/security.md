@@ -90,6 +90,28 @@ The blocklist is the floor below `--yolo`. It trips **before** the approval laye
 
 If you hit the blocklist, the tool call returns an explanatory error to the agent and nothing runs. If a legitimate workflow needs one of these commands (you're the operator of a wipe-and-reinstall pipeline, for example), run it outside the agent.
 
+### External Tool Guard
+
+A profile can require an external guard, such as Claude Code's `guard.exe`, to allow each local `terminal` command, `write_file`, `patch` and cron script before it runs:
+
+```yaml
+security:
+  tool_guard:
+    command: 'C:\Users\you\.claude\hooks\guard.exe'
+    args: []          # optional, placed before the guard's own
+    timeout_secs: 15  # optional
+```
+
+The guard receives a Claude Code `PreToolUse` event on stdin. A command goes as a `Bash` event with the folder it will run in. A file write or patch goes as a Codex `apply_patch` event with the `--codex` argument and one `*** Update File:` header for the path and another for where it lands once links are followed. Exit 0 with no output allows; a `deny` with a reason refuses and returns the reason to the agent.
+
+Anything else refuses the call: a missing or crashing guard, no answer within `timeout_secs`, an unreadable answer, a `config.yaml` that cannot be read or parsed, or a `tool_guard` with no `command` or with an unknown key.
+
+Only the `config.yaml` in the profile home counts, as resolved at the first guarded call: `HERMES_HOME` (which `--config-dir` sets), then `HERMES_AGENT_ULTRA_HOME`, then the default home. The setting is ignored in `cli-config.yaml` and the managed configuration, and `--ignore-user-config` does not switch it off.
+
+Until a guarded call finds a guard, the file is read at each guarded call, so a guard added then applies from the next call. Once a guarded call finds one, it stays in force until the process exits: rewriting the file can no longer remove or replace it, and a change applies at the next start. Before then, an unguarded tool such as `execute_code` could rewrite the file, and a rewrite carries into the next start, so if the agent must not change the guard, protect the profile's `config.yaml` in the guard's own policy.
+
+The guard judges paths and commands, not file contents. A cron script given as a file is judged by its name, and an inline cron script is judged as a `Bash` command whatever its `script_shell`. It covers only local `terminal` commands, `write_file`, `patch` and cron scripts. Other tools that run code or change files are not guarded, including input sent to a running process with `process`, the code `execute_code` runs, skill and memory writes, the `ultra_features` tools and remote terminal backends. Nor is another agent started with a different profile.
+
 ### Approval Timeout
 
 When a dangerous command prompt appears, the user has a configurable amount of time to respond. If no response is given within the timeout, the command is **denied** by default (fail-closed).

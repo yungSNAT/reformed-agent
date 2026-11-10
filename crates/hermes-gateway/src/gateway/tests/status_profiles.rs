@@ -364,9 +364,11 @@ async fn gateway_route_unauthorized_dm_pairs_with_code_message() {
     };
 
     assert!(gw.route_message(&incoming).await.is_ok());
-    let messages = sent.lock().unwrap();
-    assert_eq!(messages.len(), 1);
-    assert!(messages[0].1.contains("pairing code"));
+    {
+        let messages = sent.lock().unwrap();
+        assert_eq!(messages.len(), 1);
+        assert!(messages[0].1.contains("pairing code"));
+    }
     assert_eq!(
         gw.session_transcript_len(
             "whatsapp",
@@ -593,11 +595,12 @@ async fn gateway_discord_slash_requires_allowlist() {
         is_dm: false,
     };
     assert!(gw.route_message(&allowed).await.is_ok());
-    let sent_msgs = sent.lock().unwrap();
-    assert_eq!(sent_msgs.len(), 1);
-    assert_eq!(sent_msgs[0].0, "guild:1");
-    assert!(!sent_msgs[0].1.trim().is_empty());
-    drop(sent_msgs);
+    {
+        let sent_msgs = sent.lock().unwrap();
+        assert_eq!(sent_msgs.len(), 1);
+        assert_eq!(sent_msgs[0].0, "guild:1");
+        assert!(!sent_msgs[0].1.trim().is_empty());
+    }
 
     let paired = IncomingMessage {
         platform: "discord".into(),
@@ -886,11 +889,12 @@ async fn gateway_compress_command_emits_summary_without_warning() {
 
     assert!(gw.route_message(&incoming).await.is_ok());
 
-    let msgs = sent.lock().unwrap();
-    let reply = msgs.last().map(|(_, t)| t.clone()).unwrap_or_default();
-    assert!(reply.contains("Context compressed"));
-    assert!(!reply.contains("⚠️"));
-    drop(msgs);
+    {
+        let msgs = sent.lock().unwrap();
+        let reply = msgs.last().map(|(_, t)| t.clone()).unwrap_or_default();
+        assert!(reply.contains("Context compressed"));
+        assert!(!reply.contains("⚠️"));
+    }
 
     let updated = gw.session_manager.get_messages(&session_key).await;
     assert!(

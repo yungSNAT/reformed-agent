@@ -43,7 +43,7 @@ fn max_tool_output_total_chars() -> usize {
 }
 
 fn transcript_wrap_width(viewport_width: u16) -> u16 {
-    viewport_width.min(TRANSCRIPT_HARD_WRAP_COLS).max(1)
+    viewport_width.clamp(1, TRANSCRIPT_HARD_WRAP_COLS)
 }
 
 fn stream_lane_budget(processing: bool, chunk_count: usize) -> (usize, Duration) {

@@ -331,7 +331,7 @@ mod tests {
     fn registry_with_minimal_tools() -> Arc<ToolRegistry> {
         let reg = Arc::new(ToolRegistry::new());
         let register = |reg: &Arc<ToolRegistry>, name: &str, toolset: &str| {
-            let schema = tool_schema(name, &format!("{name} tool"), JsonSchema::new("object"));
+            let schema = tool_schema(name, format!("{name} tool"), JsonSchema::new("object"));
             let handler = Arc::new(NoopTool {
                 schema: schema.clone(),
             });

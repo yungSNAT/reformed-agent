@@ -551,7 +551,7 @@ fn resolve_latest_nonempty_session_file(
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
         candidates.push((path, modified));
     }
-    candidates.sort_by(|a, b| b.1.cmp(&a.1));
+    candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
     // Prefer canonical snapshots: file stem == session_info.session_id.
     for (path, _) in candidates {
         if let Some(summary) = session_file_summary(&path) {
@@ -718,7 +718,7 @@ fn resolve_resume_session_file(
                 .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
             candidates.push((path, modified));
         }
-        candidates.sort_by(|a, b| b.1.cmp(&a.1));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.1));
         // 1) newest canonical non-empty snapshot
         for (path, _) in &candidates {
             if let Some(summary) = session_file_summary(path) {
@@ -800,46 +800,45 @@ fn parse_resume_messages(items: &[serde_json::Value]) -> Vec<hermes_core::Messag
             .unwrap_or("")
             .to_string();
 
-        match role.as_str() {
-            "system" => {
-                if !content.is_empty() {
-                    messages.push(hermes_core::Message::system(content));
-                }
-            }
+        let message = match role.as_str() {
+            "system" => (!content.is_empty()).then(|| hermes_core::Message::system(content)),
             "assistant" => {
-                if let Some(tool_calls_val) = item.get("tool_calls") {
-                    if let Ok(tool_calls) =
-                        serde_json::from_value::<Vec<hermes_core::ToolCall>>(tool_calls_val.clone())
-                    {
-                        messages.push(hermes_core::Message::assistant_with_tool_calls(
-                            if content.is_empty() {
-                                None
-                            } else {
-                                Some(content.clone())
-                            },
-                            tool_calls,
-                        ));
-                        continue;
-                    }
-                }
-                if !content.is_empty() {
-                    messages.push(hermes_core::Message::assistant(content));
+                let tool_calls = item.get("tool_calls").and_then(|value| {
+                    serde_json::from_value::<Vec<hermes_core::ToolCall>>(value.clone()).ok()
+                });
+                match tool_calls {
+                    Some(calls) => Some(hermes_core::Message::assistant_with_tool_calls(
+                        (!content.is_empty()).then_some(content),
+                        calls,
+                    )),
+                    None => (!content.is_empty()).then(|| hermes_core::Message::assistant(content)),
                 }
             }
             "tool" => {
-                let tool_call_id = item
-                    .get("tool_call_id")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("tool_call");
-                if !content.is_empty() {
-                    messages.push(hermes_core::Message::tool_result(tool_call_id, content));
-                }
+                let supplied_id = item.get("tool_call_id").and_then(|v| v.as_str());
+                let has_text = item
+                    .get("content")
+                    .is_some_and(serde_json::Value::is_string);
+                (!content.is_empty() || (has_text && supplied_id.is_some_and(|id| !id.is_empty())))
+                    .then(|| {
+                        hermes_core::Message::tool_result(
+                            supplied_id.unwrap_or("tool_call"),
+                            content,
+                        )
+                    })
             }
-            _ => {
-                if !content.is_empty() {
-                    messages.push(hermes_core::Message::user(content));
-                }
-            }
+            _ => (!content.is_empty()).then(|| hermes_core::Message::user(content)),
+        };
+        if let Some(mut message) = message {
+            message.name = item
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            message.reasoning_content = item
+                .get("reasoning_content")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            messages.push(message);
         }
     }
     messages
@@ -859,4 +858,3 @@ fn extract_session_objective(messages: &[hermes_core::Message]) -> Option<String
             .map(ToOwned::to_owned)
     })
 }
-

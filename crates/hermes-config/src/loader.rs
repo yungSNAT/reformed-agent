@@ -8,8 +8,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 pub use hermes_core::ConfigError;
 
 use crate::config::{
-    DisplayConfig, GatewayConfig, LlmProviderConfig, ProxyConfig, TerminalBackendType,
-    TerminalConfig, TerminalHomeMode, WebConfig,
+    DisplayConfig, GatewayConfig, ProxyConfig, TerminalBackendType, TerminalConfig,
+    TerminalHomeMode, VertexConfig, WebConfig,
 };
 use crate::merge::{deep_merge, merge_configs};
 use crate::paths;
@@ -545,6 +545,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     bridge_terminal_config_to_env(&config.terminal);
     bridge_web_config_to_env(&config.web);
     bridge_display_config_to_env(&config.display);
+    bridge_vertex_config_to_env(&config.vertex);
 
     // Layer 3: environment variables (highest priority)
     apply_env_overrides(&mut config);
@@ -656,6 +657,14 @@ fn bridge_managed_overlay_to_env(config: &GatewayConfig, overlay: &serde_json::V
         &config.display,
         overlay.get("display"),
         display_config_env_bridge_pairs(),
+    );
+    bridge_managed_section_to_env(
+        &config.vertex,
+        overlay.get("vertex"),
+        &[
+            ("project_id", "VERTEX_PROJECT_ID"),
+            ("region", "VERTEX_REGION"),
+        ],
     );
 }
 

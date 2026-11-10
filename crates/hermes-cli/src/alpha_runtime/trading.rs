@@ -717,7 +717,7 @@ fn collect_repo_drift(
 }
 
 fn collect_run_context_audit(project: &TradingProjectReport) -> RunContextAudit {
-    let required = vec![
+    let required = [
         "wallet_sol".to_string(),
         "pnl_sol".to_string(),
         "reject_rate".to_string(),

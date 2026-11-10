@@ -72,10 +72,10 @@ pub fn merge_configs(yaml_config: &GatewayConfig, json_config: &GatewayConfig) -
     // Validate session reset policies
     let mut merged = merged;
     merged.session.reset_policy = merged.session.reset_policy.validate();
-    for (_platform, policy) in merged.session.platform_overrides.iter_mut() {
+    for policy in merged.session.platform_overrides.values_mut() {
         *policy = policy.validate();
     }
-    for (_stype, policy) in merged.session.session_type_overrides.iter_mut() {
+    for policy in merged.session.session_type_overrides.values_mut() {
         *policy = policy.validate();
     }
 
@@ -137,12 +137,16 @@ mod tests {
 
     #[test]
     fn merge_configs_combines() {
-        let mut json_cfg = GatewayConfig::default();
-        json_cfg.model = Some("gpt-3.5-turbo".into());
-        json_cfg.max_turns = 10;
+        let json_cfg = GatewayConfig {
+            model: Some("gpt-3.5-turbo".into()),
+            max_turns: 10,
+            ..GatewayConfig::default()
+        };
 
-        let mut yaml_cfg = GatewayConfig::default();
-        yaml_cfg.model = Some("gpt-4o".into());
+        let yaml_cfg = GatewayConfig {
+            model: Some("gpt-4o".into()),
+            ..GatewayConfig::default()
+        };
 
         let merged = merge_configs(&yaml_cfg, &json_cfg);
         // yaml wins for model

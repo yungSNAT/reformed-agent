@@ -2,8 +2,8 @@ use super::*;
 use crate::test_env_lock;
 use std::ffi::OsString;
 use std::path::Path;
-use std::sync::MutexGuard;
 use tempfile::tempdir;
+use tokio::sync::MutexGuard;
 
 struct ScopedHermesHome {
     previous: Option<OsString>,
@@ -422,7 +422,7 @@ fn objective_dag_claim_quorum_and_eval_surfaces_roundtrip() {
         upsert_objective_contract("improve objective with verified rollout", false).expect("obj");
 
         let dag = build_objective_dag_from_contract().expect("build dag");
-        assert_eq!(dag.objective_id.starts_with("obj-"), true);
+        assert!(dag.objective_id.starts_with("obj-"));
         assert!(dag.nodes.len() >= 4);
         let loaded_dag = load_objective_dag().expect("load dag");
         assert_eq!(loaded_dag.nodes.len(), dag.nodes.len());

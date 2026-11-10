@@ -4,7 +4,12 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/NousResearch/hermes-agent.git}"
-UPSTREAM_REF="${UPSTREAM_REF:-${UPSTREAM_REMOTE}/main}"
+UPSTREAM_REVISION="${UPSTREAM_REVISION:-$(tr -d '[:space:]' < "${REPO_ROOT}/docs/parity/upstream-reference.txt")}"
+UPSTREAM_BRANCH="parity-reference"
+if [[ -n "${UPSTREAM_REF:-}" ]]; then
+  echo "run-repo-ci: UPSTREAM_REF is ignored; the parity gates use the pinned revision (set UPSTREAM_REVISION to compare against another)." >&2
+fi
+UPSTREAM_REF="${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH}"
 SKIP_UPSTREAM_FETCH="${SKIP_UPSTREAM_FETCH:-false}"
 
 usage() {
@@ -14,13 +19,19 @@ Usage: scripts/run-repo-ci.sh [--skip-upstream-fetch]
 Run the repository-local CI contract. This is the authoritative gate for local
 changes; hosted GitHub Actions are a convenience mirror when they run.
 
+The parity gates compare against one pinned upstream revision, recorded in
+docs/parity/upstream-reference.txt and fetched as upstream/parity-reference, so
+a result depends on the change under test and not on that day's upstream. The
+scheduled parity audit reports drift from upstream's live main.
+
 Environment:
   CARGO_TARGET_DIR       Optional external Cargo target directory.
   CARGO_INCREMENTAL      Optional Cargo incremental setting.
   UPSTREAM_REMOTE        Upstream remote name (default: upstream).
   UPSTREAM_URL           Upstream remote URL (default: NousResearch/hermes-agent).
-  UPSTREAM_REF           Upstream ref used by parity gates (default: upstream/main).
-  SKIP_UPSTREAM_FETCH    true/false; skip refreshing upstream/main when true.
+  UPSTREAM_REVISION      Upstream commit or branch to gate against (default: the
+                         pinned revision; use main to measure current drift).
+  SKIP_UPSTREAM_FETCH    true/false; use the existing upstream/parity-reference.
 USAGE
 }
 
@@ -58,21 +69,21 @@ refresh_upstream() {
   fi
   run git -C "${REPO_ROOT}" fetch --no-tags --depth=1 \
     "${UPSTREAM_REMOTE}" \
-    "+refs/heads/main:refs/remotes/${UPSTREAM_REMOTE}/main"
+    "+${UPSTREAM_REVISION}:refs/remotes/${UPSTREAM_REF}"
 }
 
 cd "${REPO_ROOT}"
 
 refresh_upstream
 
-run python3 scripts/generate-parity-matrix.py --local-ref HEAD
-run python3 scripts/generate-workstream-status.py
+run python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
+run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-intent-mapping.py
+run python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-coverage-audit.py --check
 run python3 scripts/generate-adapter-matrix.py
-run python3 scripts/validate-intentional-divergence.py --check --allow-warnings
-run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch
-run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0
+run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
+run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-global-parity-proof.py
 run python3 scripts/generate-release-readiness-summary.py --check
 

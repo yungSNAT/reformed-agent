@@ -16,6 +16,9 @@ use std::sync::Arc;
 #[async_trait]
 pub trait CronjobBackend: Send + Sync {
     /// Create a new cron job.
+    // One argument per field of the `cronjob` tool schema, implemented in hermes-cron and
+    // the tests; a request struct would be a cross-crate redesign, not a lint fix.
+    #[allow(clippy::too_many_arguments)]
     async fn create(
         &self,
         name: &str,
@@ -30,6 +33,8 @@ pub trait CronjobBackend: Send + Sync {
     /// List all cron jobs.
     async fn list(&self) -> Result<String, ToolError>;
     /// Update a cron job.
+    // Same reason as `create`: one argument per updatable field of the `cronjob` schema.
+    #[allow(clippy::too_many_arguments)]
     async fn update(
         &self,
         id: &str,

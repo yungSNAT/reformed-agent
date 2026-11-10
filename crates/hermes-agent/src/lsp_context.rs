@@ -44,17 +44,20 @@ impl Default for LspContextConfig {
 
 impl LspContextConfig {
     pub fn from_env() -> Self {
-        let mut cfg = Self::default();
-        cfg.enabled = env_bool("HERMES_LSP_CONTEXT_ENABLED", true);
-        cfg.diagnostics_on_write = env_bool("HERMES_LSP_DIAGNOSTICS_ON_WRITE", true);
-        cfg.hover_on_read = env_bool("HERMES_LSP_HOVER_ON_READ", true);
-        cfg.references_on_rename = env_bool("HERMES_LSP_REFERENCES_ON_RENAME", true);
-        cfg.max_chars = env_usize("HERMES_LSP_CONTEXT_MAX_CHARS", DEFAULT_MAX_CHARS).max(400);
-        cfg.max_reference_hits =
-            env_usize("HERMES_LSP_REFERENCE_HITS", DEFAULT_MAX_REF_HITS).clamp(1, 100);
-        cfg.max_symbols_per_file =
-            env_usize("HERMES_LSP_SYMBOLS_PER_FILE", DEFAULT_MAX_SYMBOLS_PER_FILE).clamp(1, 40);
-        cfg
+        Self {
+            enabled: env_bool("HERMES_LSP_CONTEXT_ENABLED", true),
+            diagnostics_on_write: env_bool("HERMES_LSP_DIAGNOSTICS_ON_WRITE", true),
+            hover_on_read: env_bool("HERMES_LSP_HOVER_ON_READ", true),
+            references_on_rename: env_bool("HERMES_LSP_REFERENCES_ON_RENAME", true),
+            max_chars: env_usize("HERMES_LSP_CONTEXT_MAX_CHARS", DEFAULT_MAX_CHARS).max(400),
+            max_reference_hits: env_usize("HERMES_LSP_REFERENCE_HITS", DEFAULT_MAX_REF_HITS)
+                .clamp(1, 100),
+            max_symbols_per_file: env_usize(
+                "HERMES_LSP_SYMBOLS_PER_FILE",
+                DEFAULT_MAX_SYMBOLS_PER_FILE,
+            )
+            .clamp(1, 40),
+        }
     }
 }
 
@@ -133,7 +136,7 @@ pub fn build_lsp_context_note(
     }
 
     if !touched_paths.is_empty() {
-        code_index.refresh_paths(touched_paths.into_iter());
+        code_index.refresh_paths(touched_paths);
     }
     if sections.is_empty() {
         return None;

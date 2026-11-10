@@ -261,7 +261,16 @@ Credentials come from your shell environment (`VOLCENGINE_APP_ID` / `VOLCENGINE_
 
 #### Placeholders
 
-Your command template can reference these placeholders. Hermes substitutes them at render time and shell-quotes each value for the surrounding context (bare / single-quoted / double-quoted), so paths with spaces and other shell-sensitive characters are safe.
+On Unix, Hermes shell-quotes each placeholder value for its surrounding context (bare, single-quoted or double-quoted).
+
+On Windows, Hermes splits `command` into an executable and arguments before substituting placeholders. Use forward slashes or single quotes in literal Windows paths in the template. Move pipes, redirection or batch commands into a helper script and invoke its interpreter, such as `python C:/tts/run.py {input_path} {output_path}`. Pass placeholders as arguments to the script.
+
+The executable must be a native `.exe` program:
+
+- A name without an extension gets `.exe` appended: `piper` runs `piper.exe`.
+- Any other extension is refused, including `.cmd` and `.bat` shims such as `npx.cmd`, and so is `cmd.exe`. Invoke the tool's own `.exe` or an interpreter such as `node.exe` or `python.exe` instead.
+- Placeholders are substituted in the arguments only, never in the executable.
+- An unquoted word that starts with `#` begins a comment: Hermes drops it and the rest of the line. Quote such a word, as in `'#fff'`.
 
 | Placeholder      | Meaning                                              |
 |------------------|------------------------------------------------------|
@@ -279,7 +288,7 @@ Use `{{` and `}}` for literal braces.
 
 | Key                | Default | Meaning                                                                                                    |
 |--------------------|---------|------------------------------------------------------------------------------------------------------------|
-| `timeout`          | `120`   | Seconds; the process tree is killed on expiry (Unix `killpg`, Windows `taskkill /T`).                       |
+| `timeout`          | `120`   | Seconds before Hermes stops waiting and kills the process it started.                                       |
 | `output_format`    | `mp3`   | One of `mp3` / `wav` / `ogg` / `flac`. Auto-inferred from the output extension if Hermes picks a path.      |
 | `voice_compatible` | `false` | When `true`, Hermes converts MP3/WAV output to Opus/OGG via ffmpeg so Telegram renders a voice bubble.      |
 | `max_text_length`  | `5000`  | Input is truncated to this length before rendering the command.                                             |
@@ -289,13 +298,13 @@ Use `{{` and `}}` for literal braces.
 
 - **Built-in names always win.** A `tts.providers.openai` entry never shadows the native OpenAI provider, so no user config can silently replace a built-in.
 - **Default delivery is a document.** Command providers deliver as regular audio attachments on every platform. Opt in to voice-bubble delivery per-provider with `voice_compatible: true`.
-- **Command failures surface to the agent.** Non-zero exit, empty output, or timeout all return an error with the command's stderr/stdout included so you can debug the provider from the conversation.
+- **Command failures surface to the agent.** A non-zero exit includes stderr. Empty output and timeouts return their own errors. Hermes discards stdout.
 - **`type: command` is the default when `command:` is set.** Writing `type: command` explicitly is good practice but not required; an entry with a non-empty `command` string is treated as a command provider.
 - **`{input_path}` / `{text_path}` are interchangeable.** Use whichever reads better in your command.
 
 #### Security
 
-Command-type providers run whatever shell command you configure, with your user's permissions. Hermes quotes placeholder values and enforces the configured timeout, but the command template itself is trusted local input — treat it the same way you would a shell script on your PATH.
+Command-type providers run with your user's permissions. Treat the template as trusted code. Pass placeholder values to helpers as data arguments. Interpolating them into inline code such as `python -c` lets caller input become code.
 
 ## Voice Message Transcription (STT)
 

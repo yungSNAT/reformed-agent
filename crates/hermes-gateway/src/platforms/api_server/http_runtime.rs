@@ -42,7 +42,12 @@ async fn handle_connection(
     let auth_header = header_text
         .lines()
         .find(|l| l.to_lowercase().starts_with("authorization:"))
-        .map(|l| l.splitn(2, ':').nth(1).unwrap_or("").trim().to_string());
+        .map(|l| {
+            l.split_once(':')
+                .map_or("", |(_, value)| value)
+                .trim()
+                .to_string()
+        });
     let chronos_fire_route = method == "POST" && path == "/api/cron/fire";
 
     if let Some(ref expected) = auth_token.filter(|_| !chronos_fire_route) {
@@ -482,13 +487,15 @@ async fn handle_connection(
                         let data = format!("data: {}\n\n", serde_json::to_string(&role_chunk)?);
                         writer.write_all(data.as_bytes()).await?;
 
-                        // Content chunks
-                        for chunk in reply.as_bytes().chunks(20) {
-                            let text = String::from_utf8_lossy(chunk);
+                        // Content chunks of at most 20 bytes, split on character boundaries
+                        let mut rest = reply.as_str();
+                        while !rest.is_empty() {
+                            let (text, tail) = rest.split_at(rest.floor_char_boundary(20));
+                            rest = tail;
                             let sc = ApiServerAdapter::make_stream_chunk(
                                 &request_id,
                                 &model,
-                                Some(&text),
+                                Some(text),
                                 false,
                             );
                             let data = format!("data: {}\n\n", serde_json::to_string(&sc)?);
@@ -537,7 +544,7 @@ async fn handle_connection(
                 Ok(req) => {
                     let request_id = format!(
                         "resp_{}",
-                        uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+                        &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
                     );
                     let model = req.model.as_deref().unwrap_or("hermes").to_string();
                     let mut messages = response_input_messages(req.input);

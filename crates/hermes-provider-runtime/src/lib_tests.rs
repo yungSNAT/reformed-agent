@@ -982,6 +982,65 @@ mod tests {
         assert_eq!(normalize_runtime_provider_name("aws"), "bedrock");
         assert_eq!(normalize_runtime_provider_name("aws-bedrock"), "bedrock");
         assert_eq!(normalize_runtime_provider_name("amazon"), "bedrock");
+        for alias in [
+            "vertex",
+            "google-vertex",
+            "vertex-ai",
+            "gcp-vertex",
+            "vertexai",
+        ] {
+            assert_eq!(normalize_runtime_provider_name(alias), "vertex");
+        }
+        assert_eq!(normalize_runtime_provider_name("google-gemini"), "gemini");
+    }
+
+    #[test]
+    fn vertex_runtime_uses_oauth_minting_not_a_static_key() {
+        // upstream test_resolve_runtime_provider_mints_token / _alias: Vertex
+        // resolves to its OAuth2 source even when a config api_key is present,
+        // and has no static base URL.
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&[
+            "VERTEX_CREDENTIALS_PATH",
+            "GOOGLE_APPLICATION_CREDENTIALS",
+            "VERTEX_PROJECT_ID",
+            "CLOUDSDK_CONFIG",
+            "NO_GCE_CHECK",
+        ]);
+        std::env::remove_var("VERTEX_CREDENTIALS_PATH");
+        std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
+        std::env::remove_var("VERTEX_PROJECT_ID");
+        // Keep the machine's own gcloud login and a GCE host out of the answer.
+        let no_gcloud = std::env::temp_dir().join(format!("no-gcloud-{}", std::process::id()));
+        std::env::set_var("CLOUDSDK_CONFIG", &no_gcloud);
+        std::env::set_var("NO_GCE_CHECK", "true");
+        let unconfigured = provider_runtime_diagnostic(
+            &GatewayConfig::default(),
+            "vertex:google/gemini-3-flash-preview",
+        );
+        assert!(!unconfigured.api_key_present);
+        assert_eq!(unconfigured.api_key_source, None);
+
+        std::env::set_var("VERTEX_PROJECT_ID", "diag-project");
+        let mut config = GatewayConfig::default();
+        config.llm_providers.insert(
+            "vertex".to_string(),
+            LlmProviderConfig {
+                api_key: Some("/path/to/service-account.json".to_string()),
+                ..LlmProviderConfig::default()
+            },
+        );
+        for model in [
+            "vertex:google/gemini-3-flash-preview",
+            "google-vertex:google/gemini-3-flash-preview",
+        ] {
+            let diag = provider_runtime_diagnostic(&config, model);
+            assert_eq!(diag.runtime_provider, "vertex", "{model}");
+            assert_eq!(diag.model, "google/gemini-3-flash-preview");
+            assert!(diag.api_key_present);
+            assert_eq!(diag.api_key_source.as_deref(), Some("vertex-oauth"));
+            assert!(diag.base_url.is_none());
+        }
     }
 
     #[test]

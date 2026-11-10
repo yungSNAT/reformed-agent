@@ -705,6 +705,29 @@
     }
 
     #[test]
+    fn setup_vertex_uses_oauth2_credentials_not_an_api_key() {
+        let providers = setup_provider_defaults();
+        let vertex = providers
+            .iter()
+            .find(|option| option.provider == "vertex")
+            .expect("vertex setup option");
+
+        assert_eq!(vertex.model, "vertex:google/gemini-3-flash-preview");
+        assert_eq!(setup_provider_display("vertex"), "Google Vertex AI");
+        assert!(!setup_provider_requires_api_key("vertex"));
+        assert_eq!(setup_provider_default_base_url("vertex"), None);
+        assert_eq!(
+            setup_provider_env_keys("vertex"),
+            &["VERTEX_CREDENTIALS_PATH", "GOOGLE_APPLICATION_CREDENTIALS"]
+        );
+        assert_eq!(provider_env_var("google-vertex"), None);
+        let curated = hermes_cli::model_switch::provider_curated_models("vertex-ai");
+        assert!(curated.contains(&"google/gemini-3-flash-preview"));
+        assert!(curated.contains(&"google/gemini-2.5-pro"));
+        assert!(provider_picker_description("vertex").contains("OAuth2 service account or ADC"));
+    }
+
+    #[test]
     fn setup_default_model_pick_index_matches_provider_prefixed_target() {
         let suggested = vec![
             "nousresearch/hermes-3-llama-3.1-405b".to_string(),
@@ -898,13 +921,13 @@
         );
         assert!(
             actual.contains("openai"),
-            "OpenAI OAuth should be enabled in Hermes Ultra"
+            "OpenAI OAuth should be enabled in Reformed Agent"
         );
     }
 
     #[tokio::test]
     async fn hydrate_provider_env_from_vault_overrides_oauth_provider_env() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -950,7 +973,7 @@
 
     #[tokio::test]
     async fn hydrate_provider_env_prefers_current_nous_oauth_over_stale_vault() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1024,7 +1047,7 @@
 
     #[tokio::test]
     async fn hydrate_provider_env_rejects_stale_nous_vault_when_oauth_state_is_unusable() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         use clap::Parser;
 
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -1175,7 +1198,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_ignores_malformed_global_fallback_state() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let prev_home = std::env::var("HOME").ok();
         let prev_hermes_home = std::env::var("HERMES_HOME").ok();
@@ -1261,7 +1284,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_does_not_persist_vault_token_when_live_probe_fails() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let auth_path = tmp.path().join("auth.json");
         let vault_path = tmp.path().join("tokens.json");
@@ -1339,7 +1362,7 @@
 
     #[tokio::test]
     async fn auth_verify_nous_repairs_stale_singleton_from_vault_invoke_jwt() {
-        let _guard = env_lock();
+        let _guard = env_lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let auth_path = tmp.path().join("auth.json");
         let vault_path = tmp.path().join("tokens.json");

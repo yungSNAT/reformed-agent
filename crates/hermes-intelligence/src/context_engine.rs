@@ -185,10 +185,11 @@ impl DefaultContextEngine {
                         decisions.push(concise);
                     }
                 }
-                "tool" if tool_outcomes.len() < MAX_SECTION_ITEMS => {
-                    if !tool_outcomes.contains(&concise) {
-                        tool_outcomes.push(concise);
-                    }
+                "tool"
+                    if tool_outcomes.len() < MAX_SECTION_ITEMS
+                        && !tool_outcomes.contains(&concise) =>
+                {
+                    tool_outcomes.push(concise);
                 }
                 _ => {}
             }

@@ -6,7 +6,7 @@ mod tests {
     use tempfile::tempdir;
     use tokio::sync::mpsc;
 
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }
 
@@ -210,7 +210,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_backup_import_strips_hermes_archive_prefix() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let hermes_home = tmp.path().join("hermes-home");
         let fake_home = tmp.path().join("home");
@@ -240,7 +240,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_backup_import_round_trips_openviking_external_state() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let hermes_home = tmp.path().join("hermes-home");
         let fake_home = tmp.path().join("home");
@@ -637,7 +637,7 @@ mod tests {
 
     #[tokio::test]
     async fn version_slash_command_renders_shared_version_label() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -655,7 +655,7 @@ mod tests {
 
     #[tokio::test]
     async fn moa_without_prompt_is_usage_only() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -674,7 +674,7 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_command_reads_editor_and_queues_agent_seed() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let _visual_guard = EnvVarGuard::remove("VISUAL");
@@ -698,7 +698,7 @@ mod tests {
 
     #[tokio::test]
     async fn prompt_command_empty_editor_buffer_cancels_seed() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let _visual_guard = EnvVarGuard::remove("VISUAL");
@@ -718,7 +718,7 @@ mod tests {
 
     #[tokio::test]
     async fn learn_command_records_learning_request_for_next_turn() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -734,7 +734,7 @@ mod tests {
 
     #[tokio::test]
     async fn hatch_command_enables_pet_and_queues_design_brief() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -753,7 +753,7 @@ mod tests {
 
     #[tokio::test]
     async fn reasoning_full_and_clamp_commands_update_mode_and_status() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let _reasoning_guard = ReasoningFullResetGuard::new();
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
@@ -788,7 +788,7 @@ mod tests {
 
     #[tokio::test]
     async fn quick_exec_command_prints_stdout_before_agent_loop() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -812,7 +812,7 @@ mod tests {
 
     #[tokio::test]
     async fn quick_exec_no_output_and_timeout_have_user_visible_replies() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -849,7 +849,7 @@ mod tests {
 
     #[tokio::test]
     async fn quick_alias_rewrites_to_builtin_and_passes_args() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -872,7 +872,7 @@ mod tests {
 
     #[tokio::test]
     async fn blueprint_slash_command_creates_cron_job() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -907,7 +907,7 @@ mod tests {
 
     #[tokio::test]
     async fn app_contextual_autocomplete_and_tools_toggle_use_runtime_state() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -972,7 +972,7 @@ mod tests {
 
     #[tokio::test]
     async fn quick_command_takes_priority_over_builtin_slash_command() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -995,7 +995,7 @@ mod tests {
 
     #[tokio::test]
     async fn cli_resolves_installed_skill_slash_command() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let skill_dir = tmp.path().join("skills").join("release-captain");

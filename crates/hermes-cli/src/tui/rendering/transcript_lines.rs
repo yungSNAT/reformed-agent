@@ -1,3 +1,6 @@
+// The transcript renderer threads its output buffer, render state and styles
+// through each call; bundling them into a struct would be a redesign.
+#[allow(clippy::too_many_arguments)]
 fn append_transcript_message_lines(
     lines: &mut Vec<Line<'static>>,
     msg: &hermes_core::Message,
@@ -131,7 +134,7 @@ fn append_transcript_message_lines(
         if let Some(tool_calls) = msg.tool_calls.as_ref() {
             for tc in tool_calls {
                 let args = serde_json::from_str::<serde_json::Value>(&tc.function.arguments)
-                    .unwrap_or_else(|_| serde_json::Value::Null);
+                    .unwrap_or(serde_json::Value::Null);
                 let preview =
                     build_tool_preview_from_value(&tc.function.name, &args, 44).unwrap_or_default();
                 let emoji = tool_emoji(&tc.function.name);
@@ -197,7 +200,7 @@ fn build_transcript_lines(
                 styles.assistant_response.add_modifier(Modifier::BOLD),
             ),
             Span::styled(
-                "HERMES (streaming)",
+                "REFORMED (streaming)",
                 styles.assistant_response.add_modifier(Modifier::BOLD),
             ),
         ]));
@@ -223,42 +226,20 @@ fn build_transcript_lines(
     }
 
     if lines.is_empty() {
-        let neon = Style::default()
-            .fg(colors.status_bar_strong)
+        let title = Style::default()
+            .fg(colors.status_bar_text)
             .bg(colors.background)
             .add_modifier(Modifier::BOLD);
-        let dim = Style::default()
-            .fg(colors.status_bar_dim)
-            .bg(colors.background);
-        let accent = Style::default().fg(colors.accent).bg(colors.background);
-        let hero = [
-            " ╔══════════════════════════════════════════════════════════════════╗",
-            " ║  ██╗  ██╗███████╗██████╗ ███╗   ███╗███████╗███████╗          ║",
-            " ║  ██║  ██║██╔════╝██╔══██╗████╗ ████║██╔════╝██╔════╝          ║",
-            " ║  ███████║█████╗  ██████╔╝██╔████╔██║█████╗  ███████╗          ║",
-            " ║  ██╔══██║██╔══╝  ██╔══██╗██║╚██╔╝██║██╔══╝  ╚════██║          ║",
-            " ║  ██║  ██║███████╗██║  ██║██║ ╚═╝ ██║███████╗███████║          ║",
-            " ║  ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝╚═╝     ╚═╝╚══════╝╚══════╝          ║",
-            " ║                                                                  ║",
-            " ║       AGENT ULTRA  //  SUNBURST OPS  //  LIVE EXECUTION         ║",
-            " ║       YELLOW SIGNAL • REDLINE DRIVE • RUST-NATIVE CONTROL       ║",
-            " ╚══════════════════════════════════════════════════════════════════╝",
-        ];
-        for (idx, row) in hero.iter().enumerate() {
-            let style = if idx == 0 || idx == hero.len() - 1 {
-                accent
-            } else if row.contains("AGENT ULTRA") || row.contains("YELLOW SIGNAL") {
-                neon
-            } else {
-                dim
-            };
-            lines.push(Line::from(vec![Span::styled((*row).to_string(), style)]));
-        }
-        lines.push(Line::from(String::new()));
+        let mark = Style::default().fg(colors.accent).bg(colors.background);
+        lines.push(Line::from(vec![
+            Span::styled(" ▤ ", mark),
+            Span::styled("Printing press 2.0", title),
+        ]));
+        lines.push(Line::from(Span::styled(" ──────────────────", mark)));
         lines.push(Line::from(vec![Span::styled(
-            " Start chatting — your messages and Hermes replies will appear here.",
+            " Start chatting.",
             Style::default()
-                .fg(colors.status_bar_dim)
+                .fg(colors.foreground)
                 .bg(colors.background)
                 .add_modifier(Modifier::ITALIC),
         )]));

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -58,6 +59,27 @@ def test_docker_image_keeps_code_immutable_and_state_on_data_volume() -> None:
     assert "install -d -o 10000 -g 10000 -m 0755 /data" in text
     assert "chown -R 10000:10000 /data" not in text
     assert "chown -R 10000:10000 /usr/local" not in text
+
+
+def test_docker_image_ships_the_binary_the_launcher_runs() -> None:
+    text = DOCKERFILE.read_text()
+
+    # `hermes` only launches `hermes-agent-ultra` from its own directory.
+    assert "--bin hermes --bin hermes-agent-ultra" in text
+    assert (
+        "COPY --link --from=builder --chmod=0755 "
+        "/app/target/release/hermes-agent-ultra /usr/local/bin/hermes-agent-ultra"
+    ) in text
+
+
+def test_docker_image_builds_with_the_pinned_toolchain() -> None:
+    channel = re.search(
+        r'^channel = "([^"]+)"$', (REPO_ROOT / "rust-toolchain.toml").read_text(), re.M
+    )
+    assert channel is not None
+
+    # One compiler for local builds, CI and the image.
+    assert f"FROM rust:{channel.group(1)}-bookworm AS builder" in DOCKERFILE.read_text()
 
 
 def test_docker_docs_match_ultra_image_and_data_volume() -> None:

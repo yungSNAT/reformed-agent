@@ -248,7 +248,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-07-08T09:23:44.209378+00:00",
+  "generated_at_utc": "2026-11-10T12:06:12.983042+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -516,9 +516,9 @@
       "divergence_unowned": 0,
       "missing_rust_test_refs": 0,
       "queue_pending": 0,
-      "queue_total": 51,
-      "rust_test_files": 423,
-      "rust_test_functions": 7412,
+      "queue_total": 1,
+      "rust_test_files": 430,
+      "rust_test_functions": 7649,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,
@@ -527,7 +527,7 @@
     }
   },
   "ws_legacy_states": {
-    "complete": 6,
-    "in_progress": 1
+    "complete": 5,
+    "in_progress": 2
   }
 }

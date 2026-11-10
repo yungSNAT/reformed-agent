@@ -250,8 +250,10 @@ fn run_sessions_db_auto_maintenance_degrades_when_home_is_invalid() {
     let bad_home = tmp.path().join("not-a-dir");
     std::fs::write(&bad_home, "x").expect("write blocker file");
 
-    let mut cfg = hermes_config::GatewayConfig::default();
-    cfg.home_dir = Some(bad_home.to_string_lossy().to_string());
+    let mut cfg = hermes_config::GatewayConfig {
+        home_dir: Some(bad_home.to_string_lossy().to_string()),
+        ..Default::default()
+    };
     cfg.sessions.auto_prune = true;
 
     let result = std::panic::catch_unwind(|| run_sessions_db_auto_maintenance(&cfg));

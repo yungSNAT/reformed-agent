@@ -37,7 +37,17 @@ use hermes_cli::auth::{
     DEFAULT_NOUS_PORTAL_URL, NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
     QWEN_ACCESS_TOKEN_REFRESH_SKEW_SECONDS, QWEN_OAUTH_CLIENT_ID, QWEN_OAUTH_TOKEN_URL,
 };
-use hermes_cli::cli::{Cli, CliCommand};
+use hermes_cli::cli::{
+    AcpArgs, AuthArgs, BackupArgs, BillingArgs, ChatArgs, ClawArgs, Cli, CliCommand,
+    CloudflareArgs, CompletionArgs, ComputerUseArgs, ConfigArgs, CronArgs, DashboardArgs,
+    DebugArgs, DoctorArgs, DumpArgs, EliteCheckArgs, GatewayArgs, ImportArgs,
+    ImportHermesSessionsArgs, IncidentPackArgs, InsightsArgs, KanbanArgs, LoginArgs, LogoutArgs,
+    LogsArgs, LumioArgs, McpArgs, MemoryArgs, ModelArgs, PairingArgs, PluginsArgs, PortalArgs,
+    ProfileArgs, ResumeArgs, RotateProvenanceKeyArgs, RouteAutotuneArgs, RouteHealthArgs,
+    RouteLearningArgs, SecretsArgs, SessionsArgs, SetupArgs, SkillsArgs, SystemsArgs,
+    TeamsPipelineArgs, ToolsArgs, UninstallArgs, UpArgs, UpdateArgs, VerifyProvenanceArgs,
+    WebhookArgs, WhatsappArgs,
+};
 use hermes_cli::config_env::hydrate_env_from_config;
 use hermes_cli::model_switch::{
     cached_provider_catalog_status, format_stale_auxiliary_warning, normalize_provider_model,

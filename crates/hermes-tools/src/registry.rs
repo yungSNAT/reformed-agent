@@ -171,6 +171,9 @@ impl ToolRegistry {
     /// Register a new tool.
     ///
     /// If a tool with the same name already exists, logs a warning and overwrites.
+    // Each argument is one field of the registry entry, and many callers across the
+    // workspace pass them positionally; a builder would be a redesign, not a lint fix.
+    #[allow(clippy::too_many_arguments)]
     pub fn register(
         &self,
         name: impl Into<String>,

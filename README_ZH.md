@@ -2,6 +2,8 @@
 
 **[English](./README.md)** | **[中文](./README_ZH.md)** | **[日本語](./README_JA.md)** | **[한국어](./README_KO.md)**
 
+> 本译文早于 Reformed Agent 分支，内容未随之更新。当前信息请见[英文 README](./README.md)。下文的安装命令指向另一个项目，不会安装 Reformed Agent。
+
 [Hermes Agent](https://github.com/NousResearch/hermes-agent) 的生产级 Rust 重写版 — [Nous Research](https://nousresearch.com) 出品的自我进化 AI Agent。
 
 **84,000+ 行 Rust 代码 · 16 个 crate · 641 个测试 · 17 个平台适配器 · 30 个工具后端 · 8 个记忆插件 · 6 个跨平台发布目标**

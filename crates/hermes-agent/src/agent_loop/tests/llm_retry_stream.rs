@@ -51,8 +51,10 @@
         }
 
         let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:primary-model".to_string();
+        let mut cfg = AgentConfig {
+            model: "nous:primary-model".to_string(),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = 0;
         cfg.retry.fallback_model = Some("openrouter:backup-model".to_string());
 
@@ -108,7 +110,7 @@
             }
             let remaining = self
                 .primary_calls_before_success
-                .fetch_update(
+                .try_update(
                     std::sync::atomic::Ordering::SeqCst,
                     std::sync::atomic::Ordering::SeqCst,
                     |value| value.checked_sub(1),
@@ -147,9 +149,11 @@
         primary_failures_before_success: usize,
     ) -> Vec<String> {
         let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "primary-model".to_string();
-        cfg.provider = Some(provider.to_string());
+        let mut cfg = AgentConfig {
+            model: "primary-model".to_string(),
+            provider: Some(provider.to_string()),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = 3;
         cfg.retry.base_delay_ms = 0;
         cfg.retry.max_delay_ms = 0;
@@ -431,8 +435,10 @@
     }
 
     async fn run_chaos_harness_scenario(scenario: &ChaosHarnessScenario) -> ChaosHarnessRun {
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:primary-model".to_string();
+        let mut cfg = AgentConfig {
+            model: "nous:primary-model".to_string(),
+            ..AgentConfig::default()
+        };
         cfg.retry.max_retries = scenario.max_retries;
         cfg.retry.base_delay_ms = 0;
         cfg.retry.max_delay_ms = 0;
@@ -616,8 +622,10 @@
         }
 
         let seen_model = Arc::new(std::sync::Mutex::new(None::<String>));
-        let mut cfg = AgentConfig::default();
-        cfg.model = "nous:moonshotai/kimi-k2.6".to_string();
+        let cfg = AgentConfig {
+            model: "nous:moonshotai/kimi-k2.6".to_string(),
+            ..AgentConfig::default()
+        };
 
         let provider = Arc::new(RecordingProvider {
             seen_model: seen_model.clone(),
@@ -857,6 +865,8 @@
         TextOnlyDrop,
         MemoryContextLeak,
         MalformedToolArgs,
+        SlowStream,
+        SlowRetry,
     }
 
     struct StreamRetryProvider {
@@ -901,6 +911,19 @@
             let attempt = *calls;
 
             let events: Vec<Result<StreamChunk, AgentError>> = match self.scenario {
+                StreamRetryScenario::SlowStream => vec![
+                    Ok(stream_chunk_content("first ")),
+                    Ok(stream_chunk_content("second ")),
+                    Ok(stream_chunk_content("third")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
+                StreamRetryScenario::SlowRetry if attempt == 1 => vec![Err(AgentError::LlmApi(
+                    "Stream read error: connection lost".into(),
+                ))],
+                StreamRetryScenario::SlowRetry => vec![
+                    Ok(stream_chunk_content("retried response")),
+                    Ok(stream_chunk_finish("stop")),
+                ],
                 StreamRetryScenario::RecoverOnSecondAttempt => {
                     if attempt == 1 {
                         vec![
@@ -954,8 +977,144 @@
                 ],
             };
 
-            futures::stream::iter(events).boxed()
+            let events = futures::stream::iter(events);
+            if matches!(self.scenario, StreamRetryScenario::SlowStream | StreamRetryScenario::SlowRetry) {
+                return events
+                    .then(|event| async {
+                        tokio::time::sleep(Duration::from_millis(40)).await;
+                        event
+                    })
+                    .boxed();
+            }
+            events.boxed()
         }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_lifetime_caps_a_trickling_response_without_retry() {
+        for cap in [Some(0.1), Some(0.0), None] {
+            let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowStream));
+            let config = AgentConfig {
+                stream_max_lifetime: cap,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+            let delivered = Arc::new(Mutex::new(String::new()));
+            let captured = delivered.clone();
+            let result = agent
+                .run_stream(vec![Message::user("run")], None, Some(Box::new(move |chunk| {
+                    if let Some(content) = chunk.delta.and_then(|delta| delta.content) {
+                        captured.lock().expect("delivered stream").push_str(&content);
+                    }
+                })))
+                .await;
+
+            if cap == Some(0.1) {
+                assert!(matches!(
+                    result,
+                    Err(AgentError::Timeout(message))
+                        if message.contains("agent.stream_max_lifetime")
+                ), "expected the configured stream timeout");
+                assert_eq!(*delivered.lock().expect("delivered stream"), "first second ");
+            } else {
+                let result = result.expect("uncapped stream should finish");
+                assert!(result.messages.iter().any(|message| {
+                    message.content.as_deref() == Some("first second third")
+                }));
+            }
+            assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn stream_lifetime_resets_on_transport_retry() {
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowRetry));
+        let config = AgentConfig {
+            stream_max_lifetime: Some(0.1),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(vec![Message::user("run")], None, Some(Box::new(|_| {})))
+            .await
+            .expect("retry has its own deadline");
+        assert!(result.messages.iter().any(|message| {
+            message.content.as_deref() == Some("retried response")
+        }));
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 2);
+    }
+
+    #[tokio::test]
+    async fn zero_memory_flush_interval_runs_both_loops() {
+        struct DoneProvider;
+
+        #[async_trait::async_trait]
+        impl LlmProvider for DoneProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("done"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("done")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        // An interval of 0 turns the periodic memory sync off rather than
+        // dividing the turn count by zero.
+        let agent = AgentLoop::new(
+            AgentConfig {
+                memory_flush_interval: 0,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DoneProvider),
+        );
+        let ran = agent
+            .run(vec![Message::user("run")], None)
+            .await
+            .expect("run with memory_flush_interval 0");
+        let said_done = |messages: &[Message]| {
+            messages
+                .iter()
+                .any(|m| m.content.as_deref() == Some("done"))
+        };
+        assert!(said_done(&ran.messages));
+        let streamed = agent
+            .run_stream(vec![Message::user("run")], None, Some(Box::new(|_| {})))
+            .await
+            .expect("run_stream with memory_flush_interval 0");
+        assert!(said_done(&streamed.messages));
     }
 
     #[test]

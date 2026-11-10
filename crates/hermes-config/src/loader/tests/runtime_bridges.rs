@@ -352,3 +352,35 @@ terminal:
     );
     clear_terminal_env_bridge_vars();
 }
+
+#[test]
+fn load_config_bridges_vertex_yaml_to_env_without_overriding_existing_env() {
+    use tempfile::tempdir;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    // SAFETY: test process serializes env mutation via ENV_LOCK.
+    unsafe {
+        std::env::remove_var("VERTEX_PROJECT_ID");
+        std::env::set_var("VERTEX_REGION", "us-east4");
+    }
+    let dir = tempdir().unwrap();
+    std::fs::write(
+        dir.path().join("config.yaml"),
+        r#"
+vertex:
+  project_id: cfg-project
+  region: cfg-region
+"#,
+    )
+    .unwrap();
+
+    let cfg = load_config(Some(dir.path().to_string_lossy().as_ref())).unwrap();
+    assert_eq!(cfg.vertex.project_id.as_deref(), Some("cfg-project"));
+    assert_eq!(std::env::var("VERTEX_PROJECT_ID").unwrap(), "cfg-project");
+    assert_eq!(std::env::var("VERTEX_REGION").unwrap(), "us-east4");
+    // SAFETY: test process serializes env mutation via ENV_LOCK.
+    unsafe {
+        std::env::remove_var("VERTEX_PROJECT_ID");
+        std::env::remove_var("VERTEX_REGION");
+    }
+}

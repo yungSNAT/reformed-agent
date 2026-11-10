@@ -199,6 +199,17 @@ fn bridge_web_config_to_env(web: &WebConfig) {
     }
 }
 
+/// Upstream bridges `vertex.project_id`/`vertex.region` to the variables the
+/// Vertex adapter reads, so an explicit environment variable still wins.
+fn bridge_vertex_config_to_env(vertex: &VertexConfig) {
+    if let Some(project_id) = &vertex.project_id {
+        set_env_if_missing("VERTEX_PROJECT_ID", project_id.clone());
+    }
+    if let Some(region) = &vertex.region {
+        set_env_if_missing("VERTEX_REGION", region.clone());
+    }
+}
+
 fn apply_web_env_overrides(config: &mut WebConfig) {
     if let Some(v) = env_var_nonempty("HERMES_WEB_BACKEND") {
         config.backend = v;
@@ -494,7 +505,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
         config
             .llm_providers
             .entry("openai".to_string())
-            .or_insert_with(LlmProviderConfig::default)
+            .or_default()
             .api_key = Some(v);
     }
     let mut env_overridden_providers = std::collections::HashSet::new();
@@ -538,7 +549,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
             config
                 .llm_providers
                 .entry(provider_name.to_string())
-                .or_insert_with(LlmProviderConfig::default)
+                .or_default()
                 .api_key = Some(v);
         }
     }
@@ -568,7 +579,7 @@ pub fn apply_env_overrides(config: &mut GatewayConfig) {
             config
                 .llm_providers
                 .entry(provider_name.to_string())
-                .or_insert_with(LlmProviderConfig::default)
+                .or_default()
                 .base_url = Some(v);
         }
     }

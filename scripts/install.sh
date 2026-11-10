@@ -32,7 +32,7 @@ resolve_install_dir() {
   INSTALL_DIR="$(default_install_dir)"
 }
 
-REPO="${REPO:-sheawinkler/hermes-agent-ultra}"
+REPO="${REPO:-yungSNAT/reformed-agent}"
 VERSION="${VERSION:-latest}"
 if [[ -n "${HERMES_INSTALL_DIR:-}" ]]; then
   INSTALL_DIR="${HERMES_INSTALL_DIR}"
@@ -65,7 +65,8 @@ show_help() {
   cat <<'EOF'
 Usage: scripts/install.sh [version] [options]
 
-Install hermes-agent-ultra from GitHub Releases.
+Install Reformed Agent (hermes-agent-ultra) from GitHub Releases, or build it
+from source when run from a checkout that has no release asset for this target.
 
 Arguments:
   version                Release tag to install (default: latest)
@@ -79,7 +80,7 @@ Options:
   -h, --help             Show this help
 
 Environment variables:
-  REPO                   GitHub repo slug (default: sheawinkler/hermes-agent-ultra)
+  REPO                   GitHub repo slug (default: yungSNAT/reformed-agent)
   HERMES_INSTALL_DIR     Destination bin directory (explicit override)
   INSTALL_DIR            Destination bin directory (legacy alias, overridden by HERMES_INSTALL_DIR)
   HERMES_HOME            Hermes config dir for SOUL.md bootstrap (default: $HOME/.hermes)

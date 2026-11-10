@@ -30,10 +30,10 @@ Set your provider with `hermes model` or by editing `~/.hermes/.env`. See the [E
 
 ### Does it work on Windows?
 
-**Not natively.** Hermes Agent requires a Unix-like environment. On Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes from inside it. The standard install command works perfectly in WSL2:
+**Not natively.** Hermes Agent requires a Unix-like environment. On Windows, install [WSL2](https://learn.microsoft.com/en-us/windows/wsl/install) and run Hermes from inside it. This fork has published no release yet, so installing means building from source; with Git and a Rust toolchain installed in WSL2, run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
 
 ### I run Hermes in WSL2. What's the best way to control my normal Windows Chrome?
@@ -58,13 +58,15 @@ See:
 
 Yes — Hermes now has a tested Termux install path for Android phones.
 
-Quick install:
+Quick install, from a checkout with Rust installed:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 ```
 
-For the fully explicit manual steps, supported extras, and current limitations, see the [Termux guide](../getting-started/termux.md).
+For the packages to install first, the fully explicit manual steps, supported extras, and current limitations, see the [Termux guide](../getting-started/termux.md).
 
 Important caveat: the full `.[all]` extra is not currently available on Android because the `voice` extra depends on `faster-whisper` → `ctranslate2`, and `ctranslate2` does not publish Android wheels. Use the tested `.[termux]` extra instead.
 
@@ -224,8 +226,8 @@ source ~/.bashrc
 # Don't use sudo with the installer — it installs to ~/.local/bin
 # If you previously installed with sudo, clean up:
 sudo rm /usr/local/bin/hermes
-# Then re-run the standard installer
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+# Then re-run the installer from your checkout
+bash scripts/install.sh
 ```
 
 ---
@@ -749,9 +751,9 @@ Skills with very long descriptions are truncated to 40 characters in the Telegra
 
 **Solution:**
 
-1. Install Hermes Agent on the new machine:
+1. Install Hermes Agent on the new machine (from source, with Git and a Rust toolchain installed):
    ```bash
-   curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+   cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
    ```
 
 2. On the **source machine**, create a full backup:

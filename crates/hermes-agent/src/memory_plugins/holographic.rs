@@ -204,7 +204,7 @@ const FTS_STOPWORDS: &[&str] = &[
 ];
 
 fn clamp_trust(v: f64) -> f64 {
-    v.max(0.0).min(1.0)
+    v.clamp(0.0, 1.0)
 }
 
 fn is_fts5_unavailable(error: &rusqlite::Error) -> bool {
@@ -366,6 +366,12 @@ pub struct HolographicMemoryPlugin {
     default_trust: f64,
     min_trust: f64,
     session_id: Mutex<String>,
+}
+
+impl Default for HolographicMemoryPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl HolographicMemoryPlugin {

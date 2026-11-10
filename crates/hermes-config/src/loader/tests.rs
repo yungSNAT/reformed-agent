@@ -61,8 +61,10 @@ fn validate_valid_config() {
 
 #[test]
 fn validate_zero_max_turns() {
-    let mut config = GatewayConfig::default();
-    config.max_turns = 0;
+    let config = GatewayConfig {
+        max_turns: 0,
+        ..GatewayConfig::default()
+    };
     assert!(validate_config(&config).is_err());
 }
 
@@ -206,9 +208,11 @@ fn validate_llm_provider_request_timeout_seconds() {
 
 #[test]
 fn env_overrides_model() {
-    let mut config = GatewayConfig::default();
     // Simulate env var (we can't easily set env vars in tests, so test the logic directly)
-    config.model = Some("env-model".into());
+    let config = GatewayConfig {
+        model: Some("env-model".into()),
+        ..GatewayConfig::default()
+    };
     assert_eq!(config.model.as_deref(), Some("env-model"));
 }
 

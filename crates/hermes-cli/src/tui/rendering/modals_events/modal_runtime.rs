@@ -391,9 +391,7 @@ fn open_skin_modal(state: &mut TuiState) {
         });
     }
     let mut modal = PickerModal::new(PickerKind::Skin, "Select Skin", items);
-    let active = std::env::var("HERMES_THEME").unwrap_or_else(|_| "ultra-sunburst".to_string());
-    let active_canonical =
-        crate::skin_engine::canonical_skin_name(&active).unwrap_or("ultra-sunburst");
+    let active_canonical = crate::skin_engine::active_skin_name();
     if let Some(idx) = modal.filtered_indices.iter().position(|item_idx| {
         modal.items[*item_idx]
             .value
@@ -499,7 +497,7 @@ async fn process_modal_confirm(state: &mut TuiState, app: &mut App) -> Result<()
         }
         PickerKind::Skin => {
             let skin = crate::skin_engine::canonical_skin_name(item.value.as_str())
-                .unwrap_or("ultra-sunburst")
+                .unwrap_or(crate::skin_engine::DEFAULT_SKIN)
                 .to_string();
             std::env::set_var("HERMES_THEME", &skin);
             app.request_theme_change(&skin);

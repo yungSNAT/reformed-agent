@@ -1,6 +1,6 @@
 /// Handle `hermes status`.
 async fn run_status(cli: Cli) -> Result<(), AgentError> {
-    println!("Hermes Agent Ultra — Status");
+    println!("Reformed Agent — Status");
     println!("=====================\n");
 
     println!("Version: {}", env!("CARGO_PKG_VERSION"));
@@ -189,10 +189,8 @@ fn prune_old_debug_reports(path: &Path, expire_days: u32) -> Result<usize, Agent
             .ok()
             .and_then(|m| m.modified().ok())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-        if modified < cutoff {
-            if std::fs::remove_file(&p).is_ok() {
-                removed += 1;
-            }
+        if modified < cutoff && std::fs::remove_file(&p).is_ok() {
+            removed += 1;
         }
     }
     Ok(removed)
@@ -327,7 +325,7 @@ fn capture_debug_log_snapshot(
         let mut chunks: Vec<Vec<u8>> = Vec::new();
         let mut total = 0usize;
         let mut newline_count = 0usize;
-        let mut chunk_size = max_bytes.min(8192).max(1);
+        let mut chunk_size = max_bytes.clamp(1, 8192);
         let hard_cap = max_bytes.saturating_mul(2).max(max_bytes);
 
         while pos > 0
@@ -1088,19 +1086,19 @@ async fn run_profile(
                 .map_err(|e| AgentError::Config(e.to_string()))?;
             if let Some(map) = value.as_mapping() {
                 if let Some(v) = map
-                    .get(&serde_yaml::Value::String("model".to_string()))
+                    .get(serde_yaml::Value::String("model".to_string()))
                     .and_then(|v| v.as_str())
                 {
                     disk.model = Some(v.to_string());
                 }
                 if let Some(v) = map
-                    .get(&serde_yaml::Value::String("personality".to_string()))
+                    .get(serde_yaml::Value::String("personality".to_string()))
                     .and_then(|v| v.as_str())
                 {
                     disk.personality = Some(v.to_string());
                 }
                 if let Some(v) = map
-                    .get(&serde_yaml::Value::String("max_turns".to_string()))
+                    .get(serde_yaml::Value::String("max_turns".to_string()))
                     .and_then(|v| v.as_u64())
                 {
                     disk.max_turns = v.min(u32::MAX as u64) as u32;

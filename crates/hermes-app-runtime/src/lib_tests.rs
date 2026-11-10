@@ -7,11 +7,12 @@ mod tests {
     use hermes_config::LlmProviderConfig;
     use hermes_core::{LlmResponse, StreamChunk};
 
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
-        LOCK.get_or_init(|| std::sync::Mutex::new(()))
-            .lock()
-            .expect("env test lock poisoned")
+    // An async-aware lock so the async test can hold it across awaits; sync
+    // tests take it with `blocking_lock`, which must not run inside a runtime.
+    static ENV_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
+    fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
+        ENV_LOCK.blocking_lock()
     }
 
     struct EnvSnapshot {
@@ -343,8 +344,10 @@ mod tests {
 
     #[test]
     fn test_build_agent_config_infers_provider_for_bare_model() {
-        let mut cfg = GatewayConfig::default();
-        cfg.model = Some("claude-opus-4-6".to_string());
+        let mut cfg = GatewayConfig {
+            model: Some("claude-opus-4-6".to_string()),
+            ..GatewayConfig::default()
+        };
         cfg.llm_providers.insert(
             "anthropic".to_string(),
             LlmProviderConfig {
@@ -406,12 +409,14 @@ mod tests {
         std::env::remove_var("HERMES_FALLBACK_MODELS");
         std::env::remove_var("HERMES_FALLBACK_MODEL");
 
-        let mut cfg = GatewayConfig::default();
-        cfg.fallback_models = vec![
-            "openrouter:anthropic/claude-sonnet-4.6".to_string(),
-            "nous:Hermes-4".to_string(),
-        ];
-        cfg.fallback_model = Some("OpenRouter:anthropic/claude-sonnet-4.6".to_string());
+        let cfg = GatewayConfig {
+            fallback_models: vec![
+                "openrouter:anthropic/claude-sonnet-4.6".to_string(),
+                "nous:Hermes-4".to_string(),
+            ],
+            fallback_model: Some("OpenRouter:anthropic/claude-sonnet-4.6".to_string()),
+            ..GatewayConfig::default()
+        };
 
         let agent_cfg = build_agent_config(&cfg, "nous:openai/gpt-5.5");
         assert_eq!(
@@ -434,8 +439,10 @@ mod tests {
         std::env::remove_var("HERMES_FALLBACK_MODELS");
         std::env::set_var("HERMES_FALLBACK_MODEL", "anthropic:claude-3-5-sonnet");
 
-        let mut cfg = GatewayConfig::default();
-        cfg.fallback_models = vec!["openrouter:backup".to_string()];
+        let cfg = GatewayConfig {
+            fallback_models: vec!["openrouter:backup".to_string()],
+            ..GatewayConfig::default()
+        };
 
         let agent_cfg = build_agent_config(&cfg, "nous:openai/gpt-5.5");
         assert_eq!(
@@ -452,6 +459,20 @@ mod tests {
         let agent_cfg = build_agent_config(&cfg, "nous:openai/gpt-5.5");
 
         assert_eq!(agent_cfg.retry.max_retries, 11);
+    }
+
+    #[test]
+    fn test_build_agent_config_maps_stream_max_lifetime() {
+        let mut config = GatewayConfig::default();
+        assert_eq!(
+            build_agent_config(&config, "openai:gpt-4o").stream_max_lifetime,
+            None
+        );
+        config.agent.stream_max_lifetime = Some(1.5);
+        assert_eq!(
+            build_agent_config(&config, "openai:gpt-4o").stream_max_lifetime,
+            Some(1.5)
+        );
     }
 
     #[test]
@@ -823,7 +844,7 @@ mod tests {
 
     #[tokio::test]
     async fn run_noninteractive_query_uses_injected_provider_factory_and_returns_reply() {
-        let _lock = env_test_lock();
+        let _lock = ENV_LOCK.lock().await;
         let _env = EnvSnapshot::capture(&[
             "HERMES_MODEL",
             "HERMES_INFERENCE_MODEL",

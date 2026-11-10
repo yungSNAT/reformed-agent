@@ -129,6 +129,14 @@ llm_providers:
     }
 
     #[test]
+    fn agent_config_loads_stream_max_lifetime_from_yaml() {
+        let config: GatewayConfig = serde_yaml::from_str("agent:\n  stream_max_lifetime: 0.25\n")
+            .expect("load stream lifetime");
+        assert_eq!(config.agent.stream_max_lifetime, Some(0.25));
+        assert_eq!(GatewayConfig::default().agent.stream_max_lifetime, None);
+    }
+
+    #[test]
     fn repo_cli_config_example_parses_as_rust_gateway_config() {
         let manifest_dir = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"));
         let example_path = manifest_dir.join("../..").join("cli-config.yaml.example");

@@ -125,25 +125,11 @@ fn summarize_background_review_result(messages: &[Message]) -> Option<String> {
         let lower = message.to_ascii_lowercase();
         if lower.contains("created") || lower.contains("updated") {
             actions.push(message);
-        } else if lower.contains("added") || (!target.is_empty() && lower.contains("add")) {
-            let label = match target.as_str() {
-                "memory" => "Memory",
-                "user" => "User profile",
-                _ => target.as_str(),
-            };
-            if !label.is_empty() {
-                actions.push(format!("{label} updated"));
-            }
-        } else if message.contains("Entry added") {
-            let label = match target.as_str() {
-                "memory" => "Memory",
-                "user" => "User profile",
-                _ => target.as_str(),
-            };
-            if !label.is_empty() {
-                actions.push(format!("{label} updated"));
-            }
-        } else if lower.contains("removed") || lower.contains("replaced") {
+        } else if lower.contains("added")
+            || (!target.is_empty() && lower.contains("add"))
+            || lower.contains("removed")
+            || lower.contains("replaced")
+        {
             let label = match target.as_str() {
                 "memory" => "Memory",
                 "user" => "User profile",

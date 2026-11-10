@@ -123,23 +123,23 @@ impl Gateway {
             .inject_runtime_hints(session_key, messages.clone())
             .await;
 
-        // Start a stream
-        let stream_handle = self
-            .stream_manager
-            .start_stream(&incoming.platform, &incoming.chat_id)
-            .await;
-        let stream_id = stream_handle.id.clone();
-
-        // Send an initial streaming anchor message.
+        // Send an initial streaming anchor message. The anchor and the partial
+        // stream sends below preview the reply; the final send is the reply.
         let reply_thread_id = Self::reply_thread_id(incoming).map(str::to_string);
-        self.send_message_threaded(
+        self.send_message_with_options(
             &incoming.platform,
             &incoming.chat_id,
             "...",
             None,
-            reply_thread_id.as_deref(),
+            SendMessageOptions::non_conversational_threaded(reply_thread_id.as_deref()),
         )
         .await?;
+
+        let stream_handle = self
+            .stream_manager
+            .start_stream(&incoming.platform, &incoming.chat_id)
+            .await;
+        let stream_id = stream_handle.id;
 
         // Set up the chunk callback that updates the stream and edits the message
         let stream_manager = self.stream_manager.clone();
@@ -169,7 +169,9 @@ impl Gateway {
                                         &chat_id,
                                         &content,
                                         None,
-                                        SendMessageOptions::threaded(thread_id.as_deref()),
+                                        SendMessageOptions::non_conversational_threaded(
+                                            thread_id.as_deref(),
+                                        ),
                                     )
                                     .await;
                             }
@@ -184,11 +186,12 @@ impl Gateway {
             handler(messages, runtime_context, on_chunk).await
         } else {
             let handler = self.streaming_handler.read().await;
-            let handler = handler
-                .as_ref()
-                .ok_or_else(|| GatewayError::Platform("No streaming handler configured".into()))?;
-            handler(legacy_messages, on_chunk).await
+            match handler.as_ref() {
+                Some(handler) => handler(legacy_messages, on_chunk).await,
+                None => Err(GatewayError::Platform("No streaming handler configured".into())),
+            }
         };
+        self.stream_manager.finish_stream(&stream_id).await;
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
@@ -208,9 +211,6 @@ impl Gateway {
                 return Err(e);
             }
         };
-
-        // Finish the stream
-        self.stream_manager.finish_stream(&stream_id).await;
 
         // Add assistant response to session
         self.session_manager
@@ -842,6 +842,25 @@ impl Gateway {
         .await
     }
 
+    /// Send a status note, such as tool progress, that is not part of the
+    /// conversation. Adapters may keep it out of history or out of a reply.
+    pub async fn send_non_conversational_message(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        text: &str,
+        parse_mode: Option<ParseMode>,
+    ) -> Result<(), GatewayError> {
+        self.send_message_with_options(
+            platform,
+            chat_id,
+            text,
+            parse_mode,
+            SendMessageOptions::non_conversational_threaded(None),
+        )
+        .await
+    }
+
     /// Send a message to a caller-supplied platform chat/topic.
     ///
     /// This keeps explicit tool targets distinct from gateway-origin replies
@@ -905,6 +924,14 @@ impl Gateway {
         let adapter = self.get_adapter(platform).await.ok_or_else(|| {
             GatewayError::Platform(format!("No adapter registered for platform: {}", platform))
         })?;
+        // Tool previews can quote attachment syntax. Keep them in the status path, since
+        // native media sends bypass the adapter's non-conversational handling.
+        if options.non_conversational {
+            return Self::send_adapter_text_with_options(
+                &adapter, chat_id, text, parse_mode, options,
+            )
+            .await;
+        }
         let (without_media, media_files) = extract_media_markers(text);
         let (cleaned, images) = extract_inline_images(&without_media);
         if images.is_empty() && media_files.is_empty() {

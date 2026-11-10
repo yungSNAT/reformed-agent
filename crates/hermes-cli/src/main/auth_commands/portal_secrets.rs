@@ -58,6 +58,9 @@ async fn run_billing(args: Vec<String>) -> Result<(), AgentError> {
     Ok(())
 }
 
+// Takes the parsed `auth` subcommand fields one by one, like the other
+// command handlers; bundling them into a struct would be a redesign.
+#[allow(clippy::too_many_arguments)]
 async fn run_auth(
     cli: Cli,
     action: Option<String>,
@@ -345,7 +348,7 @@ async fn run_auth(
                             id: uuid::Uuid::new_v4().simple().to_string()[..6].to_string(),
                             label: label.unwrap_or_else(|| email.clone().unwrap_or(default_label)),
                             auth_type: "oauth".to_string(),
-                            source: source,
+                            source,
                             access_token: access_token.clone(),
                             last_status: None,
                             last_status_at: None,

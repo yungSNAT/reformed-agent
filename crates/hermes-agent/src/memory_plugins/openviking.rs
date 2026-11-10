@@ -406,6 +406,12 @@ fn spawn_deferred_commit(st: VikingState, writers: InflightWriters, context: &'s
     });
 }
 
+impl Default for OpenVikingMemoryPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OpenVikingMemoryPlugin {
     pub fn new() -> Self {
         Self {

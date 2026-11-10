@@ -281,19 +281,27 @@ impl VisionBackend for OpenAiVisionBackend {
             .json(&body)
             .send()
             .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Vision API request failed: {}", e)))?;
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!(
+                    "Vision API request failed: {}",
+                    e.without_url()
+                ))
+            })?;
 
         let status = resp.status();
-        let text = resp.text().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to read vision response: {}", e))
-        })?;
-
         if !status.is_success() {
+            // A provider may echo credentials or the input in its error body.
             return Err(ToolError::ExecutionFailed(format!(
-                "Vision API error ({}): {}",
-                status, text
+                "Vision API error ({status})"
             )));
         }
+
+        let text = resp.text().await.map_err(|e| {
+            ToolError::ExecutionFailed(format!(
+                "Failed to read vision response: {}",
+                e.without_url()
+            ))
+        })?;
 
         let data: Value = serde_json::from_str(&text).map_err(|e| {
             ToolError::ExecutionFailed(format!("Failed to parse vision response: {}", e))
@@ -306,6 +314,32 @@ impl VisionBackend for OpenAiVisionBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn vision_api_error_does_not_echo_provider_body() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let api = MockServer::start().await;
+        let key = "croft-manor-vision-fixture";
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(json!({
+                "error": {"message": format!("Incorrect API key provided: {key}")}
+            })))
+            .mount(&api)
+            .await;
+        let backend = OpenAiVisionBackend::new(key.into(), api.uri(), "fixture-model".into());
+
+        let error = backend
+            .analyze("https://example.com/fixture.png", "Describe this image")
+            .await
+            .expect_err("provider rejects key")
+            .to_string();
+
+        assert!(error.contains("401"), "{error}");
+        assert!(!error.contains(key), "{error}");
+    }
 
     static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 

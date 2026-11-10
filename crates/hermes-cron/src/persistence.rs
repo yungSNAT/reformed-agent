@@ -192,7 +192,7 @@ impl JobPersistence for FileJobPersistence {
         let mut entries = fs::read_dir(&self.data_dir).await?;
         while let Some(entry) = entries.next_entry().await? {
             let path = entry.path();
-            if path.extension().map_or(false, |ext| ext == "json") {
+            if path.extension().is_some_and(|ext| ext == "json") {
                 let contents = fs::read_to_string(&path).await?;
                 let job = serde_json::from_str::<CronJob>(&contents).map_err(|e| {
                     CronPersistenceError::Corrupted(format!(
@@ -267,7 +267,7 @@ impl SqliteJobPersistence {
     fn open_connection(&self) -> Result<rusqlite::Connection, CronPersistenceError> {
         // Ensure parent directory exists
         if let Some(parent) = self.db_path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| CronPersistenceError::Io(e))?;
+            std::fs::create_dir_all(parent).map_err(CronPersistenceError::Io)?;
         }
 
         let conn = rusqlite::Connection::open(&self.db_path)
@@ -430,7 +430,10 @@ mod tests {
             .unwrap();
 
         // Bulk replace with only one job should remove stale json files.
-        persistence.save_jobs(&[job1.clone()]).await.unwrap();
+        persistence
+            .save_jobs(std::slice::from_ref(&job1))
+            .await
+            .unwrap();
 
         let loaded = persistence.load_jobs().await.unwrap();
         assert_eq!(loaded.len(), 1);

@@ -195,20 +195,20 @@ pub fn parse_v4a_patch(patch_content: &str) -> (Vec<PatchOperation>, Option<Stri
                 current_hunk = Some(Hunk::default());
             }
             if let Some(ref mut hunk) = current_hunk {
-                if line.starts_with('+') {
+                if let Some(content) = line.strip_prefix('+') {
                     hunk.lines.push(HunkLine {
                         prefix: '+',
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
-                } else if line.starts_with('-') {
+                } else if let Some(content) = line.strip_prefix('-') {
                     hunk.lines.push(HunkLine {
                         prefix: '-',
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
-                } else if line.starts_with(' ') {
+                } else if let Some(content) = line.strip_prefix(' ') {
                     hunk.lines.push(HunkLine {
                         prefix: ' ',
-                        content: line[1..].to_string(),
+                        content: content.to_string(),
                     });
                 } else if line.starts_with('\\') {
                     // "\ No newline at end of file" — skip

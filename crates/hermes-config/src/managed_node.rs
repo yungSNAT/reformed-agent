@@ -219,6 +219,8 @@ mod tests {
         );
     }
 
+    // Only Unix has executable bits; elsewhere `is_unix_executable` accepts any file.
+    #[cfg(unix)]
     #[test]
     fn posix_prefers_bin_and_requires_executable_bit() {
         let tmp = tempdir().expect("tempdir");

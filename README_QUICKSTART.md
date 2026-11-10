@@ -1,4 +1,4 @@
-# Hermes Agent Ultra Quickstart
+# Reformed Agent Quickstart
 
 This guide is the fastest path from install to a working interactive session.
 
@@ -7,9 +7,12 @@ This guide is the fastest path from install to a working interactive session.
 From source:
 
 ```bash
-cargo install --git https://github.com/sheawinkler/hermes-agent-ultra hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra --bin hermes
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 hash -r
 ```
+
+Add `--bin hermes` only if you also want the `hermes` command; it replaces one
+installed by upstream Hermes.
 
 ## 2) Run Setup Wizard
 

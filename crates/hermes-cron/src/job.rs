@@ -228,12 +228,11 @@ impl CronJob {
         }
 
         // Validate prompt or script
-        if self.prompt.trim().is_empty()
-            && self.script.as_ref().map_or(true, |s| s.trim().is_empty())
+        if self.prompt.trim().is_empty() && self.script.as_ref().is_none_or(|s| s.trim().is_empty())
         {
             return Err("Either prompt or script must be non-empty".to_string());
         }
-        if self.no_agent && self.script.as_ref().map_or(true, |s| s.trim().is_empty()) {
+        if self.no_agent && self.script.as_ref().is_none_or(|s| s.trim().is_empty()) {
             return Err("no_agent mode requires non-empty script".to_string());
         }
         normalize_workdir(self.workdir.as_deref())?;
@@ -281,7 +280,7 @@ impl CronJob {
     /// - 6 fields: `sec min hour dom month dow` -> `sec min hour dom month dow *`
     /// - 7 fields: already correct, return as-is
     fn normalize_cron_expr(expr: &str) -> String {
-        let parts: Vec<&str> = expr.trim().split_whitespace().collect();
+        let parts: Vec<&str> = expr.split_whitespace().collect();
         match parts.len() {
             5 => format!("0 {} *", expr.trim()),
             6 => format!("{} *", expr.trim()),
@@ -390,7 +389,7 @@ mod tests {
         assert_eq!(job.status, JobStatus::Active);
         assert_eq!(job.run_count, 0);
         assert!(job.next_run.is_some());
-        assert!(job.id.len() > 0);
+        assert!(!job.id.is_empty());
     }
 
     #[test]

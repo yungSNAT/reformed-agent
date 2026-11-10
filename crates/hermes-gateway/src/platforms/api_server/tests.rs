@@ -1,4 +1,7 @@
 use super::*;
+use crate::dm::DmManager;
+use crate::gateway::{Gateway, GatewayConfig, IncomingMessage};
+use crate::session::SessionManager;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 async fn spawn_one_request_server(
@@ -548,6 +551,111 @@ async fn responses_endpoint_accepts_input_and_quoted_false_without_storing() {
 }
 
 #[tokio::test]
+async fn streamed_chat_completion_deltas_preserve_multibyte_reply() {
+    let reply = "Done 🎉🎉 文件已经整理好了，共有十二个文件。✅ 好的";
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let request = json_request(
+        "POST",
+        "/v1/chat/completions",
+        serde_json::json!({
+            "messages": [{"role": "user", "content": "tidy the files"}],
+            "stream": true,
+        }),
+    );
+    let mailbox = Arc::clone(&state.mailbox);
+    let answer = tokio::spawn(async move {
+        let inbound = rx.recv().await.expect("inbound request");
+        let sender = mailbox
+            .read()
+            .await
+            .pending
+            .get(&inbound.session_id)
+            .cloned()
+            .expect("pending response sender");
+        sender.send(reply.to_string()).await.expect("send reply");
+    });
+
+    let response = state.roundtrip(request, None).await;
+    answer.await.expect("answer task");
+
+    assert!(response.contains("text/event-stream"), "{response}");
+    let streamed: String = response
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter(|data| *data != "[DONE]")
+        .filter_map(|data| {
+            let chunk: serde_json::Value = serde_json::from_str(data).expect("chunk json");
+            chunk["choices"][0]["delta"]["content"]
+                .as_str()
+                .map(str::to_string)
+        })
+        .collect();
+    assert_eq!(streamed, reply);
+}
+
+#[tokio::test]
+async fn concurrent_sends_do_not_block_api_request_cleanup() {
+    let adapter = Arc::new(ApiServerAdapter::new(ApiServerConfig::default()));
+    let (tx, mut rx) = mpsc::channel(1);
+    let (addr, handle) = spawn_one_request_server(
+        Arc::clone(&adapter.mailbox),
+        Arc::clone(&adapter.response_store),
+        Arc::clone(&adapter.run_cancels),
+        Arc::clone(&adapter.run_store),
+        throwaway_cron_scheduler(),
+        Arc::new(RwLock::new(Some(tx))),
+        None,
+    )
+    .await;
+    let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    client
+        .write_all(
+            json_request(
+                "POST",
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "messages": [{"role": "user", "content": "hello"}],
+                    "stream": false,
+                }),
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("write request");
+    let inbound = rx.recv().await.expect("inbound request");
+
+    // Three sends race for the one-message reply mailbox, as spawned gateway
+    // sends can during a turn.
+    let sends: Vec<_> = ["first reply", "second message", "third message"]
+        .into_iter()
+        .map(|text| {
+            let adapter = Arc::clone(&adapter);
+            let chat_id = inbound.session_id.clone();
+            tokio::spawn(async move { adapter.send_message(&chat_id, text, None).await })
+        })
+        .collect();
+
+    let response = tokio::time::timeout(Duration::from_secs(5), read_http_response(client))
+        .await
+        .expect("API request should finish instead of waiting on the mailbox lock");
+    for send in sends {
+        tokio::time::timeout(Duration::from_secs(5), send)
+            .await
+            .expect("send should finish")
+            .expect("send task")
+            .expect("send result");
+    }
+    handle.await.expect("server task");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    assert_eq!(
+        json_body(&response)["choices"][0]["message"]["content"],
+        "first reply"
+    );
+    assert!(adapter.mailbox.read().await.pending.is_empty());
+}
+
+#[tokio::test]
 async fn status_updates_do_not_complete_pending_http_mailbox() {
     let adapter = ApiServerAdapter::new(ApiServerConfig::default());
     let (reply_tx, mut reply_rx) = mpsc::channel(1);
@@ -583,6 +691,141 @@ async fn status_updates_do_not_complete_pending_http_mailbox() {
         .await
         .expect("final timeout");
     assert_eq!(final_reply.as_deref(), Some("final assistant reply"));
+}
+
+async fn api_gateway(config: GatewayConfig) -> (Arc<ApiServerAdapter>, Arc<Gateway>) {
+    let adapter = Arc::new(ApiServerAdapter::new(ApiServerConfig::default()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("api-client");
+    let gateway = Arc::new(Gateway::new(
+        Arc::new(SessionManager::new(
+            hermes_config::session::SessionConfig::default(),
+        )),
+        dm_manager,
+        config,
+    ));
+    gateway
+        .register_adapter("api_server", adapter.clone())
+        .await;
+    (adapter, gateway)
+}
+
+/// Runs a non-streaming gateway turn that optionally emits a tool progress
+/// note before its final reply, and returns what the HTTP client receives.
+async fn chat_completion_content_through_gateway(progress_note: Option<&'static str>) -> String {
+    let (adapter, gateway) = api_gateway(GatewayConfig::default()).await;
+    let gateway_for_turn = Arc::downgrade(&gateway);
+    gateway
+        .set_message_handler_with_context(Arc::new(move |_messages, ctx| {
+            let gateway = gateway_for_turn.clone();
+            Box::pin(async move {
+                if let Some(note) = progress_note {
+                    let gateway = gateway.upgrade().expect("gateway alive during turn");
+                    gateway
+                        .send_non_conversational_message(&ctx.platform, &ctx.chat_id, note, None)
+                        .await?;
+                }
+                Ok("final assistant reply".to_string())
+            })
+        }))
+        .await;
+    chat_completion_through_gateway(&adapter, &gateway).await
+}
+
+/// Sends one non-streaming chat completion, routes it through `gateway` and
+/// returns the assistant content the HTTP client receives.
+async fn chat_completion_through_gateway(adapter: &ApiServerAdapter, gateway: &Gateway) -> String {
+    let (tx, mut rx) = mpsc::channel(1);
+    let (addr, handle) = spawn_one_request_server(
+        Arc::clone(&adapter.mailbox),
+        Arc::clone(&adapter.response_store),
+        Arc::clone(&adapter.run_cancels),
+        Arc::clone(&adapter.run_store),
+        throwaway_cron_scheduler(),
+        Arc::new(RwLock::new(Some(tx))),
+        None,
+    )
+    .await;
+    let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+    client
+        .write_all(
+            json_request(
+                "POST",
+                "/v1/chat/completions",
+                serde_json::json!({
+                    "messages": [{"role": "user", "content": "list the files"}],
+                    "stream": false,
+                }),
+            )
+            .as_bytes(),
+        )
+        .await
+        .expect("write request");
+
+    let inbound = rx.recv().await.expect("inbound request");
+    gateway
+        .route_message(&IncomingMessage {
+            platform: "api_server".to_string(),
+            chat_id: inbound.session_id.clone(),
+            user_id: inbound.user_id.clone(),
+            text: inbound.prompt.clone(),
+            message_id: Some(inbound.request_id.clone()),
+            thread_id: None,
+            is_dm: true,
+        })
+        .await
+        .expect("route api request");
+
+    let response = read_http_response(client).await;
+    handle.await.expect("server task");
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    json_body(&response)["choices"][0]["message"]["content"]
+        .as_str()
+        .expect("assistant content")
+        .to_string()
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_after_tool_progress_note() {
+    let content = chat_completion_content_through_gateway(Some("💻 terminal: \"ls\"")).await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_after_progress_note_with_image_link() {
+    let content = chat_completion_content_through_gateway(Some(
+        "🌐 browser: \"![shot](https://example.com/shot.png)\"",
+    ))
+    .await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_without_tool_use() {
+    let content = chat_completion_content_through_gateway(None).await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
+async fn chat_completion_returns_final_reply_when_gateway_streams() {
+    let (adapter, gateway) = api_gateway(GatewayConfig {
+        streaming_enabled: true,
+        ..GatewayConfig::default()
+    })
+    .await;
+    gateway
+        .set_streaming_handler_with_context(Arc::new(|_messages, _ctx, on_chunk| {
+            Box::pin(async move {
+                on_chunk("partial preview text long enough to flush the stream buffer".to_string());
+                // Let the spawned preview send reach the adapter before the
+                // turn ends, as it would during a real streamed turn.
+                tokio::time::sleep(Duration::from_millis(50)).await;
+                Ok("final assistant reply".to_string())
+            })
+        }))
+        .await;
+    let content = chat_completion_through_gateway(&adapter, &gateway).await;
+    assert_eq!(content, "final assistant reply");
 }
 
 #[tokio::test]

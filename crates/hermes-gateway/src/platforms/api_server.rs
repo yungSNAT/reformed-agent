@@ -17,7 +17,7 @@ use tokio::sync::{mpsc, Notify, RwLock};
 use tracing::{debug, error, info, warn};
 
 use hermes_core::errors::GatewayError;
-use hermes_core::traits::{ParseMode, PlatformAdapter};
+use hermes_core::traits::{ParseMode, PlatformAdapter, SendMessageOptions};
 use hermes_cron::{
     verify_nas_fire_token, ChronosConfig, CronError, CronJob, CronScheduler, DeliverConfig,
     DeliverTarget, JobStatus,
@@ -432,7 +432,7 @@ impl ApiServerAdapter {
     fn make_completion_id() -> String {
         format!(
             "chatcmpl-{}",
-            uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+            &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
         )
     }
 
@@ -602,13 +602,44 @@ impl PlatformAdapter for ApiServerAdapter {
         text: &str,
         _parse_mode: Option<ParseMode>,
     ) -> Result<(), GatewayError> {
+        // The pending request reads one message, so never wait for channel
+        // space: waiting here would hold the read lock that cleanup needs.
         let mailbox = self.mailbox.read().await;
-        if let Some(tx) = mailbox.pending.get(chat_id) {
-            let _ = tx.send(text.to_string()).await;
-        } else {
-            debug!(chat_id = chat_id, "No pending API request for chat_id");
+        match mailbox
+            .pending
+            .get(chat_id)
+            .map(|tx| tx.try_send(text.to_string()))
+        {
+            Some(Ok(())) => {}
+            Some(Err(mpsc::error::TrySendError::Full(_))) => {
+                debug!(
+                    chat_id = chat_id,
+                    "API response already queued; dropping later message"
+                );
+            }
+            Some(Err(mpsc::error::TrySendError::Closed(_))) | None => {
+                debug!(chat_id = chat_id, "No pending API request for chat_id");
+            }
         }
         Ok(())
+    }
+
+    async fn send_message_with_options(
+        &self,
+        chat_id: &str,
+        text: &str,
+        parse_mode: Option<ParseMode>,
+        options: SendMessageOptions,
+    ) -> Result<(), GatewayError> {
+        if options.non_conversational {
+            debug!(
+                chat_id = chat_id,
+                text = text,
+                "API server non-conversational message kept out of HTTP response mailbox"
+            );
+            return Ok(());
+        }
+        self.send_message(chat_id, text, parse_mode).await
     }
 
     async fn send_or_update_status(
@@ -737,12 +768,9 @@ async fn wait_for_run_event_snapshot(
         let notified = notifier.notified();
         tokio::pin!(notified);
 
-        if let Some(latest) = run_store.read().await.get(run_id) {
-            if latest.is_terminal() {
-                return Some(latest);
-            }
-        } else {
-            return None;
+        let latest = run_store.read().await.get(run_id)?;
+        if latest.is_terminal() {
+            return Some(latest);
         }
 
         if tokio::time::timeout(Duration::from_secs(120), &mut notified)
@@ -757,7 +785,7 @@ async fn wait_for_run_event_snapshot(
 fn make_run_id() -> String {
     format!(
         "run_{}",
-        uuid::Uuid::new_v4().to_string().replace('-', "")[..24].to_string()
+        &uuid::Uuid::new_v4().to_string().replace('-', "")[..24]
     )
 }
 

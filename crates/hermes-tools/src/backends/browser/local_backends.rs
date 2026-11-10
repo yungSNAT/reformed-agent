@@ -33,208 +33,80 @@ impl CdpBrowserBackend {
         Self::new(endpoint)
     }
 
-    /// Send a CDP command via HTTP (simplified - real impl would use WebSocket).
-    async fn cdp_command_http(&self, method: &str, params: Value) -> Result<Value, ToolError> {
-        // Get the first available page target
-        let targets_resp = self
-            .client
-            .get(format!("{}/json", self.endpoint))
-            .send()
-            .await
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!(
-                    "Failed to connect to Chrome CDP at {}: {}",
-                    self.endpoint, e
-                ))
-            })?;
-
-        let targets: Vec<Value> = targets_resp.json().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to parse CDP targets: {}", e))
-        })?;
-
-        let ws_url = targets.first()
-            .and_then(|t| t.get("webSocketDebuggerUrl"))
-            .and_then(|u| u.as_str())
-            .ok_or_else(|| ToolError::ExecutionFailed("No Chrome page target found. Is Chrome running with --remote-debugging-port=9222?".into()))?;
-
-        // For a full implementation, we'd use tokio-tungstenite to connect
-        // to the WebSocket and send CDP commands. For now, return a structured
-        // response indicating the command that would be sent.
-        Ok(json!({
-            "method": method,
-            "params": params,
-            "target": ws_url,
-            "status": "sent",
-        }))
-    }
-
-    async fn cdp_command_with_timeout(
+    /// Send one CDP command to the browser's first page. Each call opens its
+    /// own WebSocket and attaches to the page; a local Chrome keeps the page
+    /// whether or not a client is connected, so no state has to outlive a call.
+    async fn page_call(
         &self,
         method: &str,
         params: Value,
-        timeout_duration: Duration,
-    ) -> Result<Value, ToolError> {
-        match tokio::time::timeout(timeout_duration, self.cdp_command_http(method, params)).await {
-            Ok(Ok(value)) => Ok(value),
+        collect: &[&str],
+    ) -> Result<(Value, Vec<Value>), ToolError> {
+        let mut connection = CdpConnection::open_attached(&self.client, &self.endpoint)
+            .await
+            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
+        let outcome = connection.call(method, params, collect).await;
+        connection.close().await;
+        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+    }
+}
+
+impl CdpChannel for CdpBrowserBackend {
+    async fn cdp_call(
+        &self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), ToolError> {
+        match tokio::time::timeout(timeout, self.page_call(method, params, collect)).await {
+            Ok(Ok(outcome)) => Ok(outcome),
             Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
             Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
                 method,
                 &self.endpoint,
-                timeout_duration,
+                timeout,
             ))),
         }
     }
 
-    async fn cdp_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
-        self.cdp_command_with_timeout(method, params, cdp_command_timeout())
-            .await
+    /// The first navigation gets a longer allowance for Chrome's cold start.
+    fn next_navigate_timeout(&self) -> Duration {
+        cdp_open_timeout(self.first_navigation.swap(false, Ordering::SeqCst))
     }
 }
 
 #[async_trait]
 impl BrowserBackend for CdpBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
-        validate_url_does_not_exfiltrate_secret(url)?;
-        let first_open = self.first_navigation.swap(false, Ordering::SeqCst);
-        let result = self
-            .cdp_command_with_timeout(
-                "Page.navigate",
-                json!({"url": url}),
-                cdp_open_timeout(first_open),
-            )
-            .await
-            .map_err(|err| {
-                ToolError::ExecutionFailed(format!(
-                    "Failed to open {url}: {}",
-                    tool_error_message(err)
-                ))
-            })?;
-        Ok(json!({"status": "navigated", "url": url, "cdp": result}).to_string())
+        cdp_navigate(self, url).await
     }
-
     async fn snapshot(&self) -> Result<String, ToolError> {
-        let result = self
-            .cdp_command("Accessibility.getFullAXTree", json!({}))
-            .await?;
-        Ok(redact_browser_observation(
-            &json!({"status": "snapshot", "cdp": result}).to_string(),
-        ))
+        cdp_snapshot(self).await
     }
-
     async fn click(&self, selector: &str) -> Result<String, ToolError> {
-        // Use Runtime.evaluate to find and click the element
-        let js = format!(
-            "document.querySelector('{}')?.click(); 'clicked'",
-            selector.replace('\'', "\\'")
-        );
-        let result = self
-            .cdp_command("Runtime.evaluate", json!({"expression": js}))
-            .await?;
-        Ok(json!({"status": "clicked", "selector": selector, "cdp": result}).to_string())
+        cdp_click(self, selector).await
     }
-
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError> {
-        let js = format!(
-            "let el = document.querySelector('{}'); if(el) {{ el.value = '{}'; el.dispatchEvent(new Event('input')); 'typed' }} else {{ 'not found' }}",
-            selector.replace('\'', "\\'"),
-            text.replace('\'', "\\'")
-        );
-        let result = self
-            .cdp_command("Runtime.evaluate", json!({"expression": js}))
-            .await?;
-        Ok(
-            json!({"status": "typed", "selector": selector, "text": text, "cdp": result})
-                .to_string(),
-        )
+        cdp_type(self, selector, text).await
     }
-
     async fn scroll(&self, direction: &str, amount: Option<u32>) -> Result<String, ToolError> {
-        let px = amount.unwrap_or(500) as i32;
-        let (x, y) = match direction {
-            "up" => (0, -px),
-            "down" => (0, px),
-            "left" => (-px, 0),
-            "right" => (px, 0),
-            _ => (0, px),
-        };
-        let js = format!("window.scrollBy({}, {}); 'scrolled'", x, y);
-        let result = self
-            .cdp_command("Runtime.evaluate", json!({"expression": js}))
-            .await?;
-        Ok(
-            json!({"status": "scrolled", "direction": direction, "amount": px, "cdp": result})
-                .to_string(),
-        )
+        cdp_scroll(self, direction, amount).await
     }
-
     async fn go_back(&self) -> Result<String, ToolError> {
-        let result = self
-            .cdp_command(
-                "Runtime.evaluate",
-                json!({"expression": "history.back(); 'back'"}),
-            )
-            .await?;
-        Ok(json!({"status": "navigated_back", "cdp": result}).to_string())
+        cdp_go_back(self).await
     }
-
     async fn press(&self, key: &str) -> Result<String, ToolError> {
-        let result = self
-            .cdp_command(
-                "Input.dispatchKeyEvent",
-                json!({
-                    "type": "keyDown",
-                    "key": key,
-                }),
-            )
-            .await?;
-        Ok(json!({"status": "key_pressed", "key": key, "cdp": result}).to_string())
+        cdp_press(self, key).await
     }
-
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
-        let sel = selector.unwrap_or("img");
-        let js = format!(
-            "JSON.stringify(Array.from(document.querySelectorAll('{}')).map(img => ({{src: img.src, alt: img.alt, width: img.width, height: img.height}})))",
-            sel.replace('\'', "\\'")
-        );
-        let result = self
-            .cdp_command(
-                "Runtime.evaluate",
-                json!({"expression": js, "returnByValue": true}),
-            )
-            .await?;
-        Ok(json!({"status": "images_found", "selector": sel, "cdp": result}).to_string())
+        cdp_get_images(self, selector).await
     }
-
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        // Take a screenshot and analyze with vision model
-        let result = self
-            .cdp_command("Page.captureScreenshot", json!({"format": "png"}))
-            .await?;
-        Ok(browser_vision_payload(instruction, result))
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        cdp_screenshot(self).await
     }
-
     async fn console(&self, action: &str) -> Result<String, ToolError> {
-        match action {
-            "read" => {
-                let result = self.cdp_command("Runtime.evaluate", json!({
-                    "expression": "'Console messages require Runtime.consoleAPICalled event listener'"
-                })).await?;
-                Ok(json!({"status": "console_read", "cdp": result}).to_string())
-            }
-            "clear" => {
-                let result = self
-                    .cdp_command(
-                        "Runtime.evaluate",
-                        json!({"expression": "console.clear(); 'cleared'"}),
-                    )
-                    .await?;
-                Ok(json!({"status": "console_cleared", "cdp": result}).to_string())
-            }
-            other => Err(ToolError::InvalidParams(format!(
-                "Unknown console action: {}",
-                other
-            ))),
-        }
+        cdp_console(self, action).await
     }
 }
 
@@ -295,8 +167,8 @@ impl BrowserBackend for CamoFoxBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         self.inner.get_images(selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        self.inner.vision(instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        self.inner.screenshot().await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         self.inner.console(action).await

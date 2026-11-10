@@ -3,7 +3,7 @@
     use hermes_core::JsonSchema;
     use std::sync::{Mutex, MutexGuard, OnceLock};
 
-    fn env_test_lock() -> MutexGuard<'static, ()> {
+    pub(crate) fn env_test_lock() -> MutexGuard<'static, ()> {
         static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
         LOCK.get_or_init(|| Mutex::new(()))
             .lock()
@@ -1291,6 +1291,83 @@
             let prompt = agent.build_system_prompt("", &tools, "openai/gpt-5.4");
             assert!(!prompt.contains("You are a coding agent pairing"));
         }
+    }
+
+    #[tokio::test]
+    async fn code_index_scan_waits_for_run_not_the_constructor() {
+        #[derive(Default)]
+        struct CapturingProvider {
+            seen_messages: Mutex<Vec<Message>>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for CapturingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<LlmResponse, AgentError> {
+                *self.seen_messages.lock().expect("seen messages lock") = messages.to_vec();
+                Ok(LlmResponse {
+                    message: Message::assistant("done"),
+                    usage: None,
+                    model: "test".to_string(),
+                    finish_reason: Some("stop".to_string()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let workspace = tempfile::tempdir().expect("tempdir");
+        let marker = workspace.path().join("marker.rs");
+        std::fs::write(&marker, "pub fn repo_map_marker_fn() {}\n").expect("write marker");
+        let provider = Arc::new(CapturingProvider::default());
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = {
+            let _lock = env_test_lock();
+            let _cwd = EnvVarGuard::set("TERMINAL_CWD", workspace.path().to_str().unwrap());
+            AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone())
+        };
+
+        // Constructors run on async workers, where a workspace scan would stall
+        // every task sharing the worker; the scan belongs to `run`.
+        let index = agent.code_index.clone().expect("code index enabled by default");
+        assert!(index
+            .lock()
+            .expect("code index lock")
+            .list_file_symbols(&marker, 8)
+            .is_empty());
+
+        agent
+            .run(vec![Message::user("hello")], Some(Vec::new()))
+            .await
+            .expect("agent run");
+
+        let seen = provider.seen_messages.lock().expect("seen messages lock");
+        assert!(seen.iter().any(|m| m.role == MessageRole::System
+            && m.content
+                .as_deref()
+                .is_some_and(|c| c.contains("repo_map_marker_fn"))));
     }
 
     include!("tests/coding_route_learning.rs");

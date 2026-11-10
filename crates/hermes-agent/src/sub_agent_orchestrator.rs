@@ -22,7 +22,7 @@
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
@@ -32,6 +32,7 @@ use serde_json::json;
 use tokio::time::timeout;
 
 use crate::agent_loop::{AgentConfig, AgentLoop, ToolRegistry};
+use crate::code_index::CodeIndex;
 use crate::credential_pool::CredentialPool;
 use crate::interrupt::InterruptController;
 
@@ -129,6 +130,9 @@ pub struct SubAgentOrchestratorConfig {
     pub parent_session_id: Option<String>,
     pub timeout: Duration,
     pub background_delegation_callback: Option<BackgroundDelegationCallback>,
+    /// Parent's code index, shared with every child so a delegation never
+    /// scans the workspace again. `None` gives children no repo map.
+    pub code_index: Option<Arc<Mutex<CodeIndex>>>,
 }
 
 /// In-process executor for `delegate_task` tool calls.
@@ -162,6 +166,7 @@ impl SubAgentOrchestrator {
                     .background_delegation_callback
                     .clone()
                     .or_else(|| parent.callbacks.background_review_callback.clone()),
+                code_index: parent.code_index.clone(),
             },
         }
     }
@@ -351,6 +356,7 @@ impl SubAgentOrchestrator {
             None
         };
         let initial = initial_messages(&req.task, req.context.as_deref());
+        let code_index = self.cfg.code_index.clone();
 
         // Run the child on its own tokio task so that its `impl Future` type is
         // fully erased behind a `JoinHandle`, breaking async recursion with the
@@ -359,13 +365,14 @@ impl SubAgentOrchestrator {
         // `AgentLoop::run` to already be Send — this is also what the existing
         // `spawn_background_review` relies on.
         let join = tokio::spawn(async move {
-            let child_agent = AgentLoop::with_interrupt(
+            let mut child_agent = AgentLoop::with_interrupt(
                 child_config,
                 tool_registry,
                 child_provider,
                 child_interrupt_for_spawn,
             )
             .with_delegate_depth(child_depth);
+            child_agent.code_index = code_index;
             child_agent.run(initial, inherited_tools).await
         });
 
@@ -474,7 +481,20 @@ impl SubAgentOrchestrator {
             self.cfg.llm_provider.clone(),
             InterruptController::new(),
         );
-        if let Some(pool) = self.cfg.parent_credential_pool.as_ref() {
+        // The parent's pool holds the parent provider's keys; a child on
+        // another provider uses its own credential.
+        let parent = &self.cfg.parent_config;
+        let (parent_provider, _) =
+            AgentLoop::provider_and_model(parent.provider.as_deref(), parent.model.as_str());
+        let same_provider =
+            crate::provider_profiles::normalize_runtime_provider_name(parent_provider.as_str())
+                == crate::provider_profiles::normalize_runtime_provider_name(provider.as_str());
+        if let Some(pool) = self
+            .cfg
+            .parent_credential_pool
+            .as_ref()
+            .filter(|_| same_provider)
+        {
             resolver = resolver.with_primary_credential_pool(pool.clone());
         }
 
@@ -703,6 +723,7 @@ mod tests {
             parent_session_id: Some("parent".into()),
             timeout: Duration::from_secs(2),
             background_delegation_callback: None,
+            code_index: None,
         }));
 
         let out = orch
@@ -723,6 +744,102 @@ mod tests {
         assert_eq!(parsed["status"], "completed");
         let seen = seen_tools.lock().expect("seen tools lock");
         assert_eq!(seen.as_slice(), &[vec!["terminal".to_string()]]);
+    }
+
+    #[tokio::test]
+    async fn child_uses_parent_code_index_instead_of_scanning_its_own() {
+        struct SystemPromptProvider {
+            system_prompts: Arc<Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for SystemPromptProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<LlmResponse, AgentError> {
+                let system = messages
+                    .iter()
+                    .find(|m| matches!(m.role, hermes_core::MessageRole::System))
+                    .and_then(|m| m.content.clone())
+                    .unwrap_or_default();
+                self.system_prompts
+                    .lock()
+                    .expect("system prompts lock")
+                    .push(system);
+                Ok(LlmResponse {
+                    message: Message::assistant("done"),
+                    usage: None,
+                    model: "system-prompt".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        // The parent's index covers a workspace that is not the test's working
+        // directory, so its marker reaches the child's repo map only if the
+        // child reuses this index rather than scanning a workspace itself.
+        let workspace = tempfile::tempdir().unwrap();
+        std::fs::write(
+            workspace.path().join("parent.rs"),
+            "pub fn parent_index_marker_fn() {}\n",
+        )
+        .unwrap();
+        let mut index = CodeIndex::new(
+            workspace.path(),
+            crate::code_index::CodeIndexConfig::default(),
+        );
+        index.refresh_full();
+
+        let system_prompts = Arc::new(Mutex::new(Vec::<String>::new()));
+        let mut parent = AgentLoop::new(
+            AgentConfig {
+                max_turns: 2,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(SystemPromptProvider {
+                system_prompts: system_prompts.clone(),
+            }),
+        );
+        parent.code_index = Some(Arc::new(Mutex::new(index)));
+        let tmp = tempfile::tempdir().unwrap();
+        let orch = Arc::new(SubAgentOrchestrator::from_parent(
+            &parent,
+            tmp.path().to_path_buf(),
+        ));
+
+        let out = orch
+            .execute(SubAgentRequest {
+                task: "child task".into(),
+                child_depth: 1,
+                max_depth: 4,
+                ..Default::default()
+            })
+            .await;
+
+        let parsed: serde_json::Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(parsed["status"], "completed");
+        let prompts = system_prompts.lock().expect("system prompts lock");
+        assert_eq!(prompts.len(), 1);
+        assert!(prompts[0].contains("parent_index_marker_fn"));
     }
 
     #[tokio::test]
@@ -776,6 +893,7 @@ mod tests {
             parent_session_id: Some("parent".into()),
             timeout: Duration::from_millis(50),
             background_delegation_callback: None,
+            code_index: None,
         }));
         let out = orch
             .execute(SubAgentRequest {
@@ -825,6 +943,7 @@ mod tests {
                     .expect("completion lock")
                     .push(text.to_string());
             })),
+            code_index: None,
         }));
 
         let out = orch
@@ -878,6 +997,7 @@ mod tests {
             parent_session_id: None,
             timeout: Duration::from_secs(2),
             background_delegation_callback: None,
+            code_index: None,
         }));
         let out = orch
             .execute(SubAgentRequest {
@@ -914,6 +1034,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
         let child = orch.build_child_config(
             &SubAgentRequest {
@@ -958,6 +1079,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -999,6 +1121,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -1038,6 +1161,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         });
 
         let child = orch.build_child_config(
@@ -1079,6 +1203,7 @@ mod tests {
             parent_session_id: Some("root".into()),
             timeout: Duration::from_secs(1),
             background_delegation_callback: None,
+            code_index: None,
         }));
 
         let out = orch
@@ -1096,5 +1221,214 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("definitely-missing-provider"));
+    }
+
+    /// Loopback OpenAI-compatible endpoint that answers one request and hands
+    /// the raw request (headers and body) back through the channel.
+    fn loopback_chat_fixture() -> (String, std::sync::mpsc::Receiver<String>) {
+        use std::io::{Read, Write};
+
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback fixture");
+        let base_url = format!(
+            "http://{}/v1",
+            listener.local_addr().expect("fixture address")
+        );
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("read timeout");
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                if let Some(header_end) = text.find("\r\n\r\n") {
+                    let body_len = text[..header_end]
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + body_len {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"id":"fixture","object":"chat.completion","created":1,"model":"local-model","choices":[{"index":0,"message":{"role":"assistant","content":"loopback"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(reply.as_bytes());
+            let _ = request_tx.send(String::from_utf8_lossy(&request).to_string());
+        });
+
+        (base_url, request_rx)
+    }
+
+    #[tokio::test]
+    async fn delegated_child_provider_does_not_carry_parent_credential_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("custom".into()),
+            delegation_base_url: Some(base_url),
+            delegation_api_key: Some("delegation-key".into()),
+            ..AgentConfig::default()
+        };
+        let orch = SubAgentOrchestrator::new(SubAgentOrchestratorConfig {
+            parent_config: parent_config.clone(),
+            tool_registry: Arc::new(ToolRegistry::new()),
+            llm_provider: Arc::new(NoopProvider),
+            parent_credential_pool: Some(Arc::new(CredentialPool::single("parent-pool-key"))),
+            parent_interrupt: InterruptController::new(),
+            hermes_home: tmp.path().to_path_buf(),
+            parent_session_id: None,
+            timeout: Duration::from_secs(5),
+            background_delegation_callback: None,
+            code_index: None,
+        });
+        let child_config = AgentConfig {
+            model: "custom:local-model".into(),
+            provider: Some("custom".into()),
+            ..parent_config
+        };
+
+        let provider = orch
+            .child_llm_provider(&child_config)
+            .unwrap_or_else(|_| panic!("child provider builds"));
+        let _ = provider
+            .chat_completion(&[Message::user("hi")], &[], None, None, None, None)
+            .await;
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the child must address the delegation endpoint");
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer delegation-key"),
+            "the child must send the delegation key, not the parent's pool: {request}"
+        );
+    }
+
+    /// Orchestrator whose parent runs on `openai:gpt-4o` with a one-key pool.
+    fn openai_parent_orchestrator(
+        parent_config: AgentConfig,
+        hermes_home: &std::path::Path,
+    ) -> SubAgentOrchestrator {
+        SubAgentOrchestrator::new(SubAgentOrchestratorConfig {
+            parent_config,
+            tool_registry: Arc::new(ToolRegistry::new()),
+            llm_provider: Arc::new(NoopProvider),
+            parent_credential_pool: Some(Arc::new(CredentialPool::single("parent-pool-key"))),
+            parent_interrupt: InterruptController::new(),
+            hermes_home: hermes_home.to_path_buf(),
+            parent_session_id: None,
+            timeout: Duration::from_secs(5),
+            background_delegation_callback: None,
+            code_index: None,
+        })
+    }
+
+    async fn child_request(
+        orch: &SubAgentOrchestrator,
+        child_config: &AgentConfig,
+        rx: std::sync::mpsc::Receiver<String>,
+    ) -> String {
+        let provider = orch
+            .child_llm_provider(child_config)
+            .unwrap_or_else(|_| panic!("child provider builds"));
+        let _ = provider
+            .chat_completion(&[Message::user("hi")], &[], None, None, None, None)
+            .await;
+        rx.recv_timeout(Duration::from_secs(5))
+            .expect("the child must address the fixture endpoint")
+            .to_ascii_lowercase()
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_with_own_endpoint_and_key_skips_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("openai".into()),
+            delegation_base_url: Some(base_url),
+            delegation_api_key: Some("delegation-key".into()),
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer delegation-key"),
+            "a child with its own endpoint and key must not send the parent's pool: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn other_provider_child_without_override_skips_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut runtime_providers = std::collections::HashMap::new();
+        runtime_providers.insert(
+            "custom".to_string(),
+            crate::agent_loop::RuntimeProviderConfig {
+                api_key: Some("custom-config-key".to_string()),
+                base_url: Some(base_url),
+                ..Default::default()
+            },
+        );
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("custom".into()),
+            runtime_providers,
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer custom-config-key"),
+            "a child on another provider must not send the parent's pool: {request}"
+        );
+    }
+
+    #[tokio::test]
+    async fn same_provider_child_without_override_shares_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut runtime_providers = std::collections::HashMap::new();
+        runtime_providers.insert(
+            "openai".to_string(),
+            crate::agent_loop::RuntimeProviderConfig {
+                api_key: Some("parent-config-key".to_string()),
+                base_url: Some(base_url),
+                ..Default::default()
+            },
+        );
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("openai".into()),
+            runtime_providers,
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer parent-pool-key"),
+            "a plain same-provider child shares the parent's pool: {request}"
+        );
     }
 }

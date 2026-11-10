@@ -3,13 +3,27 @@ impl AgentLoop {
         &'a self,
         rt: &'a TurnRuntimeRoute,
     ) -> Option<&'a Arc<CredentialPool>> {
-        if rt.credential_pool_fallback {
+        let pool = if rt.credential_pool_fallback {
             rt.credential_pool
                 .as_ref()
                 .or(self.primary_credential_pool.as_ref())
         } else {
             rt.credential_pool.as_ref()
-        }
+        };
+        // Route pools are the primary's pool, whose keys belong to the primary
+        // provider only; a route to another provider uses its own credential.
+        let (primary_provider, _) = self.extract_provider_and_model(self.config.model.as_str());
+        let route_provider = rt
+            .provider
+            .as_deref()
+            .map(str::trim)
+            .filter(|p| !p.is_empty())
+            .map(str::to_string)
+            .unwrap_or_else(|| self.extract_provider_and_model(rt.model.as_str()).0);
+        let same_provider =
+            crate::provider_profiles::normalize_runtime_provider_name(&primary_provider)
+                == crate::provider_profiles::normalize_runtime_provider_name(&route_provider);
+        pool.filter(|_| same_provider)
     }
 
     fn messages_for_api_call(&self, ctx: &ContextManager) -> Vec<Message> {
@@ -27,7 +41,7 @@ impl AgentLoop {
         messages
     }
 
-    fn apply_prompt_cache_markers(&self, messages: &mut Vec<Message>) {
+    fn apply_prompt_cache_markers(&self, messages: &mut [Message]) {
         use hermes_core::types::{CacheControl, CacheType, MessageRole};
         if messages.is_empty() {
             return;
@@ -470,13 +484,12 @@ impl AgentLoop {
         if !body.is_object() {
             return self.config.extra_body.clone();
         }
-        if !matches!(api_mode, ApiMode::CodexResponses) {
-            if body.get("strict_tool_calls").is_none()
-                && body.get("strict_api").is_none()
-                && body.get("provider_strict").is_none()
-            {
-                body["strict_api"] = Value::Bool(true);
-            }
+        if !matches!(api_mode, ApiMode::CodexResponses)
+            && body.get("strict_tool_calls").is_none()
+            && body.get("strict_api").is_none()
+            && body.get("provider_strict").is_none()
+        {
+            body["strict_api"] = Value::Bool(true);
         }
         Some(body)
     }
@@ -986,8 +999,25 @@ impl AgentLoop {
             .and_then(|v| v.parse::<u32>().ok())
             .map(|v| v.min(10))
             .unwrap_or(self.config.stream_read_max_retries.min(10));
+        let stream_lifetime = self
+            .config
+            .stream_max_lifetime
+            .filter(|seconds| seconds.is_finite() && *seconds > 0.0)
+            .map(Duration::try_from_secs_f64)
+            .transpose()
+            .map_err(|_| AgentError::Config("agent.stream_max_lifetime is too large".into()))?;
 
         'stream_attempt: for stream_attempt in 0..=max_stream_retries {
+            let lifetime_deadline = stream_lifetime
+                .map(|cap| {
+                    tokio::time::Instant::now()
+                        .checked_add(cap)
+                        .map(|deadline| (cap, deadline))
+                        .ok_or_else(|| {
+                            AgentError::Config("agent.stream_max_lifetime is too large".into())
+                        })
+                })
+                .transpose()?;
             let mut stream = if let Some(rt) = route {
                 let (provider_name, model_name) = self.extract_provider_and_model(active_model);
                 let runtime_provider_name = rt.provider.as_deref().unwrap_or(provider_name.as_str());
@@ -1058,7 +1088,19 @@ impl AgentLoop {
             let mut deltas_were_sent = false;
             let mut stream_scrubber = StreamingContextScrubber::new();
 
-            while let Some(chunk_result) = stream.next().await {
+            loop {
+                let chunk_result = match lifetime_deadline {
+                    Some((cap, deadline)) => {
+                        match tokio::time::timeout_at(deadline, stream.next()).await {
+                            Ok(chunk) if tokio::time::Instant::now() < deadline => chunk,
+                            _ => return Ok(StreamCollectOutcome::LifetimeExceeded(cap)),
+                        }
+                    }
+                    None => stream.next().await,
+                };
+                let Some(chunk_result) = chunk_result else {
+                    break;
+                };
                 if self.interrupt.take_interrupt_graceful().is_some() {
                     let message = Self::assemble_stream_assistant_message(
                         &content,

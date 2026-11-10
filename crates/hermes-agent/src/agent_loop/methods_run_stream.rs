@@ -107,6 +107,7 @@ impl AgentLoop {
         let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
         let (advertised_tool_names, advertised_tool_names_display) =
             advertised_tool_name_index(&tool_schemas);
+        self.refresh_code_index().await;
         let (system_content, restored_system) =
             self.resolve_initial_system_prompt(&task_hint, &tool_schemas);
         ctx.add_message(Message::system(&system_content));
@@ -161,8 +162,7 @@ impl AgentLoop {
             ctx.get_messages()
                 .iter()
                 .enumerate()
-                .filter(|(_, m)| m.role == MessageRole::User)
-                .last()
+                .rfind(|(_, m)| m.role == MessageRole::User)
                 .map(|(i, _)| i)
         } else {
             None
@@ -186,8 +186,7 @@ impl AgentLoop {
         let first_user = ctx
             .get_messages()
             .iter()
-            .filter(|m| matches!(m.role, hermes_core::MessageRole::User))
-            .last()
+            .rfind(|m| matches!(m.role, hermes_core::MessageRole::User))
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
         let mem_ctx_raw = self.memory_prefetch(&first_user, session_id);
@@ -309,12 +308,15 @@ impl AgentLoop {
             self.memory_on_turn_start(total_turns, "");
 
             if self.config.checkpoint_interval_turns > 0
-                && (total_turns - 1) % self.config.checkpoint_interval_turns == 0
+                && (total_turns - 1).is_multiple_of(self.config.checkpoint_interval_turns)
             {
                 last_checkpoint_messages = Some(ctx.get_messages().to_vec());
             }
 
-            if total_turns % self.config.memory_flush_interval == 0 && total_turns > 0 {
+            if self.config.memory_flush_interval > 0
+                && total_turns > 0
+                && total_turns.is_multiple_of(self.config.memory_flush_interval)
+            {
                 let msgs = ctx.get_messages();
                 let (u, a) = extract_last_user_assistant(msgs);
                 self.memory_sync(&u, &a, session_id, msgs);
@@ -430,6 +432,12 @@ impl AgentLoop {
                         .await
                     {
                         Ok(StreamCollectOutcome::Complete(resp)) => resp,
+                        Ok(StreamCollectOutcome::LifetimeExceeded(cap)) => {
+                            return Err(AgentError::Timeout(format!(
+                                "Response still streaming after {}s. Raise agent.stream_max_lifetime or set it to 0 to disable the cap.",
+                                cap.as_secs_f64()
+                            )));
+                        }
                         Ok(StreamCollectOutcome::Interrupted(partial)) => {
                             if let Some(ref u) = partial.usage {
                                 accumulated_usage = Some(merge_usage(accumulated_usage.clone(), u));
@@ -451,6 +459,7 @@ impl AgentLoop {
                                 prefill_range.clone(),
                             ));
                         }
+                        Err(e @ AgentError::Config(_)) => return Err(e),
                         Err(e) => {
                             let api_elapsed = api_start.elapsed().as_millis() as u64;
                             self.update_route_learning(
@@ -507,7 +516,7 @@ impl AgentLoop {
                     .message
                     .tool_calls
                     .as_ref()
-                    .map_or(false, |tc| !tc.is_empty());
+                    .is_some_and(|tc| !tc.is_empty());
                 if has_tools {
                     break r;
                 }
@@ -612,7 +621,7 @@ impl AgentLoop {
             let post_ctx = serde_json::json!({
                 "turn": total_turns,
                 "api_time_ms": _api_elapsed_ms,
-                "has_tool_calls": response.message.tool_calls.as_ref().map_or(false, |tc| !tc.is_empty()),
+                "has_tool_calls": response.message.tool_calls.as_ref().is_some_and(|tc| !tc.is_empty()),
             });
             let post_results = self.invoke_hook(HookType::PostLlmCall, &post_ctx);
             self.inject_hook_context(&post_results, &mut ctx);
@@ -694,7 +703,7 @@ impl AgentLoop {
             if assistant_msg
                 .tool_calls
                 .as_ref()
-                .map_or(false, |v| !v.is_empty())
+                .is_some_and(|v| !v.is_empty())
                 && Self::assistant_visible_text_after_think_blocks(&assistant_msg)
             {
                 last_content_with_tools = assistant_msg
@@ -708,7 +717,7 @@ impl AgentLoop {
                 && assistant_msg
                     .tool_calls
                     .as_ref()
-                    .map_or(false, |calls| !calls.is_empty())
+                    .is_some_and(|calls| !calls.is_empty())
                 && truncated_tool_call_retries < self.config.truncated_tool_call_max_retries
             {
                 truncated_tool_call_retries = truncated_tool_call_retries.saturating_add(1);

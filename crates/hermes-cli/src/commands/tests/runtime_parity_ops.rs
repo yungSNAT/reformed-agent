@@ -40,7 +40,7 @@ fn p2_trigger_triage_feedback_persists_bias_and_influences_scoring() {
 
 #[tokio::test]
 async fn p2_subconscious_profile_dry_run_blocks_high_risk_tasks() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -75,7 +75,7 @@ async fn p2_subconscious_profile_dry_run_blocks_high_risk_tasks() {
 
 #[tokio::test]
 async fn p2_walkthrough_insights_persists_events() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -97,7 +97,7 @@ async fn p2_walkthrough_insights_persists_events() {
 
 #[tokio::test]
 async fn p2_integrations_snapshot_and_repair_commands_work() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -117,7 +117,7 @@ async fn p2_integrations_snapshot_and_repair_commands_work() {
 
 #[tokio::test]
 async fn p2_compress_rules_autotune_apply_updates_runtime_env() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -201,7 +201,7 @@ fn p3_swarm_commands_registered_and_completable() {
 
 #[tokio::test]
 async fn p3_swarm_status_plan_run_cancel_surface_is_handled() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -332,7 +332,7 @@ fn test_journey_command_is_registered_completable_and_cataloged() {
 
 #[tokio::test]
 async fn journey_status_surfaces_rust_learning_timeline() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -405,7 +405,7 @@ fn test_render_mcp_runtime_status_reports_drift_between_yaml_and_json() {
 
 #[tokio::test]
 async fn guard_provider_model_selection_soft_accepts_unlisted_codex_models() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     std::env::set_var("HERMES_MODEL_CATALOG_GUARD", "1");
     let (guarded, note) = guard_provider_model_selection_for_config(
         "openai-codex:gpt-9-codex-preview",
@@ -583,7 +583,7 @@ fn native_eval_trend_gate_allows_missing_baseline_when_requested() {
 
 #[tokio::test]
 async fn ops_eval_run_uses_native_report_not_python_script() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let repo = tempdir().expect("repo");
     let home = tempdir().expect("home");
     let _home_guard = TempHomeGuard::new(home.path());
@@ -1288,7 +1288,7 @@ fn cli_sessions_export_redacts_secret_fields_and_text_tokens() {
 
 #[tokio::test]
 async fn cli_sessions_export_command_writes_html_file_with_session_id_alias() {
-    let _guard = env_test_lock();
+    let _guard = test_env_lock::lock_async().await;
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let sessions_dir = hermes_config::hermes_home().join("sessions");

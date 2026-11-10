@@ -110,13 +110,11 @@ pub fn inject_budget_pressure_into_last_tool_result(
     let Some(last) = results.last_mut() else {
         return;
     };
-    if let Ok(val) = serde_json::from_str::<Value>(&last.content) {
-        if let Value::Object(mut map) = val {
-            map.insert("_budget_warning".to_string(), Value::String(w.to_string()));
-            if let Ok(s) = serde_json::to_string(&map) {
-                last.content = s;
-                return;
-            }
+    if let Ok(Value::Object(mut map)) = serde_json::from_str::<Value>(&last.content) {
+        map.insert("_budget_warning".to_string(), Value::String(w.to_string()));
+        if let Ok(s) = serde_json::to_string(&map) {
+            last.content = s;
+            return;
         }
     }
     last.content = format!("{}\n\n{}", last.content, w);

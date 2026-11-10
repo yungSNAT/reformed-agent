@@ -29,7 +29,7 @@ use hermes_core::subprocess::CommandNoWindowExt;
 use crate::McpError;
 
 const MCP_PROTOCOL_VERSION_HEADER_VALUE: &str = "2025-03-26";
-const DEFAULT_MCP_MAX_MESSAGE_BYTES_STRICT: usize = 1 * 1024 * 1024;
+const DEFAULT_MCP_MAX_MESSAGE_BYTES_STRICT: usize = 1024 * 1024;
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_BALANCED: usize = 2 * 1024 * 1024;
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_RELAXED: usize = 8 * 1024 * 1024;
 const DEFAULT_MCP_SSE_READ_TIMEOUT_SECS: u64 = 300;
@@ -591,6 +591,12 @@ impl ServerStdioTransport {
     }
 }
 
+impl Default for ServerStdioTransport {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 #[async_trait]
 impl McpTransport for ServerStdioTransport {
     async fn start(&mut self) -> Result<(), McpError> {
@@ -987,7 +993,7 @@ impl McpTransport for HttpSseTransport {
             // SSE-formatted response: extract the last `data:` line.
             body.lines()
                 .filter_map(|line| line.strip_prefix("data: "))
-                .last()
+                .next_back()
                 .unwrap_or(&body)
                 .to_string()
         } else {

@@ -156,22 +156,16 @@ fn lookup_home_for_username(username: &str) -> Option<PathBuf> {
 }
 
 fn real_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HERMES_REAL_HOME")
+    let home = std::env::var_os("HERMES_REAL_HOME")
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                current_username()
-                    .as_deref()
-                    .and_then(passwd_home_for_username)
-            }
-            #[cfg(not(unix))]
-            {
-                None
-            }
-        })
-        .or_else(home_dir)
+        .map(PathBuf::from);
+    #[cfg(unix)]
+    let home = home.or_else(|| {
+        current_username()
+            .as_deref()
+            .and_then(passwd_home_for_username)
+    });
+    home.or_else(home_dir)
 }
 
 fn ensure_profile_home_dir() -> Option<PathBuf> {
@@ -188,6 +182,21 @@ fn subprocess_home_for_mode(mode: TerminalHomeMode) -> Option<PathBuf> {
         TerminalHomeMode::Auto | TerminalHomeMode::Real => real_home_dir(),
         TerminalHomeMode::Profile => ensure_profile_home_dir().or_else(real_home_dir),
     }
+}
+
+/// Asks the profile's tool guard about a command before it runs. Returns the
+/// folder it was judged in, which the caller must run it in: `workdir`
+/// resolved once, or None for this process's folder.
+async fn guard_command(
+    command: &str,
+    workdir: Option<&str>,
+) -> Result<Option<PathBuf>, AgentError> {
+    let workdir = workdir.map(resolve_path).transpose()?;
+    let cwd = workdir.clone().unwrap_or_else(|| PathBuf::from("."));
+    hermes_config::tool_guard::check_command(command, &cwd)
+        .await
+        .map_err(AgentError::ToolExecution)?;
+    Ok(workdir)
 }
 
 fn resolve_path(input: &str) -> Result<PathBuf, AgentError> {
@@ -242,11 +251,14 @@ fn resolve_path(input: &str) -> Result<PathBuf, AgentError> {
 }
 
 use hermes_core::subprocess_env::{
-    should_strip_subprocess_env_key, SUBPROCESS_ENV_BLOCKLIST_EXACT,
-    SUBPROCESS_ENV_BLOCKLIST_PREFIXES, SUBPROCESS_ENV_FORCE_PREFIX,
-    SUBPROCESS_ENV_PASSTHROUGH_VAR,
+    should_strip_subprocess_env_key, SUBPROCESS_ENV_FORCE_PREFIX, SUBPROCESS_ENV_PASSTHROUGH_VAR,
+};
+#[cfg(unix)]
+use hermes_core::subprocess_env::{
+    SUBPROCESS_ENV_BLOCKLIST_EXACT, SUBPROCESS_ENV_BLOCKLIST_PREFIXES,
 };
 
+#[cfg(unix)]
 const SANE_PATH_ENTRIES: &[&str] = &[
     "/usr/local/bin",
     "/usr/bin",
@@ -298,6 +310,7 @@ fn is_subprocess_env_passthrough(key: &str, passthrough: &BTreeSet<String>) -> b
     passthrough.contains(key)
 }
 
+#[cfg(unix)]
 fn normalize_subprocess_path(path: Option<&str>) -> String {
     let Some(path) = path.filter(|value| !value.trim().is_empty()) else {
         return SANE_PATH_ENTRIES.join(":");
@@ -318,6 +331,9 @@ fn normalize_subprocess_path(path: Option<&str>) -> String {
     entries.join(":")
 }
 
+// Shell init files and the in-shell cleanup run only on Unix; see
+// `with_login_profile_sources`.
+#[cfg(unix)]
 fn shell_env_cleanup_snippet(configured_passthrough: &[String]) -> String {
     let mut snippet = String::new();
     let configured_passthrough = configured_passthrough
@@ -406,6 +422,7 @@ fn terminal_config_from_env() -> (Vec<String>, bool, TerminalHomeMode, Vec<Strin
     (explicit, auto_source_bashrc, home_mode, env_passthrough)
 }
 
+#[cfg(unix)]
 fn expand_env_refs(input: &str) -> String {
     let mut output = String::new();
     let mut rest = input;
@@ -436,10 +453,12 @@ fn expand_env_refs(input: &str) -> String {
     output
 }
 
+#[cfg(unix)]
 fn shell_home_dir(home_override: Option<&std::path::Path>) -> Option<PathBuf> {
     home_override.map(PathBuf::from).or_else(home_dir)
 }
 
+#[cfg(unix)]
 fn expand_shell_init_path(input: &str, home_override: Option<&std::path::Path>) -> PathBuf {
     let expanded = expand_env_refs(input.trim());
     if expanded == "~" {
@@ -453,10 +472,12 @@ fn expand_shell_init_path(input: &str, home_override: Option<&std::path::Path>) 
     PathBuf::from(expanded)
 }
 
+#[cfg(unix)]
 fn resolve_existing_shell_init_files(paths: impl IntoIterator<Item = PathBuf>) -> Vec<PathBuf> {
     paths.into_iter().filter(|p| p.is_file()).collect()
 }
 
+#[cfg(unix)]
 fn auto_shell_init_candidates(
     shell: &str,
     home_override: Option<&std::path::Path>,
@@ -476,6 +497,7 @@ fn auto_shell_init_candidates(
     }
 }
 
+#[cfg(unix)]
 fn resolve_shell_init_files_for_shell(
     shell: &str,
     explicit_files: &[String],
@@ -495,10 +517,12 @@ fn resolve_shell_init_files_for_shell(
     resolve_existing_shell_init_files(auto_shell_init_candidates(shell, home_override))
 }
 
+#[cfg(unix)]
 fn shell_single_quote(value: &str) -> String {
     format!("'{}'", value.replace('\'', "'\\''"))
 }
 
+#[cfg(unix)]
 fn shell_source_prelude(files: &[PathBuf]) -> String {
     let mut prelude = String::new();
     if files.is_empty() {
@@ -557,8 +581,14 @@ fn scrub_subprocess_env(cmd: &mut TokioCommand, configured_passthrough: &[String
         );
     }
 
-    let normalized_path = normalize_subprocess_path(std::env::var("PATH").ok().as_deref());
-    cmd.env("PATH", normalized_path);
+    // Windows keeps the inherited PATH. `SANE_PATH_ENTRIES` are POSIX
+    // directories (`/usr/bin` would search `C:\usr\bin`), and a `:`-joined
+    // list hides every Windows directory from the shell.
+    #[cfg(unix)]
+    {
+        let normalized_path = normalize_subprocess_path(std::env::var("PATH").ok().as_deref());
+        cmd.env("PATH", normalized_path);
+    }
 }
 
 fn apply_subprocess_home_policy(cmd: &mut TokioCommand, subprocess_home: Option<&PathBuf>) {

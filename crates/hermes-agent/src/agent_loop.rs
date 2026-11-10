@@ -49,7 +49,7 @@ use crate::memory_manager::{MemoryManager, StreamingContextScrubber};
 use crate::plugins::{HookResult, HookType, PluginManager, ToolExecutionMiddlewareContext};
 use crate::provider::{
     is_codex_chatgpt_token, is_openai_dynamic_model_alias, AnthropicProvider, GenericProvider,
-    OpenAiProvider, OpenRouterProvider, OPENAI_CODEX_BASE_URL, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
+    OpenAiProvider, OpenRouterProvider, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
 };
 use crate::providers_extra::{
     CopilotProvider, KimiProvider, MiniMaxProvider, NousProvider, QwenProvider,
@@ -85,7 +85,7 @@ include!("agent_loop/methods_tools_background.rs");
 include!("agent_loop/finalizer_helpers.rs");
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     include!("agent_loop/tests_core.rs");
     include!("agent_loop/tests_runtime.rs");
 }

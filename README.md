@@ -1,34 +1,17 @@
-# Hermes Agent Ultra
+# Reformed Agent
 
-**[English](./README.md)** | **[中文](./README_ZH.md)** | **[日本語](./README_JA.md)** | **[한국어](./README_KO.md)**
+Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`. Reformed Agent is a fork of [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) and keeps its reliability, security and operator-control layer.
 
-```text
-██   ██ ███████ ██████  ███    ███ ███████ ███████
-██   ██ ██      ██   ██ ████  ████ ██      ██
-███████ █████   ██████  ██ ████ ██ █████   ███████
-██   ██ ██      ██   ██ ██  ██  ██ ██           ██
-██   ██ ███████ ██   ██ ██      ██ ███████ ███████
+Translations of an earlier README, which predate this fork: [中文](./README_ZH.md), [日本語](./README_JA.md), [한국어](./README_KO.md).
 
-        A G E N T   U L T R A
-```
+## Status
 
-Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`, plus an Ultra reliability, security, and operator-control layer.
-
-## Current Release And Parity Baseline
-
-Current release baseline: [`v0.21.3`](./docs/releases/v0.21.3.md).
-
-As of `v0.21.3`, the tracked upstream parity backlog is closed in the local
-governance artifacts: upstream queue pending is `0`, shared-diff pending
-classification/review is `0 / 0`, coverage critical gaps are `0`, and SOTA
-harness critical gaps are `0`. Future upstream changes can create new drift;
-the scheduled parity audit and release-readiness summary are the public guard.
-
-Fast confidence check against published artifacts:
-
-```bash
-bash scripts/smoke-release-artifact.sh --version v0.21.3
-```
+- **Base:** Hermes Agent Ultra [`v0.22.0`](./docs/releases/v0.22.0.md) at commit `c002f8c4`.
+- **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
+- **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
+- **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
+- **Drift:** upstream has moved since the pin. Against upstream `main` at `6933155e` on 10 November 2026, the slash gate reported 21 commands missing and the surface gate 192 of 3,088 checked entries missing. Moving the pin forward is the next parity work.
+- **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
 
 Repo-local CI is the authoritative gate for development and release confidence.
 GitHub Actions are a hosted mirror of the repo contract when they run; they are
@@ -38,7 +21,23 @@ not required as the source of truth.
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} bash scripts/run-repo-ci.sh
 ```
 
-See [docs/demo.md](./docs/demo.md) for the one-command demo/readiness path.
+The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). See [docs/demo.md](./docs/demo.md) for the one-command demo/readiness path.
+
+## What Reformed Agent Changes
+
+- `Reformation skin`: the default terminal theme, a palette for a pure black canvas
+- `Hermes history import`: `hermes-ultra import-hermes-sessions <export.jsonl> --profile-dir <dir>` converts a Hermes JSONL session export into resumable snapshots in a new profile
+- `Tool guard`: `security.tool_guard` names a program that speaks Claude Code's PreToolUse hook format; when it is set, local terminal commands, `write_file`, `patch` and cron scripts ask it first and run only on a clean allow (see [security.md](./website/docs/user-guide/security.md))
+- `Stream lifetime cap`: `agent.stream_max_lifetime`, ported from Hermes
+- `Pinned parity reference`: the parity gates compare against one recorded upstream revision, so a day's upstream commits cannot fail an unrelated change
+- `Provider routing`: retries keep the configured endpoint and provider-specific credentials. Vertex AI supports service-account credentials and application default credentials.
+- `Gateway replies`: API replies keep the final answer after tool progress messages and handle streaming previews and UTF-8 chunks.
+- `Browser tools`: local and cloud browsers use Chrome DevTools Protocol, with HTTP discovery for cloud sessions and screenshot analysis through the configured vision model.
+- `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
+- `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
+- `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
+
+Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
 
 ## What You Get
 
@@ -81,34 +80,29 @@ Ultra keeps parity work separate from intentional extensions.
 
 ## Install
 
-### One-line installer
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
-```
-
-The one-line installer is safe to run on machines that also have upstream
-NousResearch Hermes installed as `hermes`: by default it installs
-`hermes-agent-ultra` and `hermes-ultra` only, leaving any existing `hermes`
-command untouched. In non-interactive `curl | bash` installs, post-install
-doctor/auth/setup probes are skipped by default; run setup later with
-`hermes-ultra setup`, or opt in during install with:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash -s -- --setup
-```
-
-Custom install path:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | sudo INSTALL_DIR=/usr/local/bin bash
-```
-
 ### From source
 
 ```bash
-cargo install --git https://github.com/sheawinkler/hermes-agent-ultra hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
+
+This installs `hermes-agent-ultra` and `hermes-ultra` only, leaving any existing
+`hermes` command from upstream NousResearch Hermes untouched. Run setup
+afterwards with `hermes-ultra setup`.
+
+### From a checkout
+
+```bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
+```
+
+The installer looks for a release asset first. This fork has published none, so
+in a checkout with `cargo` available it builds from source instead. Set a custom
+install path with `INSTALL_DIR=/usr/local/bin`, and pass `--setup` to run the
+setup wizard after installing. Ultra's one-line `curl | bash` install needs a
+published release, so it does not work for this fork yet.
 
 ## Quick Start
 
@@ -373,6 +367,10 @@ Ultra uses controlled sync workflows, not blind merges.
 - Parity artifacts:
   - `docs/parity/`
   - `.sync-reports/`
+
+The block below is generated from the last sync report Ultra recorded. It is
+older than this fork; [Status](#status) has the current measurements.
+
 <!-- BEGIN:ULTRA_SYNC_STATUS -->
 ### Live Upstream Sync Status (auto-generated)
 
@@ -398,8 +396,9 @@ Interested in helping? Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup
 Canonical/official upstream references:
 
 - Upstream (official): https://github.com/NousResearch/hermes-agent
-- Ultra (this repository): https://github.com/sheawinkler/hermes-agent-ultra
+- Ultra (the project this repository forks): https://github.com/sheawinkler/hermes-agent-ultra
 - Ultra fork archive (historical): https://github.com/sheawinkler/hermes-agent-rs-fork
+- Reformed Agent (this repository): https://github.com/yungSNAT/reformed-agent
 
 Integrated ecosystem references used in Ultra workflows:
 
@@ -428,3 +427,5 @@ Primary Rust workspace crates:
 
 Distributed under this repository's license and notices.  
 See [LICENSE](./LICENSE), [NOTICE](./NOTICE), and [UPSTREAM_ATTRIBUTION.md](./UPSTREAM_ATTRIBUTION.md).
+
+<sub>Post tenebras lux.</sub>

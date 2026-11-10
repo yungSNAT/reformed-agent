@@ -201,9 +201,7 @@ impl SentenceBuffer {
 /// Python: `cleaned.lower().rstrip(".!,")` is used as the dedup key.
 fn normalise_for_dedup(s: &str) -> String {
     let lower = s.to_lowercase();
-    lower
-        .trim_end_matches(|c: char| c == '.' || c == '!' || c == ',')
-        .to_string()
+    lower.trim_end_matches(['.', '!', ',']).to_string()
 }
 
 // ---------------------------------------------------------------------------
@@ -273,8 +271,10 @@ mod tests {
 
     #[test]
     fn force_flush_emits_long_buffered_text() {
-        let mut cfg = SentenceBufferConfig::default();
-        cfg.long_flush_len = 10;
+        let cfg = SentenceBufferConfig {
+            long_flush_len: 10,
+            ..SentenceBufferConfig::default()
+        };
         let mut b = SentenceBuffer::new(cfg);
         let _ = b.push("no sentence boundary here yet"); // 30 chars
         let flushed = b.force_flush().expect("should flush when > long_flush_len");

@@ -18,7 +18,7 @@ fn resolve_auth_provider(provider: Option<String>) -> String {
     let raw = std::env::var("HERMES_AUTH_DEFAULT_PROVIDER")
         .ok()
         .filter(|s| !s.trim().is_empty())
-        .or_else(|| infer_default_auth_provider_from_config())
+        .or_else(infer_default_auth_provider_from_config)
         .unwrap_or_else(|| "nous".to_string());
     normalize_auth_provider(&raw)
 }
@@ -153,6 +153,7 @@ fn normalize_secret_provider(provider: &str) -> String {
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
+        "google-vertex" | "vertex-ai" | "gcp-vertex" | "vertexai" => "vertex".to_string(),
         "dashscope" | "aliyun" | "alibaba-cloud" => "alibaba".to_string(),
         "alibaba_coding" | "alibaba-coding" | "alibaba_coding_plan" => {
             "alibaba-coding-plan".to_string()
@@ -239,6 +240,13 @@ fn secret_provider_aliases(provider: &str) -> Vec<String> {
             "amazon-bedrock".to_string(),
             "amazon".to_string(),
         ],
+        "vertex" => vec![
+            "vertex".to_string(),
+            "google-vertex".to_string(),
+            "vertex-ai".to_string(),
+            "gcp-vertex".to_string(),
+            "vertexai".to_string(),
+        ],
         "ai-gateway" => vec!["ai-gateway".to_string(), "aigateway".to_string()],
         "opencode-zen" => vec!["opencode-zen".to_string(), "opencode".to_string()],
         "kilocode" => vec!["kilocode".to_string(), "kilo".to_string()],
@@ -295,7 +303,7 @@ fn provider_env_var(provider: &str) -> Option<&'static str> {
         "openai" => Some("HERMES_OPENAI_API_KEY"),
         "openai-codex" => Some("HERMES_OPENAI_CODEX_API_KEY"),
         "anthropic" => Some("ANTHROPIC_API_KEY"),
-        "bedrock" => None,
+        "bedrock" | "vertex" => None,
         "google-gemini-cli" => Some("HERMES_GEMINI_OAUTH_API_KEY"),
         "gemini" => Some("GOOGLE_API_KEY"),
         "openrouter" => Some("OPENROUTER_API_KEY"),
@@ -1079,8 +1087,10 @@ async fn qqbot_qr_login_flow(
                     "qqbot qr login timed out after {timeout_seconds}s"
                 )));
             }
-            match qqbot_poll_bind_result(&client, portal_host, poll_path, &task_id).await {
-                Ok((status, app_id, encrypted_secret, user_openid)) => match status {
+            if let Ok((status, app_id, encrypted_secret, user_openid)) =
+                qqbot_poll_bind_result(&client, portal_host, poll_path, &task_id).await
+            {
+                match status {
                     2 => {
                         if app_id.trim().is_empty() || encrypted_secret.trim().is_empty() {
                             return Err(AgentError::Config(
@@ -1106,8 +1116,7 @@ async fn qqbot_qr_login_flow(
                         break;
                     }
                     _ => {}
-                },
-                Err(_) => {}
+                }
             }
             tokio::time::sleep(ONBOARD_POLL_INTERVAL).await;
         }

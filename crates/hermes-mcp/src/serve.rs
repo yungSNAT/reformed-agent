@@ -88,7 +88,7 @@ impl EventBridge {
         let events: Vec<BridgeEvent> = q
             .iter()
             .filter(|e| e.cursor > after_cursor)
-            .filter(|e| session_key.map_or(true, |sk| e.session_key == sk))
+            .filter(|e| session_key.is_none_or(|sk| e.session_key == sk))
             .take(limit)
             .cloned()
             .collect();
@@ -109,8 +109,7 @@ impl EventBridge {
             {
                 let q = self.queue.lock().unwrap();
                 for e in q.iter() {
-                    if e.cursor > after_cursor && session_key.map_or(true, |sk| e.session_key == sk)
-                    {
+                    if e.cursor > after_cursor && session_key.is_none_or(|sk| e.session_key == sk) {
                         return Some(e.clone());
                     }
                 }
@@ -444,9 +443,9 @@ impl HermesMcpServe {
         let sessions = self.session_store.list_sessions();
         let filtered: Vec<&SessionEntry> = sessions
             .iter()
-            .filter(|s| platform.map_or(true, |p| s.platform.eq_ignore_ascii_case(p)))
+            .filter(|s| platform.is_none_or(|p| s.platform.eq_ignore_ascii_case(p)))
             .filter(|s| {
-                search.map_or(true, |q| {
+                search.is_none_or(|q| {
                     let q = q.to_lowercase();
                     s.display_name.to_lowercase().contains(&q)
                         || s.session_key.to_lowercase().contains(&q)

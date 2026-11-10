@@ -93,6 +93,10 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub web: WebConfig,
 
+    /// Google Vertex AI routing (project and region).
+    #[serde(default, skip_serializing_if = "VertexConfig::is_empty")]
+    pub vertex: VertexConfig,
+
     /// Named LLM provider configurations.
     #[serde(default)]
     pub llm_providers: HashMap<String, LlmProviderConfig>,
@@ -192,6 +196,7 @@ impl Default for GatewayConfig {
             display: DisplayConfig::default(),
             terminal: TerminalConfig::default(),
             web: WebConfig::default(),
+            vertex: VertexConfig::default(),
             llm_providers: HashMap::new(),
             fallback_model: None,
             fallback_models: Vec::new(),

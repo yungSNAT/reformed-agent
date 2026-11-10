@@ -13,21 +13,24 @@ The self-improving AI agent built by [Nous Research](https://nousresearch.com). 
 
 <div style={{display: 'flex', gap: '1rem', marginBottom: '2rem', flexWrap: 'wrap'}}>
   <a href="/docs/getting-started/installation" style={{display: 'inline-block', padding: '0.6rem 1.2rem', backgroundColor: '#FFD700', color: '#07070d', borderRadius: '8px', fontWeight: 600, textDecoration: 'none'}}>Get Started →</a>
-  <a href="https://github.com/sheawinkler/hermes-agent-ultra" style={{display: 'inline-block', padding: '0.6rem 1.2rem', border: '1px solid rgba(255,215,0,0.2)', borderRadius: '8px', textDecoration: 'none'}}>View on GitHub</a>
+  <a href="https://github.com/yungSNAT/reformed-agent" style={{display: 'inline-block', padding: '0.6rem 1.2rem', border: '1px solid rgba(255,215,0,0.2)', borderRadius: '8px', textDecoration: 'none'}}>View on GitHub</a>
 </div>
 
 ## Install
 
+This fork has published no release yet, so installing means building from
+source with Git and a Rust toolchain.
+
 **Linux / macOS / WSL2**
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
 
-**Windows** — use WSL2, then run the Linux installer above. Ultra does not ship
+**Windows** — use WSL2, then run the Linux command above. Ultra does not ship
 the upstream Python PowerShell installer.
 
-**Android (Termux)** — same curl one-liner as Linux; the installer auto-detects Termux.
+**Android (Termux)** — run `scripts/install.sh` from a checkout; the installer auto-detects Termux. See the [Termux guide](/docs/getting-started/termux).
 
 See the full **[Installation Guide](/docs/getting-started/installation)** for what the installer does, the per-user vs root layout, and Windows notes.
 

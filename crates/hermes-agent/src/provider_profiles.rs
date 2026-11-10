@@ -6,6 +6,8 @@
 
 use serde_json::{Map, Value};
 
+use crate::local_backends;
+
 pub const NOUS_PRODUCT_TAG: &str = "product=hermes-agent";
 pub const NOUS_CLIENT_TAG_PREFIX: &str = "client=hermes-client-v";
 pub const KIMI_CODE_BASE_URL: &str = "https://api.kimi.com/coding/v1";
@@ -14,6 +16,28 @@ pub const KIMI_CN_BASE_URL: &str = "https://api.moonshot.cn/v1";
 pub const KIMI_CODE_USER_AGENT: &str = "KimiCLI/1.0";
 pub const GEMINI_NATIVE_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta";
 pub const GEMINI_OPENAI_BASE_URL: &str = "https://generativelanguage.googleapis.com/v1beta/openai";
+pub const DEFAULT_NOUS_INFERENCE_URL: &str = "https://inference-api.nousresearch.com/v1";
+pub const STEPFUN_BASE_URL: &str = "https://api.stepfun.ai/step_plan/v1";
+pub const QWEN_BASE_URL: &str = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1";
+pub const ALIBABA_CODING_PLAN_BASE_URL: &str = "https://coding-intl.dashscope.aliyuncs.com/v1";
+pub const GOOGLE_GEMINI_CLI_BASE_URL: &str = "cloudcode-pa://google";
+pub const AI_GATEWAY_BASE_URL: &str = "https://ai-gateway.vercel.sh/v1";
+pub const MINIMAX_CN_BASE_URL: &str = "https://api.minimaxi.com/anthropic";
+pub const NOVITA_BASE_URL: &str = "https://api.novita.ai/openai/v1";
+pub const XAI_BASE_URL: &str = "https://api.x.ai/v1";
+pub const NVIDIA_BASE_URL: &str = "https://integrate.api.nvidia.com/v1";
+pub const COPILOT_BASE_URL: &str = "https://api.githubcopilot.com";
+pub const OPENCODE_GO_BASE_URL: &str = "https://opencode.ai/zen/go/v1";
+pub const OPENCODE_ZEN_BASE_URL: &str = "https://opencode.ai/zen/v1";
+pub const KILOCODE_BASE_URL: &str = "https://api.kilo.ai/api/gateway";
+pub const HUGGINGFACE_BASE_URL: &str = "https://router.huggingface.co/v1";
+pub const GMI_BASE_URL: &str = "https://api.gmi-serving.com/v1";
+pub const XIAOMI_BASE_URL: &str = "https://api.xiaomimimo.com/v1";
+pub const ZAI_BASE_URL: &str = "https://api.z.ai/api/paas/v4";
+pub const ARCEE_BASE_URL: &str = "https://api.arcee.ai/api/v1";
+pub const TENCENT_TOKENHUB_BASE_URL: &str = "https://tokenhub.tencentmaas.com/v1";
+pub const OLLAMA_CLOUD_BASE_URL: &str = "https://ollama.com/v1";
+pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
 
 pub fn is_kimi_code_base_url(base_url: &str) -> bool {
     base_url
@@ -152,6 +176,345 @@ pub fn profile_base_url(profile: &str) -> Option<&'static str> {
         "xiaomi" => Some("https://api.xiaomimimo.com/v1"),
         _ => None,
     }
+}
+
+/// Canonical runtime name for a provider alias, shared by the primary provider
+/// builder and the agent loop's runtime routes.
+pub fn normalize_runtime_provider_name(provider: &str) -> String {
+    let normalized = provider.trim().to_ascii_lowercase();
+    match normalized.as_str() {
+        "codex" => "openai-codex".to_string(),
+        "claude" | "claude-code" => "anthropic".to_string(),
+        "mixture" | "mixture-of-agents" | "mixture_of_agents" => "moa".to_string(),
+        "nous_api" | "nousapi" | "nous-portal-api" => "nous-api".to_string(),
+        "qwen-cli" | "qwen-portal" => "qwen-oauth".to_string(),
+        "gemini-cli" | "gemini-oauth" => "google-gemini-cli".to_string(),
+        "google" | "google-gemini" | "google-ai-studio" => "gemini".to_string(),
+        "google-vertex" | "vertex-ai" | "gcp-vertex" | "vertexai" => {
+            crate::vertex::VERTEX_PROVIDER_ID.to_string()
+        }
+        "azure" | "azure-ai-foundry" | "azure_ai_foundry" => "azure-foundry".to_string(),
+        "step" | "step-plan" => "stepfun".to_string(),
+        "moonshot" | "kimi-coding" | "kimi-coding-cn" => "kimi".to_string(),
+        "alibaba" | "alibaba-coding-plan" => "qwen".to_string(),
+        "minimax-cn" => "minimax".to_string(),
+        "novita-ai" | "novitaai" => "novita".to_string(),
+        "glm" | "z-ai" | "z_ai" | "zhipu" => "zai".to_string(),
+        "aigateway" | "vercel" => "ai-gateway".to_string(),
+        "github-copilot" | "github-models" => "copilot".to_string(),
+        "github-copilot-acp" | "copilot-acp-agent" => "copilot-acp".to_string(),
+        "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
+        "gmi-cloud" | "gmicloud" => "gmi".to_string(),
+        "arcee-ai" | "arceeai" => "arcee".to_string(),
+        "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
+        "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
+        "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
+        "kilo" | "kilo-code" | "kilo-gateway" => "kilocode".to_string(),
+        "opencode" | "opencode-zen" | "zen" => "opencode-zen".to_string(),
+        "go" => "opencode-go".to_string(),
+        local if local_backends::local_backend_spec(local).is_some() => {
+            local_backends::local_backend_spec(local)
+                .expect("local backend spec checked")
+                .provider
+                .to_string()
+        }
+        _ => normalized,
+    }
+}
+
+/// Base URL that the provider's environment variable selects, if set. The
+/// primary provider builder and the agent loop's runtime routes both read it,
+/// so a rerouted turn addresses the same endpoint as the primary.
+pub fn provider_base_url_from_env(provider: &str) -> Option<String> {
+    let raw_provider = provider.trim().to_ascii_lowercase();
+    let normalized_provider = normalize_runtime_provider_name(raw_provider.as_str());
+    if let Some(url) = local_backends::local_backend_base_url_from_env(raw_provider.as_str())
+        .or_else(|| local_backends::local_backend_base_url_from_env(normalized_provider.as_str()))
+    {
+        return Some(url);
+    }
+    let env_var = match raw_provider.as_str() {
+        "minimax-cn" | "minimax_cn" => "MINIMAX_CN_BASE_URL",
+        _ => match normalized_provider.as_str() {
+            "openai" => "OPENAI_BASE_URL",
+            "openai-codex" | "codex" => "HERMES_OPENAI_CODEX_BASE_URL",
+            "nous-api" => "NOUS_BASE_URL",
+            "anthropic" => "ANTHROPIC_BASE_URL",
+            "bedrock" => "BEDROCK_BASE_URL",
+            "google-gemini-cli" => "HERMES_GEMINI_BASE_URL",
+            "gemini" | "google" => "GEMINI_BASE_URL",
+            "qwen" => "DASHSCOPE_BASE_URL",
+            "qwen-oauth" => "HERMES_QWEN_BASE_URL",
+            "stepfun" => "STEPFUN_BASE_URL",
+            "ai-gateway" => "AI_GATEWAY_BASE_URL",
+            "kimi" => "KIMI_BASE_URL",
+            "minimax" => "MINIMAX_BASE_URL",
+            "novita" => "NOVITA_BASE_URL",
+            "xai" => "XAI_BASE_URL",
+            "nvidia" => "NVIDIA_BASE_URL",
+            "copilot" => "COPILOT_API_BASE_URL",
+            "opencode-go" => "OPENCODE_GO_BASE_URL",
+            "opencode-zen" => "OPENCODE_ZEN_BASE_URL",
+            "kilocode" => "KILOCODE_BASE_URL",
+            "huggingface" => "HF_BASE_URL",
+            "gmi" => "GMI_BASE_URL",
+            "xiaomi" => "XIAOMI_BASE_URL",
+            "zai" => "GLM_BASE_URL",
+            "arcee" => "ARCEE_BASE_URL",
+            "tencent-tokenhub" => "TOKENHUB_BASE_URL",
+            "deepseek" => "DEEPSEEK_BASE_URL",
+            _ => return None,
+        },
+    };
+    std::env::var(env_var)
+        .ok()
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+}
+
+/// Default base URL for a provider with no configured or environment URL.
+/// The primary provider builder and the agent loop's runtime routes share it,
+/// so a route never falls back to another provider's host.
+pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
+    match provider.trim().to_ascii_lowercase().as_str() {
+        "openai-codex" | "codex" => Some(crate::provider::OPENAI_CODEX_BASE_URL),
+        "nous-api" | "nous_api" | "nousapi" | "nous-portal-api" => Some(DEFAULT_NOUS_INFERENCE_URL),
+        "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => Some(GOOGLE_GEMINI_CLI_BASE_URL),
+        "gemini" | "google" | "google-gemini" | "google-ai-studio" => Some(GEMINI_OPENAI_BASE_URL),
+        "qwen" | "alibaba" => Some(QWEN_BASE_URL),
+        "alibaba-coding-plan" => Some(ALIBABA_CODING_PLAN_BASE_URL),
+        "stepfun" | "step" | "step-plan" => Some(STEPFUN_BASE_URL),
+        "ai-gateway" | "aigateway" | "vercel" => Some(AI_GATEWAY_BASE_URL),
+        "kimi-coding" => Some(KIMI_CODE_BASE_URL),
+        "kimi" | "moonshot" => Some(KIMI_LEGACY_BASE_URL),
+        "kimi-coding-cn" => Some(KIMI_CN_BASE_URL),
+        "minimax-cn" | "minimax_cn" => Some(MINIMAX_CN_BASE_URL),
+        "novita" | "novita-ai" | "novitaai" => Some(NOVITA_BASE_URL),
+        "xai" => Some(XAI_BASE_URL),
+        "nvidia" => Some(NVIDIA_BASE_URL),
+        "copilot" | "github-copilot" | "github-models" => Some(COPILOT_BASE_URL),
+        "opencode-go" => Some(OPENCODE_GO_BASE_URL),
+        "opencode-zen" | "opencode" => Some(OPENCODE_ZEN_BASE_URL),
+        "kilocode" | "kilo" => Some(KILOCODE_BASE_URL),
+        "huggingface" | "hf" | "hugging-face" | "huggingface-hub" => Some(HUGGINGFACE_BASE_URL),
+        "gmi" | "gmi-cloud" | "gmicloud" => Some(GMI_BASE_URL),
+        "xiaomi" | "mimo" | "xiaomi-mimo" => Some(XIAOMI_BASE_URL),
+        "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => Some(ZAI_BASE_URL),
+        "arcee" | "arcee-ai" | "arceeai" => Some(ARCEE_BASE_URL),
+        "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
+            Some(TENCENT_TOKENHUB_BASE_URL)
+        }
+        "ollama-cloud" => Some(OLLAMA_CLOUD_BASE_URL),
+        "deepseek" => Some(DEEPSEEK_BASE_URL),
+        local if local_backends::local_backend_spec(local).is_some() => {
+            local_backends::local_backend_default_base_url(local)
+        }
+        _ => None,
+    }
+}
+
+/// A configured key: a literal, or a `${ENV}` reference to an environment variable.
+pub fn resolve_api_key_literal_or_env_ref(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if let Some(env_ref) = trimmed.strip_prefix("${").and_then(|s| s.strip_suffix('}')) {
+        return std::env::var(env_ref).ok().filter(|v| !v.trim().is_empty());
+    }
+    Some(trimmed.to_string())
+}
+
+/// Resolve API key / token for a named LLM provider from well-known environment variables.
+pub fn provider_api_key_from_env(provider: &str) -> Option<String> {
+    let raw_provider = provider.trim().to_ascii_lowercase();
+    if raw_provider == "kimi-coding-cn" {
+        return ["KIMI_CN_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"]
+            .iter()
+            .find_map(|env_var| {
+                std::env::var(env_var)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            });
+    }
+    if matches!(raw_provider.as_str(), "minimax-cn" | "minimax_cn") {
+        return std::env::var("MINIMAX_CN_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty());
+    }
+    let provider = normalize_runtime_provider_name(raw_provider.as_str());
+    if let Some(api_key) = local_backends::local_backend_api_key_from_env(raw_provider.as_str())
+        .or_else(|| local_backends::local_backend_api_key_from_env(provider.as_str()))
+    {
+        return Some(api_key);
+    }
+    match provider.as_str() {
+        "openai" => std::env::var("HERMES_OPENAI_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("OPENAI_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "openai-codex" | "codex" => std::env::var("HERMES_OPENAI_CODEX_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "anthropic" | "claude" | "claude-code" => std::env::var("ANTHROPIC_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("ANTHROPIC_TOKEN").ok())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "bedrock" => Some(crate::bedrock::BEDROCK_AUTH_MARKER.to_string()),
+        // Upstream `hermes_cli/auth.py` PROVIDER_REGISTRY["gemini"] reads these in this order.
+        "gemini" => std::env::var("GOOGLE_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => {
+            std::env::var("HERMES_GEMINI_OAUTH_API_KEY")
+                .ok()
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
+                .filter(|s| !s.trim().is_empty())
+                .or_else(|| std::env::var("GEMINI_API_KEY").ok())
+                .filter(|s| !s.trim().is_empty())
+        }
+        "openrouter" => std::env::var("OPENROUTER_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "qwen" => std::env::var("DASHSCOPE_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "qwen-oauth" => std::env::var("HERMES_QWEN_OAUTH_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("DASHSCOPE_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "kimi" | "moonshot" => {
+            let env_vars: &[&str] = if raw_provider == "kimi-coding" {
+                &["KIMI_CODING_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"]
+            } else {
+                &[
+                    "KIMI_API_KEY",
+                    "KIMI_CODING_API_KEY",
+                    "MOONSHOT_API_KEY",
+                    "KIMI_CN_API_KEY",
+                ]
+            };
+            env_vars.iter().find_map(|env_var| {
+                std::env::var(env_var)
+                    .ok()
+                    .map(|s| s.trim().to_string())
+                    .filter(|s| !s.is_empty())
+            })
+        }
+        "minimax" => std::env::var("MINIMAX_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("MINIMAX_CN_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "stepfun" => std::env::var("HERMES_STEPFUN_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("STEPFUN_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "novita" => std::env::var("NOVITA_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "nous" | "nous-api" => std::env::var("NOUS_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "copilot" => std::env::var("COPILOT_GITHUB_TOKEN")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("GH_TOKEN").ok())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("GITHUB_TOKEN").ok())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("GITHUB_COPILOT_TOKEN").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "ai-gateway" => std::env::var("AI_GATEWAY_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "arcee" => std::env::var("ARCEEAI_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("ARCEE_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        "deepseek" => std::env::var("DEEPSEEK_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "huggingface" => std::env::var("HF_TOKEN")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "gmi" => std::env::var("GMI_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "kilocode" => std::env::var("KILOCODE_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "nvidia" => std::env::var("NVIDIA_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "ollama-cloud" => std::env::var("OLLAMA_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "opencode-go" => std::env::var("OPENCODE_GO_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "opencode-zen" => std::env::var("OPENCODE_ZEN_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "xai" => std::env::var("XAI_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "xiaomi" => std::env::var("XIAOMI_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "tencent-tokenhub" => std::env::var("TOKENHUB_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty()),
+        "zai" => std::env::var("GLM_API_KEY")
+            .ok()
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("ZAI_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty())
+            .or_else(|| std::env::var("Z_AI_API_KEY").ok())
+            .filter(|s| !s.trim().is_empty()),
+        _ => None,
+    }
+}
+
+/// Credential order shared by the primary provider builder and the agent
+/// loop's runtime routes, so a route sends the credential the primary would:
+/// the configured key, the configured key variable, the provider's environment
+/// variables, then a stored OAuth token. Each step tries every name in
+/// `provider_names` (the configured name, then its canonical runtime name).
+pub fn resolve_provider_api_key(
+    provider_names: &[&str],
+    configured_api_key: Option<&str>,
+    configured_api_key_env: Option<&str>,
+    oauth_token: impl Fn(&str) -> Option<String>,
+) -> Option<String> {
+    configured_api_key
+        .and_then(resolve_api_key_literal_or_env_ref)
+        .or_else(|| {
+            configured_api_key_env
+                .map(str::trim)
+                .filter(|name| !name.is_empty())
+                .and_then(|name| std::env::var(name).ok())
+                .filter(|v| !v.trim().is_empty())
+        })
+        .or_else(|| {
+            provider_names
+                .iter()
+                .find_map(|name| provider_api_key_from_env(name))
+        })
+        .or_else(|| provider_names.iter().find_map(|name| oauth_token(name)))
 }
 
 pub fn hermes_client_tag() -> String {

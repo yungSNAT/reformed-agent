@@ -12,7 +12,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client;
 use serde_json::{json, Value};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::time::timeout;
 
@@ -35,7 +35,7 @@ const BUILTIN_TTS_PROVIDERS: &[&str] = &[
     "openai",
     "minimax",
     "piper",
-    // Reserved upstream/Python provider names. Hermes Agent Ultra must not
+    // Reserved upstream/Python provider names. Reformed Agent must not
     // let a command provider silently shadow names that are built in upstream
     // or intentionally unsupported by the Rust-only runtime.
     "edge",
@@ -340,7 +340,8 @@ fn command_tts_voice_compatible(config: &Value) -> bool {
     }
 }
 
-pub(crate) fn shell_quote_context(template: &str, placeholder_start: usize) -> Option<char> {
+#[cfg(any(not(windows), test))]
+fn shell_quote_context(template: &str, placeholder_start: usize) -> Option<char> {
     let mut single = false;
     let mut double = false;
     let mut escape = false;
@@ -371,6 +372,7 @@ pub(crate) fn shell_quote_context(template: &str, placeholder_start: usize) -> O
     }
 }
 
+#[cfg(any(not(windows), test))]
 fn posix_shell_quote(value: &str) -> String {
     if value.is_empty() {
         return "''".to_string();
@@ -386,6 +388,7 @@ fn posix_shell_quote(value: &str) -> String {
     }
 }
 
+#[cfg(any(not(windows), test))]
 fn quote_placeholder_for_context(template: &str, start: usize, value: &str) -> String {
     match shell_quote_context(template, start) {
         Some('\'') => value.replace('\'', "'\\''"),
@@ -398,9 +401,17 @@ fn quote_placeholder_for_context(template: &str, start: usize, value: &str) -> S
     }
 }
 
-pub(crate) fn render_command_tts_template(
+#[cfg(any(not(windows), test))]
+fn render_command_tts_template(template: &str, placeholders: &BTreeMap<&str, String>) -> String {
+    render_tts_template(template, placeholders, |start, value| {
+        quote_placeholder_for_context(template, start, value)
+    })
+}
+
+fn render_tts_template(
     template: &str,
     placeholders: &BTreeMap<&str, String>,
+    substitute: impl Fn(usize, &str) -> String,
 ) -> String {
     let mut out = String::with_capacity(template.len());
     let mut idx = 0;
@@ -420,7 +431,7 @@ pub(crate) fn render_command_tts_template(
             if let Some(close) = rest.find('}') {
                 let key = &rest[1..close];
                 if let Some(value) = placeholders.get(key) {
-                    out.push_str(&quote_placeholder_for_context(template, idx, value));
+                    out.push_str(&substitute(idx, value));
                     idx += close + 1;
                     continue;
                 }
@@ -431,6 +442,56 @@ pub(crate) fn render_command_tts_template(
         idx += ch.len_utf8();
     }
     out
+}
+
+#[cfg(not(windows))]
+fn command_tts_process(
+    template: &str,
+    placeholders: &BTreeMap<&str, String>,
+) -> Result<Command, ToolError> {
+    let mut command = Command::new("sh");
+    command
+        .arg("-c")
+        .arg(render_command_tts_template(template, placeholders));
+    Ok(command)
+}
+
+#[cfg(windows)]
+fn command_tts_process(
+    template: &str,
+    placeholders: &BTreeMap<&str, String>,
+) -> Result<Command, ToolError> {
+    let invalid = || {
+        ToolError::ExecutionFailed(
+        "Windows TTS commands require an executable and arguments. Put shell syntax in a helper and invoke its executable directly.".into(),
+    )
+    };
+    let words = shlex::split(template).ok_or_else(invalid)?;
+    let (program, args) = words.split_first().ok_or_else(invalid)?;
+    let mut program = PathBuf::from(program);
+    if program.extension().is_none() {
+        program.set_extension("exe");
+    }
+    // The Windows process launcher can run batch files through cmd.exe. Require a native
+    // executable so caller-supplied values stay arguments throughout process creation.
+    if !program
+        .extension()
+        .is_some_and(|ext| ext.eq_ignore_ascii_case("exe"))
+        || program
+            .file_name()
+            .is_some_and(|name| name.eq_ignore_ascii_case("cmd.exe"))
+        || args
+            .iter()
+            .any(|arg| matches!(arg.as_str(), "<" | ">" | ">>" | "|" | "&" | "&&" | "||"))
+    {
+        return Err(invalid());
+    }
+    let mut command = Command::new(program);
+    command.args(
+        args.iter()
+            .map(|arg| render_tts_template(arg, placeholders, |_, value| value.to_owned())),
+    );
+    Ok(command)
 }
 
 fn load_tts_config_from_env_or_file() -> Value {
@@ -757,11 +818,19 @@ impl MultiTtsBackend {
         let output_path = output_hint.unwrap_or_else(|| {
             std::env::temp_dir().join(format!("hermes_tts_{}.{}", uuid::Uuid::new_v4(), format))
         });
-        let input_path =
-            std::env::temp_dir().join(format!("hermes_tts_input_{}.txt", uuid::Uuid::new_v4()));
-        tokio::fs::write(&input_path, text)
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("write TTS command input: {e}")))?;
+        // Keep creation, writing and cleanup ownership in one task, even if the caller cancels.
+        let text = text.to_owned();
+        let input_path = tokio::task::spawn_blocking(move || {
+            let mut input = tempfile::Builder::new()
+                .prefix("hermes_tts_input_")
+                .suffix(".txt")
+                .tempfile()?;
+            std::io::Write::write_all(&mut input, text.as_bytes())?;
+            Ok::<_, std::io::Error>(input.into_temp_path())
+        })
+        .await
+        .map_err(|e| ToolError::ExecutionFailed(format!("prepare TTS command input: {e}")))?
+        .map_err(|e| ToolError::ExecutionFailed(format!("write TTS command input: {e}")))?;
 
         let mut placeholders = BTreeMap::new();
         placeholders.insert("input_path", input_path.display().to_string());
@@ -786,30 +855,39 @@ impl MultiTtsBackend {
                 .to_string(),
         );
 
-        let rendered = render_command_tts_template(&provider.command, &placeholders);
-        let mut cmd = if cfg!(windows) {
-            let mut cmd = Command::new("cmd");
-            cmd.arg("/C").arg(&rendered);
-            cmd
-        } else {
-            let mut cmd = Command::new("sh");
-            cmd.arg("-c").arg(&rendered);
-            cmd
-        };
-        cmd.stdout(std::process::Stdio::null())
+        let mut cmd = command_tts_process(&provider.command, &placeholders)?;
+        cmd.kill_on_drop(true)
+            .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::piped());
         cmd.suppress_windows_console();
 
         let duration = command_tts_timeout(&provider.config);
-        let output = match timeout(duration, cmd.output()).await {
-            Ok(result) => result.map_err(|e| {
-                ToolError::ExecutionFailed(format!(
-                    "TTS command provider '{}' failed to start: {e}",
-                    provider.name
-                ))
-            })?,
+        let mut child = cmd.spawn().map_err(|e| {
+            ToolError::ExecutionFailed(format!(
+                "TTS command provider '{}' failed to start: {e}",
+                provider.name
+            ))
+        })?;
+        let mut stderr = child.stderr.take().expect("piped command TTS stderr");
+        let mut diagnostics = Vec::new();
+        let status = match timeout(duration, async {
+            tokio::try_join!(child.wait(), stderr.read_to_end(&mut diagnostics))
+        })
+        .await
+        {
+            Ok(result) => {
+                result
+                    .map_err(|e| {
+                        ToolError::ExecutionFailed(format!(
+                            "TTS command provider '{}' failed whilst running: {e}",
+                            provider.name
+                        ))
+                    })?
+                    .0
+            }
             Err(_) => {
-                let _ = tokio::fs::remove_file(&input_path).await;
+                // On Windows the child can hold the input open without delete sharing.
+                let _ = timeout(Duration::from_secs(2), child.kill()).await;
                 return Err(ToolError::ExecutionFailed(format!(
                     "TTS command provider '{}' timed out after {:.1}s",
                     provider.name,
@@ -817,14 +895,14 @@ impl MultiTtsBackend {
                 )));
             }
         };
-        let _ = tokio::fs::remove_file(&input_path).await;
+        drop(input_path);
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if !status.success() {
+            let stderr = String::from_utf8_lossy(&diagnostics).trim().to_string();
             return Err(ToolError::ExecutionFailed(format!(
                 "TTS command provider '{}' exited with code {}{}",
                 provider.name,
-                output.status.code().unwrap_or(-1),
+                status.code().unwrap_or(-1),
                 if stderr.is_empty() {
                     String::new()
                 } else {
@@ -956,14 +1034,14 @@ impl TtsBackend for MultiTtsBackend {
                     .await
             }
             "piper" => self.piper_tts(text, voice, output_path).await,
-            "edge" | "edge_tts" | "edge-tts" | "neutts" | "kittentts" => Err(
-                ToolError::InvalidParams(format!(
-                "{resolved_provider} is not supported in hermes-agent-rust (zero-Python). \
+            "edge" | "edge_tts" | "edge-tts" | "neutts" | "kittentts" => {
+                Err(ToolError::InvalidParams(format!(
+                    "{resolved_provider} is not supported in hermes-agent-rust (zero-Python). \
                  Use provider='openai' (HERMES_OPENAI_API_KEY or OPENAI_API_KEY), \
                  'elevenlabs' (ELEVENLABS_API_KEY), 'minimax' (MINIMAX_API_KEY), \
                  or 'piper' (local piper binary + PIPER_MODEL)."
-            )),
-            ),
+                )))
+            }
             other => Err(ToolError::InvalidParams(format!(
                 "Unknown TTS provider: '{other}'. Use 'openai', 'elevenlabs', 'minimax', or 'piper'.",
             ))),
@@ -1082,13 +1160,18 @@ mod tests {
     #[tokio::test]
     async fn command_provider_writes_output_and_reports_voice_compatibility() {
         let tmp = tempfile::tempdir().unwrap();
-        let output = tmp.path().join("clip.ogg");
+        let output = tmp.path().join("croft manor & clip %!.ogg");
+        let command = if cfg!(windows) {
+            "esentutl.exe /y {input_path} /d {output_path} /o"
+        } else {
+            "cp {input_path} {output_path}"
+        };
         let backend = MultiTtsBackend::with_tts_config(json!({
             "provider": "copy-tts",
             "providers": {
                 "copy-tts": {
                     "type": "command",
-                    "command": "cp {input_path} {output_path}",
+                    "command": command,
                     "output_format": "ogg",
                     "voice_compatible": true
                 }
@@ -1114,6 +1197,47 @@ mod tests {
             .unwrap()
             .starts_with("[[audio_as_voice]]"));
         assert_eq!(std::fs::read_to_string(output).unwrap(), "hello command");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_keeps_substitutions_in_one_argument() {
+        let value = r#"a voice "& echo %PATH% !X!""#;
+        let placeholders = BTreeMap::from([("voice", value.to_owned())]);
+        let command = command_tts_process("tts --voice='{voice}'", &placeholders).unwrap();
+        assert_eq!(command.as_std().get_program(), "tts.exe");
+        let expected = format!("--voice={value}");
+        assert_eq!(
+            command.as_std().get_args().collect::<Vec<_>>(),
+            [expected.as_str()]
+        );
+        for template in ["cmd /c echo {voice}", "tts.bat {voice}", "tts < {voice}"] {
+            assert!(
+                command_tts_process(template, &placeholders).is_err(),
+                "{template}"
+            );
+        }
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn command_provider_reports_a_missing_executable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let output = tmp.path().join("clip.ogg");
+        let executable = tmp.path().join("missing.exe");
+        let backend = MultiTtsBackend::with_tts_config(json!({
+            "provider": "missing-tts",
+            "providers": {"missing-tts": {
+                "command": format!("'{}' {{input_path}} {{output_path}}", executable.display()),
+                "output_format": "ogg"
+            }}
+        }));
+        let error = backend
+            .synthesize("synthetic speech", None, None, output.to_str(), None)
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("failed to start"), "{error}");
+        assert!(!output.exists());
     }
 
     #[test]

@@ -90,7 +90,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-07-08T09:23:41.617774+00:00",
+  "generated_at_utc": "2026-11-10T12:06:12.348023+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -156,7 +156,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 101,
+      "direct_test_evidence_count": 102,
       "direct_test_evidence_sample": [
         "crates/hermes-tools/src/approval.rs",
         "crates/hermes-tools/src/approval/tests.rs",
@@ -184,7 +184,7 @@
         "crates/hermes-tools/src/backends/vision.rs",
         "crates/hermes-tools/src/backends/web.rs"
       ],
-      "evidence_count": 123,
+      "evidence_count": 125,
       "evidence_sample": [
         "crates/hermes-tools/src/approval.rs",
         "crates/hermes-tools/src/approval/patterns.rs",
@@ -194,6 +194,7 @@
         "crates/hermes-tools/src/approval/tests/session_and_gateway.rs",
         "crates/hermes-tools/src/approval/tests/tirith_guards.rs",
         "crates/hermes-tools/src/backends/browser.rs",
+        "crates/hermes-tools/src/backends/browser/cdp_client.rs",
         "crates/hermes-tools/src/backends/browser/cloud_backend_impls.rs",
         "crates/hermes-tools/src/backends/browser/cloud_config.rs",
         "crates/hermes-tools/src/backends/browser/cloud_sessions.rs",
@@ -209,8 +210,7 @@
         "crates/hermes-tools/src/backends/image_gen.rs",
         "crates/hermes-tools/src/backends/image_gen/auth_and_save.rs",
         "crates/hermes-tools/src/backends/image_gen/fal_managed_tests.rs",
-        "crates/hermes-tools/src/backends/image_gen/fal_payloads.rs",
-        "crates/hermes-tools/src/backends/image_gen/provider_config_payloads.rs"
+        "crates/hermes-tools/src/backends/image_gen/fal_payloads.rs"
       ],
       "id": "tool-runtime-behavior",
       "mapped": true,
@@ -221,7 +221,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 47,
+      "direct_test_evidence_count": 48,
       "direct_test_evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -249,7 +249,7 @@
         "crates/hermes-cli/src/commands/tests/surface_and_compression.rs",
         "crates/hermes-cli/src/config_env.rs"
       ],
-      "evidence_count": 178,
+      "evidence_count": 179,
       "evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -286,7 +286,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 71,
+      "direct_test_evidence_count": 73,
       "direct_test_evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/tests/coding_route_learning.rs",
@@ -314,7 +314,7 @@
         "crates/hermes-agent/src/interrupt.rs",
         "crates/hermes-agent/src/lsp_context.rs"
       ],
-      "evidence_count": 106,
+      "evidence_count": 109,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
@@ -420,7 +420,7 @@
         "crates/hermes-skills/src/usage.rs",
         "crates/hermes-skills/src/version.rs"
       ],
-      "evidence_count": 69,
+      "evidence_count": 70,
       "evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/quorum_claims.rs",
@@ -477,7 +477,7 @@
         "crates/hermes-cron/src/scheduler.rs",
         "crates/hermes-cron/src/suggestions.rs"
       ],
-      "evidence_count": 71,
+      "evidence_count": 72,
       "evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/quorum_claims.rs",
@@ -552,7 +552,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 9,
+      "direct_test_evidence_count": 10,
       "direct_test_evidence_sample": [
         "crates/hermes-environments/src/docker.rs",
         "crates/hermes-environments/src/file_sync.rs",
@@ -562,9 +562,10 @@
         "crates/hermes-environments/src/manager.rs",
         "crates/hermes-environments/src/singularity.rs",
         "crates/hermes-environments/src/ssh.rs",
-        "crates/hermes-environments/tests/backend_integration.rs"
+        "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/tool_guard.rs"
       ],
-      "evidence_count": 14,
+      "evidence_count": 15,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -579,7 +580,8 @@
         "crates/hermes-environments/src/singularity.rs",
         "crates/hermes-environments/src/ssh.rs",
         "crates/hermes-environments/src/training/mod.rs",
-        "crates/hermes-environments/tests/backend_integration.rs"
+        "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/tool_guard.rs"
       ],
       "id": "environment-lifecycle-contract",
       "mapped": true,
@@ -632,9 +634,9 @@
     "divergence_unowned": 0,
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
-    "queue_total": 51,
-    "rust_test_files": 423,
-    "rust_test_functions": 7412,
+    "queue_total": 1,
+    "rust_test_files": 430,
+    "rust_test_functions": 7649,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,

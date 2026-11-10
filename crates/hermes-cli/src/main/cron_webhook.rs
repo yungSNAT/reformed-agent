@@ -161,7 +161,7 @@ async fn run_cron(
             if agent {
                 job.no_agent = false;
             }
-            if job.no_agent && job.script.as_ref().map_or(true, |s| s.trim().is_empty()) {
+            if job.no_agent && job.script.as_ref().is_none_or(|s| s.trim().is_empty()) {
                 return Err(AgentError::Config(
                     "cron create: --no-agent requires --script".into(),
                 ));
@@ -275,7 +275,7 @@ async fn run_cron(
                     job.workdir = Some(workdir);
                 }
             }
-            if job.no_agent && job.script.as_ref().map_or(true, |s| s.trim().is_empty()) {
+            if job.no_agent && job.script.as_ref().is_none_or(|s| s.trim().is_empty()) {
                 return Err(AgentError::Config(
                     "cron edit: no_agent mode requires a non-empty script".into(),
                 ));
@@ -379,11 +379,11 @@ async fn run_cron(
 }
 
 fn webhook_store_path(cli: &Cli) -> PathBuf {
-    hermes_state_root(&cli).join("webhooks.json")
+    hermes_state_root(cli).join("webhooks.json")
 }
 
 fn webhook_subscriptions_path(cli: &Cli) -> PathBuf {
-    hermes_state_root(&cli).join("webhook_subscriptions.json")
+    hermes_state_root(cli).join("webhook_subscriptions.json")
 }
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -489,6 +489,9 @@ async fn resolve_llm_login_token(cli: &Cli, provider: &str) -> Result<String, Ag
     Ok(pasted)
 }
 
+// Takes the parsed `webhook` subcommand fields one by one, like the other
+// command handlers; bundling them into a struct would be a redesign.
+#[allow(clippy::too_many_arguments)]
 async fn run_webhook(
     cli: Cli,
     action: Option<String>,

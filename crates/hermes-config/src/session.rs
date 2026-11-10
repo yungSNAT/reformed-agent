@@ -112,7 +112,7 @@ impl Default for SessionResetPolicy {
 // ---------------------------------------------------------------------------
 
 /// Session management configuration.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SessionConfig {
     /// Policy for when to reset the session context.
     #[serde(default)]
@@ -133,18 +133,6 @@ pub struct SessionConfig {
     /// Per-session-type overrides for the reset policy.
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub session_type_overrides: HashMap<SessionType, SessionResetPolicy>,
-}
-
-impl Default for SessionConfig {
-    fn default() -> Self {
-        Self {
-            reset_policy: SessionResetPolicy::default(),
-            max_context_messages: None,
-            compression_enabled: false,
-            platform_overrides: HashMap::new(),
-            session_type_overrides: HashMap::new(),
-        }
-    }
 }
 
 impl SessionConfig {
@@ -194,10 +182,12 @@ mod tests {
 
     #[test]
     fn session_config_roundtrip() {
-        let mut cfg = SessionConfig::default();
-        cfg.reset_policy = SessionResetPolicy::Daily { at_hour: 3 };
-        cfg.max_context_messages = Some(100);
-        cfg.compression_enabled = true;
+        let cfg = SessionConfig {
+            reset_policy: SessionResetPolicy::Daily { at_hour: 3 },
+            max_context_messages: Some(100),
+            compression_enabled: true,
+            ..SessionConfig::default()
+        };
 
         let value = cfg.to_value();
         let back = SessionConfig::from_value(value).unwrap();

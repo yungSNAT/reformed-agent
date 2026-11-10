@@ -29,30 +29,43 @@ pub struct EvolutionCounters {
 // AgentLoop
 // ---------------------------------------------------------------------------
 
+/// Boxed callback that receives one string.
+pub type TextCallback = Box<dyn Fn(&str) + Send + Sync>;
+/// Boxed callback that receives a string and a JSON value.
+pub type TextValueCallback = Box<dyn Fn(&str, &Value) + Send + Sync>;
+/// Boxed callback that receives 2 strings.
+pub type TextPairCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
+/// Boxed callback that receives a step number.
+pub type StepCallback = Box<dyn Fn(u32) + Send + Sync>;
+/// Shared callback that receives one string.
+pub type SharedTextCallback = Arc<dyn Fn(&str) + Send + Sync>;
+/// Shared callback that receives 2 strings.
+pub type SharedTextPairCallback = Arc<dyn Fn(&str, &str) + Send + Sync>;
+
 /// Callbacks invoked during tool execution for progress reporting.
 #[derive(Default)]
 pub struct AgentCallbacks {
     /// Called when the LLM is "thinking" (reasoning tokens).
-    pub on_thinking: Option<Box<dyn Fn(&str) + Send + Sync>>,
+    pub on_thinking: Option<TextCallback>,
     /// Called when a tool call begins.
-    pub on_tool_start: Option<Box<dyn Fn(&str, &Value) + Send + Sync>>,
+    pub on_tool_start: Option<TextValueCallback>,
     /// Called when a tool call finishes.
-    pub on_tool_complete: Option<Box<dyn Fn(&str, &str) + Send + Sync>>,
+    pub on_tool_complete: Option<TextPairCallback>,
     /// Called for each stream delta.
-    pub on_stream_delta: Option<Box<dyn Fn(&str) + Send + Sync>>,
+    pub on_stream_delta: Option<TextCallback>,
     /// Called after each completed LLM step (full response assembled).
-    pub on_step_complete: Option<Box<dyn Fn(u32) + Send + Sync>>,
+    pub on_step_complete: Option<StepCallback>,
     /// Called when background memory/skill review completes or fails.
     ///
     /// Payload is a user-friendly summary string suitable for direct UI output.
-    pub background_review_callback: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub background_review_callback: Option<SharedTextCallback>,
     /// Called when `delegate_task(background=true)` completes out-of-band.
     ///
     /// Payload is a self-contained summary suitable for reinjection into the
     /// originating UI or platform conversation.
-    pub background_delegation_callback: Option<Arc<dyn Fn(&str) + Send + Sync>>,
+    pub background_delegation_callback: Option<SharedTextCallback>,
     /// Called for lifecycle/status notices (context pressure, retries, etc.).
-    pub status_callback: Option<Arc<dyn Fn(&str, &str) + Send + Sync>>,
+    pub status_callback: Option<SharedTextPairCallback>,
 }
 
 /// Classify an API error for retry/failover decisions.
@@ -165,9 +178,8 @@ fn classify_error(err: &str) -> ErrorClass {
         || lower.contains("authentication")
     {
         ErrorClass::Auth
-    } else if has_ssl_transient_phrase(&lower) {
-        ErrorClass::Retryable
-    } else if lower.contains("500")
+    } else if has_ssl_transient_phrase(&lower)
+        || lower.contains("500")
         || lower.contains("502")
         || lower.contains("503")
         || lower.contains("timeout")
@@ -307,10 +319,11 @@ fn advertised_tool_name_index(tool_schemas: &[ToolSchema]) -> (HashSet<&str>, St
     (names.into_iter().collect(), display)
 }
 
-/// Result of collecting one streaming completion (may end with user interrupt).
+/// Result of collecting one streaming completion.
 enum StreamCollectOutcome {
     Complete(LlmResponse),
     Interrupted(LlmResponse),
+    LifetimeExceeded(Duration),
 }
 
 #[derive(Debug, Clone, Copy)]

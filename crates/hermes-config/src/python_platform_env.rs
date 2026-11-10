@@ -117,10 +117,7 @@ fn apply_telegram_env(config: &mut GatewayConfig) {
         return;
     }
 
-    let telegram = config
-        .platforms
-        .entry("telegram".into())
-        .or_insert_with(PlatformConfig::default);
+    let telegram = config.platforms.entry("telegram".into()).or_default();
 
     if let Some(token) = token {
         let enabled_was_explicit = telegram
@@ -211,10 +208,7 @@ fn apply_telegram_env(config: &mut GatewayConfig) {
 }
 
 fn apply_weixin_env(config: &mut GatewayConfig) {
-    let wx = config
-        .platforms
-        .entry("weixin".into())
-        .or_insert_with(PlatformConfig::default);
+    let wx = config.platforms.entry("weixin".into()).or_default();
 
     if let Some(t) = env_nonempty("WEIXIN_TOKEN") {
         wx.token = Some(t);
@@ -255,10 +249,7 @@ fn apply_weixin_env(config: &mut GatewayConfig) {
 }
 
 fn apply_dingtalk_env(config: &mut GatewayConfig) {
-    let dt = config
-        .platforms
-        .entry("dingtalk".into())
-        .or_insert_with(PlatformConfig::default);
+    let dt = config.platforms.entry("dingtalk".into()).or_default();
 
     if let Some(v) = env_nonempty("DINGTALK_CLIENT_ID") {
         set_extra(dt, "client_id", json!(v));
@@ -284,10 +275,7 @@ fn apply_mattermost_env(config: &mut GatewayConfig) {
         return;
     }
 
-    let mattermost = config
-        .platforms
-        .entry("mattermost".into())
-        .or_insert_with(PlatformConfig::default);
+    let mattermost = config.platforms.entry("mattermost".into()).or_default();
     if let Some(v) = server_url {
         set_extra(mattermost, "server_url", json!(v));
     }
@@ -330,10 +318,7 @@ fn apply_matrix_env(config: &mut GatewayConfig) {
         return;
     }
 
-    let matrix = config
-        .platforms
-        .entry("matrix".into())
-        .or_insert_with(PlatformConfig::default);
+    let matrix = config.platforms.entry("matrix".into()).or_default();
     if let Some(v) = homeserver_url {
         set_extra(matrix, "homeserver_url", json!(v));
     }
@@ -364,10 +349,7 @@ fn apply_ntfy_env(config: &mut GatewayConfig) {
     let Some(topic) = env_nonempty("NTFY_TOPIC") else {
         return;
     };
-    let ntfy = config
-        .platforms
-        .entry("ntfy".into())
-        .or_insert_with(PlatformConfig::default);
+    let ntfy = config.platforms.entry("ntfy".into()).or_default();
     let enabled_was_explicit = ntfy
         .extra
         .remove("_enabled_explicit")
@@ -405,10 +387,7 @@ fn apply_ntfy_env(config: &mut GatewayConfig) {
 }
 
 fn apply_discord_env(config: &mut GatewayConfig) {
-    let discord = config
-        .platforms
-        .entry("discord".into())
-        .or_insert_with(PlatformConfig::default);
+    let discord = config.platforms.entry("discord".into()).or_default();
 
     if let Some(token) = env_nonempty("DISCORD_BOT_TOKEN") {
         let enabled_was_explicit = discord
@@ -502,10 +481,7 @@ fn apply_slack_env(config: &mut GatewayConfig) {
         return;
     }
 
-    let slack = config
-        .platforms
-        .entry("slack".into())
-        .or_insert_with(PlatformConfig::default);
+    let slack = config.platforms.entry("slack".into()).or_default();
     if let Some(token) = token {
         let enabled_was_explicit = slack
             .extra

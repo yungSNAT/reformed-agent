@@ -66,10 +66,10 @@ fn lift_agent_max_turns(map: &mut Mapping) {
     if map.contains_key(&max_key) {
         return;
     }
-    let Some(Value::Mapping(agent)) = map.get(&key("agent")) else {
+    let Some(Value::Mapping(agent)) = map.get(key("agent")) else {
         return;
     };
-    let Some(mt) = agent.get(&key("max_turns")) else {
+    let Some(mt) = agent.get(key("max_turns")) else {
         return;
     };
     map.insert(max_key, mt.clone());
@@ -86,7 +86,7 @@ fn lift_toolsets_to_tools(map: &mut Mapping) {
     if keep_existing {
         return;
     }
-    let Some(Value::Sequence(ts)) = map.remove(&key("toolsets")) else {
+    let Some(Value::Sequence(ts)) = map.remove(key("toolsets")) else {
         return;
     };
     let out: Vec<Value> = ts
@@ -111,7 +111,7 @@ fn normalize_model_block(map: &mut Mapping) {
             map.insert(model_key, Value::String(s));
         }
         Value::Mapping(m) => {
-            if let Some(persist) = m.get(&key("persist_switch_by_default")).cloned() {
+            if let Some(persist) = m.get(key("persist_switch_by_default")).cloned() {
                 let switch_key = key("model_switch");
                 let mut switch_map = match map.remove(&switch_key) {
                     Some(Value::Mapping(existing)) => existing,
@@ -126,24 +126,24 @@ fn normalize_model_block(map: &mut Mapping) {
                 map.insert(switch_key, Value::Mapping(switch_map));
             }
             let default = ["default", "name", "model"].iter().find_map(|field| {
-                m.get(&key(field))
+                m.get(key(field))
                     .and_then(as_str)
                     .map(str::trim)
                     .filter(|s| !s.is_empty())
             });
             let provider = m
-                .get(&key("provider"))
+                .get(key("provider"))
                 .and_then(as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
-            let base_url = m.get(&key("base_url")).and_then(normalized_base_url);
+            let base_url = m.get(key("base_url")).and_then(normalized_base_url);
             let api_key = m
-                .get(&key("api_key"))
+                .get(key("api_key"))
                 .and_then(as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let api_key_env = m
-                .get(&key("api_key_env"))
+                .get(key("api_key_env"))
                 .and_then(as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
@@ -193,7 +193,7 @@ fn normalize_model_block(map: &mut Mapping) {
 
 /// `custom_providers: [{ name, base_url, ... }]` → merge into `llm_providers`.
 fn merge_custom_providers_into_llm(map: &mut Mapping) {
-    let Some(Value::Sequence(providers)) = map.remove(&key("custom_providers")) else {
+    let Some(Value::Sequence(providers)) = map.remove(key("custom_providers")) else {
         return;
     };
     if providers.is_empty() {
@@ -211,7 +211,7 @@ fn merge_custom_providers_into_llm(map: &mut Mapping) {
             continue;
         };
         let Some(provider_name) = src
-            .get(&key("name"))
+            .get(key("name"))
             .and_then(as_str)
             .map(canonical_custom_provider_name)
             .filter(|s| !s.is_empty())
@@ -261,7 +261,7 @@ fn merge_custom_providers_into_llm(map: &mut Mapping) {
 
 /// `providers: { openai: { api_key: ... } }` → merge into `llm_providers`.
 fn merge_providers_into_llm(map: &mut Mapping) {
-    let Some(Value::Mapping(providers)) = map.remove(&key("providers")) else {
+    let Some(Value::Mapping(providers)) = map.remove(key("providers")) else {
         return;
     };
     if providers.is_empty() {
@@ -358,12 +358,12 @@ fn collect_fallback_entries(
         }
         Value::Mapping(entry) => {
             let provider = entry
-                .get(&key("provider"))
+                .get(key("provider"))
                 .and_then(as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
             let model = entry
-                .get(&key("model"))
+                .get(key("model"))
                 .and_then(as_str)
                 .map(str::trim)
                 .filter(|s| !s.is_empty());
@@ -400,10 +400,10 @@ fn normalize_fallback_chain(map: &mut Mapping) {
     if let Some(existing) = map.remove(&fallback_models_key) {
         collect_fallback_entries(existing, map, &mut chain, &mut seen);
     }
-    if let Some(providers) = map.remove(&key("fallback_providers")) {
+    if let Some(providers) = map.remove(key("fallback_providers")) {
         collect_fallback_entries(providers, map, &mut chain, &mut seen);
     }
-    if let Some(legacy) = map.remove(&key("fallback_model")) {
+    if let Some(legacy) = map.remove(key("fallback_model")) {
         collect_fallback_entries(legacy, map, &mut chain, &mut seen);
     }
 
@@ -417,13 +417,13 @@ fn normalize_fallback_chain(map: &mut Mapping) {
 
 /// Python `session_reset: { mode, idle_minutes, at_hour }` → `session.reset_policy` (tagged enum shape).
 fn normalize_session_reset(map: &mut Mapping) {
-    let Some(Value::Mapping(sr)) = map.get(&key("session_reset")).cloned() else {
+    let Some(Value::Mapping(sr)) = map.get(key("session_reset")).cloned() else {
         return;
     };
-    let mode = sr.get(&key("mode")).and_then(as_str).map(str::to_lowercase);
-    let idle_minutes = sr.get(&key("idle_minutes")).and_then(as_u64);
+    let mode = sr.get(key("mode")).and_then(as_str).map(str::to_lowercase);
+    let idle_minutes = sr.get(key("idle_minutes")).and_then(as_u64);
     let at_hour = sr
-        .get(&key("at_hour"))
+        .get(key("at_hour"))
         .and_then(as_u64)
         .map(|h| h.min(23) as u8);
 
@@ -470,7 +470,7 @@ fn normalize_session_reset(map: &mut Mapping) {
         _ => return,
     };
 
-    map.remove(&key("session_reset"));
+    map.remove(key("session_reset"));
     let session_key = key("session");
     let mut session = match map.get(&session_key).cloned() {
         Some(Value::Mapping(x)) => x,
@@ -775,7 +775,7 @@ personalities: null
             panic!();
         };
         normalize_config_yaml_root(m);
-        assert!(!m.contains_key(&key("personalities")));
+        assert!(!m.contains_key(key("personalities")));
         let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
         let default = crate::config::GatewayConfig::default();
         assert_eq!(cfg.model, default.model);

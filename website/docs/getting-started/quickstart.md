@@ -48,11 +48,12 @@ Pick the row that matches your goal:
 
 ## 1. Install Hermes Agent
 
-Run the one-line installer:
+This fork has published no release yet, so installing means building from
+source. With Git and a Rust toolchain installed, run:
 
 ```bash
 # Linux / macOS / WSL2 / Android (Termux)
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 ```
 
 :::tip Android / Termux

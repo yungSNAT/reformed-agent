@@ -10,6 +10,8 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
+use crate::tools::vision::VisionBackend;
+
 // ---------------------------------------------------------------------------
 // BrowserBackend trait
 // ---------------------------------------------------------------------------
@@ -25,7 +27,9 @@ pub trait BrowserBackend: Send + Sync {
     async fn go_back(&self) -> Result<String, ToolError>;
     async fn press(&self, key: &str) -> Result<String, ToolError>;
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError>;
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError>;
+    /// Capture the current page as a PNG file and return JSON with its
+    /// `screenshot_path`, never the image bytes.
+    async fn screenshot(&self) -> Result<String, ToolError>;
     async fn console(&self, action: &str) -> Result<String, ToolError>;
 }
 
@@ -360,11 +364,16 @@ impl ToolHandler for BrowserGetImagesHandler {
 
 pub struct BrowserVisionHandler {
     backend: std::sync::Arc<dyn BrowserBackend>,
+    /// The vision model, or why none is configured.
+    vision: Result<std::sync::Arc<dyn VisionBackend>, String>,
 }
 
 impl BrowserVisionHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
-        Self { backend }
+    pub fn new(
+        backend: std::sync::Arc<dyn BrowserBackend>,
+        vision: Result<std::sync::Arc<dyn VisionBackend>, String>,
+    ) -> Self {
+        Self { backend, vision }
     }
 }
 
@@ -375,7 +384,57 @@ impl ToolHandler for BrowserVisionHandler {
             .get("instruction")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'instruction' parameter".into()))?;
-        self.backend.vision(instruction).await
+        let raw = self.backend.screenshot().await?;
+        let mut result: Value = serde_json::from_str(&raw).map_err(|e| {
+            ToolError::ExecutionFailed(format!("Invalid browser screenshot result: {e}"))
+        })?;
+        let path = result["screenshot_path"]
+            .as_str()
+            .ok_or_else(|| {
+                ToolError::ExecutionFailed(
+                    "Browser screenshot result has no screenshot_path".into(),
+                )
+            })?
+            .to_string();
+        // Upstream's prompt for `browser_vision`.
+        let prompt = format!(
+            "You are analyzing a screenshot of a web browser.\n\n\
+             User's question: {instruction}\n\n\
+             Provide a detailed and helpful answer based on what you see in the screenshot. \
+             If there are interactive elements, describe them. If there are verification challenges \
+             or CAPTCHAs, describe what type they are and what action might be needed. \
+             Focus on answering the user's specific question."
+        );
+        let analysis = match &self.vision {
+            Ok(vision) => vision
+                .analyze(&path, &prompt)
+                .await
+                .map_err(|e| e.to_string()),
+            Err(not_configured) => Err(not_configured.clone()),
+        };
+        match analysis {
+            Ok(analysis) => {
+                // The vision model may have read secrets off the page.
+                let analysis = hermes_intelligence::redact_sensitive_text(analysis.trim());
+                result["success"] = json!(true);
+                result["analysis"] = json!(if analysis.is_empty() {
+                    "Vision analysis returned no content.".to_string()
+                } else {
+                    analysis
+                });
+            }
+            Err(error) => {
+                // A provider error can quote the request's key.
+                let error = hermes_intelligence::redact_sensitive_text(error);
+                tracing::warn!("browser_vision analysis failed: {error}");
+                result["success"] = json!(false);
+                result["error"] = json!(format!("Error during vision analysis: {error}"));
+                result["note"] = json!(
+                    "Screenshot was captured but vision analysis failed. You can still share it via MEDIA:<path>."
+                );
+            }
+        }
+        Ok(result.to_string())
     }
 
     fn schema(&self) -> ToolSchema {
@@ -482,8 +541,8 @@ mod tests {
         async fn get_images(&self, sel: Option<&str>) -> Result<String, ToolError> {
             Ok(format!("Images: {:?}", sel))
         }
-        async fn vision(&self, inst: &str) -> Result<String, ToolError> {
-            Ok(format!("Vision: {}", inst))
+        async fn screenshot(&self) -> Result<String, ToolError> {
+            Ok(json!({"screenshot_path": "/tmp/page.png"}).to_string())
         }
         async fn console(&self, action: &str) -> Result<String, ToolError> {
             Ok(format!("Console: {}", action))
@@ -555,13 +614,46 @@ mod tests {
                 .unwrap(),
             "Images: Some(\"img.product\")"
         );
-        assert_eq!(
-            BrowserVisionHandler::new(backend())
+        let vision: Value = serde_json::from_str(
+            &BrowserVisionHandler::new(backend(), Err("no vision model".into()))
                 .execute(json!({"instruction": "summarize the page"}))
                 .await
                 .unwrap(),
-            "Vision: summarize the page"
+        )
+        .unwrap();
+        assert_eq!(vision["screenshot_path"], "/tmp/page.png");
+        assert_eq!(
+            vision["error"],
+            "Error during vision analysis: no vision model"
         );
+    }
+
+    struct FailingVision;
+    #[async_trait]
+    impl VisionBackend for FailingVision {
+        async fn analyze(&self, _image_url: &str, _question: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed(
+                "401 Incorrect API key provided: sk-proj-abc123def456ghi789jkl012".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_vision_redacts_the_provider_error() {
+        let vision: Value = serde_json::from_str(
+            &BrowserVisionHandler::new(backend(), Ok(std::sync::Arc::new(FailingVision)))
+                .execute(json!({"instruction": "summarize the page"}))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        let error = vision["error"].as_str().expect("error");
+        assert!(
+            error.starts_with("Error during vision analysis: "),
+            "{error}"
+        );
+        assert!(!error.contains("def456ghi789jkl012"), "{error}");
     }
 
     #[tokio::test]
@@ -578,12 +670,14 @@ mod tests {
             .unwrap_err()
             .to_string()
             .contains("Missing 'key'"));
-        assert!(BrowserVisionHandler::new(backend())
-            .execute(json!({}))
-            .await
-            .unwrap_err()
-            .to_string()
-            .contains("Missing 'instruction'"));
+        assert!(
+            BrowserVisionHandler::new(backend(), Err("no vision model".into()))
+                .execute(json!({}))
+                .await
+                .unwrap_err()
+                .to_string()
+                .contains("Missing 'instruction'")
+        );
     }
 
     #[tokio::test]

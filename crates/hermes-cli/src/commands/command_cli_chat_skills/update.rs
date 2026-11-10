@@ -59,8 +59,8 @@
                             "{:28} {:14} {:14} {:16} {}",
                             entry.name,
                             entry.source,
-                            &local_hash.chars().take(14).collect::<String>(),
-                            &upstream_hash.chars().take(16).collect::<String>(),
+                            local_hash.chars().take(14).collect::<String>(),
+                            upstream_hash.chars().take(16).collect::<String>(),
                             status
                         );
                     }
@@ -69,7 +69,7 @@
                             "{:28} {:14} {:14} {:16} unavailable ({})",
                             entry.name,
                             entry.source,
-                            &local_hash.chars().take(14).collect::<String>(),
+                            local_hash.chars().take(14).collect::<String>(),
                             "-",
                             err
                         );
@@ -104,7 +104,7 @@
                         println!(
                             "  ✓ {} updated (new hash: {})",
                             install_name,
-                            &update.upstream_hash.chars().take(16).collect::<String>()
+                            update.upstream_hash.chars().take(16).collect::<String>()
                         );
                         maybe_run_skill_bootstrap(&install_name, &target, &update.files).await?;
                     }

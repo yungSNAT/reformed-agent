@@ -48,14 +48,6 @@ pub struct McpPromptInfo {
 // McpServer
 // ---------------------------------------------------------------------------
 
-/// MCP server that exposes hermes-agent tools as MCP tools to external clients.
-///
-/// The server:
-/// - Starts listening on the given transport
-/// - Handles incoming JSON-RPC requests according to the MCP protocol
-/// - Converts hermes-agent ToolSchema to MCP tool format
-/// - Dispatches tool calls through the shared ToolRegistry
-/// - Exposes resources and prompts
 /// Capability flags controlling which MCP bridge operations are allowed.
 #[derive(Debug, Clone)]
 pub struct McpCapabilityPolicy {
@@ -74,6 +66,14 @@ impl Default for McpCapabilityPolicy {
     }
 }
 
+/// MCP server that exposes hermes-agent tools as MCP tools to external clients.
+///
+/// The server:
+/// - Starts listening on the given transport
+/// - Handles incoming JSON-RPC requests according to the MCP protocol
+/// - Converts hermes-agent ToolSchema to MCP tool format
+/// - Dispatches tool calls through the shared ToolRegistry
+/// - Exposes resources and prompts
 pub struct McpServer {
     /// Shared tool registry containing all hermes-agent tools.
     tool_registry: Arc<ToolRegistry>,

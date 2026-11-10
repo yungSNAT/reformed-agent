@@ -276,11 +276,11 @@ impl Theme {
             }
             _ => {
                 // Try JSON first, then TOML
-                serde_json::from_str(&content).or_else(|_| {
-                    Err(ThemeError::Parse(format!(
+                serde_json::from_str(&content).map_err(|_| {
+                    ThemeError::Parse(format!(
                         "Unsupported theme file format: {}. Use .json or .toml",
                         ext
-                    )))
+                    ))
                 })
             }
         }
@@ -313,6 +313,46 @@ pub struct ResolvedStyles {
 // ---------------------------------------------------------------------------
 // Built-in themes
 // ---------------------------------------------------------------------------
+
+/// Reformation palette for a pure-black canvas.
+pub fn reformation_theme() -> Theme {
+    const BLACK: &str = "#000000";
+    const IVORY: &str = "#FFFFF0";
+    const PLATINUM: &str = "#E5E4E2";
+    const GOLD: &str = "#FFD32A";
+    const FRAME: &str = "#9B7735";
+    const RED: &str = "#E7162F";
+
+    let mut theme = default_theme();
+    theme.name = "reformation".into();
+    theme.colors = ThemeColors {
+        primary: BLACK.into(),
+        secondary: FRAME.into(),
+        accent: GOLD.into(),
+        background: BLACK.into(),
+        foreground: IVORY.into(),
+        error: RED.into(),
+        warning: GOLD.into(),
+        success: IVORY.into(),
+        status_bar_bg: None,
+        status_bar_text: Some(PLATINUM.into()),
+        status_bar_strong: None,
+        status_bar_dim: None,
+        status_bar_good: None,
+        status_bar_warn: None,
+        status_bar_bad: None,
+        status_bar_critical: None,
+    };
+    theme.styles.user_input.fg = Some(IVORY.into());
+    theme.styles.assistant_response.fg = Some(IVORY.into());
+    theme.styles.assistant_response.bg = Some("#66023C".into());
+    theme.styles.system_message.fg = Some(PLATINUM.into());
+    theme.styles.tool_call.fg = Some(IVORY.into());
+    theme.styles.tool_call.bg = Some("#745EB1".into());
+    theme.styles.tool_result.fg = Some(IVORY.into());
+    theme.styles.error.fg = Some(RED.into());
+    theme
+}
 
 /// Default dark theme.
 pub fn default_theme() -> Theme {
@@ -383,7 +423,7 @@ pub fn default_theme() -> Theme {
     }
 }
 
-/// Built-in hyper-saturated theme used by Hermes Agent Ultra.
+/// Built-in hyper-saturated theme used by Reformed Agent.
 pub fn ultra_neon_theme() -> Theme {
     let mut theme = default_theme();
     theme.name = "ultra-neon".to_string();

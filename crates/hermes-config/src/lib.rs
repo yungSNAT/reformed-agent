@@ -18,6 +18,7 @@ mod python_yaml_compat;
 pub mod roundtrip_tests;
 pub mod session;
 pub mod streaming;
+pub mod tool_guard;
 
 // Re-export key types for convenience
 pub use config::{
@@ -26,9 +27,9 @@ pub use config::{
     GatewayConfig, LlmProviderConfig, McpServerEntry, ModelSwitchConfig, PlatformDisplayConfig,
     ProfileConfig, ProxyConfig, QuickCommandConfig, SecurityConfig, SessionsMaintenanceConfig,
     SkillsSettings, SmartModelRoutingConfig, StaleAuxiliaryAssignment, TerminalBackendType,
-    TerminalConfig, TerminalHomeMode, ToolOutputConfig, ToolsSettings, WebConfig,
-    WebsiteBlocklistConfig, DEFAULT_TOOL_OUTPUT_MAX_BYTES, DEFAULT_TOOL_OUTPUT_MAX_LINES,
-    DEFAULT_TOOL_OUTPUT_MAX_LINE_LENGTH,
+    TerminalConfig, TerminalHomeMode, ToolGuardConfig, ToolOutputConfig, ToolsSettings,
+    VertexConfig, WebConfig, WebsiteBlocklistConfig, DEFAULT_TOOL_OUTPUT_MAX_BYTES,
+    DEFAULT_TOOL_OUTPUT_MAX_LINES, DEFAULT_TOOL_OUTPUT_MAX_LINE_LENGTH,
 };
 pub use loader::{
     apply_user_config_patch, atomic_json_write, atomic_json_write_pretty, atomic_write_bytes,

@@ -473,6 +473,11 @@
         use futures::stream::BoxStream;
         use std::time::{SystemTime, UNIX_EPOCH};
 
+        // The OAuth token is the last source, so no OpenAI key may be set.
+        let _env_lock = env_test_lock();
+        let _hermes_openai_key = EnvVarGuard::remove("HERMES_OPENAI_API_KEY");
+        let _openai_key = EnvVarGuard::remove("OPENAI_API_KEY");
+
         struct DummyProvider;
         #[async_trait::async_trait]
         impl LlmProvider for DummyProvider {
@@ -558,4 +563,348 @@
         let resolved = agent.resolve_runtime_api_key("openai", None, None);
         assert_eq!(resolved.as_deref(), Some("openai-oauth-token"));
         let _ = std::fs::remove_dir_all(home);
+    }
+
+    /// Primary runtime for the reliability route tests. A reply of "primary"
+    /// means the turn fell back to it instead of using the route.
+    struct ReliabilityRoutePrimary;
+
+    #[async_trait::async_trait]
+    impl LlmProvider for ReliabilityRoutePrimary {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant("primary"),
+                usage: None,
+                model: "primary".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    #[test]
+    fn test_reliability_route_keeps_provider_base_url_from_env() {
+        use std::io::{Read, Write};
+
+        let _env_lock = env_test_lock();
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind loopback fixture");
+        let base_url = format!("http://{}/v1", listener.local_addr().expect("fixture address"));
+        let _base_url_env = EnvVarGuard::set("DEEPSEEK_BASE_URL", &base_url);
+        let (request_tx, request_rx) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let Ok((mut stream, _)) = listener.accept() else {
+                return;
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("read timeout");
+            let mut request = Vec::new();
+            let mut chunk = [0u8; 4096];
+            loop {
+                let n = stream.read(&mut chunk).unwrap_or(0);
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&chunk[..n]);
+                let text = String::from_utf8_lossy(&request).to_ascii_lowercase();
+                if let Some(header_end) = text.find("\r\n\r\n") {
+                    let body_len = text[..header_end]
+                        .lines()
+                        .find_map(|line| line.strip_prefix("content-length:"))
+                        .and_then(|value| value.trim().parse::<usize>().ok())
+                        .unwrap_or(0);
+                    if request.len() >= header_end + 4 + body_len {
+                        break;
+                    }
+                }
+            }
+            let body = r#"{"id":"fixture","object":"chat.completion","created":1,"model":"deepseek-chat","choices":[{"index":0,"message":{"role":"assistant","content":"loopback"},"finish_reason":"stop"}],"usage":{"prompt_tokens":1,"completion_tokens":1,"total_tokens":2}}"#;
+            let reply = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            );
+            let _ = stream.write_all(reply.as_bytes());
+            let _ = request_tx.send(String::from_utf8_lossy(&request).to_string());
+        });
+
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "deepseek".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("deepseek-fixture-key".to_string()),
+                request_timeout_seconds: Some(5.0),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let mut config = AgentConfig {
+            model: "deepseek:deepseek-reasoner".to_string(),
+            provider: Some("deepseek".to_string()),
+            runtime_providers,
+            retry: RetryConfig {
+                max_retries: 0,
+                fallback_model: Some("deepseek:deepseek-chat".to_string()),
+                ..RetryConfig::default()
+            },
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+
+        // The same two steps the run loops take once the governor degrades.
+        let model = agent
+            .resolve_reliability_degrade_model(agent.config.model.as_str(), None)
+            .expect("the configured fallback model is the degrade target");
+        let route = agent.turn_route_reliability_guard(model);
+        let mut ctx = ContextManager::new(100_000);
+        ctx.add_message(Message::user("hello"));
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("tokio runtime");
+        let response = runtime.block_on(agent.call_llm_with_retry(&ctx, &[], Some(&route), None));
+
+        let request = request_rx
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the reliability route must address the DEEPSEEK_BASE_URL endpoint");
+        assert!(
+            request.starts_with("POST /v1/chat/completions "),
+            "unexpected request line: {request}"
+        );
+        assert!(
+            request
+                .to_ascii_lowercase()
+                .contains("authorization: bearer deepseek-fixture-key"),
+            "the route must send the provider's own credential: {request}"
+        );
+        let response = response.expect("routed reply");
+        assert_eq!(response.message.content.as_deref(), Some("loopback"));
+    }
+
+    #[test]
+    fn test_degrade_guards_do_not_leave_custom_provider() {
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "custom".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("custom-fixture-key".to_string()),
+                base_url: Some("http://127.0.0.1:9/v1".to_string()),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let custom = AgentLoop::new(
+            AgentConfig {
+                model: "custom:local-model".to_string(),
+                provider: Some("custom".to_string()),
+                runtime_providers,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        assert_eq!(
+            custom.resolve_reliability_degrade_model("custom:local-model", None),
+            None,
+            "without a configured fallback the reliability guard must stay on the custom endpoint"
+        );
+        assert_eq!(
+            custom.resolve_cost_degrade_model(),
+            None,
+            "without a configured fallback the cost guard must stay on the custom endpoint"
+        );
+
+        let openai = AgentLoop::new(
+            AgentConfig {
+                model: "openai:gpt-4o".to_string(),
+                provider: Some("openai".to_string()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        assert_eq!(
+            openai
+                .resolve_reliability_degrade_model("openai:gpt-4o", None)
+                .as_deref(),
+            Some("openai:gpt-4o-mini")
+        );
+        assert_eq!(
+            openai.resolve_cost_degrade_model().as_deref(),
+            Some("openai:gpt-4o-mini")
+        );
+    }
+
+    #[test]
+    fn test_primary_credential_pool_stays_with_the_primary_provider() {
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "deepseek".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("deepseek-fixture-key".to_string()),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let mut config = AgentConfig {
+            model: "openai:gpt-4o".to_string(),
+            provider: Some("openai".to_string()),
+            runtime_providers,
+            smart_model_routing: SmartModelRoutingConfig {
+                enabled: true,
+                max_simple_chars: 160,
+                max_simple_words: 28,
+                cheap_model: Some(CheapModelRouteConfig {
+                    provider: Some("deepseek".to_string()),
+                    model: Some("deepseek-chat".to_string()),
+                    base_url: None,
+                    api_key_env: None,
+                }),
+            },
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        )
+        .with_primary_credential_pool(Arc::new(CredentialPool::single("primary-pool-key")));
+
+        let same_provider = agent.turn_route_reliability_guard("openai:gpt-4o-mini".to_string());
+        assert!(
+            agent.credential_pool_for_route(&same_provider).is_some(),
+            "a route on the primary's provider keeps the primary pool"
+        );
+        let guard = agent.turn_route_reliability_guard("deepseek:deepseek-chat".to_string());
+        assert!(
+            agent.credential_pool_for_route(&guard).is_none(),
+            "a guard route to another provider must not carry the primary's keys"
+        );
+        let cheap = agent
+            .resolve_smart_runtime_route(&[Message::user("hi")])
+            .expect("cheap route");
+        assert_eq!(cheap.provider.as_deref(), Some("deepseek"));
+        assert!(
+            agent.credential_pool_for_route(&cheap).is_none(),
+            "a cheap route to another provider must not carry the primary's keys"
+        );
+    }
+
+    /// Writes an unexpired OAuth store entry for `provider` under `home`.
+    fn write_oauth_store_entry(home: &std::path::Path, provider: &str, token: &str) {
+        let auth_dir = home.join("auth");
+        std::fs::create_dir_all(&auth_dir).expect("create auth dir");
+        let store = serde_json::json!({
+            provider: {
+                "provider": provider,
+                "access_token": token,
+                "token_type": "bearer",
+                "refresh_token": null,
+                "scope": null,
+                "expires_at": "2099-01-01T00:00:00Z"
+            }
+        });
+        std::fs::write(auth_dir.join("tokens.json"), store.to_string()).expect("write token store");
+    }
+
+    #[test]
+    fn test_route_prefers_configured_key_over_stored_oauth_token() {
+        let home = tempfile::tempdir().expect("tempdir");
+        write_oauth_store_entry(home.path(), "openai", "stored-chatgpt-oauth-token");
+        let mut runtime_providers = HashMap::new();
+        runtime_providers.insert(
+            "openai".to_string(),
+            RuntimeProviderConfig {
+                api_key: Some("configured-openai-key".to_string()),
+                base_url: Some("http://127.0.0.1:9/v1".to_string()),
+                ..RuntimeProviderConfig::default()
+            },
+        );
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:gpt-4o".to_string(),
+                hermes_home: Some(home.path().to_string_lossy().to_string()),
+                runtime_providers,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        // The primary builder uses the configured key first, so a route to
+        // the same provider (and its custom base URL) must too.
+        assert_eq!(
+            agent.resolve_runtime_api_key("openai", None, None).as_deref(),
+            Some("configured-openai-key")
+        );
+    }
+
+    #[test]
+    fn test_route_prefers_provider_env_key_over_stored_oauth_token() {
+        let _env_lock = env_test_lock();
+        let _qwen_key = EnvVarGuard::set("HERMES_QWEN_OAUTH_API_KEY", "qwen-env-key");
+        let home = tempfile::tempdir().expect("tempdir");
+        write_oauth_store_entry(home.path(), "qwen-oauth", "stored-qwen-oauth-token");
+        let agent = AgentLoop::new(
+            AgentConfig {
+                hermes_home: Some(home.path().to_string_lossy().to_string()),
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(ReliabilityRoutePrimary),
+        );
+        assert_eq!(
+            agent.resolve_runtime_api_key("qwen-oauth", None, None).as_deref(),
+            Some("qwen-env-key")
+        );
+    }
+
+    #[test]
+    fn test_runtime_provider_vertex_aliases_build_without_static_key() {
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(crate::vertex::VertexProvider::new(
+                "google/gemini-3-flash-preview",
+            )),
+        );
+        for provider in [
+            "vertex",
+            "google-vertex",
+            "vertex-ai",
+            "gcp-vertex",
+            "vertexai",
+        ] {
+            let built = agent.build_runtime_provider(
+                provider,
+                "google/gemini-3-flash-preview",
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            assert!(built.is_ok(), "{provider} runtime provider should build");
+        }
     }

@@ -26,8 +26,7 @@ fn push_block(lines: &mut Vec<String>, header: &str, value: &serde_json::Value) 
 }
 
 fn sanitize_tool_line(raw: &str) -> String {
-    let sanitized =
-        sanitize_line_to_default_language_ascii(raw, false).unwrap_or_else(|| String::new());
+    let sanitized = sanitize_line_to_default_language_ascii(raw, false).unwrap_or_default();
     truncate_chars(&sanitized, max_tool_output_line_chars())
 }
 

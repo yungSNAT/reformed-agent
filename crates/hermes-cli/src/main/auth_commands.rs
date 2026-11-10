@@ -806,7 +806,7 @@ async fn run_auth_verify(
                 credential_present: provider_api_key_from_env(&target).is_some(),
                 oauth_state_present: false,
                 expires_at: None,
-                detail: Some("Provider is not OAuth-capable in Hermes Ultra.".to_string()),
+                detail: Some("Provider is not OAuth-capable in Reformed Agent.".to_string()),
             };
             print_auth_verify_result(&result);
             continue;

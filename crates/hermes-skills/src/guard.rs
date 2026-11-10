@@ -748,7 +748,7 @@ fn relaxed_mode_has_unsafe_rm(content: &str) -> bool {
 /// patterns.
 ///
 /// Uses a default set of patterns but can be extended with custom ones.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct SkillGuard {
     /// Additional user-provided blocked content patterns.
     blocked_patterns: Vec<String>,
@@ -757,16 +757,6 @@ pub struct SkillGuard {
     /// Optional mode override used by tests and embedded callers that need
     /// deterministic behavior without mutating process-wide environment.
     mode_override: Option<SkillGuardMode>,
-}
-
-impl Default for SkillGuard {
-    fn default() -> Self {
-        Self {
-            blocked_patterns: Vec::new(),
-            blocked_urls: Vec::new(),
-            mode_override: None,
-        }
-    }
 }
 
 impl SkillGuard {

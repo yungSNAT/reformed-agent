@@ -726,11 +726,11 @@ fn summarize_replay_log(path: &Path) -> Result<ReplayLogSummary, AgentError> {
 
 pub fn build_agent_card() -> Value {
     json!({
-        "name": "Hermes Agent Ultra",
+        "name": "Reformed Agent",
         "description": "Rust-native autonomous agent runtime with CLI/TUI, MCP bridge, ACP bridge, provider routing, gateway integrations, replay traces, and local release gates.",
         "version": env!("CARGO_PKG_VERSION"),
         "url": "http://127.0.0.1:9127",
-        "documentationUrl": "https://github.com/sheawinkler/hermes-agent-ultra",
+        "documentationUrl": "https://github.com/yungSNAT/reformed-agent",
         "defaultInputModes": ["text/plain", "application/json"],
         "defaultOutputModes": ["text/plain", "application/json", "application/jsonl"],
         "capabilities": {
@@ -1351,7 +1351,7 @@ mod tests {
         let (status, content_type, body) = agent_card_response_for_path(AGENT_CARD_PATH);
         assert_eq!(status, 200);
         assert_eq!(content_type, "application/json");
-        assert!(body.contains("Hermes Agent Ultra"));
+        assert!(body.contains("Reformed Agent"));
     }
 
     #[tokio::test]

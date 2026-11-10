@@ -88,10 +88,7 @@ fn doctor_elite_diagnostics_defaults_to_native_gate() {
         "doctor",
     ]);
     let payload = build_elite_doctor_diagnostics(&cli);
-    assert_eq!(
-        payload["elite_gate"]["runner"].as_str(),
-        Some("native")
-    );
+    assert_eq!(payload["elite_gate"]["runner"].as_str(), Some("native"));
     assert_eq!(
         payload["elite_gate"]["command"].as_str(),
         Some("native rust elite sync gate")
@@ -554,4 +551,106 @@ async fn run_dump_writes_real_saved_session_export_with_system_prompt() {
     assert!(doc["source_path"]
         .as_str()
         .is_some_and(|p| p.ends_with("abc123.json")));
+}
+
+const HERMES_EXPORT_FIXTURE: &str = include_str!(concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/../hermes-parity-tests/fixtures/session_import/hermes_export.jsonl"
+));
+
+#[test]
+fn imported_hermes_history_resumes_from_native_snapshots() {
+    let workspace = tempfile::tempdir().unwrap();
+    let source = workspace.path().join("hermes-export.jsonl");
+    let profile = workspace.path().join("reformed");
+    let fixture = HERMES_EXPORT_FIXTURE.replace("The notes are ready.", "");
+    std::fs::write(&source, &fixture).unwrap();
+    let summary = hermes_cli::commands::import_hermes_sessions(&source, &profile).unwrap();
+    assert_eq!(
+        (summary.sessions, summary.messages, summary.excluded_rows),
+        (2, 5, 2)
+    );
+
+    let sessions = profile.join("sessions");
+    let (id, path) =
+        resolve_resume_session_file(&sessions, Some("20261109_103000_c0ffeed0")).unwrap();
+    let parent = parse_resume_payload_file(id, path).unwrap();
+    assert_eq!(
+        parent.system_prompt.as_deref(),
+        Some("Synthetic test session.")
+    );
+    assert_eq!(parent.model.as_deref(), Some("openai:gpt-4o-mini"));
+    assert_eq!(parent.messages.len(), 3);
+    let assistant = &parent.messages[1];
+    assert_eq!(
+        assistant.reasoning_content.as_deref(),
+        Some("Read the fixture.")
+    );
+    let call = &assistant.tool_calls.as_ref().unwrap()[0];
+    assert_eq!(call.function.name, "read_file");
+    assert_eq!(call.function.arguments, r#"{"path":"fixture.txt"}"#);
+    assert_eq!(
+        parent.messages[2].tool_call_id.as_deref(),
+        Some(call.id.as_str())
+    );
+    assert_eq!(parent.messages[2].name.as_deref(), Some("read_file"));
+    assert_eq!(parent.messages[2].content.as_deref(), Some(""));
+
+    let (id, path) = resolve_resume_session_file(&sessions, Some("latest")).unwrap();
+    let child = parse_resume_payload_file(id, path.clone()).unwrap();
+    assert_eq!(child.session_id, "20261109_103200_c0ffeed1");
+    assert_eq!(child.messages.len(), 2);
+    let snapshot: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    assert_eq!(
+        snapshot["session_info"]["parent_session_id"],
+        parent.session_id
+    );
+    assert!(hermes_cli::commands::import_hermes_sessions(&source, &profile).is_err());
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), fixture);
+}
+
+#[test]
+fn rejected_hermes_history_never_publishes_partial_snapshots() {
+    let workspace = tempfile::tempdir().unwrap();
+    let source = workspace.path().join("hermes-export.jsonl");
+    let profile = workspace.path().join("reformed");
+    for malformed in [
+        r#"{"id":"../outside","started_at":1700000000,"messages":[]}"#,
+        r#"{"id":"rich","started_at":1700000000,"messages":[{"role":"user","content":[{"type":"image"}]}]}"#,
+        r#"{"id":"20261109_103000_C0FFEED0","started_at":1700000000,"messages":[]}"#,
+        r#"{"id":"orphan","started_at":1700000000,"messages":[{"role":"assistant","active":0,"tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":""}]}"#,
+        r#"{"id":"pending","started_at":1700000000,"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]}]}"#,
+        r#"{"id":"duplicate","started_at":1700000000,"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":""},{"role":"tool","tool_call_id":"call_1","content":""}]}"#,
+    ] {
+        std::fs::write(&source, format!("{HERMES_EXPORT_FIXTURE}\n{malformed}")).unwrap();
+        let error = hermes_cli::commands::import_hermes_sessions(&source, &profile).unwrap_err();
+        assert!(error.to_string().contains("Hermes export line 4"));
+        assert!(!profile.exists());
+        assert!(!workspace.path().join("outside.json").exists());
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn hermes_history_rejects_windows_profile_leaf_with_path_syntax() {
+    let workspace = tempfile::tempdir().unwrap();
+    let source = workspace.path().join("hermes-export.jsonl");
+    std::fs::write(&source, HERMES_EXPORT_FIXTURE).unwrap();
+    for destination in [
+        format!(r"{}\D:reformed", workspace.path().display()),
+        format!(r"\\?\{}\../outside", workspace.path().display()),
+        format!(r"{}\CON.txt", workspace.path().display()),
+        format!(r"{}\LPT¹", workspace.path().display()),
+    ] {
+        let error = hermes_cli::commands::import_hermes_sessions(
+            &source,
+            std::path::Path::new(&destination),
+        )
+        .unwrap_err();
+        assert!(error
+            .to_string()
+            .contains("Invalid Windows profile directory name"));
+    }
+    assert_eq!(std::fs::read_dir(workspace.path()).unwrap().count(), 1);
 }

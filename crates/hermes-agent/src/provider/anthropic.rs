@@ -486,15 +486,15 @@ impl AnthropicProvider {
             }
         }
 
-        let usage = json.get("usage").and_then(|u| {
+        let usage = json.get("usage").map(|u| {
             let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
             let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            Some(UsageStats {
+            UsageStats {
                 prompt_tokens: input,
                 completion_tokens: output,
                 total_tokens: input + output,
                 estimated_cost: None,
-            })
+            }
         });
 
         let stop_reason = json
@@ -814,14 +814,14 @@ impl LlmProvider for AnthropicProvider {
                                     "tool_use" => "tool_calls".to_string(),
                                     other => other.to_string(),
                                 });
-                            let usage = json.get("usage").and_then(|u| {
+                            let usage = json.get("usage").map(|u| {
                                 let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                Some(UsageStats {
+                                UsageStats {
                                     prompt_tokens: 0,
                                     completion_tokens: output,
                                     total_tokens: output,
                                     estimated_cost: None,
-                                })
+                                }
                             });
                             yield Ok(StreamChunk {
                                 delta: None,
@@ -831,14 +831,14 @@ impl LlmProvider for AnthropicProvider {
                         }
                         "message_start" => {
                             // Extract usage from the initial message
-                            let usage = json.get("message").and_then(|m| m.get("usage")).and_then(|u| {
+                            let usage = json.get("message").and_then(|m| m.get("usage")).map(|u| {
                                 let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                Some(UsageStats {
+                                UsageStats {
                                     prompt_tokens: input,
                                     completion_tokens: 0,
                                     total_tokens: input,
                                     estimated_cost: None,
-                                })
+                                }
                             });
                             if let Some(u) = usage {
                                 yield Ok(StreamChunk {

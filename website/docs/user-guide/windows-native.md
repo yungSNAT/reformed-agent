@@ -9,10 +9,14 @@ sidebar_position: 3
 
 Hermes Agent Ultra's supported Windows path is **WSL2**. Install Ubuntu or
 another WSL2 distribution, then run the normal POSIX installer inside the Linux
-shell:
+shell. This fork has published no release yet, so the installer builds from
+source and must run from a checkout with Git and a Rust toolchain installed in
+WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 source ~/.bashrc
 hermes-ultra
 ```
@@ -32,7 +36,7 @@ Do not use upstream `install.ps1` instructions for this repo.
 Native Windows is available only as an experimental source-build path today:
 
 ```powershell
-cargo install --git https://github.com/sheawinkler/hermes-agent-ultra hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 hermes-ultra doctor
 ```
 
@@ -61,7 +65,7 @@ file watching and filesystem performance:
 ```bash
 mkdir -p ~/code
 cd ~/code
-git clone https://github.com/sheawinkler/hermes-agent-ultra.git
+git clone https://github.com/yungSNAT/reformed-agent.git
 ```
 
 Use `/mnt/c/...` only when you explicitly need to operate on Windows-side files.

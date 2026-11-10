@@ -109,9 +109,7 @@ fn is_valid_context_job_ref(job_id: &str) -> bool {
 }
 
 fn build_context_prefix_for_job(job: &CronJob, jobs: &HashMap<String, CronJob>) -> Option<String> {
-    let Some(context_refs) = job.context_from.as_ref() else {
-        return None;
-    };
+    let context_refs = job.context_from.as_ref()?;
 
     let mut sections = Vec::new();
     for source_job_id in context_refs {

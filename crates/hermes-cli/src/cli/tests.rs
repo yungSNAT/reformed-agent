@@ -2,6 +2,19 @@ use super::*;
 use clap::Parser;
 
 #[test]
+fn cli_parse_fits_in_one_mib_stack() {
+    // A debug build once needed 1.8 MiB of stack to build the clap command, which
+    // overflowed the 2 MiB test threads.
+    let parsed = std::thread::Builder::new()
+        .stack_size(1024 * 1024)
+        .spawn(|| Cli::try_parse_from(["hermes", "cron", "list"]).is_ok())
+        .expect("spawn parser thread")
+        .join()
+        .expect("join parser thread");
+    assert!(parsed);
+}
+
+#[test]
 fn cli_parse_default() {
     let cli = Cli::try_parse_from(vec!["hermes"]).unwrap();
     assert!(cli.command.is_none());
@@ -19,11 +32,11 @@ fn cli_parse_default() {
 fn cli_parse_model() {
     let cli = Cli::try_parse_from(vec!["hermes", "model", "openai:gpt-4o"]).unwrap();
     match cli.command {
-        Some(CliCommand::Model {
+        Some(CliCommand::Model(ModelArgs {
             completion_values,
             completion_providers,
             provider_model,
-        }) => {
+        })) => {
             assert!(!completion_values);
             assert!(!completion_providers);
             assert_eq!(provider_model.as_deref(), Some("openai:gpt-4o"));
@@ -46,12 +59,12 @@ fn cli_parse_computer_use_doctor_options() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::ComputerUse {
+        Some(CliCommand::ComputerUse(ComputerUseArgs {
             action,
             json,
             include,
             skip,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("doctor"));
             assert!(json);
             assert_eq!(include, vec!["tcc_accessibility".to_string()]);
@@ -65,14 +78,14 @@ fn cli_parse_computer_use_doctor_options() {
 fn cli_parse_acp_check_flag() {
     let cli = Cli::try_parse_from(vec!["hermes", "acp", "--check"]).unwrap();
     match cli.command {
-        Some(CliCommand::Acp {
+        Some(CliCommand::Acp(AcpArgs {
             action,
             check,
             setup,
             setup_browser,
             version,
             yes,
-        }) => {
+        })) => {
             assert!(action.is_none());
             assert!(check);
             assert!(!setup);
@@ -88,14 +101,14 @@ fn cli_parse_acp_check_flag() {
 fn cli_parse_acp_setup_browser_yes_flag() {
     let cli = Cli::try_parse_from(vec!["hermes", "acp", "--setup-browser", "--yes"]).unwrap();
     match cli.command {
-        Some(CliCommand::Acp {
+        Some(CliCommand::Acp(AcpArgs {
             action,
             check,
             setup,
             setup_browser,
             version,
             yes,
-        }) => {
+        })) => {
             assert!(action.is_none());
             assert!(!check);
             assert!(!setup);
@@ -111,14 +124,14 @@ fn cli_parse_acp_setup_browser_yes_flag() {
 fn cli_parse_acp_action_setup_browser_yes_flag() {
     let cli = Cli::try_parse_from(vec!["hermes", "acp", "setup-browser", "--yes"]).unwrap();
     match cli.command {
-        Some(CliCommand::Acp {
+        Some(CliCommand::Acp(AcpArgs {
             action,
             check,
             setup,
             setup_browser,
             version,
             yes,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("setup-browser"));
             assert!(!check);
             assert!(!setup);
@@ -134,14 +147,14 @@ fn cli_parse_acp_action_setup_browser_yes_flag() {
 fn cli_parse_acp_version_flag() {
     let cli = Cli::try_parse_from(vec!["hermes", "acp", "--version"]).unwrap();
     match cli.command {
-        Some(CliCommand::Acp {
+        Some(CliCommand::Acp(AcpArgs {
             action,
             check,
             setup,
             setup_browser,
             version,
             yes,
-        }) => {
+        })) => {
             assert!(action.is_none());
             assert!(!check);
             assert!(!setup);
@@ -162,7 +175,7 @@ fn cli_parse_cloudflare_parser() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Cloudflare { action, selftest }) => {
+        Some(CliCommand::Cloudflare(CloudflareArgs { action, selftest })) => {
             assert_eq!(action.as_deref(), Some("parse-temporary-deploy-output"));
             assert!(!selftest);
         }
@@ -171,7 +184,7 @@ fn cli_parse_cloudflare_parser() {
 
     let selftest = Cli::try_parse_from(vec!["hermes", "cloudflare", "--selftest"]).unwrap();
     match selftest.command {
-        Some(CliCommand::Cloudflare { action, selftest }) => {
+        Some(CliCommand::Cloudflare(CloudflareArgs { action, selftest })) => {
             assert!(action.is_none());
             assert!(selftest);
         }
@@ -233,11 +246,11 @@ fn cli_parse_gateway_platform_compat_flag() {
         Cli::try_parse_from(vec!["hermes", "gateway", "start", "--platform", "photon"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(CliCommand::Gateway {
+        Some(CliCommand::Gateway(GatewayArgs {
             action: Some(ref action),
             platform: Some(ref platform),
             ..
-        }) if action == "start" && platform == "photon"
+        })) if action == "start" && platform == "photon"
     ));
 }
 
@@ -246,10 +259,10 @@ fn cli_parse_up_command() {
     let cli = Cli::try_parse_from(vec!["hermes", "up", "--force", "--dry-run"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(CliCommand::Up {
+        Some(CliCommand::Up(UpArgs {
             force: true,
             dry_run: true,
-        })
+        }))
     ));
 }
 
@@ -258,13 +271,13 @@ fn cli_parse_doctor() {
     let cli = Cli::try_parse_from(vec!["hermes", "doctor"]).unwrap();
     assert!(matches!(
         cli.command,
-        Some(CliCommand::Doctor {
+        Some(CliCommand::Doctor(DoctorArgs {
             deep: false,
             self_heal: false,
             snapshot: false,
             snapshot_path: None,
             bundle: false
-        })
+        }))
     ));
 }
 
@@ -281,13 +294,13 @@ fn cli_parse_doctor_with_flags() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Doctor {
+        Some(CliCommand::Doctor(DoctorArgs {
             deep,
             self_heal,
             snapshot,
             snapshot_path,
             bundle,
-        }) => {
+        })) => {
             assert!(deep);
             assert!(!self_heal);
             assert!(snapshot);
@@ -302,7 +315,7 @@ fn cli_parse_doctor_with_flags() {
 fn cli_parse_update_with_check_flag() {
     let cli = Cli::try_parse_from(vec!["hermes", "update", "--check"]).unwrap();
     match cli.command {
-        Some(CliCommand::Update { check }) => assert!(check),
+        Some(CliCommand::Update(UpdateArgs { check })) => assert!(check),
         _ => panic!("Expected Update command with --check"),
     }
 }
@@ -331,12 +344,12 @@ fn cli_parse_verify_provenance() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::VerifyProvenance {
+        Some(CliCommand::VerifyProvenance(VerifyProvenanceArgs {
             path,
             signature,
             strict,
             json,
-        }) => {
+        })) => {
             assert_eq!(path, "/tmp/doctor.json");
             assert_eq!(signature.as_deref(), Some("/tmp/doctor.sig.json"));
             assert!(strict);
@@ -350,7 +363,7 @@ fn cli_parse_verify_provenance() {
 fn cli_parse_rotate_provenance_key() {
     let cli = Cli::try_parse_from(vec!["hermes", "rotate-provenance-key", "--json"]).unwrap();
     match cli.command {
-        Some(CliCommand::RotateProvenanceKey { json }) => assert!(json),
+        Some(CliCommand::RotateProvenanceKey(RotateProvenanceKeyArgs { json })) => assert!(json),
         _ => panic!("expected rotate-provenance-key command"),
     }
 }
@@ -359,7 +372,7 @@ fn cli_parse_rotate_provenance_key() {
 fn cli_parse_route_learning_reset() {
     let cli = Cli::try_parse_from(vec!["hermes", "route-learning", "reset", "--json"]).unwrap();
     match cli.command {
-        Some(CliCommand::RouteLearning { action, json }) => {
+        Some(CliCommand::RouteLearning(RouteLearningArgs { action, json })) => {
             assert_eq!(action.as_deref(), Some("reset"));
             assert!(json);
         }
@@ -371,7 +384,7 @@ fn cli_parse_route_learning_reset() {
 fn cli_parse_route_health_show() {
     let cli = Cli::try_parse_from(vec!["hermes", "route-health", "show", "--json"]).unwrap();
     match cli.command {
-        Some(CliCommand::RouteHealth { action, json }) => {
+        Some(CliCommand::RouteHealth(RouteHealthArgs { action, json })) => {
             assert_eq!(action.as_deref(), Some("show"));
             assert!(json);
         }
@@ -391,12 +404,12 @@ fn cli_parse_route_autotune_apply() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::RouteAutotune {
+        Some(CliCommand::RouteAutotune(RouteAutotuneArgs {
             action,
             apply,
             strict,
             json,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("apply"));
             assert!(apply);
             assert!(strict);
@@ -419,11 +432,11 @@ fn cli_parse_incident_pack() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::IncidentPack {
+        Some(CliCommand::IncidentPack(IncidentPackArgs {
             snapshot,
             output,
             json,
-        }) => {
+        })) => {
             assert_eq!(snapshot.as_deref(), Some("/tmp/doctor.json"));
             assert_eq!(output.as_deref(), Some("/tmp/incident.tar.gz"));
             assert!(json);
@@ -453,7 +466,7 @@ fn cli_parse_kanban_passes_flags_as_args() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Kanban { args }) => {
+        Some(CliCommand::Kanban(KanbanArgs { args })) => {
             assert_eq!(
                 args,
                 vec![
@@ -475,7 +488,7 @@ fn cli_parse_kanban_passes_flags_as_args() {
 fn cli_parse_resume_latest_default() {
     let cli = Cli::try_parse_from(vec!["hermes", "resume"]).unwrap();
     match cli.command {
-        Some(CliCommand::Resume { session_id }) => {
+        Some(CliCommand::Resume(ResumeArgs { session_id })) => {
             assert!(session_id.is_none());
         }
         _ => panic!("Expected Resume command"),
@@ -486,7 +499,7 @@ fn cli_parse_resume_latest_default() {
 fn cli_parse_resume_specific_session() {
     let cli = Cli::try_parse_from(vec!["hermes", "resume", "abc123"]).unwrap();
     match cli.command {
-        Some(CliCommand::Resume { session_id }) => {
+        Some(CliCommand::Resume(ResumeArgs { session_id })) => {
             assert_eq!(session_id.as_deref(), Some("abc123"));
         }
         _ => panic!("Expected Resume command"),
@@ -497,7 +510,7 @@ fn cli_parse_resume_specific_session() {
 fn cli_parse_elite_check() {
     let cli = Cli::try_parse_from(vec!["hermes", "elite-check", "--json", "--strict"]).unwrap();
     match cli.command {
-        Some(CliCommand::EliteCheck { json, strict }) => {
+        Some(CliCommand::EliteCheck(EliteCheckArgs { json, strict })) => {
             assert!(json);
             assert!(strict);
         }
@@ -518,7 +531,7 @@ fn cli_parse_systems_mcp_conformance() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Systems {
+        Some(CliCommand::Systems(SystemsArgs {
             action,
             topic,
             json,
@@ -526,7 +539,7 @@ fn cli_parse_systems_mcp_conformance() {
             host,
             port,
             once,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("mcp"));
             assert_eq!(topic.as_deref(), Some("conformance"));
             assert!(json);
@@ -553,14 +566,14 @@ fn cli_parse_mcp_add_command_does_not_clobber_top_level_command() {
     .unwrap();
 
     match cli.command {
-        Some(CliCommand::Mcp {
+        Some(CliCommand::Mcp(McpArgs {
             action,
             name,
             server,
             url,
             command,
             parallel_tools,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("add"));
             assert_eq!(name.as_deref(), Some("filesystem"));
             assert!(server.is_none());
@@ -576,7 +589,7 @@ fn cli_parse_mcp_add_command_does_not_clobber_top_level_command() {
 fn cli_parse_logs_default() {
     let cli = Cli::try_parse_from(vec!["hermes", "logs"]).unwrap();
     match cli.command {
-        Some(CliCommand::Logs { lines, follow }) => {
+        Some(CliCommand::Logs(LogsArgs { lines, follow })) => {
             assert_eq!(lines, 20);
             assert!(!follow);
         }
@@ -598,12 +611,12 @@ fn cli_parse_serve_alias_for_headless_dashboard_api() {
     .unwrap();
 
     match cli.command {
-        Some(CliCommand::Serve {
+        Some(CliCommand::Serve(DashboardArgs {
             host,
             port,
             no_open,
             insecure,
-        }) => {
+        })) => {
             assert_eq!(host, "127.0.0.1");
             assert_eq!(port, 9123);
             assert!(no_open);
@@ -617,7 +630,7 @@ fn cli_parse_serve_alias_for_headless_dashboard_api() {
 fn cli_parse_logs_with_count() {
     let cli = Cli::try_parse_from(vec!["hermes", "logs", "50"]).unwrap();
     match cli.command {
-        Some(CliCommand::Logs { lines, .. }) => {
+        Some(CliCommand::Logs(LogsArgs { lines, .. })) => {
             assert_eq!(lines, 50);
         }
         _ => panic!("Expected Logs command"),
@@ -628,7 +641,7 @@ fn cli_parse_logs_with_count() {
 fn cli_parse_profile() {
     let cli = Cli::try_parse_from(vec!["hermes", "profile", "list"]).unwrap();
     match cli.command {
-        Some(CliCommand::Profile { action, .. }) => {
+        Some(CliCommand::Profile(ProfileArgs { action, .. })) => {
             assert_eq!(action.as_deref(), Some("list"));
         }
         _ => panic!("Expected Profile command"),
@@ -639,7 +652,7 @@ fn cli_parse_profile() {
 fn cli_parse_profile_create() {
     let cli = Cli::try_parse_from(vec!["hermes", "profile", "create", "work"]).unwrap();
     match cli.command {
-        Some(CliCommand::Profile { action, name, .. }) => {
+        Some(CliCommand::Profile(ProfileArgs { action, name, .. })) => {
             assert_eq!(action.as_deref(), Some("create"));
             assert_eq!(name.as_deref(), Some("work"));
         }
@@ -651,7 +664,7 @@ fn cli_parse_profile_create() {
 fn cli_parse_config_set() {
     let cli = Cli::try_parse_from(vec!["hermes", "config", "set", "model", "gpt-4o"]).unwrap();
     match cli.command {
-        Some(CliCommand::Config { action, key, value }) => {
+        Some(CliCommand::Config(ConfigArgs { action, key, value })) => {
             assert_eq!(action.as_deref(), Some("set"));
             assert_eq!(key.as_deref(), Some("model"));
             assert_eq!(value.as_deref(), Some("gpt-4o"));
@@ -672,7 +685,7 @@ fn cli_parse_billing_trailing_args() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Billing { args }) => {
+        Some(CliCommand::Billing(BillingArgs { args })) => {
             assert_eq!(
                 args,
                 vec!["charge", "50", "--confirm", "--idempotency-key=key-1"]
@@ -694,12 +707,12 @@ fn cli_parse_secrets_set() {
     ])
     .unwrap();
     match cli.command {
-        Some(CliCommand::Secrets {
+        Some(CliCommand::Secrets(SecretsArgs {
             action,
             provider,
             value,
             show,
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("set"));
             assert_eq!(provider.as_deref(), Some("openai"));
             assert_eq!(value.as_deref(), Some("sk-test"));
@@ -714,13 +727,13 @@ fn cli_parse_skills_blank_slate_flags() {
     let cli =
         Cli::try_parse_from(vec!["hermes", "skills", "opt-out", "--remove", "--yes"]).unwrap();
     match cli.command {
-        Some(CliCommand::Skills {
+        Some(CliCommand::Skills(SkillsArgs {
             action,
             remove,
             yes,
             sync,
             ..
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("opt-out"));
             assert!(remove);
             assert!(yes);
@@ -731,13 +744,13 @@ fn cli_parse_skills_blank_slate_flags() {
 
     let cli = Cli::try_parse_from(vec!["hermes", "skills", "opt-in", "--sync"]).unwrap();
     match cli.command {
-        Some(CliCommand::Skills {
+        Some(CliCommand::Skills(SkillsArgs {
             action,
             remove,
             yes,
             sync,
             ..
-        }) => {
+        })) => {
             assert_eq!(action.as_deref(), Some("opt-in"));
             assert!(!remove);
             assert!(!yes);

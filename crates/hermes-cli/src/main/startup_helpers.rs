@@ -222,9 +222,7 @@ fn oneshot_auto_verify_oauth_provider(
     provider_override: Option<&str>,
     model_override: Option<&str>,
 ) -> Option<String> {
-    let Some(message) = auth_error_message(err) else {
-        return None;
-    };
+    let message = auth_error_message(err)?;
 
     if !oneshot_auth_is_refreshable(&message) {
         return None;

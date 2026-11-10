@@ -7,7 +7,7 @@ mod tests {
     use std::path::Path;
     use unicode_width::UnicodeWidthStr;
 
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }
 
@@ -64,6 +64,30 @@ mod tests {
     }
 
     #[test]
+    fn test_reformation_skin_renders_black_canvas() {
+        use ratatui::backend::TestBackend;
+
+        let _guard = env_test_lock();
+        let temp = tempfile::tempdir().expect("tempdir");
+        let app = build_test_app(temp.path());
+        let theme = crate::skin_engine::resolve_theme("unrecognised");
+        assert_eq!(crate::skin_engine::resolve_theme("reformation"), theme);
+
+        for (width, height) in [(24, 8), (96, 24)] {
+            let mut terminal = ratatui::Terminal::new(TestBackend::new(width, height))
+                .expect("create terminal");
+            let mut state = TuiState::default();
+            terminal
+                .draw(|frame| render(frame, &app, &mut state, &theme))
+                .expect("draw TUI");
+            let cells = terminal.backend().buffer().content();
+            assert!(cells.iter().all(|cell| cell.bg == Color::Rgb(0, 0, 0)));
+            let header: String = cells[..width as usize].iter().map(|cell| cell.symbol()).collect();
+            assert!(header.contains("Reformed Agent"), "header: {header}");
+        }
+    }
+
+    #[test]
     fn test_spinner_char() {
         let mut state = TuiState::default();
         let c1 = state.spinner_char();
@@ -86,16 +110,20 @@ mod tests {
 
     #[test]
     fn test_tui_state_completions_update() {
-        let mut state = TuiState::default();
-        state.input = "/mod".to_string();
+        let mut state = TuiState {
+            input: "/mod".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(state.completions.contains(&"/model".to_string()));
     }
 
     #[test]
     fn test_completion_popup_hidden_when_slash_deleted() {
-        let mut state = TuiState::default();
-        state.input = "/model".to_string();
+        let mut state = TuiState {
+            input: "/model".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(should_render_completions_popup(&state));
 
@@ -107,8 +135,10 @@ mod tests {
 
     #[test]
     fn test_completion_popup_hidden_when_modal_or_processing_active() {
-        let mut state = TuiState::default();
-        state.input = "/model".to_string();
+        let mut state = TuiState {
+            input: "/model".to_string(),
+            ..Default::default()
+        };
         state.update_completions();
         assert!(should_render_completions_popup(&state));
 
@@ -470,9 +500,11 @@ mod tests {
     fn test_bracketed_paste_inserts_multiline_text_without_submit_shortcut() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let mut state = TuiState::default();
-        state.input = "before  after".to_string();
-        state.cursor_position = "before ".len();
+        let mut state = TuiState {
+            input: "before  after".to_string(),
+            cursor_position: "before ".len(),
+            ..Default::default()
+        };
 
         state.insert_paste_at_cursor("line1\r\nline2\rline3");
 
@@ -585,9 +617,11 @@ mod tests {
 
     #[test]
     fn test_insert_newline_at_cursor_updates_input_and_cursor() {
-        let mut state = TuiState::default();
-        state.input = "hello".to_string();
-        state.cursor_position = 5;
+        let mut state = TuiState {
+            input: "hello".to_string(),
+            cursor_position: 5,
+            ..Default::default()
+        };
         state.insert_newline_at_cursor();
         assert_eq!(state.input, "hello\n");
         assert_eq!(state.cursor_position, 6);
@@ -595,9 +629,11 @@ mod tests {
 
     #[test]
     fn test_insert_newline_at_cursor_clamps_non_char_boundary() {
-        let mut state = TuiState::default();
-        state.input = "éx".to_string();
-        state.cursor_position = 1; // interior byte of 'é'
+        let mut state = TuiState {
+            input: "éx".to_string(),
+            cursor_position: 1, // interior byte of 'é'
+            ..Default::default()
+        };
         state.insert_newline_at_cursor();
         assert_eq!(state.input, "\néx");
         assert_eq!(state.cursor_position, 1);
@@ -613,9 +649,11 @@ mod tests {
     fn test_native_editor_input_inserts_and_deletes_at_cursor() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-        let mut state = TuiState::default();
-        state.input = "helo".to_string();
-        state.cursor_position = 2;
+        let mut state = TuiState {
+            input: "helo".to_string(),
+            cursor_position: 2,
+            ..Default::default()
+        };
 
         state.apply_editor_input(KeyEvent::new(KeyCode::Char('l'), KeyModifiers::NONE));
         assert_eq!(state.input, "hello");
@@ -665,8 +703,10 @@ mod tests {
 
     #[test]
     fn test_scroll_history_offset_not_capped_to_u16() {
-        let mut state = TuiState::default();
-        state.scroll_offset = (u16::MAX as usize).saturating_sub(1);
+        let mut state = TuiState {
+            scroll_offset: (u16::MAX as usize).saturating_sub(1),
+            ..Default::default()
+        };
         state.scroll_history_up(8);
         assert_eq!(state.scroll_offset, (u16::MAX as usize).saturating_add(7));
         assert!(!state.auto_follow_transcript);
@@ -751,7 +791,7 @@ mod tests {
         assert!(!rendered_text.contains("SYSTEM"));
         assert!(!rendered_text.contains("internal system payload"));
         assert!(rendered_text.contains("USER"));
-        assert!(rendered_text.contains("HERMES"));
+        assert!(rendered_text.contains("REFORMED"));
         assert!(rendered_text.contains("reply with 1"));
         assert!(rendered_text.contains("1"));
     }
@@ -768,6 +808,7 @@ mod tests {
             .map(|line| line.to_string())
             .collect::<Vec<_>>()
             .join("\n");
+        assert!(rendered_text.contains("Printing press 2.0"));
         assert!(rendered_text.contains("Start chatting"));
     }
 

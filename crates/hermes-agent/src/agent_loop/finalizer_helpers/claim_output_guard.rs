@@ -194,9 +194,8 @@ fn strip_list_prefix(line: &str) -> &str {
         .or_else(|| trimmed.strip_prefix("* "))
         .or_else(|| trimmed.strip_prefix("+ "))
         .unwrap_or(trimmed);
-    let mut chars = without_bullet.char_indices();
     let mut end_idx = 0usize;
-    while let Some((idx, ch)) = chars.next() {
+    for (idx, ch) in without_bullet.char_indices() {
         if ch.is_ascii_digit() {
             end_idx = idx + ch.len_utf8();
             continue;

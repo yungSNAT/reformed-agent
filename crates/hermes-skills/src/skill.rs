@@ -318,19 +318,19 @@ impl SkillProvider for SkillManager {
 mod tests {
     use super::*;
     use crate::store::FileSkillStore;
-    use std::path::PathBuf;
+    use std::path::Path;
     use tempfile::tempdir;
 
     // Helper to create a manager backed by a temp dir.
-    fn make_manager(dir: &PathBuf) -> SkillManager {
-        let store = Arc::new(FileSkillStore::new(dir.clone()));
+    fn make_manager(dir: &Path) -> SkillManager {
+        let store = Arc::new(FileSkillStore::new(dir.to_path_buf()));
         SkillManager::new(store)
     }
 
     #[tokio::test]
     async fn test_create_and_get_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         let skill = mgr
             .create_skill("test-skill", "# Test Skill\nHello world", Some("general"))
@@ -348,7 +348,7 @@ mod tests {
     #[tokio::test]
     async fn test_list_skills() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         mgr.create_skill(
             "skill-a",
@@ -368,7 +368,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_rejects_duplicate_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         mgr.create_skill("dup-skill", "# Skill\n1. First", None)
             .await
@@ -383,7 +383,7 @@ mod tests {
     #[tokio::test]
     async fn test_create_rejects_oversized_content() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
         let oversized = format!("# Huge\n{}", "x".repeat(MAX_SKILL_CONTENT_CHARS + 1));
 
         let err = mgr
@@ -396,7 +396,7 @@ mod tests {
     #[tokio::test]
     async fn test_update_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         mgr.create_skill(
             "up-skill",
@@ -419,7 +419,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         mgr.create_skill("del-skill", "# Bye\n- Step one\n- Step two", None)
             .await
@@ -433,7 +433,7 @@ mod tests {
     #[tokio::test]
     async fn test_get_nonexistent_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         let result = mgr.get_skill("no-such-skill").await.unwrap();
         assert!(result.is_none());
@@ -442,7 +442,7 @@ mod tests {
     #[tokio::test]
     async fn test_delete_nonexistent_skill() {
         let dir = tempdir().unwrap();
-        let mgr = make_manager(&dir.path().to_path_buf());
+        let mgr = make_manager(dir.path());
 
         let result = mgr.delete_skill("no-such-skill").await;
         // Deleting a non-existent skill should still succeed (idempotent).

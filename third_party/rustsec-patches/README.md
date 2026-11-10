@@ -8,7 +8,8 @@ graph clear under `cargo audit --deny warnings` while upstream releases catch up
 
 - `matrix-pickle-derive-0.2.2`: removes `proc-macro-error2` and uses `syn::Error`.
 - `matrix-sdk-crypto-0.18.0`: removes the doc-only `aquamarine` dependency.
-- `tungstenite-0.29.0`: replaces direct `rand` usage with `getrandom`.
+- `tungstenite-0.29.0`: replaces direct `rand` usage with `getrandom`, uses `usize::MAX`
+  for Rust 1.99 compatibility and omits raw handshake requests from trace logs to protect credentials.
 - `vodozemac-0.10.0`: replaces `rand 0.8` usage with `rand_core::OsRng`.
 
 The canonical local patch files are in `patches/`. The checked-in crate trees are

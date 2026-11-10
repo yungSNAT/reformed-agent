@@ -78,7 +78,7 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
     ) -> Result<String, ToolError> {
         let Some(lang) = language else {
             return Err(ToolError::InvalidParams(
-                "Missing language parameter; Hermes Agent Ultra does not default to Python in the Rust-only runtime".into(),
+                "Missing language parameter; Reformed Agent does not default to Python in the Rust-only runtime".into(),
             ));
         };
         let timeout_secs = timeout.unwrap_or(self.default_timeout_secs);
@@ -86,7 +86,7 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
         let (interpreter, flag) = match lang {
             "python" | "python3" => {
                 return Err(ToolError::InvalidParams(
-                    "Python execution is disabled in Hermes Agent Ultra's Rust-only runtime".into(),
+                    "Python execution is disabled in Reformed Agent's Rust-only runtime".into(),
                 ))
             }
             "javascript" | "js" | "node" => ("node", "-e"),
@@ -195,10 +195,12 @@ mod tests {
             .enable_all()
             .build()
             .expect("test runtime");
+        // An MSYS bash on Windows prints HOME in its POSIX form, so prove
+        // which directory HOME names by writing a file through it.
         let raw = runtime.block_on(async {
             backend
                 .execute(
-                    "printf '%s|%s' \"$HOME\" \"$HERMES_REAL_HOME\"",
+                    "printf home-probe > \"$HOME/home-probe\" && printf '%s' \"$HERMES_REAL_HOME\"",
                     Some("bash"),
                     Some(5),
                 )
@@ -208,11 +210,12 @@ mod tests {
         let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
         assert_eq!(
             payload["stdout"].as_str().unwrap(),
-            format!(
-                "{}|{}",
-                hermes.path().join("home").display(),
-                real.path().display()
-            )
+            real.path().display().to_string()
+        );
+        assert_eq!(
+            std::fs::read_to_string(hermes.path().join("home").join("home-probe"))
+                .expect("probe written through HOME"),
+            "home-probe"
         );
     }
 

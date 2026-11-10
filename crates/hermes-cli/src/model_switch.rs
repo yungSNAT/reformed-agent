@@ -163,6 +163,9 @@ pub fn provider_picker_description(provider: &str) -> &'static str {
             "copilot-acp" => "GitHub Copilot ACP (Spawns copilot --acp --stdio)",
             "huggingface" => "Hugging Face Inference Providers",
             "gemini" => "Google AI Studio (Native Gemini API)",
+            "vertex" => {
+                "Google Vertex AI (Gemini via GCP; OAuth2 service account or ADC, GCP billing/quotas)"
+            }
             "deepseek" => "DeepSeek (V3, R1, coder, direct API)",
             "xai" => "xAI Grok (Direct API)",
             "zai" => "Z.AI / GLM (Zhipu direct API)",
@@ -612,7 +615,7 @@ mod tests {
         resolve_huggingface_catalog_endpoint_and_token,
     };
 
-    fn env_guard() -> std::sync::MutexGuard<'static, ()> {
+    fn env_guard() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }
 
@@ -884,7 +887,7 @@ mod tests {
 
     #[tokio::test]
     async fn bedrock_provider_models_include_region_aware_curated_fallback_and_aliases() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         std::env::set_var("AWS_REGION", "eu-central-1");
@@ -897,7 +900,7 @@ mod tests {
 
     #[tokio::test]
     async fn preferred_provider_merges_models_dev_with_curated() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({
@@ -967,7 +970,7 @@ mod tests {
 
     #[tokio::test]
     async fn local_provider_catalog_returns_curated_without_network_dependency() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({}));
@@ -987,7 +990,7 @@ mod tests {
 
     #[tokio::test]
     async fn provider_model_ids_normalizes_provider_aliases() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({}));
@@ -998,7 +1001,7 @@ mod tests {
 
     #[tokio::test]
     async fn nous_provider_uses_curated_plus_openrouter_agentic_catalog() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({
@@ -1198,7 +1201,7 @@ mod tests {
 
     #[tokio::test]
     async fn huggingface_catalog_keeps_curated_then_models_dev_agentic_entries() {
-        let _guard = env_guard();
+        let _guard = test_env_lock::lock_async().await;
         std::env::set_var("HERMES_HF_CATALOG_DISABLE_LIVE", "1");
         let client = seeded_client(json!({
             "huggingface": {

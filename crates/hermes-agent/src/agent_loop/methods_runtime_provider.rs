@@ -1,5 +1,14 @@
 impl AgentLoop {
     fn extract_provider_and_model<'a>(&self, model: &'a str) -> (String, &'a str) {
+        Self::provider_and_model(self.config.provider.as_deref(), model)
+    }
+
+    /// Splits `provider:model`. A model with no provider part belongs to
+    /// `configured_provider`, or to `openai` when none is configured.
+    pub(crate) fn provider_and_model<'a>(
+        configured_provider: Option<&str>,
+        model: &'a str,
+    ) -> (String, &'a str) {
         if let Some((p, m)) = model.split_once(':') {
             let p = p.trim();
             let m = m.trim();
@@ -7,10 +16,7 @@ impl AgentLoop {
                 return (p.to_string(), m);
             }
         }
-        let fallback_provider = self
-            .config
-            .provider
-            .as_deref()
+        let fallback_provider = configured_provider
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or("openai")
@@ -95,9 +101,8 @@ impl AgentLoop {
         ) {
             return Some(BEDROCK_AUTH_MARKER.to_string());
         }
-        if let Some(token) = self.resolve_oauth_store_api_key(provider) {
-            return Some(token);
-        }
+        // A key set on the route itself (a cheap model's `api_key_env`) comes
+        // first; after that the route follows the primary builder's order.
         if let Some(key) = explicit_api_key.map(str::trim).filter(|s| !s.is_empty()) {
             return Some(key.to_string());
         }
@@ -111,144 +116,14 @@ impl AgentLoop {
                 }
             }
         }
-        if let Some(cfg) = self.runtime_provider_config(provider) {
-            if let Some(ref key) = cfg.api_key {
-                let trimmed = key.trim();
-                if let Some(env_ref) = trimmed.strip_prefix("${").and_then(|s| s.strip_suffix('}'))
-                {
-                    if let Ok(v) = std::env::var(env_ref) {
-                        if !v.trim().is_empty() {
-                            return Some(v);
-                        }
-                    }
-                } else if !trimmed.is_empty() {
-                    return Some(trimmed.to_string());
-                }
-            }
-            if let Some(env_name) = cfg
-                .api_key_env
-                .as_deref()
-                .map(str::trim)
-                .filter(|s| !s.is_empty())
-            {
-                if let Ok(v) = std::env::var(env_name) {
-                    if !v.trim().is_empty() {
-                        return Some(v);
-                    }
-                }
-            }
-        }
-        if matches!(provider, "openai" | "codex" | "openai-codex") {
-            return std::env::var("HERMES_OPENAI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("OPENAI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty());
-        }
-        if provider == "stepfun" {
-            return std::env::var("HERMES_STEPFUN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("STEPFUN_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty());
-        }
-        match provider {
-            "google-ai-studio" => std::env::var("GOOGLE_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GEMINI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "gemini" | "google" | "google-gemini" => std::env::var("GEMINI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GOOGLE_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "gmi" | "gmi-cloud" | "gmicloud" => std::env::var("GMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "arcee" | "arcee-ai" | "arceeai" => std::env::var("ARCEEAI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ARCEE_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "xiaomi" | "mimo" | "xiaomi-mimo" => std::env::var("XIAOMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
-                std::env::var("TOKENHUB_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "anthropic" | "claude" | "claude-code" => std::env::var("ANTHROPIC_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ANTHROPIC_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("CLAUDE_CODE_OAUTH_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => {
-                std::env::var("HERMES_GEMINI_OAUTH_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "openrouter" => std::env::var("OPENROUTER_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "qwen" | "qwen-oauth" => std::env::var("DASHSCOPE_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "kimi-coding" => std::env::var("KIMI_CODING_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "kimi" | "moonshot" => std::env::var("KIMI_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_CODING_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "kimi-coding-cn" => std::env::var("KIMI_CN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("KIMI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MOONSHOT_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "minimax" => std::env::var("MINIMAX_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty()),
-            "minimax-cn" | "minimax_cn" => std::env::var("MINIMAX_CN_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("MINIMAX_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "nous" | "nous-api" | "nous_api" | "nousapi" | "nous-portal-api" => {
-                std::env::var("NOUS_API_KEY")
-                    .ok()
-                    .filter(|v| !v.trim().is_empty())
-            }
-            "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => std::env::var("GLM_API_KEY")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("ZAI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("Z_AI_API_KEY").ok())
-                .filter(|v| !v.trim().is_empty()),
-            "copilot" | "copilot-acp" => std::env::var("COPILOT_GITHUB_TOKEN")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GH_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GITHUB_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty())
-                .or_else(|| std::env::var("GITHUB_COPILOT_TOKEN").ok())
-                .filter(|v| !v.trim().is_empty()),
-            _ => None,
-        }
+        let cfg = self.runtime_provider_config(provider);
+        let canonical = crate::provider_profiles::normalize_runtime_provider_name(provider);
+        crate::provider_profiles::resolve_provider_api_key(
+            &[provider, canonical.as_str()],
+            cfg.and_then(|c| c.api_key.as_deref()),
+            cfg.and_then(|c| c.api_key_env.as_deref()),
+            |name| self.resolve_oauth_store_api_key(name),
+        )
     }
 
     fn resolve_runtime_base_url(
@@ -263,75 +138,34 @@ impl AgentLoop {
             .and_then(|c| c.base_url.as_ref())
             .map(|s| s.trim().to_string())
             .filter(|s| !s.is_empty())
+            .or_else(|| crate::provider_profiles::provider_base_url_from_env(provider))
             .or_else(|| {
+                // Only routes the shared default table leaves out, and Kimi,
+                // whose key picks the host in `resolve_kimi_runtime_base_url_for_key`.
                 if provider == "copilot-acp" {
                     std::env::var("COPILOT_ACP_BASE_URL")
                         .ok()
                         .map(|s| s.trim().to_string())
                         .filter(|s| !s.is_empty())
                         .or_else(|| Some("acp://copilot".to_string()))
-                } else if provider == "openai-codex" || provider == "codex" {
-                    Some(OPENAI_CODEX_BASE_URL.to_string())
                 } else if provider == "qwen-oauth" {
                     Some("https://dashscope.aliyuncs.com/compatible-mode/v1".to_string())
-                } else if provider == "google-gemini-cli" {
-                    Some("cloudcode-pa://google".to_string())
                 } else if matches!(
                     provider,
                     "bedrock" | "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon"
                 ) {
-                    std::env::var("BEDROCK_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| Some(bedrock_runtime_base_url(&resolve_bedrock_region())))
-                } else if matches!(
-                    provider,
-                    "nous-api" | "nous_api" | "nousapi" | "nous-portal-api"
-                ) {
-                    std::env::var("NOUS_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| Some("https://inference-api.nousresearch.com/v1".to_string()))
-                } else if provider == "stepfun" {
-                    Some("https://api.stepfun.ai/step_plan/v1".to_string())
+                    Some(bedrock_runtime_base_url(&resolve_bedrock_region()))
                 } else if matches!(provider, "kimi" | "moonshot" | "kimi-coding") {
-                    std::env::var("KIMI_BASE_URL")
-                        .ok()
-                        .map(|s| s.trim().to_string())
-                        .filter(|s| !s.is_empty())
-                        .or_else(|| {
-                            Some(crate::provider_profiles::KIMI_LEGACY_BASE_URL.to_string())
-                        })
-                } else if provider == "kimi-coding-cn" {
-                    Some(crate::provider_profiles::KIMI_CN_BASE_URL.to_string())
-                } else if provider == "minimax-cn" || provider == "minimax_cn" {
-                    Some("https://api.minimaxi.com/anthropic".to_string())
-                } else if provider == "copilot" {
-                    Some("https://api.githubcopilot.com".to_string())
-                } else if matches!(
-                    provider,
-                    "gemini" | "google" | "google-gemini" | "google-ai-studio"
-                ) {
-                    Some("https://generativelanguage.googleapis.com/v1beta/openai".to_string())
-                } else if matches!(provider, "gmi" | "gmi-cloud" | "gmicloud") {
-                    Some("https://api.gmi-serving.com/v1".to_string())
-                } else if matches!(provider, "arcee" | "arcee-ai" | "arceeai") {
-                    Some("https://api.arcee.ai/api/v1".to_string())
-                } else if matches!(provider, "xiaomi" | "mimo" | "xiaomi-mimo") {
-                    Some("https://api.xiaomimimo.com/v1".to_string())
-                } else if matches!(
-                    provider,
-                    "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas"
-                ) {
-                    Some("https://tokenhub.tencentmaas.com/v1".to_string())
-                } else if matches!(provider, "zai" | "glm" | "z-ai" | "z_ai" | "zhipu") {
-                    Some("https://api.z.ai/api/paas/v4".to_string())
-                } else if crate::local_backends::is_local_backend_provider(provider) {
-                    crate::local_backends::local_backend_resolved_base_url(provider)
+                    Some(crate::provider_profiles::KIMI_LEGACY_BASE_URL.to_string())
                 } else {
-                    None
+                    // The primary provider builder's lookup: alias, then canonical name.
+                    let normalized =
+                        crate::provider_profiles::normalize_runtime_provider_name(provider);
+                    crate::provider_profiles::provider_default_base_url(provider)
+                        .or_else(|| {
+                            crate::provider_profiles::provider_default_base_url(&normalized)
+                        })
+                        .map(str::to_string)
                 }
             })
     }
@@ -858,6 +692,7 @@ impl AgentLoop {
         (command, args)
     }
 
+    #[allow(clippy::too_many_arguments)] // Keep endpoint, auth precedence and route overrides explicit.
     pub(crate) fn build_runtime_provider(
         &self,
         provider: &str,
@@ -868,6 +703,18 @@ impl AgentLoop {
         api_mode: Option<&ApiMode>,
         credential_pool: Option<&Arc<CredentialPool>>,
     ) -> Result<Arc<dyn LlmProvider>, AgentError> {
+        if hermes_core::providers::canonical_provider_id(provider)
+            == crate::vertex::VERTEX_PROVIDER_ID
+        {
+            // Vertex mints its own OAuth2 token and base URL per request; a
+            // static key or routed base URL never applies.
+            let model = crate::model_normalize::normalize_model_for_provider(model_name, provider);
+            return Ok(Arc::new(
+                crate::vertex::VertexProvider::new(model).with_optional_request_timeout_seconds(
+                    self.resolve_runtime_request_timeout_seconds(provider),
+                ),
+            ));
+        }
         let base_url = self.resolve_runtime_base_url(provider, route_base_url);
         let api_key =
             match self.resolve_runtime_api_key(provider, api_key_env_override, explicit_api_key) {
@@ -1047,7 +894,9 @@ impl AgentLoop {
             None,
             explicit_api_key,
             api_mode.as_ref(),
-            self.primary_credential_pool.as_ref(),
+            self.primary_credential_pool
+                .as_ref()
+                .filter(|_| !Self::is_runtime_override(route_base_url, explicit_api_key)),
         )
     }
 

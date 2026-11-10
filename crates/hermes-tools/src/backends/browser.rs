@@ -4,6 +4,7 @@
 //! and provides browser automation capabilities.
 
 use async_trait::async_trait;
+use futures::{SinkExt, StreamExt};
 use hermes_config::{
     cli_config_path, config_path, is_managed_tool_gateway_ready, managed_nous_tools_enabled,
     resolve_managed_tool_gateway, ManagedToolGatewayConfig, ResolveOptions,
@@ -19,6 +20,7 @@ use std::sync::{
 };
 use std::time::Duration;
 use tokio::sync::Mutex;
+use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 use uuid::Uuid;
 
@@ -35,6 +37,8 @@ const FIRECRAWL_BROWSER_DEFAULT_TTL_SECS: u64 = 300;
 const DEFAULT_CDP_COMMAND_TIMEOUT_SECS: u64 = 30;
 const MIN_CDP_OPEN_TIMEOUT_SECS: u64 = 60;
 const MIN_FIRST_CDP_OPEN_TIMEOUT_SECS: u64 = 120;
+/// Age past which a saved browser screenshot is deleted.
+const SCREENSHOT_MAX_AGE: Duration = Duration::from_secs(24 * 3600);
 #[cfg(test)]
 const CAMOFOX_STATE_DIR_NAME: &str = "browser_auth";
 #[cfg(test)]
@@ -70,7 +74,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "browser-use" => match BrowserUseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserUseProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_browser_use_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -80,7 +84,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "browserbase" => match BrowserbaseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserbaseProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_browserbase_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -90,7 +94,7 @@ pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
         "firecrawl" => match FirecrawlBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "FirecrawlBrowserProvider",
-                Arc::new(backend),
+                backend,
             )),
             Err(err) if explicit_firecrawl_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
@@ -259,10 +263,21 @@ fn browser_cdp_hint(method: &str, detail: &str) -> Vec<&'static str> {
     hints
 }
 
+/// Scheme, host and port of a CDP endpoint. Messages that reach the model and
+/// the logs print only these: the endpoint's user info, path or query can carry
+/// a key.
+fn cdp_endpoint_origin(endpoint: &str) -> String {
+    match Url::parse(endpoint.trim()).map(|url| url.origin()) {
+        Ok(origin) if origin.is_tuple() => origin.ascii_serialization(),
+        _ => "the configured CDP endpoint".to_string(),
+    }
+}
+
 fn format_cdp_timeout_error(method: &str, endpoint: &str, timeout_duration: Duration) -> String {
     let mut parts = vec![format!(
-        "Browser CDP command '{method}' timed out after {} while contacting {endpoint}.",
-        duration_label(timeout_duration)
+        "Browser CDP command '{method}' timed out after {} while contacting {}.",
+        duration_label(timeout_duration),
+        cdp_endpoint_origin(endpoint)
     )];
     parts.extend(browser_cdp_hint(method, "").into_iter().map(str::to_string));
     parts.join("\n")
@@ -281,7 +296,8 @@ fn tool_error_message(err: ToolError) -> String {
 fn format_cdp_command_error(method: &str, endpoint: &str, err: ToolError) -> ToolError {
     let detail = tool_error_message(err);
     let mut parts = vec![format!(
-        "Browser CDP command '{method}' failed while contacting {endpoint}: {detail}"
+        "Browser CDP command '{method}' failed while contacting {}: {detail}",
+        cdp_endpoint_origin(endpoint)
     )];
     parts.extend(
         browser_cdp_hint(method, &detail)
@@ -557,20 +573,73 @@ fn yaml_gateway_route(value: &serde_yaml::Value) -> bool {
     }
 }
 
-fn browser_vision_payload(instruction: &str, screenshot: Value) -> String {
-    json!({
-        "status": "vision_analysis",
-        "instruction": instruction,
-        "screenshot": screenshot,
-        "note": "Screenshot captured; vision analysis requires LLM integration"
-    })
-    .to_string()
+/// Delete browser screenshots in `dir` older than a day, as upstream's
+/// `_cleanup_old_screenshots` does, so the cache does not grow without bound.
+/// A file that cannot be checked or removed is logged and left; pruning never
+/// stops a capture. Upstream also skips the scan if it ran within the hour;
+/// this scans on every capture, which costs one directory listing.
+async fn prune_old_screenshots(dir: &Path) {
+    let Some(cutoff) = std::time::SystemTime::now().checked_sub(SCREENSHOT_MAX_AGE) else {
+        return;
+    };
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::debug!("listing {} for old screenshots failed: {e}", dir.display());
+            return;
+        }
+    };
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::debug!("listing {} for old screenshots failed: {e}", dir.display());
+                break;
+            }
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with("browser_screenshot_") && name.ends_with(".png")) {
+            continue;
+        }
+        let path = entry.path();
+        let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
+            Ok(modified) if modified < cutoff => tokio::fs::remove_file(&path).await,
+            Ok(_) => continue,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = outcome {
+            tracing::debug!("removing old screenshot {} failed: {e}", path.display());
+        }
+    }
+}
+
+/// Save a browser screenshot under `cache/screenshots` in the Hermes home,
+/// with upstream's file name, and return its path.
+async fn save_browser_screenshot(png: &[u8]) -> Result<std::path::PathBuf, ToolError> {
+    let dir = hermes_config::hermes_home()
+        .join("cache")
+        .join("screenshots");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        ToolError::ExecutionFailed(format!("Failed to create {}: {e}", dir.display()))
+    })?;
+    prune_old_screenshots(&dir).await;
+    let path = dir.join(format!(
+        "browser_screenshot_{}.png",
+        Uuid::new_v4().simple()
+    ));
+    tokio::fs::write(&path, png).await.map_err(|e| {
+        ToolError::ExecutionFailed(format!("Failed to save {}: {e}", path.display()))
+    })?;
+    Ok(path)
 }
 
 /// Browser backend using Chrome DevTools Protocol.
 /// Connects to Chrome via WebSocket for automation.
 pub struct CdpBrowserBackend {
-    /// CDP WebSocket endpoint URL (e.g., ws://localhost:9222/devtools/page/...)
+    /// DevTools endpoint: an HTTP discovery URL (`http://localhost:9222`), a
+    /// bare `ws://host:port` or a browser WebSocket URL.
     endpoint: String,
     client: reqwest::Client,
     first_navigation: AtomicBool,
@@ -585,10 +654,13 @@ pub struct CamoFoxBrowserBackend {
     profile: String,
 }
 
-struct CloudFallbackBrowserBackend {
+struct CloudFallbackBrowserBackend<C> {
     provider: &'static str,
-    cloud: Arc<dyn BrowserBackend>,
+    cloud: C,
     local: CdpBrowserBackend,
+    /// Serialises cloud actions, including session cleanup, and retains the
+    /// first fallback reason.
+    fallback_reason: Mutex<Option<String>>,
 }
 
 struct UnavailableBrowserBackend {
@@ -632,7 +704,7 @@ impl BrowserBackend for UnavailableBrowserBackend {
         Err(self.unavailable())
     }
 
-    async fn vision(&self, _instruction: &str) -> Result<String, ToolError> {
+    async fn screenshot(&self) -> Result<String, ToolError> {
         Err(self.unavailable())
     }
 
@@ -641,158 +713,73 @@ impl BrowserBackend for UnavailableBrowserBackend {
     }
 }
 
+/// Falls back to the local browser only when the cloud provider is
+/// unavailable: no session, or no CDP connection to it. A command the cloud
+/// browser ran keeps its own result or error, since the local browser holds a
+/// different page. This matches upstream, which falls back when creating the
+/// cloud session fails and keeps the local session for the rest of the task.
 #[async_trait]
-impl BrowserBackend for CloudFallbackBrowserBackend {
+impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBrowserBackend<C> {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
-        match self.cloud.navigate(url).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser command failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .navigate(url)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        // Reject the URL before a cloud session is created for it.
+        validate_url_does_not_exfiltrate_secret(url)?;
+        self.run(self.cloud.navigate(url), self.local.navigate(url))
+            .await
     }
 
     async fn snapshot(&self) -> Result<String, ToolError> {
-        match self.cloud.snapshot().await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser snapshot failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .snapshot()
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(self.cloud.snapshot(), self.local.snapshot()).await
     }
 
     async fn click(&self, selector: &str) -> Result<String, ToolError> {
-        match self.cloud.click(selector).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser click failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .click(selector)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(self.cloud.click(selector), self.local.click(selector))
+            .await
     }
 
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError> {
-        match self.cloud.r#type(selector, text).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser type failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .r#type(selector, text)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(
+            self.cloud.r#type(selector, text),
+            self.local.r#type(selector, text),
+        )
+        .await
     }
 
     async fn scroll(&self, direction: &str, amount: Option<u32>) -> Result<String, ToolError> {
-        match self.cloud.scroll(direction, amount).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser scroll failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .scroll(direction, amount)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(
+            self.cloud.scroll(direction, amount),
+            self.local.scroll(direction, amount),
+        )
+        .await
     }
 
     async fn go_back(&self) -> Result<String, ToolError> {
-        match self.cloud.go_back().await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser back failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .go_back()
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(self.cloud.go_back(), self.local.go_back()).await
     }
 
     async fn press(&self, key: &str) -> Result<String, ToolError> {
-        match self.cloud.press(key).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser key press failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .press(key)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(self.cloud.press(key), self.local.press(key)).await
     }
 
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
-        match self.cloud.get_images(selector).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser images failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .get_images(selector)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(
+            self.cloud.get_images(selector),
+            self.local.get_images(selector),
+        )
+        .await
     }
 
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        match self.cloud.vision(instruction).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser vision failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .vision(instruction)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        self.run(self.cloud.screenshot(), self.local.screenshot())
+            .await
     }
 
     async fn console(&self, action: &str) -> Result<String, ToolError> {
-        match self.cloud.console(action).await {
-            Ok(result) => Ok(result),
-            Err(cloud_err) => {
-                tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser console failed; trying local CDP fallback");
-                let local = self
-                    .local
-                    .console(action)
-                    .await
-                    .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-                Ok(self.mark_fallback(local, &cloud_err))
-            }
-        }
+        self.run(self.cloud.console(action), self.local.console(action))
+            .await
     }
 }
+
+include!("browser/cdp_client.rs");
 
 include!("browser/cloud_backend_impls.rs");
 

@@ -67,7 +67,7 @@ Hermes does not work reliably on WSL1 — WSL1 translates Linux syscalls on the 
 
 ### Distro choice
 
-Ubuntu (LTS) is what we test against. Debian works. Arch and NixOS work for people who want them, but the one-line installer assumes a Debian-derived `apt` system — see the [Nix setup guide](/docs/getting-started/nix-setup) for that path.
+Ubuntu (LTS) is what we test against. Debian works. Arch and NixOS work for people who want them; for NixOS, see the [Nix setup guide](/docs/getting-started/nix-setup).
 
 ### Enable systemd (recommended)
 
@@ -99,10 +99,14 @@ The `metadata` mount option above is important — without it, files on `/mnt/c/
 
 ### Install Hermes Agent Ultra inside WSL
 
-Once you have a WSL2 shell open:
+This fork has published no release yet, so the installer builds from source and
+must run from a checkout. Once you have a WSL2 shell open with Git and a Rust
+toolchain installed (see [Prerequisites](/docs/getting-started/installation#prerequisites)):
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 source ~/.bashrc
 hermes-ultra
 ```

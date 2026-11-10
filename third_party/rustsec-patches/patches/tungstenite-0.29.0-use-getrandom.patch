@@ -36,7 +36,11 @@
  /// Mask/unmask a frame.
 --- a/src/handshake/client.rs
 +++ b/src/handshake/client.rs
-@@ -329,8 +329,9 @@
+@@ -196,3 +196,2 @@
+     req.extend_from_slice(b"\r\n");
+-    trace!("Request: {:?}", String::from_utf8_lossy(&req));
+     Ok((req, key))
+@@ -329,8 +328,9 @@
  pub fn generate_key() -> String {
      // a base64-encoded (see Section 4 of [RFC4648]) value that,
      // when decoded, is 16 bytes in length (RFC 6455)
@@ -48,3 +52,19 @@
  }
  
  #[cfg(test)]
+--- a/src/protocol/frame/mod.rs
++++ b/src/protocol/frame/mod.rs
+@@ -168 +168 @@
+-        let max_size = max_size.unwrap_or_else(usize::max_value);
++        let max_size = max_size.unwrap_or(usize::MAX);
+--- a/src/protocol/message.rs
++++ b/src/protocol/message.rs
+@@ -114,7 +114,7 @@
+     pub fn extend<T: AsRef<[u8]>>(&mut self, tail: T, size_limit: Option<usize>) -> Result<()> {
+         // Always have a max size. This ensures an error in case of concatenating two buffers
+         // of more than `usize::max_value()` bytes in total.
+-        let max_size = size_limit.unwrap_or_else(usize::max_value);
++        let max_size = size_limit.unwrap_or(usize::MAX);
+         let my_size = self.len();
+         let portion_size = tail.as_ref().len();
+         // Be careful about integer overflows here.

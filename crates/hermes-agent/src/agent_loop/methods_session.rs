@@ -68,6 +68,9 @@ impl AgentLoop {
             .unwrap_or_else(|| Message::tool_result(&result.tool_call_id, &result.content))
     }
 
+    // Called from 11 exit points in the run loops, each passing its own loop
+    // state; bundling that state into a struct would be a run-loop redesign.
+    #[allow(clippy::too_many_arguments)]
     fn graceful_interrupt_result(
         &self,
         ctx: &ContextManager,
@@ -196,8 +199,9 @@ impl AgentLoop {
         if !workspace_root.exists() {
             return None;
         }
-        let mut index = CodeIndex::default_for_workspace(workspace_root);
-        let _ = index.ensure_fresh();
+        // No scan here: constructors run on async workers, and a full scan can
+        // take seconds. `run` and `run_stream` refresh it on the blocking pool.
+        let index = CodeIndex::default_for_workspace(workspace_root);
         Some(Arc::new(Mutex::new(index)))
     }
 

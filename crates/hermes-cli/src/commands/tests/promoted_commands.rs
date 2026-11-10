@@ -1,6 +1,6 @@
     #[tokio::test]
     async fn cli_reload_skills_reports_snapshot_and_queues_note() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let skill_dir = tmp.path().join("skills").join("release-captain");
@@ -25,7 +25,7 @@
 
     #[tokio::test]
     async fn promoted_snapshot_command_lists_snapshots() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -39,7 +39,7 @@
 
     #[tokio::test]
     async fn promoted_rollback_command_shows_controls() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -51,7 +51,7 @@
 
     #[tokio::test]
     async fn promoted_queue_command_shows_usage_and_status() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -67,7 +67,7 @@
 
     #[tokio::test]
     async fn promoted_steer_command_sets_and_clears_instruction() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -153,7 +153,7 @@
 
     #[tokio::test]
     async fn reload_mcp_refreshes_agent_snapshot_from_runtime_registry() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -277,7 +277,7 @@
 
     #[tokio::test]
     async fn promoted_btw_command_queues_ephemeral_background_task() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -292,7 +292,7 @@
 
     #[tokio::test]
     async fn slash_auth_status_command_is_handled() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -307,7 +307,7 @@
 
     #[tokio::test]
     async fn slash_runbook_and_telemetry_commands_are_handled() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -327,7 +327,7 @@
 
     #[tokio::test]
     async fn slash_agents_pause_resume_and_status_are_handled() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -362,7 +362,7 @@
 
     #[tokio::test]
     async fn slash_agents_doctor_uses_native_queue_audit() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let jobs = tmp.path().join("background_jobs");
@@ -393,7 +393,7 @@
 
     #[tokio::test]
     async fn promoted_sethome_command_sets_status_and_clears_marker() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -416,7 +416,7 @@
 
     #[tokio::test]
     async fn promoted_paste_command_uses_test_clipboard_override() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         std::env::set_var("HERMES_TEST_CLIPBOARD_TEXT", "alpha clipboard payload");
@@ -431,7 +431,7 @@
 
     #[tokio::test]
     async fn promoted_gquota_command_emits_provider_diagnostics() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -445,7 +445,7 @@
 
     #[tokio::test]
     async fn promoted_image_command_queues_and_consumes_hint() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -467,7 +467,7 @@
 
     #[tokio::test]
     async fn promoted_feedback_command_writes_feedback_log() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -485,7 +485,7 @@
 
     #[tokio::test]
     async fn promoted_debug_dump_command_writes_session_snapshot() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -506,7 +506,7 @@
 
     #[tokio::test]
     async fn promoted_plan_status_command_emits_queue_summary() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -520,7 +520,7 @@
 
     #[tokio::test]
     async fn promoted_lsp_status_command_emits_index_details() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -534,7 +534,7 @@
 
     #[tokio::test]
     async fn promoted_approve_and_deny_commands_operate_on_pairing_store() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -718,7 +718,7 @@
 
     #[tokio::test]
     async fn usage_command_reports_actual_session_usage_without_estimated_cost() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         hermes_core::credits::clear_last_nous_credits_state();
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
@@ -757,7 +757,7 @@
 
     #[tokio::test]
     async fn usage_command_includes_last_nous_credits_state() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         hermes_core::credits::clear_last_nous_credits_state();
         hermes_core::credits::capture_nous_credits_from_pairs([
             ("x-nous-credits-version", "1"),
@@ -791,7 +791,7 @@
 
     #[tokio::test]
     async fn billing_command_renders_billing_surface_when_logged_out() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let _real_home_guard = EnvVarGuard::set("HOME", tmp.path());

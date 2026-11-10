@@ -692,6 +692,8 @@ mod tests {
     /// with parallel cargo test workers (env is process-global).
     #[test]
     fn build_default_auxiliary_client_scenarios() {
+        // The agent-loop tests read these provider keys under the same lock.
+        let _lock = crate::agent_loop::tests::env_test_lock();
         let _g = EnvGuard::clear();
 
         // Scenario 1: no keys → empty chain.

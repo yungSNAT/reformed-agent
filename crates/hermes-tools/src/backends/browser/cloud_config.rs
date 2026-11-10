@@ -11,20 +11,9 @@ pub struct BrowserbaseConfig {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct BrowserbaseFeatures {
-    basic_stealth: bool,
-    proxies: bool,
-    advanced_stealth: bool,
-    keep_alive: bool,
-    custom_timeout: bool,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
 struct BrowserbaseSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    features: BrowserbaseFeatures,
 }
 
 /// Browserbase cloud browser backend.
@@ -35,6 +24,7 @@ pub struct BrowserbaseBrowserBackend {
     config: BrowserbaseConfig,
     client: reqwest::Client,
     session: Mutex<Option<BrowserbaseSession>>,
+    cdp: CloudCdpConnection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -47,10 +37,8 @@ pub struct BrowserUseConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct BrowserUseSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    external_call_id: Option<String>,
 }
 
 /// Browser Use cloud browser backend.
@@ -63,6 +51,7 @@ pub struct BrowserUseBrowserBackend {
     client: reqwest::Client,
     session: Mutex<Option<BrowserUseSession>>,
     pending_create_key: Mutex<Option<String>>,
+    cdp: CloudCdpConnection,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,10 +64,8 @@ pub struct FirecrawlBrowserConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct FirecrawlBrowserSession {
-    session_name: String,
     bb_session_id: String,
     cdp_url: String,
-    ttl_secs: u64,
 }
 
 /// Firecrawl cloud browser backend.
@@ -90,6 +77,7 @@ pub struct FirecrawlBrowserBackend {
     config: FirecrawlBrowserConfig,
     client: reqwest::Client,
     session: Mutex<Option<FirecrawlBrowserSession>>,
+    cdp: CloudCdpConnection,
 }
 
 impl UnavailableBrowserBackend {
@@ -102,24 +90,61 @@ impl UnavailableBrowserBackend {
     }
 }
 
-impl CloudFallbackBrowserBackend {
-    fn new(provider: &'static str, cloud: Arc<dyn BrowserBackend>) -> Self {
+impl<C> CloudFallbackBrowserBackend<C> {
+    fn new(provider: &'static str, cloud: C) -> Self {
         Self {
             provider,
             cloud,
             local: CdpBrowserBackend::from_env(),
+            fallback_reason: Mutex::new(None),
         }
     }
 
-    fn fallback_error(&self, cloud_err: &ToolError, local_err: ToolError) -> ToolError {
+    fn fallback_error(&self, reason: &str, local_err: ToolError) -> ToolError {
         ToolError::ExecutionFailed(format!(
             "{} failed: {}; local CDP fallback failed: {}",
-            self.provider, cloud_err, local_err
+            self.provider, reason, local_err
         ))
     }
 
-    fn mark_fallback(&self, local_result: String, cloud_err: &ToolError) -> String {
-        browser_fallback_response(local_result, self.provider, &cloud_err.to_string())
+    /// Run `local` in place of a command the unavailable cloud browser could
+    /// not take, and mark its result as a fallback.
+    async fn fall_back(
+        &self,
+        reason: &str,
+        local: impl std::future::Future<Output = Result<String, ToolError>>,
+    ) -> Result<String, ToolError> {
+        let local = local
+            .await
+            .map_err(|local_err| self.fallback_error(reason, local_err))?;
+        Ok(browser_fallback_response(local, self.provider, reason))
+    }
+}
+
+impl<C: CloudBrowserSession> CloudFallbackBrowserBackend<C> {
+    /// Keep each cloud action and its cleanup together. A queued action
+    /// can then attach to a new session if the previous action lost its
+    /// page. Only a connection failure switches the backend to local CDP.
+    async fn run(
+        &self,
+        cloud: impl std::future::Future<Output = Result<String, ToolError>>,
+        local: impl std::future::Future<Output = Result<String, ToolError>>,
+    ) -> Result<String, ToolError> {
+        let mut fallback_reason = self.fallback_reason.lock().await;
+        let reason = match fallback_reason.as_ref() {
+            Some(reason) => reason.clone(),
+            None => match cloud_connect(&self.cloud).await {
+                Ok(()) => return cloud.await,
+                Err(error) => {
+                    tracing::warn!(provider = self.provider, %error, "cloud browser unavailable; using local CDP from now on");
+                    let reason = error.to_string();
+                    *fallback_reason = Some(reason.clone());
+                    reason
+                }
+            },
+        };
+        drop(fallback_reason);
+        self.fall_back(&reason, local).await
     }
 }
 

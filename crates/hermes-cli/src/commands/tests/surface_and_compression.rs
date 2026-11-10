@@ -34,7 +34,7 @@
 
     #[tokio::test]
     async fn harness_command_reports_issue_backed_cockpit_and_teach_skill() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -147,7 +147,7 @@
 
     #[tokio::test]
     async fn suggestions_catalog_accept_and_dismiss_flow() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -195,7 +195,7 @@
 
     #[tokio::test]
     async fn objective_lifecycle_pause_resume_updates_session_injection() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -224,7 +224,7 @@
 
     #[tokio::test]
     async fn objective_wait_pid_and_unwait_update_contract() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -264,7 +264,7 @@
 
     #[tokio::test]
     async fn objective_wait_supports_session_and_seconds_forms() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -304,7 +304,7 @@
 
     #[tokio::test]
     async fn objective_behavior_mode_can_be_switched() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -331,7 +331,7 @@
 
     #[tokio::test]
     async fn promoted_subgoal_command_supports_add_update_and_clear() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -355,7 +355,7 @@
 
     #[tokio::test]
     async fn promoted_handoff_command_surfaces_usage_and_unknown_platform() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -576,7 +576,7 @@
 
     #[tokio::test]
     async fn p0_walkthrough_and_integrations_commands_emit_expected_sections() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -598,7 +598,7 @@
 
     #[tokio::test]
     async fn upstream_parity_bundles_command_lists_skill_bundles() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -621,7 +621,7 @@
 
     #[tokio::test]
     async fn upstream_parity_codex_runtime_persists_auto_without_codex_binary() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -642,7 +642,7 @@
 
     #[tokio::test]
     async fn upstream_parity_platform_command_lists_cli_platform_state() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -673,7 +673,7 @@
 
     #[tokio::test]
     async fn p0_compress_rules_set_and_apply_updates_runtime_env() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -705,7 +705,7 @@
 
     #[tokio::test]
     async fn compress_command_reports_before_after_message_and_token_summary() {
-        let _guard = env_test_lock();
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;

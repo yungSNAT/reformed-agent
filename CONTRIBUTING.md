@@ -1,12 +1,12 @@
-# Contributing to Hermes Agent Ultra
+# Contributing to Reformed Agent
 
-Hermes Agent Ultra is a Rust-first parity and reliability fork of `NousResearch/hermes-agent`. Contributions should preserve that contract: port upstream behavior intentionally, keep Ultra-only extensions explicit, and avoid placeholder runtime paths.
+Reformed Agent is a fork of Hermes Agent Ultra, a Rust-first parity and reliability fork of `NousResearch/hermes-agent`. Contributions should preserve that contract: port upstream behaviour intentionally, keep Ultra-only and Reformed-only extensions explicit, and avoid placeholder runtime paths.
 
 ## Getting Started
 
 ```bash
-git clone https://github.com/sheawinkler/hermes-agent-ultra.git
-cd hermes-agent-ultra
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
 cargo build --workspace
 cargo test --workspace
 ```
@@ -47,9 +47,15 @@ cargo fmt --all --check
 bash scripts/clippy-warning-gate.sh --check
 bash scripts/check-runtime-placeholders.sh
 cargo test --workspace
-python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref upstream/main --local-ref HEAD
-python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-ref HEAD
+git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/NousResearch/hermes-agent.git
+git fetch --no-tags --depth=1 upstream "+$(tr -d '[:space:]' < docs/parity/upstream-reference.txt):refs/remotes/upstream/parity-reference"
+python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref upstream/parity-reference
+python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
 ```
+
+`bash scripts/run-repo-ci.sh` runs all of these and the governance checks in one pass. The compiler is the version pinned in `rust-toolchain.toml`.
+
+The parity gates compare against the upstream revision recorded in `docs/parity/upstream-reference.txt`, not against upstream `main`, so upstream's daily commits cannot fail an unrelated change. To move the pin, change that file in its own PR together with the ports and regenerated `docs/parity/` artifacts the new revision needs.
 
 If your change touches parity governance artifacts, regenerate and commit the affected files under `docs/parity/`.
 

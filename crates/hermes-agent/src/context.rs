@@ -133,20 +133,22 @@ impl ContextCompressor {
             }
 
             match msg.role {
-                MessageRole::User if goals.len() < MAX_ITEMS_PER_SECTION => {
-                    if !goals.contains(&concise) {
-                        goals.push(concise);
-                    }
+                MessageRole::User
+                    if goals.len() < MAX_ITEMS_PER_SECTION && !goals.contains(&concise) =>
+                {
+                    goals.push(concise);
                 }
-                MessageRole::Assistant if assistant_updates.len() < MAX_ITEMS_PER_SECTION => {
-                    if !assistant_updates.contains(&concise) {
-                        assistant_updates.push(concise);
-                    }
+                MessageRole::Assistant
+                    if assistant_updates.len() < MAX_ITEMS_PER_SECTION
+                        && !assistant_updates.contains(&concise) =>
+                {
+                    assistant_updates.push(concise);
                 }
-                MessageRole::Tool if tool_updates.len() < MAX_ITEMS_PER_SECTION => {
-                    if !tool_updates.contains(&concise) {
-                        tool_updates.push(concise);
-                    }
+                MessageRole::Tool
+                    if tool_updates.len() < MAX_ITEMS_PER_SECTION
+                        && !tool_updates.contains(&concise) =>
+                {
+                    tool_updates.push(concise);
                 }
                 _ => {}
             }
@@ -789,11 +791,9 @@ fn render_memory_block(target: &str, entries: &[String]) -> Option<String> {
     };
     let content = entries.join(MEMORY_ENTRY_DELIMITER);
     let current = content.chars().count();
-    let pct = if limit > 0 {
-        ((current * 100) / limit).min(100)
-    } else {
-        0
-    };
+    let pct = (current * 100)
+        .checked_div(limit)
+        .map_or(0, |pct| pct.min(100));
     Some(format!(
         "{label} [{pct}% - {current}/{limit} chars]\n{content}"
     ))

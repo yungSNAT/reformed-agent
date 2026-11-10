@@ -290,7 +290,7 @@ fn lookup_payload_template_value(payload: &serde_json::Value, key: &str) -> Opti
 }
 
 fn decode_hex(input: &str) -> Option<Vec<u8>> {
-    if input.is_empty() || input.len() % 2 != 0 {
+    if input.is_empty() || !input.len().is_multiple_of(2) {
         return None;
     }
     let mut out = Vec::with_capacity(input.len() / 2);

@@ -51,8 +51,8 @@ People use Hermes for software development, research, system administration, dat
 ## Quick Start
 
 ```bash
-# Install
-curl -fsSL https://raw.githubusercontent.com/sheawinkler/hermes-agent-ultra/main/scripts/install.sh | bash
+# Install (no release yet, so this builds from source; needs Git and a Rust toolchain)
+cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli --locked --bin hermes-agent-ultra --bin hermes-ultra
 
 # Interactive chat (default)
 hermes-ultra

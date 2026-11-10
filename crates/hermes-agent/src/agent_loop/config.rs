@@ -325,7 +325,7 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation_api_key: Option<String>,
 
-    /// Flush memories every N turns.
+    /// Flush memories every N turns; 0 turns the periodic flush off.
     #[serde(default = "default_memory_flush_interval")]
     pub memory_flush_interval: u32,
 
@@ -398,7 +398,8 @@ pub struct AgentConfig {
     pub cost_guard_degrade_at_ratio: f64,
 
     /// Optional explicit cheaper model to use after crossing the degrade ratio.
-    /// If unset, falls back to `retry.fallback_model` then a built-in cheap default.
+    /// If unset, falls back to `retry.fallback_model` then, only when the
+    /// primary provider is OpenAI, a built-in cheap default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cost_guard_degrade_model: Option<String>,
 
@@ -475,6 +476,10 @@ pub struct AgentConfig {
     /// streaming collection path.
     #[serde(default = "default_stream_read_max_retries")]
     pub stream_read_max_retries: u32,
+
+    /// Maximum elapsed seconds for one streaming attempt. Absent or zero disables it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_max_lifetime: Option<f64>,
 
     /// Run one compression pass before the first LLM call if context is already over threshold.
     #[serde(default = "default_preflight_context_compress")]
@@ -733,6 +738,7 @@ impl Default for AgentConfig {
             empty_content_max_retries: default_empty_content_max_retries(),
             thinking_prefill_max_retries: default_thinking_prefill_max_retries(),
             stream_read_max_retries: default_stream_read_max_retries(),
+            stream_max_lifetime: None,
             preflight_context_compress: default_preflight_context_compress(),
             persist_user_message: None,
             invalid_tool_call_max_retries: default_invalid_tool_call_max_retries(),

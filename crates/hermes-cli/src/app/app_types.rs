@@ -190,7 +190,11 @@ fn list_session_snapshot_entries(sessions_dir: &Path) -> Vec<SessionSnapshotEntr
     entries
 }
 
+// The `statvfs` field types differ by platform (`f_bavail` is `u32` on macOS;
+// `f_frsize` is a `c_ulong`), so the `as u64` casts are needed even where they
+// are no-ops.
 #[cfg(unix)]
+#[allow(clippy::unnecessary_cast)]
 fn available_disk_space_bytes(path: &Path) -> Option<u64> {
     use std::ffi::CString;
     use std::os::unix::ffi::OsStrExt;

@@ -174,6 +174,12 @@ pub struct ByteRoverPlugin {
     auto_extract: Mutex<bool>,
 }
 
+impl Default for ByteRoverPlugin {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ByteRoverPlugin {
     pub fn new() -> Self {
         Self {

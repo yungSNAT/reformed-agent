@@ -104,7 +104,7 @@ impl AuxiliaryTask {
 
     /// Construct a task from a free-form string. Returns `Custom` for any
     /// unknown identifier.
-    pub fn from_str(name: &str) -> Self {
+    pub fn from_name(name: &str) -> Self {
         match name.trim().to_lowercase().as_str() {
             "compression" => AuxiliaryTask::Compression,
             "vision" => AuxiliaryTask::Vision,
@@ -143,7 +143,7 @@ mod tests {
             AuxiliaryTask::Title,
             AuxiliaryTask::Classify,
         ] {
-            assert_eq!(AuxiliaryTask::from_str(t.as_key()), t);
+            assert_eq!(AuxiliaryTask::from_name(t.as_key()), t);
         }
     }
 
@@ -156,7 +156,7 @@ mod tests {
     #[test]
     fn unknown_string_becomes_custom() {
         assert_eq!(
-            AuxiliaryTask::from_str("foobar"),
+            AuxiliaryTask::from_name("foobar"),
             AuxiliaryTask::Custom("foobar".to_string())
         );
     }

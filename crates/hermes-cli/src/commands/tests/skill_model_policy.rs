@@ -338,7 +338,7 @@ install_command: "uv pip install -r requirements.txt"
 
     #[tokio::test]
     async fn model_refresh_command_clears_cache_and_lists_configured_provider() {
-        let _lock = env_test_lock();
+        let _lock = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -368,7 +368,7 @@ install_command: "uv pip install -r requirements.txt"
 
     #[tokio::test]
     async fn model_persistence_preserves_nested_model_siblings() {
-        let _lock = env_test_lock();
+        let _lock = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -446,7 +446,7 @@ llm_providers:
 
     #[tokio::test]
     async fn model_switch_command_emits_preflight_warning_for_large_transcript() {
-        let _lock = env_test_lock();
+        let _lock = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
@@ -484,7 +484,7 @@ llm_providers:
 
     #[tokio::test]
     async fn model_switch_command_failure_does_not_commit_or_claim_success() {
-        let _lock = env_test_lock();
+        let _lock = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;

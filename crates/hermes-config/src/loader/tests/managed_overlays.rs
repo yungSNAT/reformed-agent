@@ -71,6 +71,35 @@ web:
 }
 
 #[test]
+fn managed_vertex_config_overrides_only_declared_keys() {
+    let _global_guard = crate::managed_gateway::test_lock::lock();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    clear_managed_scope_test_env();
+    let home = tempfile::tempdir().unwrap();
+    let managed = tempfile::tempdir().unwrap();
+    std::fs::write(
+        managed.path().join("config.yaml"),
+        "vertex:\n  project_id: managed-project\n",
+    )
+    .unwrap();
+    set_test_env("HERMES_HOME", home.path());
+    set_test_env("HERMES_MANAGED_DIR", managed.path());
+    set_test_env("VERTEX_PROJECT_ID", "shell-project");
+    set_test_env("VERTEX_REGION", "us-east4");
+
+    let result = load_config(Some(home.path().to_string_lossy().as_ref()));
+    let project = std::env::var("VERTEX_PROJECT_ID");
+    let region = std::env::var("VERTEX_REGION");
+    remove_test_env("VERTEX_PROJECT_ID");
+    remove_test_env("VERTEX_REGION");
+    clear_managed_scope_test_env();
+
+    result.unwrap();
+    assert_eq!(project.unwrap(), "managed-project");
+    assert_eq!(region.unwrap(), "us-east4");
+}
+
+#[test]
 fn load_dotenv_managed_env_overrides_user_dotenv_and_shell() {
     use tempfile::tempdir;
 
