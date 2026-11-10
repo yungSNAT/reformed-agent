@@ -20,7 +20,7 @@ CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} cargo test -p hermes-cli runtime_pa
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} cargo test -p hermes-http dashboard_oidc -- --nocapture
 ```
 
-## Release Artifact Smoke
+## Release Artefact Smoke
 
 ```bash
 bash scripts/smoke-release-artifact.sh --version <tag>

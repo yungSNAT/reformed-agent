@@ -11,7 +11,7 @@ Translations of an earlier README, which predate this fork: [中文](./README_ZH
 - **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
 - **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
 - **Drift:** upstream has moved since the pin. Against upstream `main` at `6933155e` on 10 November 2026, the slash gate reported 21 commands missing and the surface gate 192 of 3,088 checked entries missing. Moving the pin forward is the next parity work.
-- **Windows:** the Windows test scope covers config, cron, environments and tools. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
+- **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
 
 Repo-local CI is the authoritative gate for development and release confidence.
 GitHub Actions are a hosted mirror of the repo contract when they run; they are
