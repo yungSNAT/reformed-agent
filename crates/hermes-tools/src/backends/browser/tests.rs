@@ -1508,6 +1508,33 @@ async fn browser_use_failed_discovery_counts_as_unavailable() {
     discovery.verify().await;
 }
 
+#[tokio::test]
+async fn browser_use_discovery_sends_the_url_query_and_keeps_it_out_of_the_failure() {
+    let discovery = cdp_discovery(500, json!({"error": "down"})).await;
+    let api = vendor_api(
+        "/browsers",
+        format!("{}?apiKey=cdp-secret", discovery.uri()),
+    )
+    .await;
+    let mut cfg = BrowserUseConfig::new_direct("bu-key".into());
+    cfg.base_url = api.uri();
+    let (local_http, _local_commands) = spawn_local_cdp(answer_all(json!({"nodes": []}))).await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "BrowserUseProvider",
+        cloud: BrowserUseBrowserBackend::new(cfg),
+        local: CdpBrowserBackend::new(local_http.uri()),
+    };
+
+    let raw = backend.snapshot().await.expect("local fallback");
+
+    assert!(raw.contains("/json/version"), "{raw}");
+    assert!(!raw.contains("cdp-secret"), "{raw}");
+    let requests = discovery.received_requests().await.expect("recording");
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0].url.path(), "/json/version");
+    assert_eq!(requests[0].url.query(), Some("apiKey=cdp-secret"));
+}
+
 /// A PNG signature: enough for the tests to check the saved bytes.
 const TEST_PNG: &[u8] = b"\x89PNG\r\n\x1a\nfixture";
 

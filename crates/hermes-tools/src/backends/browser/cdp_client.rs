@@ -218,8 +218,10 @@ async fn resolve_cdp_ws_url(client: &reqwest::Client, cdp_url: &str) -> Result<S
     if raw.to_ascii_lowercase().contains("/devtools/browser/") {
         return Ok(raw.to_string());
     }
+    // Messages never quote the URL's query or user info: cloud vendors carry
+    // their key there, and these messages reach the model and the logs.
     let mut discovery =
-        Url::parse(raw).map_err(|e| CdpFailure::Lost(format!("Invalid CDP URL {raw}: {e}")))?;
+        Url::parse(raw).map_err(|e| CdpFailure::Lost(format!("Invalid CDP URL: {e}")))?;
     match discovery.scheme() {
         "ws" | "wss" => {
             if discovery.port().is_none() || discovery.path() != "/" || discovery.query().is_some()
@@ -233,33 +235,41 @@ async fn resolve_cdp_ws_url(client: &reqwest::Client, cdp_url: &str) -> Result<S
             };
             discovery
                 .set_scheme(scheme)
-                .map_err(|()| CdpFailure::Lost(format!("Invalid CDP URL {raw}")))?;
+                .map_err(|()| CdpFailure::Lost("Invalid CDP URL".into()))?;
         }
         "http" | "https" => {}
         other => {
             return Err(CdpFailure::Lost(format!(
-                "Unsupported CDP URL scheme '{other}' in {raw}"
+                "Unsupported CDP URL scheme '{other}'"
             )))
         }
     }
-    let discovery = discovery.as_str();
-    let version_url = if discovery.ends_with("/json/version") {
-        discovery.to_string()
-    } else {
-        format!("{}/json/version", discovery.trim_end_matches('/'))
-    };
+    if !discovery.path().ends_with("/json/version") {
+        let path = format!("{}/json/version", discovery.path().trim_end_matches('/'));
+        discovery.set_path(&path);
+    }
+    let version_url = format!(
+        "{}://{}{}{}",
+        discovery.scheme(),
+        discovery.host_str().unwrap_or_default(),
+        discovery
+            .port()
+            .map(|port| format!(":{port}"))
+            .unwrap_or_default(),
+        discovery.path()
+    );
     let failed = |detail: String| {
         CdpFailure::Lost(format!("CDP discovery at {version_url} failed: {detail}"))
     };
     let payload: Value = client
-        .get(&version_url)
+        .get(discovery)
         .send()
         .await
         .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| failed(e.to_string()))?
+        .map_err(|e| failed(e.without_url().to_string()))?
         .json()
         .await
-        .map_err(|e| failed(e.to_string()))?;
+        .map_err(|e| failed(e.without_url().to_string()))?;
     match payload["webSocketDebuggerUrl"].as_str().map(str::trim) {
         Some(ws_url) if !ws_url.is_empty() => {
             tracing::info!("resolved CDP endpoint {version_url} to the browser WebSocket");
