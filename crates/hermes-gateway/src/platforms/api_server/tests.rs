@@ -792,6 +792,15 @@ async fn chat_completion_returns_final_reply_after_tool_progress_note() {
 }
 
 #[tokio::test]
+async fn chat_completion_returns_final_reply_after_progress_note_with_image_link() {
+    let content = chat_completion_content_through_gateway(Some(
+        "🌐 browser: \"![shot](https://example.com/shot.png)\"",
+    ))
+    .await;
+    assert_eq!(content, "final assistant reply");
+}
+
+#[tokio::test]
 async fn chat_completion_returns_final_reply_without_tool_use() {
     let content = chat_completion_content_through_gateway(None).await;
     assert_eq!(content, "final assistant reply");

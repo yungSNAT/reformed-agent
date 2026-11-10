@@ -924,6 +924,14 @@ impl Gateway {
         let adapter = self.get_adapter(platform).await.ok_or_else(|| {
             GatewayError::Platform(format!("No adapter registered for platform: {}", platform))
         })?;
+        // Tool previews can quote attachment syntax. Keep them in the status path, since
+        // native media sends bypass the adapter's non-conversational handling.
+        if options.non_conversational {
+            return Self::send_adapter_text_with_options(
+                &adapter, chat_id, text, parse_mode, options,
+            )
+            .await;
+        }
         let (without_media, media_files) = extract_media_markers(text);
         let (cleaned, images) = extract_inline_images(&without_media);
         if images.is_empty() && media_files.is_empty() {
