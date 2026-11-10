@@ -37,6 +37,8 @@ const FIRECRAWL_BROWSER_DEFAULT_TTL_SECS: u64 = 300;
 const DEFAULT_CDP_COMMAND_TIMEOUT_SECS: u64 = 30;
 const MIN_CDP_OPEN_TIMEOUT_SECS: u64 = 60;
 const MIN_FIRST_CDP_OPEN_TIMEOUT_SECS: u64 = 120;
+/// Age past which a saved browser screenshot is deleted.
+const SCREENSHOT_MAX_AGE: Duration = Duration::from_secs(24 * 3600);
 #[cfg(test)]
 const CAMOFOX_STATE_DIR_NAME: &str = "browser_auth";
 #[cfg(test)]
@@ -571,6 +573,48 @@ fn yaml_gateway_route(value: &serde_yaml::Value) -> bool {
     }
 }
 
+/// Delete browser screenshots in `dir` older than a day, as upstream's
+/// `_cleanup_old_screenshots` does, so the cache does not grow without bound.
+/// A file that cannot be checked or removed is logged and left; pruning never
+/// stops a capture. Upstream also skips the scan if it ran within the hour;
+/// this scans on every capture, which costs one directory listing.
+async fn prune_old_screenshots(dir: &Path) {
+    let Some(cutoff) = std::time::SystemTime::now().checked_sub(SCREENSHOT_MAX_AGE) else {
+        return;
+    };
+    let mut entries = match tokio::fs::read_dir(dir).await {
+        Ok(entries) => entries,
+        Err(e) => {
+            tracing::debug!("listing {} for old screenshots failed: {e}", dir.display());
+            return;
+        }
+    };
+    loop {
+        let entry = match entries.next_entry().await {
+            Ok(Some(entry)) => entry,
+            Ok(None) => break,
+            Err(e) => {
+                tracing::debug!("listing {} for old screenshots failed: {e}", dir.display());
+                break;
+            }
+        };
+        let name = entry.file_name();
+        let name = name.to_string_lossy();
+        if !(name.starts_with("browser_screenshot_") && name.ends_with(".png")) {
+            continue;
+        }
+        let path = entry.path();
+        let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
+            Ok(modified) if modified < cutoff => tokio::fs::remove_file(&path).await,
+            Ok(_) => continue,
+            Err(e) => Err(e),
+        };
+        if let Err(e) = outcome {
+            tracing::debug!("removing old screenshot {} failed: {e}", path.display());
+        }
+    }
+}
+
 /// Save a browser screenshot under `cache/screenshots` in the Hermes home,
 /// with upstream's file name, and return its path.
 async fn save_browser_screenshot(png: &[u8]) -> Result<std::path::PathBuf, ToolError> {
@@ -580,6 +624,7 @@ async fn save_browser_screenshot(png: &[u8]) -> Result<std::path::PathBuf, ToolE
     tokio::fs::create_dir_all(&dir).await.map_err(|e| {
         ToolError::ExecutionFailed(format!("Failed to create {}: {e}", dir.display()))
     })?;
+    prune_old_screenshots(&dir).await;
     let path = dir.join(format!(
         "browser_screenshot_{}.png",
         Uuid::new_v4().simple()

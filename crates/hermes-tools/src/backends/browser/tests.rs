@@ -1196,6 +1196,40 @@ async fn cdp_screenshot_accepts_a_reply_larger_than_16_mib() {
 }
 
 #[tokio::test]
+async fn cdp_screenshot_prunes_screenshots_older_than_a_day() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
+    let dir = home.path().join("cache").join("screenshots");
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let hours_ago =
+        |hours: u64| std::time::SystemTime::now() - std::time::Duration::from_secs(hours * 3600);
+    let file_aged = |name: &str, modified: std::time::SystemTime| {
+        let path = dir.join(name);
+        std::fs::File::create(&path)
+            .expect("create file")
+            .set_modified(modified)
+            .expect("set modified time");
+        path
+    };
+    let old = file_aged("browser_screenshot_old.png", hours_ago(25));
+    let recent = file_aged("browser_screenshot_recent.png", hours_ago(23));
+    let unrelated = file_aged("notes.png", hours_ago(25));
+    let (http, _commands) = spawn_local_cdp(answer_all(json!({"data": "iVBORw0KGgo="}))).await;
+
+    let raw = CdpBrowserBackend::new(http.uri())
+        .screenshot()
+        .await
+        .expect("screenshot");
+
+    let value: Value = serde_json::from_str(&raw).expect("screenshot json");
+    assert!(std::path::Path::new(value["screenshot_path"].as_str().expect("path")).exists());
+    assert!(!old.exists(), "a screenshot older than a day is removed");
+    assert!(recent.exists());
+    assert!(unrelated.exists());
+}
+
+#[tokio::test]
 async fn cdp_selector_and_text_are_spliced_as_string_literals() {
     let (http, mut commands) = spawn_local_cdp(answer_all(
         json!({"result": {"type": "string", "value": "typed"}}),
