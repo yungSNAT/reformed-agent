@@ -1004,10 +1004,16 @@ mod tests {
             "VERTEX_CREDENTIALS_PATH",
             "GOOGLE_APPLICATION_CREDENTIALS",
             "VERTEX_PROJECT_ID",
+            "CLOUDSDK_CONFIG",
+            "NO_GCE_CHECK",
         ]);
         std::env::remove_var("VERTEX_CREDENTIALS_PATH");
         std::env::remove_var("GOOGLE_APPLICATION_CREDENTIALS");
         std::env::remove_var("VERTEX_PROJECT_ID");
+        // Keep the machine's own gcloud login and a GCE host out of the answer.
+        let no_gcloud = std::env::temp_dir().join(format!("no-gcloud-{}", std::process::id()));
+        std::env::set_var("CLOUDSDK_CONFIG", &no_gcloud);
+        std::env::set_var("NO_GCE_CHECK", "true");
         let unconfigured = provider_runtime_diagnostic(
             &GatewayConfig::default(),
             "vertex:google/gemini-3-flash-preview",
