@@ -11,6 +11,7 @@ Translations of an earlier README, which predate this fork: [中文](./README_ZH
 - **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
 - **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
 - **Drift:** upstream has moved since the pin. Against upstream `main` at `6933155e` on 10 November 2026, the slash gate reported 21 commands missing and the surface gate 192 of 3,088 checked entries missing. Moving the pin forward is the next parity work.
+- **Windows:** the Windows test scope covers config, cron, environments and tools. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
 
 Repo-local CI is the authoritative gate for development and release confidence.
 GitHub Actions are a hosted mirror of the repo contract when they run; they are
@@ -29,6 +30,9 @@ The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). 
 - `Tool guard`: `security.tool_guard` names a program that speaks Claude Code's PreToolUse hook format; when it is set, local terminal commands, `write_file`, `patch` and cron scripts ask it first and run only on a clean allow (see [security.md](./website/docs/user-guide/security.md))
 - `Stream lifetime cap`: `agent.stream_max_lifetime`, ported from Hermes
 - `Pinned parity reference`: the parity gates compare against one recorded upstream revision, so a day's upstream commits cannot fail an unrelated change
+- `Provider routing`: retries keep the configured endpoint and provider-specific credentials. Vertex AI supports service-account credentials and application default credentials.
+- `Gateway replies`: API replies keep the final answer after tool progress messages and handle streaming previews and UTF-8 chunks.
+- `Browser tools`: local and cloud browsers use Chrome DevTools Protocol, with HTTP discovery for cloud sessions and screenshot analysis through the configured vision model.
 
 Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
 
