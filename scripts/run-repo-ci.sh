@@ -6,6 +6,9 @@ UPSTREAM_REMOTE="${UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_URL="${UPSTREAM_URL:-https://github.com/NousResearch/hermes-agent.git}"
 UPSTREAM_REVISION="${UPSTREAM_REVISION:-$(tr -d '[:space:]' < "${REPO_ROOT}/docs/parity/upstream-reference.txt")}"
 UPSTREAM_BRANCH="parity-reference"
+if [[ -n "${UPSTREAM_REF:-}" ]]; then
+  echo "run-repo-ci: UPSTREAM_REF is ignored; the parity gates use the pinned revision (set UPSTREAM_REVISION to compare against another)." >&2
+fi
 UPSTREAM_REF="${UPSTREAM_REMOTE}/${UPSTREAM_BRANCH}"
 SKIP_UPSTREAM_FETCH="${SKIP_UPSTREAM_FETCH:-false}"
 
@@ -76,9 +79,9 @@ refresh_upstream
 run python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-intent-mapping.py
+run python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-coverage-audit.py --check
 run python3 scripts/generate-adapter-matrix.py
-run python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
 run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-global-parity-proof.py

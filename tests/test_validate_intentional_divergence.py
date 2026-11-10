@@ -1,4 +1,5 @@
 import importlib.util
+import json
 from pathlib import Path
 
 
@@ -19,6 +20,13 @@ def test_registry_path_is_reported_relative_to_the_repository(tmp_path):
 
     # The committed report must not carry the location of someone's checkout.
     assert mod.repo_relative(registry, tmp_path) == "docs/parity/intentional-divergence.json"
+
+
+def test_committed_report_names_the_registry_by_its_repository_path():
+    repo_root = Path(__file__).resolve().parents[1]
+    report = json.loads((repo_root / "docs" / "parity" / "divergence-validation.json").read_text())
+
+    assert report["divergence_file"] == "docs/parity/intentional-divergence.json"
 
 
 def test_registry_path_outside_the_repository_is_reported_in_full(tmp_path):

@@ -27,9 +27,9 @@ jobs:
           python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-workstream-status.py --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-intent-mapping.py
+          python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-coverage-audit.py --check
           python3 scripts/generate-adapter-matrix.py
-          python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch parity-reference
           python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-global-parity-proof.py

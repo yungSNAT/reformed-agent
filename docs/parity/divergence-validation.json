@@ -1,6 +1,6 @@
 {
-  "divergence_file": "E:\\reformed-finish-wt\\divergence\\docs\\parity\\intentional-divergence.json",
-  "generated_at_utc": "2026-11-09T19:38:14.435572+00:00",
+  "divergence_file": "docs/parity/intentional-divergence.json",
+  "generated_at_utc": "2026-11-10T06:49:54.580462+00:00",
   "items": [
     {
       "errors": [],
@@ -57,38 +57,36 @@
     {
       "errors": [],
       "id": "rust-skills-catalog-governance",
-      "last_reviewed": "2026-07-02",
-      "matched_files": 1074,
+      "last_reviewed": "2026-11-10",
+      "matched_files": 157,
       "matched_sample": [
-        "optional-skills/DESCRIPTION.md",
-        "optional-skills/autonomous-ai-agents/DESCRIPTION.md",
-        "optional-skills/autonomous-ai-agents/antigravity-cli/SKILL.md",
-        "optional-skills/autonomous-ai-agents/antigravity-cli/references/cli-docs.md",
-        "optional-skills/autonomous-ai-agents/blackbox/SKILL.md",
-        "optional-skills/autonomous-ai-agents/grok/SKILL.md",
-        "optional-skills/autonomous-ai-agents/honcho/SKILL.md",
-        "optional-skills/autonomous-ai-agents/openhands/SKILL.md",
-        "optional-skills/blockchain/evm/SKILL.md",
-        "optional-skills/blockchain/evm/scripts/evm_client.py",
-        "optional-skills/blockchain/hyperliquid/SKILL.md",
-        "optional-skills/blockchain/hyperliquid/scripts/hyperliquid_client.py",
-        "optional-skills/blockchain/solana/SKILL.md",
-        "optional-skills/blockchain/solana/scripts/solana_client.py",
-        "optional-skills/communication/DESCRIPTION.md",
-        "optional-skills/communication/one-three-one-rule/SKILL.md",
-        "optional-skills/creative/DESCRIPTION.md",
-        "optional-skills/creative/baoyu-article-illustrator/PORT_NOTES.md",
-        "optional-skills/creative/baoyu-article-illustrator/SKILL.md",
-        "optional-skills/creative/baoyu-article-illustrator/prompts/system.md"
+        "optional-skills/creative/baoyu-comic/PORT_NOTES.md",
+        "optional-skills/creative/baoyu-comic/SKILL.md",
+        "optional-skills/creative/baoyu-comic/references/analysis-framework.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/chalk.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/ink-brush.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/ligne-claire.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/manga.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/minimalist.md",
+        "optional-skills/creative/baoyu-comic/references/art-styles/realistic.md",
+        "optional-skills/creative/baoyu-comic/references/auto-selection.md",
+        "optional-skills/creative/baoyu-comic/references/base-prompt.md",
+        "optional-skills/creative/baoyu-comic/references/character-template.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/cinematic.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/dense.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/four-panel.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/mixed.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/splash.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/standard.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/webtoon.md",
+        "optional-skills/creative/baoyu-comic/references/ohmsha-guide.md"
       ],
-      "overdue": true,
-      "owner": "sheawinkler",
-      "review_date": "2026-10-02",
-      "status": "approved",
+      "overdue": false,
+      "owner": "yungSNAT",
+      "review_date": "2026-12-10",
+      "status": "temporary",
       "ticket": 21,
-      "warnings": [
-        "review_date is overdue"
-      ]
+      "warnings": []
     },
     {
       "errors": [],
@@ -202,20 +200,18 @@
     {
       "errors": [],
       "id": "rust-vertex-provider-plugin-parity",
-      "last_reviewed": "2026-07-02",
+      "last_reviewed": "2026-11-10",
       "matched_files": 2,
       "matched_sample": [
         "plugins/model-providers/vertex/__init__.py",
         "plugins/model-providers/vertex/plugin.yaml"
       ],
-      "overdue": true,
-      "owner": "sheawinkler",
-      "review_date": "2026-10-02",
+      "overdue": false,
+      "owner": "yungSNAT",
+      "review_date": "2027-02-10",
       "status": "approved",
       "ticket": 700,
-      "warnings": [
-        "review_date is overdue"
-      ]
+      "warnings": []
     },
     {
       "errors": [],
@@ -301,10 +297,10 @@
   "summary": {
     "errors": 0,
     "items": 13,
-    "local_paths": 4077,
-    "review_overdue": 2,
+    "local_paths": 4085,
+    "review_overdue": 0,
     "unowned": 0,
     "upstream_paths": 6177,
-    "warnings": 3
+    "warnings": 1
   }
 }
