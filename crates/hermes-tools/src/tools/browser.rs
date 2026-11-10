@@ -424,6 +424,8 @@ impl ToolHandler for BrowserVisionHandler {
                 });
             }
             Err(error) => {
+                // A provider error can quote the request's key.
+                let error = hermes_intelligence::redact_sensitive_text(error);
                 tracing::warn!("browser_vision analysis failed: {error}");
                 result["success"] = json!(false);
                 result["error"] = json!(format!("Error during vision analysis: {error}"));
@@ -624,6 +626,34 @@ mod tests {
             vision["error"],
             "Error during vision analysis: no vision model"
         );
+    }
+
+    struct FailingVision;
+    #[async_trait]
+    impl VisionBackend for FailingVision {
+        async fn analyze(&self, _image_url: &str, _question: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed(
+                "401 Incorrect API key provided: sk-proj-abc123def456ghi789jkl012".into(),
+            ))
+        }
+    }
+
+    #[tokio::test]
+    async fn browser_vision_redacts_the_provider_error() {
+        let vision: Value = serde_json::from_str(
+            &BrowserVisionHandler::new(backend(), Ok(std::sync::Arc::new(FailingVision)))
+                .execute(json!({"instruction": "summarize the page"}))
+                .await
+                .unwrap(),
+        )
+        .unwrap();
+
+        let error = vision["error"].as_str().expect("error");
+        assert!(
+            error.starts_with("Error during vision analysis: "),
+            "{error}"
+        );
+        assert!(!error.contains("def456ghi789jkl012"), "{error}");
     }
 
     #[tokio::test]
