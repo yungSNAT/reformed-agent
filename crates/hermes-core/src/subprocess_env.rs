@@ -4,10 +4,53 @@
 //! passthrough. Non-terminal helper processes should use this module so they do
 //! not blindly inherit high-value operator credentials.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 pub const SUBPROCESS_ENV_FORCE_PREFIX: &str = "_HERMES_FORCE_";
 pub const SUBPROCESS_ENV_PASSTHROUGH_VAR: &str = "HERMES_SUBPROCESS_ENV_PASSTHROUGH";
+
+pub fn normalize_env_passthrough_name(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    if trimmed.is_empty()
+        || !trimmed
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
+    {
+        None
+    } else {
+        Some(trimmed.to_string())
+    }
+}
+
+pub fn parse_subprocess_env_passthrough(value: &str) -> BTreeSet<String> {
+    value
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ':' | ';'))
+        .filter_map(normalize_env_passthrough_name)
+        .collect()
+}
+
+/// `hermes_subprocess_env(false)` plus the keys passed through in
+/// `HERMES_SUBPROCESS_ENV_PASSTHROUGH` and the `_HERMES_FORCE_<KEY>`
+/// overrides, as the terminal tool applies them. For model-facing processes
+/// outside the terminal tool, such as `execute_code`.
+pub fn hermes_subprocess_env_with_passthrough() -> BTreeMap<String, String> {
+    let mut env = hermes_subprocess_env(false);
+    if let Ok(raw) = std::env::var(SUBPROCESS_ENV_PASSTHROUGH_VAR) {
+        for key in parse_subprocess_env_passthrough(&raw) {
+            if let Ok(value) = std::env::var(&key) {
+                env.insert(key, value);
+            }
+        }
+    }
+    for (key, value) in std::env::vars() {
+        if let Some(target) = key.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX) {
+            if !target.is_empty() && should_strip_subprocess_env_key(target, false) {
+                env.insert(target.to_string(), value);
+            }
+        }
+    }
+    env
+}
 
 /// Tier-1 secrets stripped from every managed subprocess, even when provider
 /// credentials are intentionally inherited for a model-driving child.

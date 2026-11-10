@@ -251,6 +251,7 @@ fn resolve_path(input: &str) -> Result<PathBuf, AgentError> {
 }
 
 use hermes_core::subprocess_env::{
+    normalize_env_passthrough_name, parse_subprocess_env_passthrough,
     should_strip_subprocess_env_key, SUBPROCESS_ENV_FORCE_PREFIX, SUBPROCESS_ENV_PASSTHROUGH_VAR,
 };
 #[cfg(unix)]
@@ -271,26 +272,6 @@ const SANE_PATH_ENTRIES: &[&str] = &[
 
 fn should_strip_subprocess_env(key: &str) -> bool {
     should_strip_subprocess_env_key(key, false)
-}
-
-fn normalize_env_passthrough_name(value: &str) -> Option<String> {
-    let trimmed = value.trim();
-    if trimmed.is_empty()
-        || !trimmed
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
-
-fn parse_subprocess_env_passthrough(value: &str) -> BTreeSet<String> {
-    value
-        .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | ':' | ';'))
-        .filter_map(normalize_env_passthrough_name)
-        .collect()
 }
 
 fn subprocess_env_passthrough_set(configured: &[String]) -> BTreeSet<String> {

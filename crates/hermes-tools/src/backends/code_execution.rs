@@ -114,9 +114,10 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
         }
 
         // Model-written code gets the environment without provider keys and
-        // other credentials, as gateway hooks do.
+        // other credentials, except those the user passed through, as the
+        // terminal tool does.
         cmd.env_clear()
-            .envs(hermes_core::subprocess_env::hermes_subprocess_env(false));
+            .envs(hermes_core::subprocess_env::hermes_subprocess_env_with_passthrough());
         apply_code_subprocess_home(&mut cmd);
         cmd.stdin(Stdio::null())
             .stdout(Stdio::piped())
@@ -243,6 +244,31 @@ mod tests {
             .expect("bash should run");
         let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
         assert_eq!(payload["stdout"].as_str().unwrap(), "absent", "{raw}");
+    }
+
+    #[test]
+    fn model_code_sees_credentials_the_user_passed_through() {
+        let _global_env = test_lock::lock();
+        let _key = EnvGuard::set("OPENAI_API_KEY", "sk-canary-passed-through");
+        let _pass = EnvGuard::set("HERMES_SUBPROCESS_ENV_PASSTHROUGH", "OPENAI_API_KEY");
+        let backend = LocalCodeExecutionBackend::default();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let raw = runtime
+            .block_on(backend.execute(
+                "printf '%s' \"${OPENAI_API_KEY:-absent}\"",
+                Some("bash"),
+                Some(5),
+            ))
+            .expect("bash should run");
+        let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
+        assert_eq!(
+            payload["stdout"].as_str().unwrap(),
+            "sk-canary-passed-through",
+            "{raw}"
+        );
     }
 
     struct EnvGuard {
