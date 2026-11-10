@@ -91,7 +91,8 @@ if [[ ! -f "${ALLOWLIST_FILE}" ]]; then
   exit 1
 fi
 
-grep -vE '^\s*(#|$)' "${ALLOWLIST_FILE}" | LC_ALL=C sort -u > "${tmp_allow}"
+# grep exits 1 when the allowlist has no entries, which is the normal state.
+{ grep -vE '^\s*(#|$)' "${ALLOWLIST_FILE}" || true; } | LC_ALL=C sort -u > "${tmp_allow}"
 
 comm -23 "${tmp_seen}" "${tmp_allow}" > "${tmp_new}"
 comm -13 "${tmp_seen}" "${tmp_allow}" > "${tmp_stale}"
