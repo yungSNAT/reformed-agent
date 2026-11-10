@@ -868,16 +868,6 @@ fn setup_memory_provider_target(
 mod mem0_setup_tests {
     use super::*;
     use serde_json::Value;
-    use std::sync::{Mutex, OnceLock};
-
-    static TEST_ENV_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-
-    fn env_test_lock() -> std::sync::MutexGuard<'static, ()> {
-        TEST_ENV_LOCK
-            .get_or_init(|| Mutex::new(()))
-            .lock()
-            .expect("env test lock")
-    }
 
     struct EnvGuard {
         key: &'static str,
@@ -909,7 +899,7 @@ mod mem0_setup_tests {
 
     #[test]
     fn setup_mem0_accepts_self_hosted_host_without_cloud_api_key() {
-        let _guard = env_test_lock();
+        let _guard = crate::test_env_lock::lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let _home = EnvGuard::set("HERMES_HOME", tmp.path());
         let _api = EnvGuard::remove("MEM0_API_KEY");
@@ -932,7 +922,7 @@ mod mem0_setup_tests {
 
     #[test]
     fn setup_mem0_selfhosted_flags_write_host_config_and_secret_env() {
-        let _guard = env_test_lock();
+        let _guard = crate::test_env_lock::lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let _home = EnvGuard::set("HERMES_HOME", tmp.path());
         let _api = EnvGuard::remove("MEM0_API_KEY");
@@ -964,7 +954,7 @@ mod mem0_setup_tests {
 
     #[test]
     fn setup_mem0_dry_run_does_not_write_config_or_secret() {
-        let _guard = env_test_lock();
+        let _guard = crate::test_env_lock::lock();
         let tmp = tempfile::tempdir().expect("tempdir");
         let _home = EnvGuard::set("HERMES_HOME", tmp.path());
         let _api = EnvGuard::remove("MEM0_API_KEY");
