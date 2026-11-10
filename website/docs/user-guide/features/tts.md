@@ -265,6 +265,13 @@ On Unix, Hermes shell-quotes each placeholder value for its surrounding context 
 
 On Windows, Hermes splits `command` into an executable and arguments before substituting placeholders. Use forward slashes or single quotes in literal Windows paths in the template. Move pipes, redirection or batch commands into a helper script and invoke its interpreter, such as `python C:/tts/run.py {input_path} {output_path}`. Pass placeholders as arguments to the script.
 
+The executable must be a native `.exe` program:
+
+- A name without an extension gets `.exe` appended: `piper` runs `piper.exe`.
+- Any other extension is refused, including `.cmd` and `.bat` shims such as `npx.cmd`, and so is `cmd.exe`. Invoke the tool's own `.exe` or an interpreter such as `node.exe` or `python.exe` instead.
+- Placeholders are substituted in the arguments only, never in the executable.
+- An unquoted word that starts with `#` begins a comment: Hermes drops it and the rest of the line. Quote such a word, as in `'#fff'`.
+
 | Placeholder      | Meaning                                              |
 |------------------|------------------------------------------------------|
 | `{input_path}`   | Path to the temp UTF-8 text file Hermes wrote        |
