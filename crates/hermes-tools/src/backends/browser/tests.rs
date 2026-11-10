@@ -638,20 +638,6 @@ fn browserbase_payload_matches_provider_feature_knobs() {
 }
 
 #[test]
-fn browser_vision_payload_is_llm_content_independent() {
-    let raw = browser_vision_payload("inspect", json!({"data": "png-bytes"}));
-    let value: Value = serde_json::from_str(&raw).expect("vision payload json");
-
-    assert_eq!(value["status"], "vision_analysis");
-    assert_eq!(value["instruction"], "inspect");
-    assert_eq!(value["screenshot"]["data"], "png-bytes");
-    assert_eq!(
-        value["note"],
-        "Screenshot captured; vision analysis requires LLM integration"
-    );
-}
-
-#[test]
 fn browser_backend_choice_prefers_explicit_provider_then_browserbase_creds() {
     let _scope = EnvScope::new();
     assert_eq!(browser_backend_choice_from_env(), "cdp");
@@ -1044,31 +1030,39 @@ async fn cdp_click_reports_missing_element() {
 }
 
 #[tokio::test]
-async fn cdp_vision_returns_captured_screenshot_data() {
+async fn cdp_screenshot_saves_png_under_hermes_cache() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
     let (http, mut commands) = spawn_local_cdp(answer_all(json!({"data": "iVBORw0KGgo="}))).await;
     let backend = CdpBrowserBackend::new(http.uri());
 
-    let raw = backend.vision("describe").await.expect("screenshot");
-    let value: Value = serde_json::from_str(&raw).expect("vision json");
+    let raw = backend.screenshot().await.expect("screenshot");
+    let value: Value = serde_json::from_str(&raw).expect("screenshot json");
 
-    assert_eq!(value["screenshot"]["data"], "iVBORw0KGgo=");
+    let path = std::path::PathBuf::from(value["screenshot_path"].as_str().expect("path"));
+    assert!(path.starts_with(home.path().join("cache").join("screenshots")));
+    assert_eq!(std::fs::read(&path).expect("saved"), b"\x89PNG\r\n\x1a\n");
+    assert!(!raw.contains("iVBORw0KGgo="));
     let (_, command) = commands.recv().await.expect("command reached the browser");
     assert_eq!(command["method"], "Page.captureScreenshot");
 }
 
 #[tokio::test]
-async fn cdp_vision_accepts_a_reply_larger_than_16_mib() {
+async fn cdp_screenshot_accepts_a_reply_larger_than_16_mib() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
     let data = "A".repeat(17 * 1024 * 1024);
     let (http, _commands) = spawn_local_cdp(answer_all(json!({"data": data}))).await;
     let backend = CdpBrowserBackend::new(http.uri());
 
-    let raw = backend.vision("describe").await.expect("large screenshot");
-    let value: Value = serde_json::from_str(&raw).expect("vision json");
+    let raw = backend.screenshot().await.expect("large screenshot");
+    let value: Value = serde_json::from_str(&raw).expect("screenshot json");
 
-    assert_eq!(
-        value["screenshot"]["data"].as_str().map(str::len),
-        Some(data.len())
-    );
+    let path = value["screenshot_path"].as_str().expect("path");
+    let saved = std::fs::metadata(path).expect("saved screenshot").len();
+    assert_eq!(saved, (data.len() / 4 * 3) as u64);
 }
 
 #[tokio::test]
@@ -1225,6 +1219,9 @@ async fn vendor_api(route: &str, cdp_url: String) -> wiremock::MockServer {
 
 #[tokio::test]
 async fn browserbase_commands_share_one_attached_connection() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
     let (ws_addr, mut commands) =
         spawn_cdp_websocket(remote_browser(|command| match command["method"].as_str() {
             Some("Page.captureScreenshot") => json!({"data": "iVBORw0KGgo="}),
@@ -1236,11 +1233,12 @@ async fn browserbase_commands_share_one_attached_connection() {
     cfg.base_url = api.uri();
     let backend = BrowserbaseBrowserBackend::new(cfg);
 
-    let raw = backend.vision("describe").await.expect("screenshot");
+    let raw = backend.screenshot().await.expect("screenshot");
     backend.snapshot().await.expect("snapshot");
 
-    let value: Value = serde_json::from_str(&raw).expect("vision json");
-    assert_eq!(value["screenshot"]["data"], "iVBORw0KGgo=");
+    let value: Value = serde_json::from_str(&raw).expect("screenshot json");
+    let path = value["screenshot_path"].as_str().expect("path");
+    assert_eq!(std::fs::read(path).expect("saved"), b"\x89PNG\r\n\x1a\n");
     let mut summary = Vec::new();
     while let Ok((index, command)) = commands.try_recv() {
         assert_eq!(index, 0, "every command uses the first connection");
@@ -1508,4 +1506,105 @@ async fn browser_use_failed_discovery_counts_as_unavailable() {
     assert!(reason.contains("/json/version"), "{reason}");
     assert_eq!(drain_commands(&mut local_commands).len(), 1);
     discovery.verify().await;
+}
+
+/// A PNG signature: enough for the tests to check the saved bytes.
+const TEST_PNG: &[u8] = b"\x89PNG\r\n\x1a\nfixture";
+
+/// Vision backend stub that records what it was asked and answers `answer`.
+struct StubVision {
+    answer: &'static str,
+    seen: std::sync::Mutex<Vec<(String, String, Vec<u8>)>>,
+}
+
+#[async_trait]
+impl crate::tools::vision::VisionBackend for StubVision {
+    async fn analyze(&self, image_url: &str, question: &str) -> Result<String, ToolError> {
+        let bytes = std::fs::read(image_url).expect("screenshot exists when analysed");
+        self.seen.lock().expect("stub lock").push((
+            image_url.to_string(),
+            question.to_string(),
+            bytes,
+        ));
+        Ok(self.answer.to_string())
+    }
+}
+
+fn vision_handler(
+    backend: Arc<dyn BrowserBackend>,
+    vision: Result<Arc<dyn crate::tools::vision::VisionBackend>, String>,
+) -> crate::tools::browser::BrowserVisionHandler {
+    crate::tools::browser::BrowserVisionHandler::new(backend, vision)
+}
+
+/// Run `browser_vision` against a local fixture whose screenshot is `TEST_PNG`.
+async fn run_browser_vision(
+    vision: Result<Arc<dyn crate::tools::vision::VisionBackend>, String>,
+) -> (String, Value) {
+    use hermes_core::ToolHandler;
+
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, TEST_PNG);
+    let (http, _commands) = spawn_local_cdp(answer_all(json!({"data": encoded}))).await;
+    let handler = vision_handler(Arc::new(CdpBrowserBackend::new(http.uri())), vision);
+    let raw = handler
+        .execute(json!({"instruction": "Is there a login form?"}))
+        .await
+        .expect("browser_vision result");
+    let value: Value = serde_json::from_str(&raw).expect("vision json");
+    (raw, value)
+}
+
+#[tokio::test]
+async fn browser_vision_returns_analysis_and_saved_screenshot_path() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
+    let stub = Arc::new(StubVision {
+        answer: "A login form with two fields.",
+        seen: std::sync::Mutex::new(Vec::new()),
+    });
+
+    let (raw, value) = run_browser_vision(Ok(stub.clone())).await;
+
+    assert_eq!(value["success"], true, "{raw}");
+    assert_eq!(value["analysis"], "A login form with two fields.");
+    let path = std::path::PathBuf::from(value["screenshot_path"].as_str().expect("path"));
+    assert!(path.starts_with(home.path().join("cache").join("screenshots")));
+    assert!(path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.starts_with("browser_screenshot_") && name.ends_with(".png")));
+    assert_eq!(std::fs::read(&path).expect("saved screenshot"), TEST_PNG);
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, TEST_PNG);
+    assert!(!raw.contains(&encoded));
+    let seen = stub.seen.lock().expect("stub lock");
+    assert_eq!(seen.len(), 1);
+    assert_eq!(std::path::Path::new(&seen[0].0), path);
+    assert!(seen[0].1.contains("Is there a login form?"));
+    assert_eq!(seen[0].2, TEST_PNG);
+}
+
+#[tokio::test]
+async fn browser_vision_without_vision_model_returns_path_and_note() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
+
+    let (raw, value) = run_browser_vision(Err(
+        "No API key configured for vision provider `openai`".to_string(),
+    ))
+    .await;
+
+    assert_eq!(value["success"], false, "{raw}");
+    assert!(value["error"]
+        .as_str()
+        .is_some_and(|error| error.contains("No API key configured for vision provider")));
+    assert!(value["note"]
+        .as_str()
+        .is_some_and(|note| note.contains("MEDIA:<path>")));
+    let path = std::path::PathBuf::from(value["screenshot_path"].as_str().expect("path"));
+    assert_eq!(std::fs::read(&path).expect("saved screenshot"), TEST_PNG);
+    let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, TEST_PNG);
+    assert!(!raw.contains(&encoded));
+    assert!(!raw.contains("requires LLM integration"));
 }

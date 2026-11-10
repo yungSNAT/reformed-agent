@@ -595,6 +595,11 @@ fn register_builtin_tools_with_data_dir(
             "browser",
             Arc::new(crate::tools::browser::BrowserVisionHandler::new(
                 browser_backend.clone(),
+                crate::backends::vision::OpenAiVisionBackend::from_env()
+                    .map(|backend| {
+                        Arc::new(backend) as Arc<dyn crate::tools::vision::VisionBackend>
+                    })
+                    .map_err(|err| err.to_string()),
             )),
             "👁️",
             vec![],

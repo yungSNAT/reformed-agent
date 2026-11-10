@@ -559,14 +559,23 @@ fn yaml_gateway_route(value: &serde_yaml::Value) -> bool {
     }
 }
 
-fn browser_vision_payload(instruction: &str, screenshot: Value) -> String {
-    json!({
-        "status": "vision_analysis",
-        "instruction": instruction,
-        "screenshot": screenshot,
-        "note": "Screenshot captured; vision analysis requires LLM integration"
-    })
-    .to_string()
+/// Save a browser screenshot under `cache/screenshots` in the Hermes home,
+/// with upstream's file name, and return its path.
+async fn save_browser_screenshot(png: &[u8]) -> Result<std::path::PathBuf, ToolError> {
+    let dir = hermes_config::hermes_home()
+        .join("cache")
+        .join("screenshots");
+    tokio::fs::create_dir_all(&dir).await.map_err(|e| {
+        ToolError::ExecutionFailed(format!("Failed to create {}: {e}", dir.display()))
+    })?;
+    let path = dir.join(format!(
+        "browser_screenshot_{}.png",
+        Uuid::new_v4().simple()
+    ));
+    tokio::fs::write(&path, png).await.map_err(|e| {
+        ToolError::ExecutionFailed(format!("Failed to save {}: {e}", path.display()))
+    })?;
+    Ok(path)
 }
 
 /// Browser backend using Chrome DevTools Protocol.
@@ -634,7 +643,7 @@ impl BrowserBackend for UnavailableBrowserBackend {
         Err(self.unavailable())
     }
 
-    async fn vision(&self, _instruction: &str) -> Result<String, ToolError> {
+    async fn screenshot(&self) -> Result<String, ToolError> {
         Err(self.unavailable())
     }
 
@@ -717,13 +726,10 @@ impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBr
         }
     }
 
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
+    async fn screenshot(&self) -> Result<String, ToolError> {
         match cloud_connect(&self.cloud).await {
-            Ok(()) => self.cloud.vision(instruction).await,
-            Err(cloud_err) => {
-                self.fall_back(cloud_err, self.local.vision(instruction))
-                    .await
-            }
+            Ok(()) => self.cloud.screenshot().await,
+            Err(cloud_err) => self.fall_back(cloud_err, self.local.screenshot()).await,
         }
     }
 

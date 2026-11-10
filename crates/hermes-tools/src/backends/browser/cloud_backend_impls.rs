@@ -24,8 +24,8 @@ impl BrowserBackend for BrowserbaseBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         cdp_get_images(self, selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        cdp_vision(self, instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        cdp_screenshot(self).await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         cdp_console(self, action).await
@@ -58,8 +58,8 @@ impl BrowserBackend for BrowserUseBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         cdp_get_images(self, selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        cdp_vision(self, instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        cdp_screenshot(self).await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         cdp_console(self, action).await
@@ -92,8 +92,8 @@ impl BrowserBackend for FirecrawlBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         cdp_get_images(self, selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        cdp_vision(self, instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        cdp_screenshot(self).await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         cdp_console(self, action).await

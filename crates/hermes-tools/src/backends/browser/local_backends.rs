@@ -125,8 +125,8 @@ impl BrowserBackend for CdpBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         cdp_get_images(self, selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        cdp_vision(self, instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        cdp_screenshot(self).await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         cdp_console(self, action).await
@@ -190,8 +190,8 @@ impl BrowserBackend for CamoFoxBrowserBackend {
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
         self.inner.get_images(selector).await
     }
-    async fn vision(&self, instruction: &str) -> Result<String, ToolError> {
-        self.inner.vision(instruction).await
+    async fn screenshot(&self) -> Result<String, ToolError> {
+        self.inner.screenshot().await
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         self.inner.console(action).await

@@ -605,11 +605,21 @@ async fn cdp_get_images<C: CdpChannel>(
     Ok(json!({"status": "images_found", "selector": sel, "cdp": result}).to_string())
 }
 
-async fn cdp_vision<C: CdpChannel>(channel: &C, instruction: &str) -> Result<String, ToolError> {
+async fn cdp_screenshot<C: CdpChannel>(channel: &C) -> Result<String, ToolError> {
     let result = channel
         .cdp_command("Page.captureScreenshot", json!({"format": "png"}))
         .await?;
-    Ok(browser_vision_payload(instruction, result))
+    let data = result["data"].as_str().ok_or_else(|| {
+        ToolError::ExecutionFailed("Page.captureScreenshot returned no data".into())
+    })?;
+    let png =
+        base64::Engine::decode(&base64::engine::general_purpose::STANDARD, data).map_err(|e| {
+            ToolError::ExecutionFailed(format!(
+                "Page.captureScreenshot returned invalid base64: {e}"
+            ))
+        })?;
+    let path = save_browser_screenshot(&png).await?;
+    Ok(json!({"status": "screenshot_captured", "screenshot_path": path}).to_string())
 }
 
 async fn cdp_console<C: CdpChannel>(channel: &C, action: &str) -> Result<String, ToolError> {
