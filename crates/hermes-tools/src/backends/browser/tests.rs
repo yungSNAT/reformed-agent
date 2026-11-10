@@ -809,6 +809,17 @@ async fn spawn_cdp_websocket(
     std::net::SocketAddr,
     tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
 ) {
+    spawn_cdp_websocket_recording(responder, |_| true).await
+}
+
+/// [`spawn_cdp_websocket`], recording only the commands `record` accepts.
+async fn spawn_cdp_websocket_recording(
+    responder: CdpResponder,
+    record: fn(&Value) -> bool,
+) -> (
+    std::net::SocketAddr,
+    tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) {
     use futures::{SinkExt, StreamExt};
     use tokio_tungstenite::tungstenite::Message;
 
@@ -835,7 +846,9 @@ async fn spawn_cdp_websocket(
                         _ => continue,
                     };
                     let command: Value = serde_json::from_str(text.as_str()).expect("command json");
-                    let _ = command_tx.send((index, command.clone()));
+                    if record(&command) {
+                        let _ = command_tx.send((index, command.clone()));
+                    }
                     let Some(frames) = responder(&command) else {
                         continue;
                     };
@@ -859,10 +872,11 @@ async fn spawn_cdp_websocket(
     (addr, command_rx)
 }
 
-/// Loopback stand-in for a local Chrome: `/json` lists a service worker
-/// before the page, as Chrome can, and the page's WebSocket uses `responder`.
+/// Loopback stand-in for a local Chrome: `/json/version` gives the browser
+/// WebSocket, whose first page answers through `page` once attached. Only
+/// the page's commands are recorded.
 async fn spawn_local_cdp(
-    responder: CdpResponder,
+    page: CdpResponder,
 ) -> (
     wiremock::MockServer,
     tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
@@ -870,17 +884,38 @@ async fn spawn_local_cdp(
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let (ws_addr, commands) = spawn_cdp_websocket(responder).await;
+    let (ws_addr, commands) = spawn_cdp_websocket_recording(attachable_browser(page), |command| {
+        command.get("sessionId").is_some()
+    })
+    .await;
     let http = MockServer::start().await;
     Mock::given(method("GET"))
-        .and(path("/json"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"type": "service_worker", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/SW"},
-            {"type": "page", "webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/page/P1")},
-        ])))
+        .and(path("/json/version"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(
+            json!({"webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/browser/B")}),
+        ))
         .mount(&http)
         .await;
     (http, commands)
+}
+
+/// A browser endpoint that lists a service worker before its first page, as
+/// Chrome can, attaches to that page as session `S1` and passes every other
+/// command to `page`.
+fn attachable_browser(page: CdpResponder) -> CdpResponder {
+    std::sync::Arc::new(move |command: &Value| match command["method"].as_str() {
+        Some("Target.getTargets") => Some(vec![cdp_result(
+            command,
+            json!({"targetInfos": [
+                {"targetId": "SW", "type": "service_worker"},
+                {"targetId": "P1", "type": "page"},
+            ]}),
+        )]),
+        Some("Target.attachToTarget") => {
+            Some(vec![cdp_result(command, json!({"sessionId": "S1"}))])
+        }
+        _ => page(command),
+    })
 }
 
 /// Every command recorded so far, without its connection index.
@@ -934,25 +969,120 @@ async fn cdp_command_maps_protocol_error_to_tool_error() {
 
 #[tokio::test]
 async fn cdp_command_without_page_target_fails() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-
-    let http = MockServer::start().await;
-    Mock::given(method("GET"))
-        .and(path("/json"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!([
-            {"type": "service_worker", "webSocketDebuggerUrl": "ws://127.0.0.1:1/devtools/page/SW"},
-        ])))
-        .mount(&http)
-        .await;
-    let backend = CdpBrowserBackend::new(http.uri());
+    let (ws_addr, _commands) = spawn_cdp_websocket(std::sync::Arc::new(|command: &Value| {
+        Some(vec![cdp_result(
+            command,
+            json!({"targetInfos": [{"targetId": "SW", "type": "service_worker"}]}),
+        )])
+    }))
+    .await;
+    let backend = CdpBrowserBackend::new(format!("ws://{ws_addr}/devtools/browser/B"));
 
     let err = backend
         .cdp_command("Runtime.evaluate", json!({"expression": "1"}))
         .await
         .expect_err("no page target");
 
-    assert!(err.to_string().contains("No Chrome page target found"));
+    assert!(err.to_string().contains("has no page target"), "{err}");
+}
+
+/// A loopback address with nothing listening on it.
+async fn closed_addr() -> std::net::SocketAddr {
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    listener.local_addr().expect("addr")
+}
+
+/// Fail when `rendered` quotes the user info or query of a CDP endpoint.
+fn assert_no_endpoint_secret(rendered: &str) {
+    for secret in ["cdp-user", "cdp-pass", "cdp-secret"] {
+        assert!(!rendered.contains(secret), "{rendered}");
+    }
+}
+
+#[tokio::test]
+async fn local_cdp_http_endpoint_secret_stays_out_of_errors() {
+    let closed = closed_addr().await;
+    let backend = CdpBrowserBackend::new(format!(
+        "http://cdp-user:cdp-pass@{closed}/?token=cdp-secret"
+    ));
+    let err = backend
+        .navigate("https://example.com")
+        .await
+        .expect_err("closed CDP endpoint");
+    let rendered = err.to_string();
+    assert!(rendered.contains(&format!("http://{closed}")), "{rendered}");
+    assert_no_endpoint_secret(&rendered);
+
+    let silent = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let silent_addr = silent.local_addr().expect("addr");
+    tokio::spawn(async move {
+        let (_stream, _) = silent.accept().await.expect("accept");
+        tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+    });
+    let backend = CdpBrowserBackend::new(format!(
+        "http://cdp-user:cdp-pass@{silent_addr}/?token=cdp-secret"
+    ));
+    let err = backend
+        .cdp_call(
+            "Runtime.evaluate",
+            json!({"expression": "1"}),
+            &[],
+            std::time::Duration::from_millis(25),
+        )
+        .await
+        .expect_err("timeout");
+    let rendered = err.to_string();
+    assert!(
+        rendered.contains(&format!("http://{silent_addr}")),
+        "{rendered}"
+    );
+    assert_no_endpoint_secret(&rendered);
+}
+
+#[tokio::test]
+async fn local_cdp_websocket_endpoint_secret_stays_out_of_errors() {
+    let closed = closed_addr().await;
+    let backend = CdpBrowserBackend::new(format!(
+        "ws://cdp-user:cdp-pass@{closed}/devtools/browser/B?token=cdp-secret"
+    ));
+
+    let err = backend.snapshot().await.expect_err("closed CDP endpoint");
+
+    let rendered = err.to_string();
+    assert!(rendered.contains(&format!("ws://{closed}")), "{rendered}");
+    assert_no_endpoint_secret(&rendered);
+}
+
+#[tokio::test]
+async fn local_cdp_websocket_endpoint_runs_commands_on_the_first_page() {
+    let (ws_addr, mut commands) = spawn_cdp_websocket(remote_browser(
+        |_| json!({"result": {"type": "number", "value": 2}}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(format!("ws://{ws_addr}/devtools/browser/B"));
+
+    let result = backend
+        .cdp_command("Runtime.evaluate", json!({"expression": "1 + 1"}))
+        .await
+        .expect("cdp result over a WebSocket endpoint");
+
+    assert_eq!(result, json!({"result": {"type": "number", "value": 2}}));
+    let sent: Vec<(Value, Value)> = drain_commands(&mut commands)
+        .into_iter()
+        .map(|command| (command["method"].clone(), command["sessionId"].clone()))
+        .collect();
+    assert_eq!(
+        sent,
+        vec![
+            (json!("Target.getTargets"), Value::Null),
+            (json!("Target.attachToTarget"), Value::Null),
+            (json!("Runtime.evaluate"), json!("S1")),
+        ]
+    );
 }
 
 #[tokio::test]
@@ -1136,10 +1266,12 @@ async fn cdp_console_read_returns_replayed_messages() {
         if command["method"] == "Runtime.enable" {
             frames.push(json!({
                 "method": "Runtime.executionContextCreated",
+                "sessionId": command["sessionId"],
                 "params": {"context": {"id": 1}},
             }));
             frames.push(json!({
                 "method": "Runtime.consoleAPICalled",
+                "sessionId": command["sessionId"],
                 "params": {
                     "type": "log",
                     "args": [{"type": "string", "value": "hello"}, {"type": "number", "value": 2}],
@@ -1147,6 +1279,7 @@ async fn cdp_console_read_returns_replayed_messages() {
             }));
             frames.push(json!({
                 "method": "Runtime.exceptionThrown",
+                "sessionId": command["sessionId"],
                 "params": {
                     "exceptionDetails": {"text": "Uncaught", "exception": {"description": "Error: boom"}},
                 },
@@ -1182,23 +1315,15 @@ async fn cdp_console_read_returns_replayed_messages() {
 /// A remote browser endpoint with one page target that answers through its
 /// flattened session; `page` gives each page command's result.
 fn remote_browser(page: fn(&Value) -> Value) -> CdpResponder {
-    std::sync::Arc::new(move |command: &Value| {
-        let result = match command["method"].as_str() {
-            Some("Target.getTargets") => json!({"targetInfos": [
-                {"targetId": "SW", "type": "service_worker"},
-                {"targetId": "P1", "type": "page"},
-            ]}),
-            Some("Target.attachToTarget") => json!({"sessionId": "S1"}),
-            _ if command["sessionId"] == "S1" => page(command),
-            _ => {
-                return Some(vec![json!({
-                    "id": command["id"],
-                    "error": {"code": -32_601, "message": "not attached to a page"},
-                })])
-            }
-        };
-        Some(vec![cdp_result(command, result)])
-    })
+    attachable_browser(std::sync::Arc::new(move |command: &Value| {
+        if command["sessionId"] == "S1" {
+            return Some(vec![cdp_result(command, page(command))]);
+        }
+        Some(vec![json!({
+            "id": command["id"],
+            "error": {"code": -32_601, "message": "not attached to a page"},
+        })])
+    }))
 }
 
 /// Vendor API stub that creates one session whose CDP URL is `cdp_url`.

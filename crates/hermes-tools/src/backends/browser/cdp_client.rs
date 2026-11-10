@@ -69,7 +69,7 @@ impl CdpConnection {
             .flatten()
             .find(|target| target["type"] == "page")
             .and_then(|target| target["targetId"].as_str())
-            .ok_or_else(|| CdpFailure::Lost("The remote browser has no page target".into()))?
+            .ok_or_else(|| CdpFailure::Lost("The browser has no page target".into()))?
             .to_string();
         let (attached, _) = self
             .call(

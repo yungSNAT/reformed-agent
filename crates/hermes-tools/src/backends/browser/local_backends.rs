@@ -33,39 +33,16 @@ impl CdpBrowserBackend {
         Self::new(endpoint)
     }
 
-    /// Send one CDP command to the first page target. Each call opens its own
-    /// WebSocket to the page; a local Chrome keeps the page whether or not a
-    /// client is connected, so no state has to outlive a call.
+    /// Send one CDP command to the browser's first page. Each call opens its
+    /// own WebSocket and attaches to the page; a local Chrome keeps the page
+    /// whether or not a client is connected, so no state has to outlive a call.
     async fn page_call(
         &self,
         method: &str,
         params: Value,
         collect: &[&str],
     ) -> Result<(Value, Vec<Value>), ToolError> {
-        let targets_resp = self
-            .client
-            .get(format!("{}/json", self.endpoint))
-            .send()
-            .await
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!(
-                    "Failed to connect to Chrome CDP at {}: {}",
-                    self.endpoint, e
-                ))
-            })?;
-
-        let targets: Vec<Value> = targets_resp.json().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to parse CDP targets: {}", e))
-        })?;
-
-        // Chrome also lists service workers, iframes and extension pages here.
-        let ws_url = targets
-            .iter()
-            .filter(|t| t.get("type").and_then(Value::as_str) == Some("page"))
-            .find_map(|t| t.get("webSocketDebuggerUrl").and_then(Value::as_str))
-            .ok_or_else(|| ToolError::ExecutionFailed("No Chrome page target found. Is Chrome running with --remote-debugging-port=9222?".into()))?;
-
-        let mut connection = CdpConnection::open(ws_url)
+        let mut connection = CdpConnection::open_attached(&self.client, &self.endpoint)
             .await
             .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
         let outcome = connection.call(method, params, collect).await;

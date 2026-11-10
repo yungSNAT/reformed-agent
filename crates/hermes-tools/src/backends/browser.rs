@@ -261,10 +261,21 @@ fn browser_cdp_hint(method: &str, detail: &str) -> Vec<&'static str> {
     hints
 }
 
+/// Scheme, host and port of a CDP endpoint. Messages that reach the model and
+/// the logs print only these: the endpoint's user info, path or query can carry
+/// a key.
+fn cdp_endpoint_origin(endpoint: &str) -> String {
+    match Url::parse(endpoint.trim()).map(|url| url.origin()) {
+        Ok(origin) if origin.is_tuple() => origin.ascii_serialization(),
+        _ => "the configured CDP endpoint".to_string(),
+    }
+}
+
 fn format_cdp_timeout_error(method: &str, endpoint: &str, timeout_duration: Duration) -> String {
     let mut parts = vec![format!(
-        "Browser CDP command '{method}' timed out after {} while contacting {endpoint}.",
-        duration_label(timeout_duration)
+        "Browser CDP command '{method}' timed out after {} while contacting {}.",
+        duration_label(timeout_duration),
+        cdp_endpoint_origin(endpoint)
     )];
     parts.extend(browser_cdp_hint(method, "").into_iter().map(str::to_string));
     parts.join("\n")
@@ -283,7 +294,8 @@ fn tool_error_message(err: ToolError) -> String {
 fn format_cdp_command_error(method: &str, endpoint: &str, err: ToolError) -> ToolError {
     let detail = tool_error_message(err);
     let mut parts = vec![format!(
-        "Browser CDP command '{method}' failed while contacting {endpoint}: {detail}"
+        "Browser CDP command '{method}' failed while contacting {}: {detail}",
+        cdp_endpoint_origin(endpoint)
     )];
     parts.extend(
         browser_cdp_hint(method, &detail)
@@ -581,7 +593,8 @@ async fn save_browser_screenshot(png: &[u8]) -> Result<std::path::PathBuf, ToolE
 /// Browser backend using Chrome DevTools Protocol.
 /// Connects to Chrome via WebSocket for automation.
 pub struct CdpBrowserBackend {
-    /// CDP WebSocket endpoint URL (e.g., ws://localhost:9222/devtools/page/...)
+    /// DevTools endpoint: an HTTP discovery URL (`http://localhost:9222`), a
+    /// bare `ws://host:port` or a browser WebSocket URL.
     endpoint: String,
     client: reqwest::Client,
     first_navigation: AtomicBool,
