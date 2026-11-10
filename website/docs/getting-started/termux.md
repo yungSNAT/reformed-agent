@@ -10,10 +10,16 @@ Hermes Agent Ultra can run as a phone-native Rust CLI through
 [Termux](https://termux.dev/). The supported path is the same POSIX installer
 used on Linux and macOS; on Termux it installs binaries into `$PREFIX/bin`.
 
-## One-line Installer
+## Installer
+
+This fork has published no release yet, so the installer builds from source
+and must run from a checkout with Rust installed. Install the packages listed
+under [Manual Source Build](#manual-source-build) first, then run:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 ```
 
 The installer detects Termux and:

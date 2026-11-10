@@ -210,9 +210,10 @@ def emit_llms_index() -> str:
     )
     lines.append("")
     lines.append(
-        "Install: `curl -fsSL https://raw.githubusercontent.com/sheawinkler/"
-        "hermes-agent-ultra/main/scripts/install.sh | bash`  "
-        "(Linux, macOS, WSL2, Termux)"
+        "Install from source (no release yet; needs Git and a Rust toolchain): "
+        "`cargo install --git https://github.com/yungSNAT/reformed-agent hermes-cli "
+        "--locked --bin hermes-agent-ultra --bin hermes-ultra`  "
+        "(Linux, macOS, WSL2)"
     )
     lines.append("")
     lines.append("Repo: https://github.com/yungSNAT/reformed-agent")

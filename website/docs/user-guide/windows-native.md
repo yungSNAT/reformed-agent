@@ -9,10 +9,14 @@ sidebar_position: 3
 
 Hermes Agent Ultra's supported Windows path is **WSL2**. Install Ubuntu or
 another WSL2 distribution, then run the normal POSIX installer inside the Linux
-shell:
+shell. This fork has published no release yet, so the installer builds from
+source and must run from a checkout with Git and a Rust toolchain installed in
+WSL2:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 source ~/.bashrc
 hermes-ultra
 ```

@@ -6,14 +6,19 @@ description: "Install Hermes Agent Ultra on Linux, macOS, WSL2, or Android via T
 
 # Installation
 
-Get Hermes Agent Ultra up and running in under two minutes with the one-line installer.
+This fork has published no release yet, so installing means building from
+source. You need Git and a Rust toolchain (see [Prerequisites](#prerequisites)).
 
 ## Quick Install
 
 ### Linux / macOS / WSL2 / Android (Termux)
 
+Run the installer from a checkout:
+
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash
+git clone https://github.com/yungSNAT/reformed-agent.git
+cd reformed-agent
+bash scripts/install.sh
 ```
 
 That installs `hermes-agent-ultra` plus the shorter `hermes-ultra` command.
@@ -30,20 +35,20 @@ hermes-ultra setup
 Or opt into setup during install:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.sh | bash -s -- --setup
+bash scripts/install.sh --setup
 ```
 
 :::tip Windows users
 Hermes Agent Ultra does not ship the upstream Python PowerShell installer.
-Use WSL2 and run the POSIX installer above, or install from source with Rust
-using the Cargo command below.
+Use WSL2 and run the POSIX installer above from a checkout, or install from
+source with Rust using the Cargo command below.
 :::
 
 ### What the Installer Does
 
-The installer prefers the published GitHub Release binary for your platform. If
-no matching release asset is available, it falls back to a source build with
-Cargo. It then:
+The installer looks for a published GitHub Release binary for your platform
+first. With no release asset available, it builds from source with Cargo, which
+works only when run from a checkout with `cargo` on your PATH. It then:
 
 - installs the canonical `hermes-agent-ultra` binary
 - creates the `hermes-ultra` symlink
@@ -59,7 +64,7 @@ normal user, root, or Termux:
 | Installer | Binary location | Primary command | Data directory |
 |---|---|---|---|
 | Per-user (normal) | `~/.local/bin/hermes-agent-ultra` | `~/.local/bin/hermes-ultra` | `~/.hermes/` |
-| Root-mode (`sudo curl … \| sudo bash`) | `/usr/local/bin/hermes-agent-ultra` | `/usr/local/bin/hermes-ultra` | `/root/.hermes/` or `$HERMES_HOME` |
+| Root-mode (installer run as root) | `/usr/local/bin/hermes-agent-ultra` | `/usr/local/bin/hermes-ultra` | `/root/.hermes/` or `$HERMES_HOME` |
 | Termux | `$PREFIX/bin/hermes-agent-ultra` | `$PREFIX/bin/hermes-ultra` | `~/.hermes/` |
 
 Set `HERMES_INSTALL_DIR` or pass `--dir` to choose a different binary
@@ -89,13 +94,13 @@ hermes-ultra setup          # Or run the full setup wizard to configure everythi
 
 ## Prerequisites
 
-For release-asset installs, the POSIX installer only needs `curl`, `tar`, and a
-normal shell environment. For source-build fallback, install the Rust toolchain
-and Git first.
+Every install currently builds from source, so install the Rust toolchain and
+Git first. In a checkout, rustup uses the toolchain pinned in
+`rust-toolchain.toml`.
 
 :::info
 Hermes Agent Ultra is Rust-first. Do not install the app from PyPI; use the
-release installer or Cargo source install.
+installer from a checkout or the Cargo source install.
 :::
 
 :::tip Nix users
