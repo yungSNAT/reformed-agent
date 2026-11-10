@@ -1044,6 +1044,35 @@ async fn local_cdp_http_endpoint_secret_stays_out_of_errors() {
 }
 
 #[tokio::test]
+async fn local_cdp_http_error_does_not_echo_reason_phrase() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind");
+    let address = listener.local_addr().expect("address");
+    tokio::spawn(async move {
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut request = [0; 1024];
+        let _ = stream.read(&mut request).await.expect("read request");
+        stream
+            .write_all(b"HTTP/1.1 401 Unauthorized token=cdp-secret\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .await
+            .expect("write response");
+    });
+    let backend = CdpBrowserBackend::new(format!("http://{address}/?token=cdp-secret"));
+
+    let error = backend
+        .snapshot()
+        .await
+        .expect_err("HTTP error")
+        .to_string();
+
+    assert!(error.contains("401"), "{error}");
+    assert_no_endpoint_secret(&error);
+}
+
+#[tokio::test]
 async fn local_cdp_websocket_endpoint_secret_stays_out_of_errors() {
     let closed = closed_addr().await;
     let backend = CdpBrowserBackend::new(format!(
@@ -1577,6 +1606,82 @@ async fn cloud_lost_page_session_reconnects_on_the_next_action() {
     assert_eq!(page_sessions, vec![json!("S1"), json!("S2")]);
     assert_eq!(session_creations(&api, "/v1/sessions").await, 2);
     api.verify().await;
+}
+
+#[tokio::test]
+async fn queued_cloud_action_waits_for_lost_page_cleanup() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let created = Arc::new(AtomicUsize::new(0));
+    let page_lost = Arc::new(AtomicBool::new(false));
+    let browser_created = created.clone();
+    let (ws_addr, mut commands) = spawn_cdp_websocket(Arc::new(move |command: &Value| {
+        let first_session = browser_created.load(Ordering::SeqCst) == 1;
+        let result = match command["method"].as_str() {
+            Some("Target.getTargets") if first_session && page_lost.load(Ordering::SeqCst) => {
+                cdp_result(command, json!({"targetInfos": []}))
+            }
+            Some("Target.getTargets") => cdp_result(
+                command,
+                json!({"targetInfos": [{"targetId": "P1", "type": "page"}]}),
+            ),
+            Some("Target.attachToTarget") => cdp_result(command, json!({"sessionId": "S1"})),
+            _ if first_session => {
+                page_lost.store(true, Ordering::SeqCst);
+                json!({"id": command["id"], "error": {"code": -32_001, "message": "Session not found"}})
+            }
+            _ => cdp_result(command, json!({"nodes": []})),
+        };
+        Some(vec![result])
+    }))
+    .await;
+    let api = MockServer::start().await;
+    let vendor_created = created.clone();
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions"))
+        .respond_with(move |_: &Request| {
+            let id = vendor_created.fetch_add(1, Ordering::SeqCst) + 1;
+            ResponseTemplate::new(200).set_body_json(json!({
+                "id": format!("vendor_session_{id}"),
+                "connectUrl": format!("ws://{ws_addr}/devtools/browser/B"),
+            }))
+        })
+        .mount(&api)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions/vendor_session_1"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&api)
+        .await;
+    let mut config = BrowserbaseConfig::new("bb-key".into(), "project".into());
+    config.base_url = api.uri();
+    let local = CdpBrowserBackend::new(format!("http://{}", closed_addr().await));
+    let backend = CloudFallbackBrowserBackend {
+        provider: "BrowserbaseProvider",
+        cloud: BrowserbaseBrowserBackend::new(config),
+        local,
+        fallback_reason: Mutex::new(None),
+    };
+    cloud_connect(&backend.cloud)
+        .await
+        .expect("initial session");
+
+    let mut first = backend.snapshot();
+    let mut queued = backend.snapshot();
+    assert!(futures::poll!(&mut first).is_pending());
+    assert!(futures::poll!(&mut queued).is_pending());
+    let (first, queued) = tokio::join!(first, queued);
+
+    assert!(first.expect_err("lost page").to_string().contains("-32001"));
+    queued.expect("the queued action attaches to a fresh cloud session");
+    assert_eq!(created.load(Ordering::SeqCst), 2);
+    let snapshots = drain_commands(&mut commands)
+        .into_iter()
+        .filter(|command| command["method"] == "Accessibility.getFullAXTree")
+        .count();
+    assert_eq!(snapshots, 2, "the lost action was not replayed");
 }
 
 #[tokio::test]

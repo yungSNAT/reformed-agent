@@ -260,12 +260,15 @@ async fn resolve_cdp_ws_url(client: &reqwest::Client, cdp_url: &str) -> Result<S
     let failed = |detail: String| {
         CdpFailure::Lost(format!("CDP discovery (/json/version) at {origin} failed: {detail}"))
     };
-    let payload: Value = client
+    let response = client
         .get(discovery)
         .send()
         .await
-        .and_then(reqwest::Response::error_for_status)
-        .map_err(|e| failed(e.without_url().to_string()))?
+        .map_err(|e| failed(e.without_url().to_string()))?;
+    if !response.status().is_success() {
+        return Err(failed(format!("HTTP {}", response.status())));
+    }
+    let payload: Value = response
         .json()
         .await
         .map_err(|e| failed(e.without_url().to_string()))?;

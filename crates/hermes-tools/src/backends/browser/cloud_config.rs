@@ -122,22 +122,29 @@ impl<C> CloudFallbackBrowserBackend<C> {
 }
 
 impl<C: CloudBrowserSession> CloudFallbackBrowserBackend<C> {
-    /// Connect the cloud browser, or return why the actions go to the local
-    /// browser. The first failure decides for this backend's life: no tool
-    /// ends a browser session here, and contacting the vendor again would
-    /// create a billable session per action and split the task between a
-    /// blank cloud page and the local one.
-    async fn connect_cloud(&self) -> Result<(), String> {
+    /// Keep each cloud action and its cleanup together. A queued action
+    /// can then attach to a new session if the previous action lost its
+    /// page. Only a connection failure switches the backend to local CDP.
+    async fn run(
+        &self,
+        cloud: impl std::future::Future<Output = Result<String, ToolError>>,
+        local: impl std::future::Future<Output = Result<String, ToolError>>,
+    ) -> Result<String, ToolError> {
         let mut fallback_reason = self.fallback_reason.lock().await;
-        if let Some(reason) = fallback_reason.as_ref() {
-            return Err(reason.clone());
-        }
-        cloud_connect(&self.cloud).await.map_err(|cloud_err| {
-            tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser unavailable; using local CDP from now on");
-            let reason = cloud_err.to_string();
-            *fallback_reason = Some(reason.clone());
-            reason
-        })
+        let reason = match fallback_reason.as_ref() {
+            Some(reason) => reason.clone(),
+            None => match cloud_connect(&self.cloud).await {
+                Ok(()) => return cloud.await,
+                Err(error) => {
+                    tracing::warn!(provider = self.provider, %error, "cloud browser unavailable; using local CDP from now on");
+                    let reason = error.to_string();
+                    *fallback_reason = Some(reason.clone());
+                    reason
+                }
+            },
+        };
+        drop(fallback_reason);
+        self.fall_back(&reason, local).await
     }
 }
 

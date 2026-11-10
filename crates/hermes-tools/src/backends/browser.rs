@@ -658,7 +658,8 @@ struct CloudFallbackBrowserBackend<C> {
     provider: &'static str,
     cloud: C,
     local: CdpBrowserBackend,
-    /// Serialises connection attempts and retains the first fallback reason.
+    /// Serialises cloud actions, including session cleanup, and retains the
+    /// first fallback reason.
     fallback_reason: Mutex<Option<String>>,
 }
 
@@ -722,82 +723,59 @@ impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBr
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         // Reject the URL before a cloud session is created for it.
         validate_url_does_not_exfiltrate_secret(url)?;
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.navigate(url).await,
-            Err(reason) => self.fall_back(&reason, self.local.navigate(url)).await,
-        }
+        self.run(self.cloud.navigate(url), self.local.navigate(url))
+            .await
     }
 
     async fn snapshot(&self) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.snapshot().await,
-            Err(reason) => self.fall_back(&reason, self.local.snapshot()).await,
-        }
+        self.run(self.cloud.snapshot(), self.local.snapshot()).await
     }
 
     async fn click(&self, selector: &str) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.click(selector).await,
-            Err(reason) => self.fall_back(&reason, self.local.click(selector)).await,
-        }
+        self.run(self.cloud.click(selector), self.local.click(selector))
+            .await
     }
 
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.r#type(selector, text).await,
-            Err(reason) => {
-                self.fall_back(&reason, self.local.r#type(selector, text))
-                    .await
-            }
-        }
+        self.run(
+            self.cloud.r#type(selector, text),
+            self.local.r#type(selector, text),
+        )
+        .await
     }
 
     async fn scroll(&self, direction: &str, amount: Option<u32>) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.scroll(direction, amount).await,
-            Err(reason) => {
-                self.fall_back(&reason, self.local.scroll(direction, amount))
-                    .await
-            }
-        }
+        self.run(
+            self.cloud.scroll(direction, amount),
+            self.local.scroll(direction, amount),
+        )
+        .await
     }
 
     async fn go_back(&self) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.go_back().await,
-            Err(reason) => self.fall_back(&reason, self.local.go_back()).await,
-        }
+        self.run(self.cloud.go_back(), self.local.go_back()).await
     }
 
     async fn press(&self, key: &str) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.press(key).await,
-            Err(reason) => self.fall_back(&reason, self.local.press(key)).await,
-        }
+        self.run(self.cloud.press(key), self.local.press(key)).await
     }
 
     async fn get_images(&self, selector: Option<&str>) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.get_images(selector).await,
-            Err(reason) => {
-                self.fall_back(&reason, self.local.get_images(selector))
-                    .await
-            }
-        }
+        self.run(
+            self.cloud.get_images(selector),
+            self.local.get_images(selector),
+        )
+        .await
     }
 
     async fn screenshot(&self) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.screenshot().await,
-            Err(reason) => self.fall_back(&reason, self.local.screenshot()).await,
-        }
+        self.run(self.cloud.screenshot(), self.local.screenshot())
+            .await
     }
 
     async fn console(&self, action: &str) -> Result<String, ToolError> {
-        match self.connect_cloud().await {
-            Ok(()) => self.cloud.console(action).await,
-            Err(reason) => self.fall_back(&reason, self.local.console(action)).await,
-        }
+        self.run(self.cloud.console(action), self.local.console(action))
+            .await
     }
 }
 
