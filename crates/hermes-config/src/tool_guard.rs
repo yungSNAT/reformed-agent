@@ -427,12 +427,14 @@ mod tests {
     #[tokio::test]
     async fn anything_but_a_clean_allow_or_deny_refuses() {
         let cwd = std::env::current_dir().unwrap();
-        for (script, why) in [
-            ("cat >/dev/null; exit 3", "the guard failed"),
-            ("cat >/dev/null; echo allow", "could not be read"),
-            ("sleep 5", "did not answer in time"),
+        // Only the last case waits for its limit; the others answer at once and
+        // need room for a slow `sh` start on a loaded machine.
+        for (script, timeout_secs, why) in [
+            ("cat >/dev/null; exit 3", 15, "the guard failed"),
+            ("cat >/dev/null; echo allow", 15, "could not be read"),
+            ("sleep 5", 1, "did not answer in time"),
         ] {
-            let (home, _) = profile(script, 1);
+            let (home, _) = profile(script, timeout_secs);
             let refused = check_command_in(home.path(), "echo hi", &cwd)
                 .await
                 .unwrap_err();
