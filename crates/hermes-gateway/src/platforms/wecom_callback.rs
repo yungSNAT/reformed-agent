@@ -156,7 +156,7 @@ fn http_content_length(header_text: &str) -> Option<usize> {
 }
 
 fn wecom_callback_body_exceeds_limit(req: &str, body_start: usize) -> bool {
-    let header_end = body_start.saturating_sub(4).min(req.len());
+    let header_end = req.floor_char_boundary(body_start.saturating_sub(4));
     if http_content_length(&req[..header_end])
         .map(|len| len > WECOM_CALLBACK_MAX_BODY_BYTES)
         .unwrap_or(false)

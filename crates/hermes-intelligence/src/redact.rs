@@ -217,7 +217,7 @@ static DISCORD_MENTION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<@!?(\d{17,20})>"#).unwrap());
 
 static SIGNAL_PHONE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\+[1-9]\d{6,14}\b"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"\+[1-9][0-9]{6,14}\b"#).unwrap());
 
 static URL_WITH_QUERY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(https?|wss?|ftp)://([^\s/?#]+)([^\s?#]*)\?([^\s#]+)(#\S*)?"#).unwrap()

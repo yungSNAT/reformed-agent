@@ -419,7 +419,7 @@ fn render_status(
         "✓".to_string()
     };
     let model = &app.current_model;
-    let session = &app.session_id[..8.min(app.session_id.len())];
+    let session = &app.session_id[..app.session_id.floor_char_boundary(8)];
     let msg_count = state
         .transcript_cache
         .total_messages

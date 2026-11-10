@@ -1261,7 +1261,7 @@ pub async fn handle_cli_sessions(
                     println!(
                         "{:3} {:30} {:>6}KB {:>6}  {}",
                         idx + 1,
-                        &name[..name.len().min(30)],
+                        &name[..name.floor_char_boundary(30)],
                         size / 1024,
                         msgs,
                         age_str,
@@ -1420,7 +1420,7 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok());
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..4], &key[key.len() - 4..])
+                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
                 } else {
                     "****".to_string()
                 };
@@ -1451,7 +1451,7 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
             let env_key = std::env::var("ANTHROPIC_API_KEY").ok();
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..4], &key[key.len() - 4..])
+                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
                 } else {
                     "****".to_string()
                 };
@@ -1479,7 +1479,7 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
             let env_key = std::env::var(&env_var).ok();
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..4], &key[key.len() - 4..])
+                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
                 } else {
                     "****".to_string()
                 };

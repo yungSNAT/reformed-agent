@@ -224,8 +224,8 @@ fn truncate_context(content: &str, max_chars: usize, filename: &str) -> String {
     let head_len = (max_chars as f64 * TRUNCATE_HEAD_RATIO) as usize;
     let tail_len = (max_chars as f64 * TRUNCATE_TAIL_RATIO) as usize;
 
-    let head = &content[..head_len.min(content.len())];
-    let tail_start = content.len().saturating_sub(tail_len);
+    let head = &content[..content.floor_char_boundary(head_len)];
+    let tail_start = content.ceil_char_boundary(content.len().saturating_sub(tail_len));
     let tail = &content[tail_start..];
 
     format!(

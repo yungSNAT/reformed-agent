@@ -732,7 +732,7 @@ fn branch_checkpoint_name(session_id: &str, label: Option<&str>) -> String {
         .to_string();
     format!(
         "branch-{}-{}",
-        &session_id[..8.min(session_id.len())],
+        &session_id[..session_id.floor_char_boundary(8)],
         if sanitized.is_empty() {
             "checkpoint"
         } else {

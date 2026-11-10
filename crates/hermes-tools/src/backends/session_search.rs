@@ -726,7 +726,8 @@ impl SqliteSessionSearchBackend {
         if end.saturating_sub(start) < max_chars {
             start = end.saturating_sub(max_chars);
         }
-        let body = &full_text[start..end];
+        let body =
+            &full_text[full_text.floor_char_boundary(start)..full_text.ceil_char_boundary(end)];
         let prefix = if start > 0 {
             "...[earlier conversation truncated]...\n\n"
         } else {

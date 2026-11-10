@@ -776,6 +776,9 @@ impl Theme {
 /// Parse a hex color string (without `#` prefix) into an RGB tuple.
 fn parse_hex(hex: &str) -> Result<(u8, u8, u8), ()> {
     let hex = hex.trim();
+    if !hex.is_ascii() {
+        return Err(());
+    }
     match hex.len() {
         6 => {
             let r = u8::from_str_radix(&hex[0..2], 16).map_err(|_| ())?;
