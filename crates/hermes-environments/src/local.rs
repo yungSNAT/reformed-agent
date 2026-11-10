@@ -505,7 +505,9 @@ impl TerminalBackend for LocalBackend {
         if background {
             // In background mode, keep stdin pipe open for process(write/submit).
             cmd.stdin(Stdio::piped());
-        } else if pty {
+        } else {
+            // Never hand a foreground command the agent's own stdin: under ACP
+            // or `mcp serve` that is the JSON-RPC stream.
             cmd.stdin(Stdio::null());
         }
 
