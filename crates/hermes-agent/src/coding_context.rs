@@ -618,7 +618,7 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
 
 fn git_last_commit(root: &Path) -> Option<String> {
     let output = workspace_git(root)
-        .args(["log", "-1", "--oneline", "--no-show-signature"])
+        .args(["log", "-1", "--oneline"])
         .output()
         .ok()?;
     if !output.status.success() {
