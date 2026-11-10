@@ -120,6 +120,7 @@ pub const SUBPROCESS_ENV_BLOCKLIST_PREFIXES: &[&str] = &[
     "HERMES_HTTP_",
 ];
 
+#[cfg(unix)]
 const SANE_PATH_ENTRIES: &[&str] = &[
     "/usr/local/bin",
     "/usr/bin",
@@ -140,6 +141,7 @@ pub fn should_strip_subprocess_env_key(key: &str, inherit_credentials: bool) -> 
         || key == SUBPROCESS_ENV_PASSTHROUGH_VAR
 }
 
+#[cfg(unix)]
 pub fn normalize_subprocess_path(path: Option<&str>) -> String {
     let Some(path) = path.filter(|value| !value.trim().is_empty()) else {
         return SANE_PATH_ENTRIES.join(":");
@@ -174,22 +176,21 @@ where
     V: Into<String>,
 {
     let mut env = BTreeMap::new();
-    let mut path = None;
     for (key, value) in vars {
         let key = key.into();
-        let value = value.into();
-        if key == "PATH" {
-            path = Some(value.clone());
-        }
         if should_strip_subprocess_env_key(&key, inherit_credentials) {
             continue;
         }
-        env.insert(key, value);
+        env.insert(key, value.into());
     }
-    env.insert(
-        "PATH".to_string(),
-        normalize_subprocess_path(path.as_deref()),
-    );
+    // Windows keeps the inherited PATH. The sane entries are POSIX
+    // directories (`/usr/bin` would search `C:\usr\bin`), and a `:`-joined
+    // list hides every Windows directory from the child.
+    #[cfg(unix)]
+    {
+        let path = normalize_subprocess_path(env.get("PATH").map(String::as_str));
+        env.insert("PATH".to_string(), path);
+    }
     env
 }
 
@@ -260,5 +261,35 @@ mod tests {
         );
         assert!(!env.contains_key("_HERMES_FORCE_OPENAI_API_KEY"));
         assert!(!env.contains_key("HERMES_SUBPROCESS_ENV_PASSTHROUGH"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn path_keeps_its_entries_and_gains_the_sane_ones() {
+        let env = build(&[("PATH", "/custom/bin")], false);
+        let path = env.get("PATH").expect("PATH is always set");
+        assert!(path.starts_with("/custom/bin:"), "{path}");
+        assert!(path.split(':').any(|entry| entry == "/usr/bin"), "{path}");
+
+        let env = build(&[("HOME", "/home/user")], false);
+        assert_eq!(
+            env.get("PATH").map(String::as_str),
+            Some(SANE_PATH_ENTRIES.join(":").as_str())
+        );
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_is_inherited_unchanged_under_either_spelling() {
+        let inherited = r"C:\Windows\System32;C:\Program Files\Git\cmd";
+        for name in ["PATH", "Path"] {
+            let env = build(&[(name, inherited)], false);
+            let paths: Vec<(&str, &str)> = env
+                .iter()
+                .filter(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+                .map(|(key, value)| (key.as_str(), value.as_str()))
+                .collect();
+            assert_eq!(paths, [(name, inherited)]);
+        }
     }
 }
