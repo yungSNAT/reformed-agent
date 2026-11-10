@@ -33,6 +33,9 @@ The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). 
 - `Provider routing`: retries keep the configured endpoint and provider-specific credentials. Vertex AI supports service-account credentials and application default credentials.
 - `Gateway replies`: API replies keep the final answer after tool progress messages and handle streaming previews and UTF-8 chunks.
 - `Browser tools`: local and cloud browsers use Chrome DevTools Protocol, with HTTP discovery for cloud sessions and screenshot analysis through the configured vision model.
+- `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
+- `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
+- `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
 
 Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
 
