@@ -1382,6 +1382,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn other_provider_child_without_override_skips_parent_pool() {
+        let (base_url, request_rx) = loopback_chat_fixture();
+        let tmp = tempfile::tempdir().unwrap();
+        let mut runtime_providers = std::collections::HashMap::new();
+        runtime_providers.insert(
+            "custom".to_string(),
+            crate::agent_loop::RuntimeProviderConfig {
+                api_key: Some("custom-config-key".to_string()),
+                base_url: Some(base_url),
+                ..Default::default()
+            },
+        );
+        let parent_config = AgentConfig {
+            model: "openai:gpt-4o".into(),
+            provider: Some("openai".into()),
+            delegation_provider: Some("custom".into()),
+            runtime_providers,
+            ..AgentConfig::default()
+        };
+        let orch = openai_parent_orchestrator(parent_config.clone(), tmp.path());
+        let request = child_request(&orch, &parent_config, request_rx).await;
+        assert!(
+            request.contains("authorization: bearer custom-config-key"),
+            "a child on another provider must not send the parent's pool: {request}"
+        );
+    }
+
+    #[tokio::test]
     async fn same_provider_child_without_override_shares_parent_pool() {
         let (base_url, request_rx) = loopback_chat_fixture();
         let tmp = tempfile::tempdir().unwrap();
