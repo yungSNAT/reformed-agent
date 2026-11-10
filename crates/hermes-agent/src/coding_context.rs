@@ -552,10 +552,18 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 }
 
 fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
+    // The workspace's own `.git/config` must not run code here: `core.fsmonitor`
+    // names a program that `git status` would execute.
+    // shortcut: clean and process filters named in that config can still run
+    // when `git status` re-reads a racily clean file; upstream Hermes
+    // neutralises them in `noninteractive_repo_git_env`, which is the port to make.
     let status = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["status", "--short", "--branch"])
+        .args(["-c", "core.fsmonitor=false"])
+        .args(["--no-optional-locks", "status", "--short", "--branch"])
+        .env("GIT_TERMINAL_PROMPT", "0")
+        .stdin(std::process::Stdio::null())
         .suppress_windows_console()
         .output();
     let Ok(output) = status else {
@@ -784,5 +792,37 @@ mod tests {
         }
         assert_eq!(model_family(Some("acme/foo-1")), None);
         assert_eq!(model_family(None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_run_the_repository_fsmonitor() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        git_init(&repo);
+        let marker = tmp.path().join("fsmonitor-ran");
+        let hook = tmp.path().join("fsmonitor.sh");
+        std::fs::write(
+            &hook,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let configured = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "core.fsmonitor"])
+            .arg(&hook)
+            .status()
+            .unwrap();
+        assert!(configured.success());
+
+        let block = build_coding_workspace_block(&repo).expect("workspace block");
+        assert!(block.contains("Status:"), "{block}");
+        assert!(
+            !marker.exists(),
+            "git status ran the repository's core.fsmonitor program"
+        );
     }
 }
