@@ -572,10 +572,7 @@ impl SearchBackend for LocalSearchBackend {
             max.saturating_add(offset)
         };
 
-        let mut matches: Vec<Value> = Vec::new();
-        let mut files: Vec<String> = Vec::new();
-        let mut seen_files: HashSet<String> = HashSet::new();
-        let mut counts: BTreeMap<String, usize> = BTreeMap::new();
+        let mut found = ContentMatches::default();
 
         let path = std::path::Path::new(path);
         if !path.exists() {
@@ -585,23 +582,12 @@ impl SearchBackend for LocalSearchBackend {
             )));
         }
 
-        Self::search_dir_content(
-            &re,
-            path,
-            file_glob,
-            context,
-            fetch_limit,
-            &mut matches,
-            &mut files,
-            &mut seen_files,
-            &mut counts,
-        )
-        .await;
+        Self::search_dir_content(&re, path, file_glob, context, fetch_limit, &mut found).await;
 
         match output_mode {
             "files_only" => {
-                let total = files.len();
-                let page: Vec<String> = files.into_iter().skip(offset).take(max).collect();
+                let total = found.files.len();
+                let page: Vec<String> = found.files.into_iter().skip(offset).take(max).collect();
                 Ok(json!({
                     "files": page,
                     "total": total,
@@ -610,17 +596,17 @@ impl SearchBackend for LocalSearchBackend {
                 .to_string())
             }
             "count" => {
-                let total_count: usize = counts.values().sum();
+                let total_count: usize = found.counts.values().sum();
                 Ok(json!({
-                    "counts": counts,
+                    "counts": found.counts,
                     "total": total_count,
                     "pattern": pattern,
                 })
                 .to_string())
             }
             _ => {
-                let total = matches.len();
-                let page: Vec<Value> = matches.into_iter().skip(offset).take(max).collect();
+                let total = found.matches.len();
+                let page: Vec<Value> = found.matches.into_iter().skip(offset).take(max).collect();
                 Ok(json!({
                     "matches": page,
                     "total": total,
@@ -668,6 +654,15 @@ impl SearchBackend for LocalSearchBackend {
 
 const MAX_SEARCH_DEPTH: u32 = 12;
 
+/// What a content search collects as it walks the tree.
+#[derive(Default)]
+struct ContentMatches {
+    matches: Vec<Value>,
+    files: Vec<String>,
+    seen_files: HashSet<String>,
+    counts: BTreeMap<String, usize>,
+}
+
 impl LocalSearchBackend {
     async fn search_dir_content(
         re: &Regex,
@@ -675,24 +670,9 @@ impl LocalSearchBackend {
         file_glob: Option<&str>,
         context: usize,
         fetch_limit: usize,
-        matches: &mut Vec<Value>,
-        files: &mut Vec<String>,
-        seen_files: &mut HashSet<String>,
-        counts: &mut BTreeMap<String, usize>,
+        found: &mut ContentMatches,
     ) {
-        Self::search_dir_content_depth(
-            re,
-            dir,
-            file_glob,
-            context,
-            fetch_limit,
-            matches,
-            files,
-            seen_files,
-            counts,
-            0,
-        )
-        .await;
+        Self::search_dir_content_depth(re, dir, file_glob, context, fetch_limit, found, 0).await;
     }
 
     async fn search_dir_content_depth(
@@ -701,13 +681,10 @@ impl LocalSearchBackend {
         file_glob: Option<&str>,
         context: usize,
         fetch_limit: usize,
-        matches: &mut Vec<Value>,
-        files: &mut Vec<String>,
-        seen_files: &mut HashSet<String>,
-        counts: &mut BTreeMap<String, usize>,
+        found: &mut ContentMatches,
         depth: u32,
     ) {
-        if matches.len() >= fetch_limit || depth >= MAX_SEARCH_DEPTH {
+        if found.matches.len() >= fetch_limit || depth >= MAX_SEARCH_DEPTH {
             return;
         }
 
@@ -718,7 +695,7 @@ impl LocalSearchBackend {
 
         let mut entries = entries;
         while let Ok(Some(entry)) = entries.next_entry().await {
-            if matches.len() >= fetch_limit {
+            if found.matches.len() >= fetch_limit {
                 break;
             }
 
@@ -740,10 +717,7 @@ impl LocalSearchBackend {
                     file_glob,
                     context,
                     fetch_limit,
-                    matches,
-                    files,
-                    seen_files,
-                    counts,
+                    found,
                     depth + 1,
                 ))
                 .await;
@@ -770,10 +744,10 @@ impl LocalSearchBackend {
                     }
 
                     let path_str = path.display().to_string();
-                    if seen_files.insert(path_str.clone()) {
-                        files.push(path_str.clone());
+                    if found.seen_files.insert(path_str.clone()) {
+                        found.files.push(path_str.clone());
                     }
-                    *counts.entry(path_str.clone()).or_insert(0) += match_indices.len();
+                    *found.counts.entry(path_str.clone()).or_insert(0) += match_indices.len();
 
                     let mut selected_indices = BTreeSet::new();
                     if context > 0 {
@@ -791,10 +765,10 @@ impl LocalSearchBackend {
                     }
 
                     for line_idx in selected_indices {
-                        if matches.len() >= fetch_limit {
+                        if found.matches.len() >= fetch_limit {
                             break;
                         }
-                        matches.push(json!({
+                        found.matches.push(json!({
                             "file": path_str.clone(),
                             "line": line_idx + 1,
                             "content": lines[line_idx].chars().take(500).collect::<String>(),

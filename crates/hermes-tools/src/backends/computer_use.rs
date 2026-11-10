@@ -304,7 +304,6 @@ fn stderr_tail(stderr: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn command_available_accepts_existing_absolute_path() {

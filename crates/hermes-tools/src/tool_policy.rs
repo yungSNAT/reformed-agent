@@ -603,7 +603,7 @@ fn sandbox_profile_violation(
     if matches!(profile, ExecutionSandboxProfile::Dev) {
         return None;
     }
-    if !COMMAND_TOOLS.iter().any(|name| *name == tool_name) {
+    if !COMMAND_TOOLS.contains(&tool_name) {
         return None;
     }
     let cmd = command_field_from_params(params)?.to_ascii_lowercase();
