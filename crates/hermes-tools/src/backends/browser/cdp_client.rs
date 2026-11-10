@@ -53,8 +53,9 @@ impl CdpConnection {
     }
 
     /// Open a browser-level endpoint and attach to its first page.
-    async fn open_attached(ws_url: &str) -> Result<Self, CdpFailure> {
-        let mut connection = Self::open(ws_url).await?;
+    async fn open_attached(client: &reqwest::Client, cdp_url: &str) -> Result<Self, CdpFailure> {
+        let ws_url = resolve_cdp_ws_url(client, cdp_url).await?;
+        let mut connection = Self::open(&ws_url).await?;
         connection.attach_to_first_page().await?;
         Ok(connection)
     }
@@ -158,6 +159,8 @@ impl CdpConnection {
 #[derive(Default)]
 struct CloudCdpConnection {
     connection: Mutex<Option<CdpConnection>>,
+    /// Client for CDP discovery requests.
+    client: reqwest::Client,
 }
 
 impl CloudCdpConnection {
@@ -165,7 +168,8 @@ impl CloudCdpConnection {
     async fn connect(&self, cdp_url: &str, timeout: Duration) -> Result<(), CdpFailure> {
         let mut guard = self.connection.lock().await;
         if guard.is_none() {
-            *guard = Some(within(timeout, CdpConnection::open_attached(cdp_url)).await?);
+            *guard =
+                Some(within(timeout, CdpConnection::open_attached(&self.client, cdp_url)).await?);
         }
         Ok(())
     }
@@ -185,7 +189,7 @@ impl CloudCdpConnection {
             // Taken out so that a failure or timeout drops it.
             let mut connection = match guard.take() {
                 Some(connection) => connection,
-                None => CdpConnection::open_attached(cdp_url).await?,
+                None => CdpConnection::open_attached(&self.client, cdp_url).await?,
             };
             let outcome = connection.call(method, params, collect).await;
             if !matches!(outcome, Err(CdpFailure::Lost(_))) {
@@ -200,6 +204,68 @@ impl CloudCdpConnection {
         if let Some(connection) = self.connection.lock().await.take() {
             connection.close().await;
         }
+    }
+}
+
+/// The browser WebSocket URL for a CDP endpoint, as upstream's
+/// `_resolve_cdp_override` finds it. A `/devtools/browser/` URL, or any other
+/// WebSocket URL with a path, is used as given. An HTTP discovery endpoint, or
+/// a bare `ws(s)://host:port`, is resolved through `/json/version`. Upstream
+/// keeps the raw URL when discovery fails; that URL cannot be opened here, so
+/// the failure is returned instead.
+async fn resolve_cdp_ws_url(client: &reqwest::Client, cdp_url: &str) -> Result<String, CdpFailure> {
+    let raw = cdp_url.trim();
+    if raw.to_ascii_lowercase().contains("/devtools/browser/") {
+        return Ok(raw.to_string());
+    }
+    let mut discovery =
+        Url::parse(raw).map_err(|e| CdpFailure::Lost(format!("Invalid CDP URL {raw}: {e}")))?;
+    match discovery.scheme() {
+        "ws" | "wss" => {
+            if discovery.port().is_none() || discovery.path() != "/" || discovery.query().is_some()
+            {
+                return Ok(raw.to_string());
+            }
+            let scheme = if discovery.scheme() == "ws" {
+                "http"
+            } else {
+                "https"
+            };
+            discovery
+                .set_scheme(scheme)
+                .map_err(|()| CdpFailure::Lost(format!("Invalid CDP URL {raw}")))?;
+        }
+        "http" | "https" => {}
+        other => {
+            return Err(CdpFailure::Lost(format!(
+                "Unsupported CDP URL scheme '{other}' in {raw}"
+            )))
+        }
+    }
+    let discovery = discovery.as_str();
+    let version_url = if discovery.ends_with("/json/version") {
+        discovery.to_string()
+    } else {
+        format!("{}/json/version", discovery.trim_end_matches('/'))
+    };
+    let failed = |detail: String| {
+        CdpFailure::Lost(format!("CDP discovery at {version_url} failed: {detail}"))
+    };
+    let payload: Value = client
+        .get(&version_url)
+        .send()
+        .await
+        .and_then(reqwest::Response::error_for_status)
+        .map_err(|e| failed(e.to_string()))?
+        .json()
+        .await
+        .map_err(|e| failed(e.to_string()))?;
+    match payload["webSocketDebuggerUrl"].as_str().map(str::trim) {
+        Some(ws_url) if !ws_url.is_empty() => {
+            tracing::info!("resolved CDP endpoint {version_url} to the browser WebSocket");
+            Ok(ws_url.to_string())
+        }
+        _ => Err(failed("no webSocketDebuggerUrl in the response".into())),
     }
 }
 

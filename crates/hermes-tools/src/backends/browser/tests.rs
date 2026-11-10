@@ -1436,3 +1436,76 @@ async fn cloud_fallback_uses_local_when_cloud_connection_fails() {
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["method"], "Runtime.evaluate");
 }
+
+/// DevTools discovery stub: `/json/version` answers with `status` and `body`.
+async fn cdp_discovery(status: u16, body: Value) -> wiremock::MockServer {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let discovery = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/json/version"))
+        .respond_with(ResponseTemplate::new(status).set_body_json(body))
+        .expect(1)
+        .mount(&discovery)
+        .await;
+    discovery
+}
+
+#[tokio::test]
+async fn browser_use_resolves_http_discovery_url_before_connecting() {
+    let (ws_addr, mut commands) =
+        spawn_cdp_websocket(remote_browser(|_| json!({"nodes": []}))).await;
+    let discovery = cdp_discovery(
+        200,
+        json!({"webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/browser/B")}),
+    )
+    .await;
+    let api = vendor_api("/browsers", discovery.uri()).await;
+    let mut cfg = BrowserUseConfig::new_direct("bu-key".into());
+    cfg.base_url = api.uri();
+    let backend = BrowserUseBrowserBackend::new(cfg);
+
+    backend
+        .snapshot()
+        .await
+        .expect("snapshot over resolved URL");
+
+    let methods: Vec<Value> = drain_commands(&mut commands)
+        .into_iter()
+        .map(|command| command["method"].clone())
+        .collect();
+    assert_eq!(
+        methods,
+        vec![
+            json!("Target.getTargets"),
+            json!("Target.attachToTarget"),
+            json!("Accessibility.getFullAXTree"),
+        ]
+    );
+    discovery.verify().await;
+}
+
+#[tokio::test]
+async fn browser_use_failed_discovery_counts_as_unavailable() {
+    let discovery = cdp_discovery(500, json!({"error": "down"})).await;
+    let api = vendor_api("/browsers", discovery.uri()).await;
+    let mut cfg = BrowserUseConfig::new_direct("bu-key".into());
+    cfg.base_url = api.uri();
+    let (local_http, mut local_commands) = spawn_local_cdp(answer_all(json!({"nodes": []}))).await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "BrowserUseProvider",
+        cloud: BrowserUseBrowserBackend::new(cfg),
+        local: CdpBrowserBackend::new(local_http.uri()),
+    };
+
+    let raw = backend.snapshot().await.expect("local fallback");
+    let value: Value = serde_json::from_str(&raw).expect("fallback json");
+
+    assert_eq!(value["fallback_from_cloud"], true);
+    let reason = value["fallback_reason"].as_str().expect("reason");
+    assert!(reason.contains("CDP discovery"), "{reason}");
+    assert!(reason.contains("/json/version"), "{reason}");
+    assert_eq!(drain_commands(&mut local_commands).len(), 1);
+    discovery.verify().await;
+}
