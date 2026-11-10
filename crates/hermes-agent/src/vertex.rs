@@ -309,8 +309,7 @@ impl VertexProvider {
     fn with_auth(auth: Arc<VertexAuth>, model: impl Into<String>) -> Self {
         Self {
             auth,
-            template: GenericProvider::new(String::new(), String::new(), model)
-                .with_provider_profile(VERTEX_PROVIDER_ID),
+            template: GenericProvider::new(String::new(), String::new(), model),
         }
     }
 
