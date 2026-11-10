@@ -9,6 +9,10 @@ const CDP_MAX_MESSAGE_BYTES: usize = 256 * 1024 * 1024;
 /// page has already logged.
 const CDP_CONSOLE_EVENTS: &[&str] = &["Runtime.consoleAPICalled", "Runtime.exceptionThrown"];
 
+/// Protocol error code for a command whose session id the browser does not
+/// know.
+const CDP_SESSION_NOT_FOUND: i64 = -32_001;
+
 type CdpSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -52,11 +56,16 @@ impl CdpConnection {
         })
     }
 
-    /// Open a browser-level endpoint and attach to its first page.
+    /// Open a browser-level endpoint and attach to its first page. A
+    /// connection that cannot attach is of no use, so any attach failure
+    /// counts as [`CdpFailure::Lost`].
     async fn open_attached(client: &reqwest::Client, cdp_url: &str) -> Result<Self, CdpFailure> {
         let ws_url = resolve_cdp_ws_url(client, cdp_url).await?;
         let mut connection = Self::open(&ws_url).await?;
-        connection.attach_to_first_page().await?;
+        connection
+            .attach_to_first_page()
+            .await
+            .map_err(|failure| CdpFailure::Lost(failure.message()))?;
         Ok(connection)
     }
 
@@ -133,6 +142,12 @@ impl CdpConnection {
                 );
                 if let Some(data) = error["data"].as_str() {
                     detail.push_str(&format!(" ({data})"));
+                }
+                // Chrome answers a command for a session it no longer has,
+                // because the page closed or crashed, with this code
+                // (`SessionNotFound` in Chromium's DevToolsSession).
+                if error["code"] == CDP_SESSION_NOT_FOUND {
+                    return Err(CdpFailure::Lost(detail));
                 }
                 return Err(CdpFailure::Rejected(detail));
             }

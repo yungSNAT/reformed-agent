@@ -1464,6 +1464,114 @@ async fn browserbase_lost_connection_releases_the_session() {
     api.verify().await;
 }
 
+/// Browserbase backend on a vendor stub whose sessions use `browser` and
+/// whose session release is expected exactly once.
+async fn browserbase_on(
+    browser: CdpResponder,
+) -> (
+    BrowserbaseBrowserBackend,
+    wiremock::MockServer,
+    tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, ResponseTemplate};
+
+    let (ws_addr, commands) = spawn_cdp_websocket(browser).await;
+    let api = vendor_api("/v1/sessions", format!("ws://{ws_addr}/devtools/browser/B")).await;
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions/vendor_session_1"))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&api)
+        .await;
+    let mut cfg = BrowserbaseConfig::new("bb-key".into(), "proj".into());
+    cfg.base_url = api.uri();
+    (BrowserbaseBrowserBackend::new(cfg), api, commands)
+}
+
+/// How many sessions the vendor stub was asked to create at `route`.
+async fn session_creations(api: &wiremock::MockServer, route: &str) -> usize {
+    api.received_requests()
+        .await
+        .expect("recorded requests")
+        .iter()
+        .filter(|request| request.method.as_str() == "POST" && request.url.path() == route)
+        .count()
+}
+
+#[tokio::test]
+async fn cloud_lost_page_session_reconnects_on_the_next_action() {
+    // Chrome answers a command for a detached session with -32001 (see
+    // `DevToolsSession` in Chromium's content/browser/devtools).
+    let attaches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let browser: CdpResponder = {
+        let attaches = attaches.clone();
+        Arc::new(move |command: &Value| {
+            let reply = match command["method"].as_str() {
+                Some("Target.getTargets") => cdp_result(
+                    command,
+                    json!({"targetInfos": [{"targetId": "P1", "type": "page"}]}),
+                ),
+                Some("Target.attachToTarget") => {
+                    let n = attaches.fetch_add(1, Ordering::SeqCst) + 1;
+                    cdp_result(command, json!({"sessionId": format!("S{n}")}))
+                }
+                _ if command["sessionId"] == "S1" => json!({
+                    "id": command["id"],
+                    "error": {"code": -32_001, "message": "Session with given id not found."},
+                }),
+                _ => cdp_result(command, json!({"nodes": []})),
+            };
+            Some(vec![reply])
+        })
+    };
+    let (backend, api, mut commands) = browserbase_on(browser).await;
+
+    let err = backend.snapshot().await.expect_err("page target gone");
+    assert!(err.to_string().contains("-32001"), "{err}");
+    backend
+        .snapshot()
+        .await
+        .expect("the next action re-attaches");
+
+    assert_eq!(attaches.load(Ordering::SeqCst), 2);
+    let page_sessions: Vec<Value> = drain_commands(&mut commands)
+        .into_iter()
+        .filter(|command| command["method"] == "Accessibility.getFullAXTree")
+        .map(|command| command["sessionId"].clone())
+        .collect();
+    assert_eq!(page_sessions, vec![json!("S1"), json!("S2")]);
+    assert_eq!(session_creations(&api, "/v1/sessions").await, 2);
+    api.verify().await;
+}
+
+#[tokio::test]
+async fn cloud_rejected_attach_releases_the_session() {
+    let (backend, api, _commands) = browserbase_on(Arc::new(|command: &Value| {
+        let reply = match command["method"].as_str() {
+            Some("Target.getTargets") => cdp_result(
+                command,
+                json!({"targetInfos": [{"targetId": "P1", "type": "page"}]}),
+            ),
+            _ => json!({
+                "id": command["id"],
+                "error": {"code": -32_602, "message": "No target with given id found"},
+            }),
+        };
+        Some(vec![reply])
+    }))
+    .await;
+
+    let err = backend.snapshot().await.expect_err("attach rejected");
+
+    assert!(
+        err.to_string().contains("No target with given id found"),
+        "{err}"
+    );
+    assert!(backend.session.lock().await.is_none());
+    api.verify().await;
+}
+
 #[tokio::test]
 async fn cloud_wss_endpoint_attempts_a_tls_handshake() {
     // A TCP listener that drops each connection: the handshake fails, but
