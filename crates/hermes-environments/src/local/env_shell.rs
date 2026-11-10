@@ -156,22 +156,16 @@ fn lookup_home_for_username(username: &str) -> Option<PathBuf> {
 }
 
 fn real_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HERMES_REAL_HOME")
+    let home = std::env::var_os("HERMES_REAL_HOME")
         .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .or_else(|| {
-            #[cfg(unix)]
-            {
-                current_username()
-                    .as_deref()
-                    .and_then(passwd_home_for_username)
-            }
-            #[cfg(not(unix))]
-            {
-                None
-            }
-        })
-        .or_else(home_dir)
+        .map(PathBuf::from);
+    #[cfg(unix)]
+    let home = home.or_else(|| {
+        current_username()
+            .as_deref()
+            .and_then(passwd_home_for_username)
+    });
+    home.or_else(home_dir)
 }
 
 fn ensure_profile_home_dir() -> Option<PathBuf> {
