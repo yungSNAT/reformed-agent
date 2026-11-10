@@ -155,9 +155,17 @@ fn http_content_length(header_text: &str) -> Option<usize> {
     })
 }
 
-fn wecom_callback_body_exceeds_limit(req: &str, body_start: usize) -> bool {
-    let header_end = req.floor_char_boundary(body_start.saturating_sub(4));
-    if http_content_length(&req[..header_end])
+/// Byte offset of the body in a raw HTTP request, or `req.len()` when the
+/// headers have not ended.
+fn http_body_start(req: &[u8]) -> usize {
+    req.windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map_or(req.len(), |i| i + 4)
+}
+
+fn wecom_callback_body_exceeds_limit(req: &[u8], body_start: usize) -> bool {
+    let headers = String::from_utf8_lossy(&req[..body_start.saturating_sub(4)]);
+    if http_content_length(&headers)
         .map(|len| len > WECOM_CALLBACK_MAX_BODY_BYTES)
         .unwrap_or(false)
     {
@@ -717,8 +725,8 @@ async fn handle_callback_request(
         return Ok(());
     }
 
-    let body_start = req.find("\r\n\r\n").map(|i| i + 4).unwrap_or(n);
-    if wecom_callback_body_exceeds_limit(&req, body_start) {
+    let body_start = http_body_start(&buf[..n]);
+    if wecom_callback_body_exceeds_limit(&buf[..n], body_start) {
         writer
             .write_all(b"HTTP/1.1 413 Payload Too Large\r\nContent-Length: 0\r\n\r\n")
             .await?;
@@ -918,18 +926,24 @@ mod tests {
             "POST /wecom/callback HTTP/1.1\r\nContent-Length: {}\r\n\r\n<xml/>",
             WECOM_CALLBACK_MAX_BODY_BYTES + 1
         );
-        let body_start = req.find("\r\n\r\n").unwrap() + 4;
+        let body_start = http_body_start(req.as_bytes());
 
-        assert!(wecom_callback_body_exceeds_limit(&req, body_start));
+        assert!(wecom_callback_body_exceeds_limit(
+            req.as_bytes(),
+            body_start
+        ));
     }
 
     #[test]
     fn callback_body_limit_rejects_oversized_buffered_body() {
         let body = "x".repeat(WECOM_CALLBACK_MAX_BODY_BYTES + 1);
         let req = format!("POST /wecom/callback HTTP/1.1\r\n\r\n{body}");
-        let body_start = req.find("\r\n\r\n").unwrap() + 4;
+        let body_start = http_body_start(req.as_bytes());
 
-        assert!(wecom_callback_body_exceeds_limit(&req, body_start));
+        assert!(wecom_callback_body_exceeds_limit(
+            req.as_bytes(),
+            body_start
+        ));
     }
 
     #[test]
@@ -939,8 +953,17 @@ mod tests {
             "POST /wecom/callback HTTP/1.1\r\nContent-Length: {}\r\n\r\n{body}",
             body.len()
         );
-        let body_start = req.find("\r\n\r\n").unwrap() + 4;
+        let body_start = http_body_start(req.as_bytes());
 
-        assert!(!wecom_callback_body_exceeds_limit(&req, body_start));
+        assert!(!wecom_callback_body_exceeds_limit(
+            req.as_bytes(),
+            body_start
+        ));
+    }
+
+    #[test]
+    fn body_start_counts_bytes_not_lossy_characters() {
+        let req = b"POST /wecom/callback HTTP/1.1\r\nX-Junk: \xff\xff\xff\r\n\r\n<xml/>";
+        assert_eq!(&req[http_body_start(req)..], b"<xml/>");
     }
 }

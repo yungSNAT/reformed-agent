@@ -217,7 +217,7 @@ static DISCORD_MENTION_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r#"<@!?(\d{17,20})>"#).unwrap());
 
 static SIGNAL_PHONE_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r#"\+[1-9][0-9]{6,14}\b"#).unwrap());
+    LazyLock::new(|| Regex::new(r#"\+[1-9]\d{6,14}\b"#).unwrap());
 
 static URL_WITH_QUERY_RE: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"(?i)\b(https?|wss?|ftp)://([^\s/?#]+)([^\s?#]*)\?([^\s#]+)(#\S*)?"#).unwrap()
@@ -441,12 +441,12 @@ fn redact_builtin_text(text: &str) -> String {
 
     result = SIGNAL_PHONE_RE
         .replace_all(&result, |caps: &regex::Captures<'_>| {
-            let phone = caps.get(0).map_or("", |m| m.as_str());
-            if phone.len() <= 8 {
-                format!("{}****{}", &phone[..2], &phone[phone.len() - 2..])
-            } else {
-                format!("{}****{}", &phone[..4], &phone[phone.len() - 4..])
-            }
+            // `\d` matches any Unicode digit, so count characters, not bytes.
+            let phone: Vec<char> = caps.get(0).map_or("", |m| m.as_str()).chars().collect();
+            let keep = if phone.len() <= 8 { 2 } else { 4 };
+            let head: String = phone[..keep].iter().collect();
+            let tail: String = phone[phone.len() - keep..].iter().collect();
+            format!("{head}****{tail}")
         })
         .to_string();
 
@@ -622,6 +622,16 @@ mod tests {
         let text = "Call me at 555-123-4567";
         let result = redactor.redact(text);
         assert!(result.contains("[REDACTED_PHONE]"));
+    }
+
+    #[test]
+    fn signal_phone_numbers_in_any_digits_are_masked() {
+        assert_eq!(redact_builtin_text("+61412345678"), "+614****5678");
+        // Devanagari digits are 3 bytes each, so byte offsets split them.
+        assert_eq!(
+            redact_builtin_text("+9\u{0967}\u{0968}\u{0969}\u{096A}\u{096B}\u{096C}\u{096D}"),
+            "+9\u{0967}\u{0968}****\u{096A}\u{096B}\u{096C}\u{096D}"
+        );
     }
 
     #[test]

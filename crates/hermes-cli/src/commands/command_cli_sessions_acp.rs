@@ -390,7 +390,10 @@ fn iter_user_prompt_records(
             }
             index += 1;
             let mut record = serde_json::Map::new();
-            record.insert("session_id".into(), serde_json::Value::String(session.id.clone()));
+            record.insert(
+                "session_id".into(),
+                serde_json::Value::String(session.id.clone()),
+            );
             record.insert(
                 "index".into(),
                 serde_json::Value::Number(serde_json::Number::from(index as u64)),
@@ -412,7 +415,10 @@ fn iter_user_prompt_records(
                 .and_then(serde_json::Value::as_str)
                 .filter(|value| !value.is_empty())
             {
-                record.insert("event_id".into(), serde_json::Value::String(event_id.into()));
+                record.insert(
+                    "event_id".into(),
+                    serde_json::Value::String(event_id.into()),
+                );
             }
             records.push(record);
         }
@@ -554,7 +560,12 @@ fn append_session_messages_markdown(
         let suffix = message_timestamp(message)
             .map(|value| format!(" - {}", value))
             .unwrap_or_default();
-        lines.push(format!("{} {}{}", marker, markdown_heading_text(&label), suffix));
+        lines.push(format!(
+            "{} {}{}",
+            marker,
+            markdown_heading_text(&label),
+            suffix
+        ));
         lines.push(String::new());
         if role == "tool" {
             lines.push(fenced_session_text(&message_text(message.get("content"))));
@@ -977,7 +988,8 @@ pub async fn handle_cli_sessions(
                 if let Some(candidate) = session.clone().map(|value| value.trim().to_string()) {
                     if candidate.is_empty() {
                         export_subject = None;
-                    } else if resolve_unique_session_snapshot(&sessions_dir, &candidate)?.is_some() {
+                    } else if resolve_unique_session_snapshot(&sessions_dir, &candidate)?.is_some()
+                    {
                         export_subject = Some(candidate);
                     } else if export_output.is_none()
                         && session_export_positional_looks_like_output(&candidate)
@@ -1095,11 +1107,8 @@ pub async fn handle_cli_sessions(
             }
             let max_age_days =
                 prune_cutoff_for_sessions(source.as_deref(), older_than, name.as_deref());
-            let candidates = prune_session_snapshot_candidates(
-                &sessions_dir,
-                source.as_deref(),
-                max_age_days,
-            )?;
+            let candidates =
+                prune_session_snapshot_candidates(&sessions_dir, source.as_deref(), max_age_days)?;
             println!("{}", render_prune_preview(&candidates));
             if candidates.is_empty() {
                 return Ok(());
@@ -1420,7 +1429,9 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok());
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
+                    let head = &key[..key.floor_char_boundary(4)];
+                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
+                    format!("{head}...{tail}")
                 } else {
                     "****".to_string()
                 };
@@ -1451,7 +1462,9 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
             let env_key = std::env::var("ANTHROPIC_API_KEY").ok();
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
+                    let head = &key[..key.floor_char_boundary(4)];
+                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
+                    format!("{head}...{tail}")
                 } else {
                     "****".to_string()
                 };
@@ -1479,7 +1492,9 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
             let env_key = std::env::var(&env_var).ok();
             if let Some(key) = env_key {
                 let masked = if key.len() > 8 {
-                    format!("{}...{}", &key[..key.floor_char_boundary(4)], &key[key.ceil_char_boundary(key.len() - 4)..])
+                    let head = &key[..key.floor_char_boundary(4)];
+                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
+                    format!("{head}...{tail}")
                 } else {
                     "****".to_string()
                 };
