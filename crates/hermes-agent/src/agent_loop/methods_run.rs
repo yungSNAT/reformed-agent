@@ -263,7 +263,7 @@ impl AgentLoop {
             self.memory_on_turn_start(total_turns, "");
 
             // Memory sync at flush interval
-            if total_turns % self.config.memory_flush_interval == 0 && total_turns > 0 {
+            if total_turns.is_multiple_of(self.config.memory_flush_interval) && total_turns > 0 {
                 let msgs = ctx.get_messages();
                 let (u, a) = extract_last_user_assistant(msgs);
                 self.memory_sync(&u, &a, session_id, msgs);

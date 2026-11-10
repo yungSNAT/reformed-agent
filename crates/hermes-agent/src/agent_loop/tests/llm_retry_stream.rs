@@ -1048,6 +1048,75 @@
         assert_eq!(*provider.calls.lock().expect("calls lock"), 2);
     }
 
+    #[tokio::test]
+    async fn zero_memory_flush_interval_runs_both_loops() {
+        struct DoneProvider;
+
+        #[async_trait::async_trait]
+        impl LlmProvider for DoneProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("done"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("done")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        // An interval of 0 turns the periodic memory sync off rather than
+        // dividing the turn count by zero.
+        let agent = AgentLoop::new(
+            AgentConfig {
+                memory_flush_interval: 0,
+                skip_memory: true,
+                skip_context_files: true,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DoneProvider),
+        );
+        let ran = agent
+            .run(vec![Message::user("run")], None)
+            .await
+            .expect("run with memory_flush_interval 0");
+        let said_done = |messages: &[Message]| {
+            messages
+                .iter()
+                .any(|m| m.content.as_deref() == Some("done"))
+        };
+        assert!(said_done(&ran.messages));
+        let streamed = agent
+            .run_stream(vec![Message::user("run")], None, Some(Box::new(|_| {})))
+            .await
+            .expect("run_stream with memory_flush_interval 0");
+        assert!(said_done(&streamed.messages));
+    }
+
     #[test]
     fn normalize_tool_call_arguments_repairs_malformed_json_without_retry_error() {
         let mut tc = ToolCall {
