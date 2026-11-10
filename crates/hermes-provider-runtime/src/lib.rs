@@ -18,6 +18,9 @@ use hermes_agent::provider_profiles;
 use hermes_agent::providers_extra::{
     CopilotProvider, KimiProvider, MiniMaxProvider, NousProvider, QwenProvider,
 };
+use hermes_agent::vertex::{
+    has_vertex_credentials, VertexProvider, VERTEX_AUTH_SOURCE, VERTEX_PROVIDER_ID,
+};
 use hermes_agent::CodexProvider;
 use hermes_config::{GatewayConfig, LlmProviderConfig};
 use hermes_core::{AgentError, LlmProvider};
@@ -448,6 +451,12 @@ fn provider_runtime_api_key_source(
     runtime_provider: &str,
     oauth_token_resolver: Option<&OAuthTokenResolver<'_>>,
 ) -> (bool, Option<String>) {
+    if runtime_provider == VERTEX_PROVIDER_ID {
+        // Vertex mints OAuth2 tokens per request, so no static key applies.
+        // Like upstream's setup status, report the fast no-network check.
+        let present = has_vertex_credentials();
+        return (present, present.then(|| VERTEX_AUTH_SOURCE.to_string()));
+    }
     if let Some(config) = provider_config {
         if config
             .api_key
@@ -680,6 +689,16 @@ pub fn build_provider_with_auth_resolver(
     let provider_config =
         active_llm_provider_config(config, provider_name.as_str(), runtime_provider.as_str());
     let request_timeout_seconds = provider_config.and_then(|c| c.request_timeout_seconds);
+
+    if runtime_provider == VERTEX_PROVIDER_ID {
+        // Resolved before any api_key or base_url lookup, as upstream does: the
+        // credentials path must never be read as a static key, and the base URL
+        // comes from the project and region when each token is minted.
+        return Arc::new(
+            VertexProvider::new(model_name)
+                .with_optional_request_timeout_seconds(request_timeout_seconds),
+        );
+    }
 
     let default_base_url = provider_default_base_url(provider_name.as_str())
         .or_else(|| provider_default_base_url(runtime_provider.as_str()));

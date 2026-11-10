@@ -169,6 +169,7 @@ fn gateway_config(
         display: Default::default(),
         terminal: TerminalConfig::default(),
         web: Default::default(),
+        vertex: Default::default(),
         llm_providers: HashMap::new(),
         fallback_model: None,
         fallback_models: Vec::new(),

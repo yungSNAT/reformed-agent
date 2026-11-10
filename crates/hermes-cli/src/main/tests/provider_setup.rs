@@ -705,6 +705,29 @@
     }
 
     #[test]
+    fn setup_vertex_uses_oauth2_credentials_not_an_api_key() {
+        let providers = setup_provider_defaults();
+        let vertex = providers
+            .iter()
+            .find(|option| option.provider == "vertex")
+            .expect("vertex setup option");
+
+        assert_eq!(vertex.model, "vertex:google/gemini-3-flash-preview");
+        assert_eq!(setup_provider_display("vertex"), "Google Vertex AI");
+        assert!(!setup_provider_requires_api_key("vertex"));
+        assert_eq!(setup_provider_default_base_url("vertex"), None);
+        assert_eq!(
+            setup_provider_env_keys("vertex"),
+            &["VERTEX_CREDENTIALS_PATH", "GOOGLE_APPLICATION_CREDENTIALS"]
+        );
+        assert_eq!(provider_env_var("google-vertex"), None);
+        let curated = hermes_cli::model_switch::provider_curated_models("vertex-ai");
+        assert!(curated.contains(&"google/gemini-3-flash-preview"));
+        assert!(curated.contains(&"google/gemini-2.5-pro"));
+        assert!(provider_picker_description("vertex").contains("OAuth2 service account or ADC"));
+    }
+
+    #[test]
     fn setup_default_model_pick_index_matches_provider_prefixed_target() {
         let suggested = vec![
             "nousresearch/hermes-3-llama-3.1-405b".to_string(),

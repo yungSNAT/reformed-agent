@@ -165,12 +165,12 @@
       "id": "rust-vertex-provider-plugin-parity",
       "status": "approved",
       "workstream": "WS3",
-      "summary": "Keep upstream Vertex Python provider plugin files out of the Rust runtime while tracking equivalent Rust provider surfaces.",
-      "owner": "sheawinkler",
+      "summary": "Upstream Vertex Python provider plugin files stay reference-only; the Vertex provider is ported to Rust in hermes-agent::vertex.",
+      "owner": "yungSNAT",
       "ticket": 700,
-      "last_reviewed": "2026-07-02",
-      "review_date": "2026-10-02",
-      "rationale": "Upstream Vertex provider metadata points to a Python vertex_adapter. Hermes Ultra keeps runtime provider behavior in Rust via generic/OpenAI-compatible provider routing, Gemini-compatible request shaping, custom base_url/header support, and OAuth provider surfaces; the Python plugin files are reference-only and should not be vendored into the Rust runtime.",
+      "last_reviewed": "2026-11-10",
+      "review_date": "2027-02-10",
+      "rationale": "The Rust port of agent/vertex_adapter.py and the vertex plugin lives in crates/hermes-agent/src/vertex.rs (VertexProvider, token cache, base URL from project and region, 401 re-mint) and crates/hermes-agent/src/vertex/credentials.rs (service-account RS256 JWT bearer grant, authorised-user refresh-token grant, Compute Engine metadata server, in google-auth's ADC order). It is selected by provider id vertex and its aliases in hermes-provider-runtime and the agent loop's runtime routing, listed in the CLI provider catalogue and setup wizard, and reads VERTEX_CREDENTIALS_PATH, GOOGLE_APPLICATION_CREDENTIALS, VERTEX_PROJECT_ID, VERTEX_REGION and the vertex: config section. ADC external_account, impersonated and GDCH credential types, metadata-server mTLS and the Vertex thinking_config extra_body hook are not ported. The Python plugin files are reference-only and are not vendored into the Rust runtime.",
       "path_prefixes": [
         "plugins/model-providers/vertex/"
       ]

@@ -40,6 +40,7 @@ pub mod steer;
 pub mod sub_agent_orchestrator;
 pub mod subdirectory_hints;
 pub mod tool_call_args;
+pub mod vertex;
 
 // Re-export primary agent types
 pub use agent_loop::{
@@ -75,6 +76,7 @@ pub use provider::{AnthropicProvider, GenericProvider, OpenAiProvider, OpenRoute
 pub use providers_extra::{
     CopilotProvider, KimiProvider, MiniMaxProvider, NousProvider, QwenProvider,
 };
+pub use vertex::VertexProvider;
 
 // Re-export rate limiting, credential pool, and fallback chain
 pub use credential_pool::CredentialPool;

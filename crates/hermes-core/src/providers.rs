@@ -10,6 +10,7 @@ pub const KNOWN_PROVIDERS: &[&str] = &[
     "qwen-oauth",
     "google-gemini-cli",
     "gemini",
+    "vertex",
     "kimi",
     "kimi-coding",
     "kimi-coding-cn",
@@ -109,6 +110,7 @@ pub fn canonical_provider_id(provider: &str) -> String {
         "nous_api" | "nousapi" | "nous-portal-api" => "nous-api".to_string(),
         "gemini-cli" | "gemini-oauth" => "google-gemini-cli".to_string(),
         "google" | "google-gemini" | "google-ai-studio" => "gemini".to_string(),
+        "google-vertex" | "vertex-ai" | "gcp-vertex" | "vertexai" => "vertex".to_string(),
         "azure" | "azure-ai-foundry" | "azure_ai_foundry" => "azure-foundry".to_string(),
         "step" | "step-plan" => "stepfun".to_string(),
         "moonshot" | "kimi-coding" | "kimi-coding-cn" => "kimi".to_string(),
@@ -359,6 +361,17 @@ mod tests {
         assert_eq!(canonical_provider_id("amazon-bedrock"), "bedrock");
         assert_eq!(canonical_provider_id("amazon"), "bedrock");
         assert_eq!(canonical_provider_id("minimax_cn"), "minimax-cn");
+        for alias in [
+            "vertex",
+            "google-vertex",
+            "vertex-ai",
+            "gcp-vertex",
+            "vertexai",
+        ] {
+            assert_eq!(canonical_provider_id(alias), "vertex");
+        }
+        // `google-vertex` is Vertex, not the AI Studio `gemini` provider.
+        assert_eq!(canonical_provider_id("google-gemini"), "gemini");
     }
 
     #[test]

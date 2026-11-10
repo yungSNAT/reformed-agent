@@ -163,6 +163,9 @@ pub fn provider_picker_description(provider: &str) -> &'static str {
             "copilot-acp" => "GitHub Copilot ACP (Spawns copilot --acp --stdio)",
             "huggingface" => "Hugging Face Inference Providers",
             "gemini" => "Google AI Studio (Native Gemini API)",
+            "vertex" => {
+                "Google Vertex AI (Gemini via GCP; OAuth2 service account or ADC, GCP billing/quotas)"
+            }
             "deepseek" => "DeepSeek (V3, R1, coder, direct API)",
             "xai" => "xAI Grok (Direct API)",
             "zai" => "Z.AI / GLM (Zhipu direct API)",

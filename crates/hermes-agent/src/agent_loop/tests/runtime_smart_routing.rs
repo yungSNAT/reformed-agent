@@ -879,3 +879,32 @@
             Some("qwen-env-key")
         );
     }
+
+    #[test]
+    fn test_runtime_provider_vertex_aliases_build_without_static_key() {
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(crate::vertex::VertexProvider::new(
+                "google/gemini-3-flash-preview",
+            )),
+        );
+        for provider in [
+            "vertex",
+            "google-vertex",
+            "vertex-ai",
+            "gcp-vertex",
+            "vertexai",
+        ] {
+            let built = agent.build_runtime_provider(
+                provider,
+                "google/gemini-3-flash-preview",
+                None,
+                None,
+                None,
+                None,
+                None,
+            );
+            assert!(built.is_ok(), "{provider} runtime provider should build");
+        }
+    }

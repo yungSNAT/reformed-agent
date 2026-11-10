@@ -696,6 +696,18 @@ impl AgentLoop {
         api_mode: Option<&ApiMode>,
         credential_pool: Option<&Arc<CredentialPool>>,
     ) -> Result<Arc<dyn LlmProvider>, AgentError> {
+        if hermes_core::providers::canonical_provider_id(provider)
+            == crate::vertex::VERTEX_PROVIDER_ID
+        {
+            // Vertex mints its own OAuth2 token and base URL per request; a
+            // static key or routed base URL never applies.
+            let model = crate::model_normalize::normalize_model_for_provider(model_name, provider);
+            return Ok(Arc::new(
+                crate::vertex::VertexProvider::new(model).with_optional_request_timeout_seconds(
+                    self.resolve_runtime_request_timeout_seconds(provider),
+                ),
+            ));
+        }
         let base_url = self.resolve_runtime_base_url(provider, route_base_url);
         let api_key =
             match self.resolve_runtime_api_key(provider, api_key_env_override, explicit_api_key) {

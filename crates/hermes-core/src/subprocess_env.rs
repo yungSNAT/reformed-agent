@@ -68,6 +68,7 @@ pub const SUBPROCESS_ENV_BLOCKLIST_EXACT: &[&str] = &[
     "GITHUB_TOKEN",
     "GLM_API_KEY",
     "GOOGLE_API_KEY",
+    "GOOGLE_APPLICATION_CREDENTIALS",
     "GROQ_API_KEY",
     "HASS_TOKEN",
     "HASS_URL",
@@ -105,6 +106,7 @@ pub const SUBPROCESS_ENV_BLOCKLIST_EXACT: &[&str] = &[
     "TELEGRAM_HOME_CHANNEL",
     "TELEGRAM_HOME_CHANNEL_NAME",
     "TOGETHER_API_KEY",
+    "VERTEX_CREDENTIALS_PATH",
     "WHATSAPP_ALLOWED_USERS",
     "WHATSAPP_ENABLED",
     "WHATSAPP_MODE",
@@ -223,6 +225,21 @@ mod tests {
         assert!(!env.contains_key("OPENAI_API_KEY"));
         assert!(!env.contains_key("HERMES_OPENAI_API_KEY"));
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn vertex_credential_paths_are_stripped_by_default() {
+        let env = build(
+            &[
+                ("VERTEX_CREDENTIALS_PATH", "/secrets/sa.json"),
+                ("GOOGLE_APPLICATION_CREDENTIALS", "/secrets/sa.json"),
+                ("VERTEX_REGION", "global"),
+            ],
+            false,
+        );
+        assert!(!env.contains_key("VERTEX_CREDENTIALS_PATH"));
+        assert!(!env.contains_key("GOOGLE_APPLICATION_CREDENTIALS"));
+        assert_eq!(env.get("VERTEX_REGION").map(String::as_str), Some("global"));
     }
 
     #[test]

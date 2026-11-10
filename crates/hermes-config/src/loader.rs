@@ -9,7 +9,7 @@ pub use hermes_core::ConfigError;
 
 use crate::config::{
     DisplayConfig, GatewayConfig, ProxyConfig, TerminalBackendType, TerminalConfig,
-    TerminalHomeMode, WebConfig,
+    TerminalHomeMode, VertexConfig, WebConfig,
 };
 use crate::merge::{deep_merge, merge_configs};
 use crate::paths;
@@ -545,6 +545,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     bridge_terminal_config_to_env(&config.terminal);
     bridge_web_config_to_env(&config.web);
     bridge_display_config_to_env(&config.display);
+    bridge_vertex_config_to_env(&config.vertex);
 
     // Layer 3: environment variables (highest priority)
     apply_env_overrides(&mut config);

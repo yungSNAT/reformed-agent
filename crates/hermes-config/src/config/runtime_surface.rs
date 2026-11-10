@@ -286,6 +286,29 @@ pub struct WebConfig {
 }
 
 // ---------------------------------------------------------------------------
+// VertexConfig
+// ---------------------------------------------------------------------------
+
+/// Non-secret Google Vertex AI routing settings (upstream `vertex:` section).
+/// The credentials path is a secret pointer and stays in `.env`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, Default)]
+pub struct VertexConfig {
+    /// GCP project ID; unset uses the project in the credentials.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_id: Option<String>,
+
+    /// Vertex location; unset means `global`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub region: Option<String>,
+}
+
+impl VertexConfig {
+    pub fn is_empty(&self) -> bool {
+        self.project_id.is_none() && self.region.is_none()
+    }
+}
+
+// ---------------------------------------------------------------------------
 // ApprovalConfig
 // ---------------------------------------------------------------------------
 

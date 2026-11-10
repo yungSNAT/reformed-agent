@@ -260,6 +260,17 @@ const CURATED_PROVIDER_MODELS: &[(&str, &[&str])] = &[
         ],
     ),
     (
+        "vertex",
+        &[
+            "google/gemini-3.1-pro-preview",
+            "google/gemini-3-pro-preview",
+            "google/gemini-3-flash-preview",
+            "google/gemini-3.1-flash-lite-preview",
+            "google/gemini-2.5-pro",
+            "google/gemini-2.5-flash",
+        ],
+    ),
+    (
         "google-gemini-cli",
         &[
             "gemini-3.1-pro-preview",

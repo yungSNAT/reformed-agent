@@ -190,6 +190,9 @@ pub fn normalize_runtime_provider_name(provider: &str) -> String {
         "qwen-cli" | "qwen-portal" => "qwen-oauth".to_string(),
         "gemini-cli" | "gemini-oauth" => "google-gemini-cli".to_string(),
         "google" | "google-gemini" | "google-ai-studio" => "gemini".to_string(),
+        "google-vertex" | "vertex-ai" | "gcp-vertex" | "vertexai" => {
+            crate::vertex::VERTEX_PROVIDER_ID.to_string()
+        }
         "azure" | "azure-ai-foundry" | "azure_ai_foundry" => "azure-foundry".to_string(),
         "step" | "step-plan" => "stepfun".to_string(),
         "moonshot" | "kimi-coding" | "kimi-coding-cn" => "kimi".to_string(),

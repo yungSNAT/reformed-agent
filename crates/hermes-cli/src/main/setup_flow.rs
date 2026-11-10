@@ -130,6 +130,8 @@ const SETUP_BEDROCK_ENV_KEYS: &[&str] = &[
     "AWS_SECRET_ACCESS_KEY",
     "AWS_SESSION_TOKEN",
 ];
+const SETUP_VERTEX_ENV_KEYS: &[&str] =
+    &["VERTEX_CREDENTIALS_PATH", "GOOGLE_APPLICATION_CREDENTIALS"];
 const HERMES_ENABLE_NOUS_MANAGED_TOOLS_ENV_KEY: &str = "HERMES_ENABLE_NOUS_MANAGED_TOOLS";
 
 #[derive(Clone, Copy)]
@@ -199,6 +201,11 @@ const SETUP_MODEL_OPTIONS: &[SetupModelOption] = &[
         provider: "gemini",
         model: "gemini:gemini-3.1-pro-preview",
         label: "Google AI Studio Gemini (API key)",
+    },
+    SetupModelOption {
+        provider: "vertex",
+        model: "vertex:google/gemini-3-flash-preview",
+        label: "Google Vertex AI (OAuth2 service account or ADC)",
     },
     SetupModelOption {
         provider: "qwen-oauth",
@@ -501,6 +508,7 @@ fn setup_provider_display(provider: &str) -> &'static str {
         "ai-gateway" => "Vercel AI Gateway",
         "arcee" => "Arcee",
         "bedrock" => "AWS Bedrock",
+        "vertex" => "Google Vertex AI",
         "copilot" => "GitHub Copilot",
         "huggingface" => "Hugging Face",
         "kilocode" => "KiloCode",
@@ -552,6 +560,7 @@ fn setup_provider_env_keys(provider: &str) -> &'static [&'static str] {
         "ai-gateway" => SETUP_AI_GATEWAY_ENV_KEYS,
         "arcee" => SETUP_ARCEE_ENV_KEYS,
         "bedrock" => SETUP_BEDROCK_ENV_KEYS,
+        "vertex" => SETUP_VERTEX_ENV_KEYS,
         "copilot" => SETUP_COPILOT_ENV_KEYS,
         "huggingface" => SETUP_HUGGINGFACE_ENV_KEYS,
         "kilocode" => SETUP_KILOCODE_ENV_KEYS,
@@ -626,10 +635,68 @@ fn setup_provider_default_base_url(provider: &str) -> Option<&'static str> {
     }
 }
 
+/// Upstream `_model_flow_vertex` steps 1 to 3: report the credential source,
+/// then ask for the GCP project and region (non-secret, saved under `vertex:`).
+fn prompt_vertex_setup(
+    stdin: &std::io::Stdin,
+    env_path: &Path,
+    current: hermes_config::VertexConfig,
+) -> hermes_config::VertexConfig {
+    use std::io::Write;
+
+    let credentials_path = SETUP_VERTEX_ENV_KEYS.iter().find_map(|key| {
+        std::env::var(key)
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .or_else(|| read_env_key(env_path, key))
+    });
+    match credentials_path {
+        Some(path) => println!("\n  Vertex credentials: service account JSON ({path}) ✓"),
+        None => {
+            println!("\n  Vertex credentials: Application Default Credentials (ADC)");
+            println!("    Vertex uses OAuth2, not a static API key. Either:");
+            println!("      • run 'gcloud auth application-default login', or");
+            println!(
+                "      • set VERTEX_CREDENTIALS_PATH in ~/.hermes/.env to a service account JSON"
+            );
+        }
+    }
+
+    let read_answer = |prompt: String| {
+        print!("{prompt}");
+        std::io::stdout().flush().ok();
+        let mut answer = String::new();
+        stdin.read_line(&mut answer).ok();
+        answer.trim().to_string()
+    };
+    let project_default = current
+        .project_id
+        .clone()
+        .unwrap_or_else(|| "from credentials".to_string());
+    let project = read_answer(format!("  GCP project ID [{project_default}]: "));
+    let region_default = current
+        .region
+        .clone()
+        .unwrap_or_else(|| hermes_agent::vertex::VERTEX_DEFAULT_REGION.to_string());
+    let region = read_answer(format!("  Vertex region [{region_default}]: "));
+    hermes_config::VertexConfig {
+        project_id: Some(project)
+            .filter(|p| !p.is_empty())
+            .or(current.project_id),
+        region: Some(if region.is_empty() {
+            region_default
+        } else {
+            region
+        }),
+    }
+}
+
 fn setup_provider_requires_api_key(provider: &str) -> bool {
     !matches!(
         provider,
         "bedrock"
+            | "vertex"
             | "ollama-local"
             | "llama-cpp"
             | "vllm"
@@ -827,10 +894,12 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
         .map(|option| {
             let auth_label = if provider_supports_oauth(option.provider) {
                 "OAuth/API key"
-            } else if !setup_provider_requires_api_key(option.provider) {
-                "Local / optional key"
             } else if option.provider == "bedrock" {
                 "AWS credentials"
+            } else if option.provider == "vertex" {
+                "OAuth2 / ADC"
+            } else if !setup_provider_requires_api_key(option.provider) {
+                "Local / optional key"
             } else {
                 "API key"
             };
@@ -870,6 +939,7 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
     let mut selected_oauth_client_id: Option<String> = None;
     let mut selected_nous_oauth_authenticated = false;
     let mut selected_nous_managed_tools_enabled: Option<bool> = None;
+    let mut selected_vertex_config: Option<hermes_config::VertexConfig> = None;
 
     if provider_supports_oauth(&selected_provider) {
         print!(
@@ -1091,6 +1161,11 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
         println!(
             "\nAWS Bedrock uses AWS credential chain (env/profile/role). Skipping API key prompt."
         );
+    } else if selected_provider == "vertex" {
+        let current = load_user_config_file(&config_path)
+            .map(|cfg| cfg.vertex)
+            .unwrap_or_default();
+        selected_vertex_config = Some(prompt_vertex_setup(&stdin, &env_path, current));
     } else if !setup_provider_requires_api_key(&selected_provider) {
         println!(
             "\n{} is a local/self-host OpenAI-compatible backend. API key is optional.",
@@ -1325,6 +1400,9 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
         }
         if let Some(client_id) = selected_oauth_client_id {
             provider.oauth_client_id = Some(client_id);
+        }
+        if let Some(vertex) = selected_vertex_config {
+            disk.vertex = vertex;
         }
         validate_config(&disk).map_err(|e| AgentError::Config(e.to_string()))?;
         save_config_yaml(&config_path, &disk).map_err(|e| AgentError::Config(e.to_string()))?;
