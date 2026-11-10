@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-07-08T09:23:39.924163+00:00",
+  "generated_at_utc": "2026-11-10T12:06:11.325570+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "4f83eedf9cfafa82d81b3f2ea8ada0027536c99a",
-    "upstream_ref": "upstream/main",
+    "local_sha": "b1e03bcd37eb5106742105e8e938ce0b04bb6653",
+    "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1337,
+    "commits_ahead": 1437,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1071,
+    "local_patch_unique": 1169,
     "files_only_upstream": 3439,
-    "files_only_local": 1336,
+    "files_only_local": 1350,
     "files_shared_identical": 1458,
     "files_shared_different": 1280,
-    "tree_files_changed": 5953,
-    "tree_insertions": 1369575,
-    "tree_deletions": 606983
+    "tree_files_changed": 5967,
+    "tree_insertions": 1369582,
+    "tree_deletions": 616099
   },
   "top_upstream_only": [
     {
@@ -352,11 +352,11 @@
     },
     {
       "path": "crates/hermes-cli",
-      "count": 182
+      "count": 183
     },
     {
       "path": "crates/hermes-tools",
-      "count": 123
+      "count": 126
     },
     {
       "path": "crates/hermes-gateway",
@@ -364,7 +364,7 @@
     },
     {
       "path": "crates/hermes-agent",
-      "count": 107
+      "count": 110
     },
     {
       "path": "skills/creative",
@@ -372,7 +372,7 @@
     },
     {
       "path": "docs/parity",
-      "count": 56
+      "count": 57
     },
     {
       "path": "crates/hermes-intelligence",
@@ -380,7 +380,7 @@
     },
     {
       "path": "crates/hermes-config",
-      "count": 30
+      "count": 31
     },
     {
       "path": "website/docs",
@@ -399,15 +399,19 @@
       "count": 17
     },
     {
+      "path": "crates/hermes-environments",
+      "count": 16
+    },
+    {
       "path": "crates/hermes-eval",
       "count": 16
     },
     {
-      "path": "crates/hermes-environments",
-      "count": 15
+      "path": "crates/hermes-parity-tests",
+      "count": 14
     },
     {
-      "path": "crates/hermes-parity-tests",
+      "path": "crates/hermes-cron",
       "count": 13
     },
     {
@@ -417,10 +421,6 @@
     {
       "path": "skills/mlops",
       "count": 13
-    },
-    {
-      "path": "crates/hermes-cron",
-      "count": 12
     },
     {
       "path": "crates/hermes-mcp",
@@ -676,11 +676,11 @@
     },
     {
       "path": "crates/hermes-cli",
-      "count": 182
+      "count": 183
     },
     {
       "path": "crates/hermes-tools",
-      "count": 123
+      "count": 126
     },
     {
       "path": "crates/hermes-gateway",
@@ -688,7 +688,7 @@
     },
     {
       "path": "crates/hermes-agent",
-      "count": 107
+      "count": 110
     },
     {
       "path": "skills/creative",
@@ -696,7 +696,7 @@
     },
     {
       "path": "docs/parity",
-      "count": 56
+      "count": 57
     },
     {
       "path": "crates/hermes-intelligence",
@@ -704,7 +704,7 @@
     },
     {
       "path": "crates/hermes-config",
-      "count": 30
+      "count": 31
     },
     {
       "path": "website/docs",
@@ -723,15 +723,19 @@
       "count": 17
     },
     {
+      "path": "crates/hermes-environments",
+      "count": 16
+    },
+    {
       "path": "crates/hermes-eval",
       "count": 16
     },
     {
-      "path": "crates/hermes-environments",
-      "count": 15
+      "path": "crates/hermes-parity-tests",
+      "count": 14
     },
     {
-      "path": "crates/hermes-parity-tests",
+      "path": "crates/hermes-cron",
       "count": 13
     },
     {
@@ -741,10 +745,6 @@
     {
       "path": "skills/mlops",
       "count": 13
-    },
-    {
-      "path": "crates/hermes-cron",
-      "count": 12
     },
     {
       "path": "crates/hermes-mcp",
@@ -838,7 +838,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 1019,
       "shared_different": 798,
-      "local_only": 43,
+      "local_only": 44,
       "risk": "critical",
       "effort": "XL"
     },
@@ -848,7 +848,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 1422,
       "shared_different": 13,
-      "local_only": 454,
+      "local_only": 458,
       "risk": "critical",
       "effort": "XL"
     },
@@ -858,7 +858,7 @@
       "name": "UX parity",
       "upstream_only": 587,
       "shared_different": 328,
-      "local_only": 138,
+      "local_only": 139,
       "risk": "high",
       "effort": "XL"
     },
@@ -868,7 +868,7 @@
       "name": "Tools and adapters parity",
       "upstream_only": 181,
       "shared_different": 102,
-      "local_only": 161,
+      "local_only": 164,
       "risk": "high",
       "effort": "L"
     },
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 73,
       "shared_different": 0,
-      "local_only": 412,
+      "local_only": 417,
       "risk": "critical",
       "effort": "M"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1071,
+    "local_patch_unique": 1169,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "f64e4f4f5768c18a53f44890747653bafcab2796"
@@ -936,7 +936,7 @@
     ],
     "local_patch_equivalent_sample": [],
     "intentional_divergence_items": 13,
-    "intentional_divergence_covered_files": 1344
+    "intentional_divergence_covered_files": 1182
   },
   "intentional_divergence": [
     {
@@ -978,14 +978,11 @@
     },
     {
       "id": "rust-skills-catalog-governance",
-      "status": "approved",
+      "status": "temporary",
       "workstream": "WS4",
-      "summary": "Track upstream skills and optional-skills catalogs via parity audits while keeping Rust runtime skill loading externalized (no direct Python skill-tree vendoring).",
-      "matched_files": 319,
+      "summary": "Track the upstream skills and optional-skills catalogues imported into this tree, the upstream skill paths kept elsewhere here or replaced in Rust, and the upstream skills not yet imported.",
+      "matched_files": 157,
       "matched_sample": [
-        "optional-skills/autonomous-ai-agents/honcho/SKILL.md",
-        "optional-skills/creative/DESCRIPTION.md",
-        "optional-skills/creative/baoyu-article-illustrator/references/styles.md",
         "optional-skills/creative/baoyu-comic/PORT_NOTES.md",
         "optional-skills/creative/baoyu-comic/SKILL.md",
         "optional-skills/creative/baoyu-comic/references/analysis-framework.md",
@@ -1002,7 +999,10 @@
         "optional-skills/creative/baoyu-comic/references/layouts/dense.md",
         "optional-skills/creative/baoyu-comic/references/layouts/four-panel.md",
         "optional-skills/creative/baoyu-comic/references/layouts/mixed.md",
-        "optional-skills/creative/baoyu-comic/references/layouts/splash.md"
+        "optional-skills/creative/baoyu-comic/references/layouts/splash.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/standard.md",
+        "optional-skills/creative/baoyu-comic/references/layouts/webtoon.md",
+        "optional-skills/creative/baoyu-comic/references/ohmsha-guide.md"
       ]
     },
     {
@@ -1081,7 +1081,7 @@
     },
     {
       "id": "upstream-s6-plan-doc-archive",
-      "status": "approved",
+      "status": "deprecated",
       "workstream": "WS7",
       "summary": "Do not import upstream implementation-plan archive documents unless they change local runtime or release behavior.",
       "matched_files": 0,
@@ -1091,7 +1091,7 @@
       "id": "rust-vertex-provider-plugin-parity",
       "status": "approved",
       "workstream": "WS3",
-      "summary": "Keep upstream Vertex Python provider plugin files out of the Rust runtime while tracking equivalent Rust provider surfaces.",
+      "summary": "Upstream Vertex Python provider plugin files stay reference-only; the Vertex provider is ported to Rust in hermes-agent::vertex.",
       "matched_files": 2,
       "matched_sample": [
         "plugins/model-providers/vertex/__init__.py",

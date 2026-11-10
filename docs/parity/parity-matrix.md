@@ -1,11 +1,11 @@
 # Parity Matrix
 
-Generated: `2026-07-08T09:23:39.924163+00:00`
+Generated: `2026-11-10T12:06:11.325570+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`4f83eedf9cfafa82d81b3f2ea8ada0027536c99a`)
-- Upstream ref: `upstream/main` (`f64e4f4f5768c18a53f44890747653bafcab2796`)
+- Local ref: `HEAD` (`b1e03bcd37eb5106742105e8e938ce0b04bb6653`)
+- Upstream ref: `upstream/parity-reference` (`f64e4f4f5768c18a53f44890747653bafcab2796`)
 - Merge base: `none (history divergence)`
 
 ## Summary
@@ -13,17 +13,17 @@ Generated: `2026-07-08T09:23:39.924163+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1337 |
+| Commits ahead local (`local` ancestry only) | 1437 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1071 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1169 |
 | Files only in upstream tree | 3439 |
-| Files only in local tree | 1336 |
+| Files only in local tree | 1350 |
 | Shared files identical content | 1458 |
 | Shared files different content | 1280 |
-| Total files changed (`local` vs `upstream`) | 5953 |
-| Insertions (`local` vs `upstream`) | 1369575 |
-| Deletions (`local` vs `upstream`) | 606983 |
+| Total files changed (`local` vs `upstream`) | 5967 |
+| Insertions (`local` vs `upstream`) | 1369582 |
+| Deletions (`local` vs `upstream`) | 616099 |
 
 ## Top 40 upstream-only buckets
 
@@ -120,24 +120,24 @@ Generated: `2026-07-08T09:23:39.924163+00:00`
 | Bucket | Files |
 | --- | ---: |
 | `third_party/rustsec-patches` | 190 |
-| `crates/hermes-cli` | 182 |
-| `crates/hermes-tools` | 123 |
+| `crates/hermes-cli` | 183 |
+| `crates/hermes-tools` | 126 |
 | `crates/hermes-gateway` | 111 |
-| `crates/hermes-agent` | 107 |
+| `crates/hermes-agent` | 110 |
 | `skills/creative` | 70 |
-| `docs/parity` | 56 |
+| `docs/parity` | 57 |
 | `crates/hermes-intelligence` | 40 |
-| `crates/hermes-config` | 30 |
+| `crates/hermes-config` | 31 |
 | `website/docs` | 26 |
 | `crates/hermes-acp` | 22 |
 | `crates/hermes-core` | 18 |
 | `docs/releases` | 17 |
+| `crates/hermes-environments` | 16 |
 | `crates/hermes-eval` | 16 |
-| `crates/hermes-environments` | 15 |
-| `crates/hermes-parity-tests` | 13 |
+| `crates/hermes-parity-tests` | 14 |
+| `crates/hermes-cron` | 13 |
 | `crates/hermes-source-parity-tests` | 13 |
 | `skills/mlops` | 13 |
-| `crates/hermes-cron` | 12 |
 | `crates/hermes-mcp` | 10 |
 | `crates/hermes-skills` | 10 |
 | `docs/roadmaps` | 10 |
@@ -176,8 +176,8 @@ Generated: `2026-07-08T09:23:39.924163+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1071`
-- Intentional divergence tracked items: `13` (covered files: `1344`)
+- Local unique by patch-id: `1169`
+- Intentional divergence tracked items: `13` (covered files: `1182`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
 ## Intentional Divergence Registry
@@ -187,13 +187,13 @@ Generated: `2026-07-08T09:23:39.924163+00:00`
 | `ultra-contextlattice-memory-plugin` | approved | WS3 | 2 | Keep ContextLattice native memory plugin and provider discovery in the Rust agent runtime. |
 | `ultra-webhook-queue-backends` | approved | WS7 | 4 | Preserve webhook-driven sync queue worker architecture with sqlite, SQS, and Kafka support. |
 | `ultra-launchd-webhook-lifecycle` | approved | WS7 | 4 | Preserve launchd-based interactive dev lifecycle management for webhook listener and worker. |
-| `rust-skills-catalog-governance` | approved | WS4 | 319 | Track upstream skills and optional-skills catalogs via parity audits while keeping Rust runtime skill loading externalized (no direct Python skill-tree vendoring). |
+| `rust-skills-catalog-governance` | temporary | WS4 | 157 | Track the upstream skills and optional-skills catalogues imported into this tree, the upstream skill paths kept elsewhere here or replaced in Rust, and the upstream skills not yet imported. |
 | `rust-gateway-platform-plugin-parity` | approved | WS3 | 40 | Keep platform adapter parity in the Rust gateway instead of vendoring upstream Python platform-plugin trees. |
 | `rust-chronos-managed-cron-provider` | approved | WS3 | 5 | Own Chronos managed-cron behavior in the Rust cron scheduler and API server instead of vendoring the upstream Python cron plugin. |
 | `rust-runtime-no-raft-platform-plugin` | temporary | WS3 | 3 | Track the upstream Raft Python platform plugin as non-runtime until a Rust-native Raft adapter is scoped. |
 | `upstream-python-plugin-backend-drift-20260527` | temporary | WS3 | 10 | Track upstream Python backend plugin trees that are not yet closed as Rust-native runtime surfaces. |
-| `upstream-s6-plan-doc-archive` | approved | WS7 | 0 | Do not import upstream implementation-plan archive documents unless they change local runtime or release behavior. |
-| `rust-vertex-provider-plugin-parity` | approved | WS3 | 2 | Keep upstream Vertex Python provider plugin files out of the Rust runtime while tracking equivalent Rust provider surfaces. |
+| `upstream-s6-plan-doc-archive` | deprecated | WS7 | 0 | Do not import upstream implementation-plan archive documents unless they change local runtime or release behavior. |
+| `rust-vertex-provider-plugin-parity` | approved | WS3 | 2 | Upstream Vertex Python provider plugin files stay reference-only; the Vertex provider is ported to Rust in hermes-agent::vertex. |
 | `rust-cli-tui-primary-ux-surface` | approved | WS5 | 938 | Treat Rust CLI/TUI and gateway as primary UX surface; upstream web/ui-tui trees are tracked as intentional divergence unless explicitly ported. |
 | `rust-memory-provider-plugin-parity` | approved | WS3 | 13 | Keep Honcho and Mem0 memory provider behavior in Rust-native memory/provider surfaces instead of vendoring Python plugin trees. |
 | `rust-image-provider-plugin-parity` | approved | WS5 | 4 | Keep OpenRouter and Krea image generation provider behavior in the Rust image backend instead of vendoring upstream Python plugin trees. |

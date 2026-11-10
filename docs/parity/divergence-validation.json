@@ -1,6 +1,6 @@
 {
   "divergence_file": "docs/parity/intentional-divergence.json",
-  "generated_at_utc": "2026-11-10T06:49:54.580462+00:00",
+  "generated_at_utc": "2026-11-10T12:06:11.756379+00:00",
   "items": [
     {
       "errors": [],
@@ -297,7 +297,7 @@
   "summary": {
     "errors": 0,
     "items": 13,
-    "local_paths": 4085,
+    "local_paths": 4088,
     "review_overdue": 0,
     "unowned": 0,
     "upstream_paths": 6177,

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-07-08T09:23:41.104345+00:00",
+  "generated_at_utc": "2026-11-10T12:06:11.586644+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -39,7 +39,7 @@
       ]
     },
     {
-      "evidence_count": 123,
+      "evidence_count": 125,
       "evidence_sample": [
         "crates/hermes-tools/src/approval.rs",
         "crates/hermes-tools/src/approval/patterns.rs",
@@ -49,6 +49,7 @@
         "crates/hermes-tools/src/approval/tests/session_and_gateway.rs",
         "crates/hermes-tools/src/approval/tests/tirith_guards.rs",
         "crates/hermes-tools/src/backends/browser.rs",
+        "crates/hermes-tools/src/backends/browser/cdp_client.rs",
         "crates/hermes-tools/src/backends/browser/cloud_backend_impls.rs",
         "crates/hermes-tools/src/backends/browser/cloud_config.rs",
         "crates/hermes-tools/src/backends/browser/cloud_sessions.rs",
@@ -64,8 +65,7 @@
         "crates/hermes-tools/src/backends/image_gen.rs",
         "crates/hermes-tools/src/backends/image_gen/auth_and_save.rs",
         "crates/hermes-tools/src/backends/image_gen/fal_managed_tests.rs",
-        "crates/hermes-tools/src/backends/image_gen/fal_payloads.rs",
-        "crates/hermes-tools/src/backends/image_gen/provider_config_payloads.rs"
+        "crates/hermes-tools/src/backends/image_gen/fal_payloads.rs"
       ],
       "id": "tool-runtime-behavior",
       "mapped": true,
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "evidence_count": 178,
+      "evidence_count": 179,
       "evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "evidence_count": 106,
+      "evidence_count": 109,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
@@ -178,7 +178,7 @@
       ]
     },
     {
-      "evidence_count": 69,
+      "evidence_count": 70,
       "evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/quorum_claims.rs",
@@ -215,7 +215,7 @@
       ]
     },
     {
-      "evidence_count": 71,
+      "evidence_count": 72,
       "evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/quorum_claims.rs",
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "evidence_count": 14,
+      "evidence_count": 15,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -288,7 +288,8 @@
         "crates/hermes-environments/src/singularity.rs",
         "crates/hermes-environments/src/ssh.rs",
         "crates/hermes-environments/src/training/mod.rs",
-        "crates/hermes-environments/tests/backend_integration.rs"
+        "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/tool_guard.rs"
       ],
       "id": "environment-lifecycle-contract",
       "mapped": true,
