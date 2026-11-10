@@ -551,20 +551,28 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
     seen.into_keys().take(MAX_VERIFY_COMMANDS).collect()
 }
 
-fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
-    // The workspace's own `.git/config` must not run code here: `core.fsmonitor`
-    // names a program that `git status` would execute.
-    // shortcut: clean and process filters named in that config can still run
-    // when `git status` re-reads a racily clean file; upstream Hermes
-    // neutralises them in `noninteractive_repo_git_env`, which is the port to make.
-    let status = Command::new("git")
-        .arg("-C")
+/// A `git` command for reading the workspace that the workspace's own
+/// `.git/config` cannot use to run a program: an empty `core.fsmonitor`
+/// disables the fsmonitor program on every git version, `log.showSignature`
+/// off stops `git log` running `gpg.program`, and `--no-optional-locks` keeps
+/// `git status` from writing the index, so no index hook runs.
+///
+/// shortcut: clean and process filters named in that config can still run
+/// when `git status` re-reads a racily clean file; upstream Hermes neutralises
+/// them in `noninteractive_repo_git_env`, which is the port to make.
+fn workspace_git(root: &Path) -> Command {
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
         .arg(root)
-        .args(["-c", "core.fsmonitor=false"])
-        .args(["--no-optional-locks", "status", "--short", "--branch"])
-        .env("GIT_TERMINAL_PROMPT", "0")
-        .stdin(std::process::Stdio::null())
-        .suppress_windows_console()
+        .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
+        .arg("--no-optional-locks")
+        .suppress_windows_console();
+    cmd
+}
+
+fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
+    let status = workspace_git(root)
+        .args(["status", "--short", "--branch"])
         .output();
     let Ok(output) = status else {
         return;
@@ -609,11 +617,8 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
 }
 
 fn git_last_commit(root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["log", "-1", "--oneline"])
-        .suppress_windows_console()
+    let output = workspace_git(root)
+        .args(["log", "-1", "--oneline", "--no-show-signature"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -796,33 +801,73 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn workspace_snapshot_does_not_run_the_repository_fsmonitor() {
+    fn workspace_snapshot_runs_no_program_the_repository_config_names() {
+        use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
         let repo = tmp.path().join("repo");
         git_init(&repo);
-        let marker = tmp.path().join("fsmonitor-ran");
-        let hook = tmp.path().join("fsmonitor.sh");
-        std::fs::write(
-            &hook,
-            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
-        )
-        .unwrap();
-        std::fs::set_permissions(&hook, std::fs::Permissions::from_mode(0o755)).unwrap();
-        let configured = Command::new("git")
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        let marker_program = |name: &str| {
+            let marker = tmp.path().join(format!("{name}-ran"));
+            let program = tmp.path().join(format!("{name}.sh"));
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            (marker, program.display().to_string())
+        };
+
+        // A HEAD commit carrying a signature makes `git log` verify it with
+        // `gpg.program` when `log.showSignature` is on.
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let commit = format!(
+            "tree {tree}\nauthor T <t@example.com> 1700000000 +0000\n\
+             committer T <t@example.com> 1700000000 +0000\n\
+             gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\nsigned\n"
+        );
+        let mut hash = Command::new("git")
             .arg("-C")
             .arg(&repo)
-            .args(["config", "core.fsmonitor"])
-            .arg(&hook)
-            .status()
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
             .unwrap();
-        assert!(configured.success());
+        hash.stdin
+            .take()
+            .unwrap()
+            .write_all(commit.as_bytes())
+            .unwrap();
+        let sha = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap();
+        git(&["update-ref", "HEAD", sha.trim()]);
+
+        let (fsmonitor_ran, fsmonitor) = marker_program("fsmonitor");
+        let (gpg_ran, gpg) = marker_program("gpg");
+        git(&["config", "core.fsmonitor", &fsmonitor]);
+        git(&["config", "log.showSignature", "true"]);
+        git(&["config", "gpg.program", &gpg]);
 
         let block = build_coding_workspace_block(&repo).expect("workspace block");
         assert!(block.contains("Status:"), "{block}");
         assert!(
-            !marker.exists(),
+            !fsmonitor_ran.exists(),
             "git status ran the repository's core.fsmonitor program"
+        );
+        assert!(
+            !gpg_ran.exists(),
+            "git log ran the repository's gpg.program"
         );
     }
 }
