@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use base64::Engine as _;
 use futures::StreamExt;
-use hermes_agent::bedrock::{
-    bedrock_runtime_base_url, resolve_bedrock_region, BedrockProvider, BEDROCK_AUTH_MARKER,
-};
+use hermes_agent::bedrock::{bedrock_runtime_base_url, resolve_bedrock_region, BedrockProvider};
 use hermes_agent::local_backends;
 use hermes_agent::provider::{
     is_codex_chatgpt_token, AnthropicProvider, GenericProvider, OpenAiProvider, OpenRouterProvider,
