@@ -7,7 +7,8 @@ use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 
-pub const SUBPROCESS_ENV_PASSTHROUGH_VAR: &str = "HERMES_SUBPROCESS_ENV_PASSTHROUGH";
+use hermes_core::subprocess_env::normalize_env_passthrough_name as normalize_name;
+pub use hermes_core::subprocess_env::SUBPROCESS_ENV_PASSTHROUGH_VAR;
 
 static SESSION_PASSTHROUGH: LazyLock<Mutex<BTreeSet<String>>> =
     LazyLock::new(|| Mutex::new(BTreeSet::new()));
@@ -15,19 +16,6 @@ static CONFIG_PASSTHROUGH: LazyLock<Mutex<Option<BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(None));
 
 pub struct EnvPassthroughHandler;
-
-fn normalize_name(name: &str) -> Option<String> {
-    let trimmed = name.trim();
-    if trimmed.is_empty()
-        || !trimmed
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_')
-    {
-        None
-    } else {
-        Some(trimmed.to_string())
-    }
-}
 
 fn hermes_home() -> Option<PathBuf> {
     std::env::var_os("HERMES_HOME")
@@ -219,9 +207,7 @@ impl ToolHandler for EnvPassthroughHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{LazyLock, Mutex};
-
-    static ENV_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+    use hermes_config::managed_gateway::test_lock;
 
     struct EnvVarGuard {
         key: &'static str,
@@ -256,7 +242,7 @@ mod tests {
 
     #[test]
     fn registry_trims_skips_empty_and_clears_session_names() {
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _global_env = test_lock::lock();
         reset();
 
         assert!(!is_env_passthrough("TENOR_API_KEY"));
@@ -276,8 +262,7 @@ mod tests {
 
     #[test]
     fn config_passthrough_is_loaded_from_hermes_home() {
-        let _global_env = hermes_config::managed_gateway::test_lock::lock();
-        let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let _global_env = test_lock::lock();
         reset();
         let tmp = tempfile::tempdir().expect("tempdir");
         std::fs::write(

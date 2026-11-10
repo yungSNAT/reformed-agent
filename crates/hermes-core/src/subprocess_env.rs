@@ -29,23 +29,30 @@ pub fn parse_subprocess_env_passthrough(value: &str) -> BTreeSet<String> {
         .collect()
 }
 
-/// `hermes_subprocess_env(false)` plus the keys passed through in
-/// `HERMES_SUBPROCESS_ENV_PASSTHROUGH` and the `_HERMES_FORCE_<KEY>`
-/// overrides, as the terminal tool applies them. For model-facing processes
-/// outside the terminal tool, such as `execute_code`.
-pub fn hermes_subprocess_env_with_passthrough() -> BTreeMap<String, String> {
+/// `hermes_subprocess_env(false)` plus the keys in `passthrough` (the
+/// configured and session lists) and in `HERMES_SUBPROCESS_ENV_PASSTHROUGH`,
+/// and the `_HERMES_FORCE_<KEY>` overrides, as the terminal tool applies them.
+/// For model-facing processes outside the terminal tool, such as `execute_code`.
+pub fn hermes_subprocess_env_with_passthrough(
+    passthrough: &BTreeSet<String>,
+) -> BTreeMap<String, String> {
     let mut env = hermes_subprocess_env(false);
+    let mut keys = passthrough.clone();
     if let Ok(raw) = std::env::var(SUBPROCESS_ENV_PASSTHROUGH_VAR) {
-        for key in parse_subprocess_env_passthrough(&raw) {
-            if let Ok(value) = std::env::var(&key) {
-                env.insert(key, value);
-            }
+        keys.extend(parse_subprocess_env_passthrough(&raw));
+    }
+    for key in keys {
+        if let Ok(value) = std::env::var(&key) {
+            env.insert(key, value);
         }
     }
-    for (key, value) in std::env::vars() {
+    for (key, value) in std::env::vars_os() {
+        let (Some(key), Some(value)) = (key.to_str(), value.to_str()) else {
+            continue;
+        };
         if let Some(target) = key.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX) {
             if !target.is_empty() && should_strip_subprocess_env_key(target, false) {
-                env.insert(target.to_string(), value);
+                env.insert(target.to_string(), value.to_string());
             }
         }
     }
