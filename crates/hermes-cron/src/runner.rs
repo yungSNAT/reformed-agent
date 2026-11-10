@@ -295,13 +295,21 @@ fn resolve_cron_script_path(raw: &str) -> Result<Option<PathBuf>, CronError> {
         ));
     }
 
-    // `canonicalize` gives `\\?\C:\x` on Windows, which MSYS shells cannot
-    // open; the joined path names the same file.
+    // Run the path that was checked, so a link re-pointed after the check is
+    // not followed.
     #[cfg(windows)]
-    let runnable = candidate;
-    #[cfg(not(windows))]
-    let runnable = canonical_candidate;
-    Ok(Some(runnable))
+    let canonical_candidate = without_verbatim_disk_prefix(canonical_candidate);
+    Ok(Some(canonical_candidate))
+}
+
+/// `canonicalize` gives `\\?\C:\x` on Windows, which MSYS shells cannot open;
+/// `C:\x` names the same file. Other verbatim forms, such as `\\?\UNC\`, stay.
+#[cfg(windows)]
+fn without_verbatim_disk_prefix(path: PathBuf) -> PathBuf {
+    match path.to_str().and_then(|text| text.strip_prefix(r"\\?\")) {
+        Some(rest) if rest.as_bytes().get(1) == Some(&b':') => PathBuf::from(rest),
+        _ => path,
+    }
 }
 
 fn command_for_script_path(script_path: &Path) -> Command {
@@ -1343,6 +1351,53 @@ tools_config:
 
         let err = block_on(runner.run_job(&job)).expect_err("blocked");
         assert!(err.to_string().contains("blocked cron script path"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn test_script_path_blocks_a_link_that_leaves_scripts() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let scripts = home.path().join("scripts");
+        std::fs::create_dir_all(&scripts).unwrap();
+        let outside = home.path().join("outside.sh");
+        std::fs::write(&outside, "echo escaped\n").unwrap();
+        std::os::unix::fs::symlink(&outside, scripts.join("link.sh")).unwrap();
+        let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
+
+        let err = resolve_cron_script_path("link.sh").expect_err("blocked");
+        assert!(err.to_string().contains("outside Hermes scripts"), "{err}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn test_script_path_is_the_checked_path_without_the_verbatim_prefix() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let scripts = home.path().join("scripts");
+        let real = scripts.join("real");
+        std::fs::create_dir_all(&real).unwrap();
+        std::fs::write(real.join("watchdog.sh"), "echo scripts-ok\n").unwrap();
+        // A junction needs no privilege, unlike a symlink.
+        let linked = std::process::Command::new("cmd")
+            .args(["/C", "mklink", "/J"])
+            .arg(scripts.join("alias"))
+            .arg(&real)
+            .output()
+            .unwrap();
+        assert!(linked.status.success(), "{linked:?}");
+        let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
+
+        let resolved = resolve_cron_script_path("alias/watchdog.sh")
+            .expect("resolves")
+            .expect("is a script path");
+        // The link is resolved before the run, and an MSYS shell can open the result.
+        let checked = std::fs::canonicalize(real.join("watchdog.sh")).unwrap();
+        assert_eq!(resolved, without_verbatim_disk_prefix(checked));
+        assert!(!resolved.to_string_lossy().starts_with(r"\\?\"));
+
+        let unc = PathBuf::from(r"\\?\UNC\server\share\x.sh");
+        assert_eq!(without_verbatim_disk_prefix(unc.clone()), unc);
     }
 
     #[tokio::test]
