@@ -113,8 +113,14 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
             cmd.arg(flag).arg(code);
         }
 
+        // Model-written code gets the environment without provider keys and
+        // other credentials, as gateway hooks do.
+        cmd.env_clear()
+            .envs(hermes_core::subprocess_env::hermes_subprocess_env(false));
         apply_code_subprocess_home(&mut cmd);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         cmd.suppress_windows_console();
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
@@ -217,6 +223,26 @@ mod tests {
                 .expect("probe written through HOME"),
             "home-probe"
         );
+    }
+
+    #[test]
+    fn model_code_does_not_see_provider_credentials() {
+        let _global_env = test_lock::lock();
+        let _key = EnvGuard::set("OPENAI_API_KEY", "sk-canary-not-for-model-code");
+        let backend = LocalCodeExecutionBackend::default();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let raw = runtime
+            .block_on(backend.execute(
+                "printf '%s' \"${OPENAI_API_KEY:-absent}\"",
+                Some("bash"),
+                Some(5),
+            ))
+            .expect("bash should run");
+        let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
+        assert_eq!(payload["stdout"].as_str().unwrap(), "absent", "{raw}");
     }
 
     struct EnvGuard {
