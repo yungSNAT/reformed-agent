@@ -10,3 +10,6 @@ scripts/**/*.py linguist-vendored
 skills/**/*.py linguist-vendored
 optional-skills/**/*.py linguist-vendored
 plugins/**/*.py linguist-vendored
+
+# Shell scripts keep LF endings on every checkout; bash rejects CRLF.
+*.sh text eol=lf
