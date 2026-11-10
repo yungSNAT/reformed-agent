@@ -1617,6 +1617,7 @@ async fn cloud_fallback_returns_cloud_page_error_without_touching_local() {
             task_id: "task-fallback-page-error".into(),
         }),
         local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: OnceLock::new(),
     };
 
     let err = backend
@@ -1655,6 +1656,7 @@ async fn cloud_fallback_uses_local_when_cloud_connection_fails() {
             task_id: "task-fallback-connection".into(),
         }),
         local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: OnceLock::new(),
     };
 
     let raw = backend.click("#ok").await.expect("local fallback");
@@ -1666,6 +1668,36 @@ async fn cloud_fallback_uses_local_when_cloud_connection_fails() {
     let sent = drain_commands(&mut local_commands);
     assert_eq!(sent.len(), 1);
     assert_eq!(sent[0]["method"], "Runtime.evaluate");
+}
+
+#[tokio::test]
+async fn cloud_fallback_stays_local_after_the_cloud_connection_fails() {
+    let closed = closed_addr().await;
+    let api = vendor_api("/v2/browser", format!("ws://{closed}/devtools/browser/B")).await;
+    let (local_http, mut local_commands) = spawn_local_cdp(answer_all(
+        json!({"result": {"type": "string", "value": "clicked"}}),
+    ))
+    .await;
+    let backend = CloudFallbackBrowserBackend {
+        provider: "FirecrawlBrowserProvider",
+        cloud: FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+            api_key: "fc-key".into(),
+            base_url: api.uri(),
+            ttl_secs: 300,
+            task_id: "task-fallback-sticks".into(),
+        }),
+        local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: OnceLock::new(),
+    };
+
+    for _ in 0..2 {
+        let raw = backend.click("#ok").await.expect("local fallback");
+        let value: Value = serde_json::from_str(&raw).expect("fallback json");
+        assert_eq!(value["fallback_from_cloud"], true, "{raw}");
+    }
+
+    assert_eq!(session_creations(&api, "/v2/browser").await, 1);
+    assert_eq!(drain_commands(&mut local_commands).len(), 2);
 }
 
 /// DevTools discovery stub: `/json/version` answers with `status` and `body`.
@@ -1728,6 +1760,7 @@ async fn browser_use_failed_discovery_counts_as_unavailable() {
         provider: "BrowserUseProvider",
         cloud: BrowserUseBrowserBackend::new(cfg),
         local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: OnceLock::new(),
     };
 
     let raw = backend.snapshot().await.expect("local fallback");
@@ -1756,6 +1789,7 @@ async fn browser_use_discovery_sends_the_url_query_and_keeps_it_out_of_the_failu
         provider: "BrowserUseProvider",
         cloud: BrowserUseBrowserBackend::new(cfg),
         local: CdpBrowserBackend::new(local_http.uri()),
+        fallback_reason: OnceLock::new(),
     };
 
     let raw = backend.snapshot().await.expect("local fallback");

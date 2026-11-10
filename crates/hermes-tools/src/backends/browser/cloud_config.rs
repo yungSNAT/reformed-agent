@@ -96,32 +96,47 @@ impl<C> CloudFallbackBrowserBackend<C> {
             provider,
             cloud,
             local: CdpBrowserBackend::from_env(),
+            fallback_reason: OnceLock::new(),
         }
     }
 
-    fn fallback_error(&self, cloud_err: &ToolError, local_err: ToolError) -> ToolError {
+    fn fallback_error(&self, reason: &str, local_err: ToolError) -> ToolError {
         ToolError::ExecutionFailed(format!(
             "{} failed: {}; local CDP fallback failed: {}",
-            self.provider, cloud_err, local_err
+            self.provider, reason, local_err
         ))
-    }
-
-    fn mark_fallback(&self, local_result: String, cloud_err: &ToolError) -> String {
-        browser_fallback_response(local_result, self.provider, &cloud_err.to_string())
     }
 
     /// Run `local` in place of a command the unavailable cloud browser could
     /// not take, and mark its result as a fallback.
     async fn fall_back(
         &self,
-        cloud_err: ToolError,
+        reason: &str,
         local: impl std::future::Future<Output = Result<String, ToolError>>,
     ) -> Result<String, ToolError> {
-        tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser unavailable; using local CDP");
         let local = local
             .await
-            .map_err(|local_err| self.fallback_error(&cloud_err, local_err))?;
-        Ok(self.mark_fallback(local, &cloud_err))
+            .map_err(|local_err| self.fallback_error(reason, local_err))?;
+        Ok(browser_fallback_response(local, self.provider, reason))
+    }
+}
+
+impl<C: CloudBrowserSession> CloudFallbackBrowserBackend<C> {
+    /// Connect the cloud browser, or return why the actions go to the local
+    /// browser. The first failure decides for this backend's life: no tool
+    /// ends a browser session here, and contacting the vendor again would
+    /// create a billable session per action and split the task between a
+    /// blank cloud page and the local one.
+    async fn connect_cloud(&self) -> Result<(), String> {
+        if let Some(reason) = self.fallback_reason.get() {
+            return Err(reason.clone());
+        }
+        cloud_connect(&self.cloud).await.map_err(|cloud_err| {
+            tracing::warn!(provider = self.provider, error = %cloud_err, "cloud browser unavailable; using local CDP from now on");
+            self.fallback_reason
+                .get_or_init(|| cloud_err.to_string())
+                .clone()
+        })
     }
 }
 
