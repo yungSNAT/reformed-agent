@@ -484,15 +484,10 @@ impl SubAgentOrchestrator {
         // The parent's pool holds the parent provider's keys; a child on
         // another provider uses its own credential.
         let parent = &self.cfg.parent_config;
-        let parent_provider = parent
-            .model
-            .split_once(':')
-            .map(|(p, _)| p.trim())
-            .filter(|p| !p.is_empty())
-            .or_else(|| clean_config_string(parent.provider.as_deref()))
-            .unwrap_or("openai");
+        let (parent_provider, _) =
+            AgentLoop::provider_and_model(parent.provider.as_deref(), parent.model.as_str());
         let same_provider =
-            crate::provider_profiles::normalize_runtime_provider_name(parent_provider)
+            crate::provider_profiles::normalize_runtime_provider_name(parent_provider.as_str())
                 == crate::provider_profiles::normalize_runtime_provider_name(provider.as_str());
         if let Some(pool) = self
             .cfg

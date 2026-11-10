@@ -1,5 +1,14 @@
 impl AgentLoop {
     fn extract_provider_and_model<'a>(&self, model: &'a str) -> (String, &'a str) {
+        Self::provider_and_model(self.config.provider.as_deref(), model)
+    }
+
+    /// Splits `provider:model`. A model with no provider part belongs to
+    /// `configured_provider`, or to `openai` when none is configured.
+    pub(crate) fn provider_and_model<'a>(
+        configured_provider: Option<&str>,
+        model: &'a str,
+    ) -> (String, &'a str) {
         if let Some((p, m)) = model.split_once(':') {
             let p = p.trim();
             let m = m.trim();
@@ -7,10 +16,7 @@ impl AgentLoop {
                 return (p.to_string(), m);
             }
         }
-        let fallback_provider = self
-            .config
-            .provider
-            .as_deref()
+        let fallback_provider = configured_provider
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .unwrap_or("openai")
