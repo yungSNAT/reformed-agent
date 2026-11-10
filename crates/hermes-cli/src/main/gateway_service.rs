@@ -95,6 +95,8 @@ fn cleanup_stale_gateway_metadata(pid_path: &Path) {
     let _ = std::fs::remove_file(gateway_lock_path_for_pid_path(pid_path));
 }
 
+// Only the Unix `gateway_pid_is_alive` and its test call this.
+#[cfg(any(unix, test))]
 fn looks_like_gateway_process(cmdline: &str) -> bool {
     let cmdline = cmdline.to_ascii_lowercase();
     const PATTERNS: &[&str] = &[
