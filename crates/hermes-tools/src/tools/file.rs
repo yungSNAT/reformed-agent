@@ -450,6 +450,9 @@ impl ToolHandler for PatchHandler {
 #[async_trait]
 pub trait SearchBackend: Send + Sync {
     /// Search file contents by regex pattern.
+    // One argument per field of the `search_files` tool schema; a request struct would be
+    // a redesign of the backend contract, not a lint fix.
+    #[allow(clippy::too_many_arguments)]
     async fn search_content(
         &self,
         pattern: &str,

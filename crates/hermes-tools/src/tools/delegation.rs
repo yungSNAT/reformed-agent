@@ -16,6 +16,9 @@ use std::sync::Arc;
 #[async_trait]
 pub trait DelegationBackend: Send + Sync {
     /// Delegate a task to a sub-agent.
+    // One argument per field of the `delegate_task` tool schema; a request struct would be
+    // a redesign of the backend contract, not a lint fix.
+    #[allow(clippy::too_many_arguments)]
     async fn delegate(
         &self,
         task: &str,
