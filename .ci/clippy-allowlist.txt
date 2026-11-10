@@ -1,2 +1,2 @@
-# Empty on purpose: the workspace builds with no clippy warnings.
+# Empty on purpose: the gate's build (Linux, default features) has no clippy warnings.
 # An entry here needs a reason in its PR. Format: target|lint|file.
