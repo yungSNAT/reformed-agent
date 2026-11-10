@@ -436,49 +436,61 @@ impl SimpleExtractBackend {
 }
 
 const MAX_EXTRACT_REDIRECTS: usize = 10;
+/// Whole-fetch limit for the built-in extractor: every hop, its URL check and
+/// the body read share it, as reqwest's total timeout did when it followed
+/// redirects itself.
+const EXTRACT_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// GETs `url`, following up to `MAX_EXTRACT_REDIRECTS` redirects by hand and
 /// running `check` on the first URL and on every redirect target before
-/// connecting to it. `client` must not follow redirects itself.
+/// connecting to it. Follows the statuses reqwest follows. `client` must not
+/// follow redirects itself. Fails with a timeout once `deadline` passes.
 async fn get_with_checked_redirects<F, Fut>(
     client: &Client,
     url: &str,
+    deadline: tokio::time::Instant,
     check: F,
 ) -> Result<reqwest::Response, ToolError>
 where
     F: Fn(String) -> Fut,
     Fut: std::future::Future<Output = Result<(), ToolError>>,
 {
-    let mut current = url.to_string();
-    for _ in 0..=MAX_EXTRACT_REDIRECTS {
-        check(current.clone()).await?;
-        let resp = client.get(&current).send().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to fetch '{}': {}", current, e))
-        })?;
-        if !resp.status().is_redirection() {
-            return Ok(resp);
+    let follow = async {
+        let mut current = url.to_string();
+        for _ in 0..=MAX_EXTRACT_REDIRECTS {
+            check(current.clone()).await?;
+            let resp = client.get(&current).send().await.map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to fetch '{}': {}", current, e))
+            })?;
+            if !matches!(resp.status().as_u16(), 301 | 302 | 303 | 307 | 308) {
+                return Ok(resp);
+            }
+            // Servers send raw UTF-8 paths; reqwest accepts them, so do the same.
+            let Some(location) = resp
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .and_then(|v| std::str::from_utf8(v.as_bytes()).ok())
+            else {
+                return Ok(resp);
+            };
+            current = resp
+                .url()
+                .join(location)
+                .map_err(|e| {
+                    ToolError::ExecutionFailed(format!(
+                        "Invalid redirect from '{}' to '{}': {}",
+                        current, location, e
+                    ))
+                })?
+                .to_string();
         }
-        let Some(location) = resp
-            .headers()
-            .get(reqwest::header::LOCATION)
-            .and_then(|v| v.to_str().ok())
-        else {
-            return Ok(resp);
-        };
-        current = resp
-            .url()
-            .join(location)
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!(
-                    "Invalid redirect from '{}' to '{}': {}",
-                    current, location, e
-                ))
-            })?
-            .to_string();
-    }
-    Err(ToolError::ExecutionFailed(format!(
-        "Too many redirects fetching '{url}'"
-    )))
+        Err(ToolError::ExecutionFailed(format!(
+            "Too many redirects fetching '{url}'"
+        )))
+    };
+    tokio::time::timeout_at(deadline, follow)
+        .await
+        .map_err(|_| ToolError::Timeout(format!("Fetching '{url}' took too long")))?
 }
 
 impl Default for SimpleExtractBackend {
@@ -491,7 +503,8 @@ impl Default for SimpleExtractBackend {
 impl WebExtractBackend for SimpleExtractBackend {
     async fn extract(&self, url: &str, _include_links: bool) -> Result<String, ToolError> {
         validate_url_does_not_exfiltrate_secret(url)?;
-        let resp = get_with_checked_redirects(&self.client, url, |hop| async move {
+        let deadline = tokio::time::Instant::now() + EXTRACT_TIMEOUT;
+        let resp = get_with_checked_redirects(&self.client, url, deadline, |hop| async move {
             crate::tools::url_safety::ensure_url_fetch_allowed(&hop).await
         })
         .await?;
@@ -511,9 +524,12 @@ impl WebExtractBackend for SimpleExtractBackend {
             .unwrap_or("")
             .to_string();
 
-        let bytes = resp.bytes().await.map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to read response body: {}", e))
-        })?;
+        let bytes = tokio::time::timeout_at(deadline, resp.bytes())
+            .await
+            .map_err(|_| ToolError::Timeout(format!("Fetching '{url}' took too long")))?
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to read response body: {}", e))
+            })?;
 
         if bytes.len() > MAX_EXTRACT_BYTES {
             let text = String::from_utf8_lossy(&bytes[..MAX_EXTRACT_BYTES]);
@@ -1716,6 +1732,10 @@ mod redirect_tests {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
+    fn later() -> tokio::time::Instant {
+        tokio::time::Instant::now() + EXTRACT_TIMEOUT
+    }
+
     async fn redirecting_server() -> MockServer {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
@@ -1746,6 +1766,15 @@ mod redirect_tests {
     }
 
     #[tokio::test]
+    async fn simple_extract_refuses_a_metadata_start_url() {
+        let err = SimpleExtractBackend::new()
+            .extract("http://169.254.169.254/latest/meta-data/", false)
+            .await
+            .expect_err("the metadata address must be refused");
+        assert!(err.to_string().contains("Blocked"), "{err}");
+    }
+
+    #[tokio::test]
     async fn checked_redirects_refuse_a_blocked_hop_before_connecting() {
         let server = redirecting_server().await;
         Mock::given(method("GET"))
@@ -1758,6 +1787,7 @@ mod redirect_tests {
         let err = get_with_checked_redirects(
             &client,
             &format!("{}/start", server.uri()),
+            later(),
             |hop| async move {
                 if hop.ends_with("/target") {
                     Err(ToolError::ExecutionFailed(format!("Blocked: {hop}")))
@@ -1782,10 +1812,15 @@ mod redirect_tests {
             .await;
         let client = SimpleExtractBackend::new().client;
         let seen = std::sync::Mutex::new(Vec::new());
-        let resp = get_with_checked_redirects(&client, &format!("{}/start", server.uri()), |hop| {
-            seen.lock().unwrap().push(hop);
-            async { Ok(()) }
-        })
+        let resp = get_with_checked_redirects(
+            &client,
+            &format!("{}/start", server.uri()),
+            later(),
+            |hop| {
+                seen.lock().unwrap().push(hop);
+                async { Ok(()) }
+            },
+        )
         .await
         .unwrap();
         assert_eq!(resp.text().await.unwrap(), "followed");
@@ -1803,12 +1838,96 @@ mod redirect_tests {
             .mount(&server)
             .await;
         let client = SimpleExtractBackend::new().client;
-        let err =
-            get_with_checked_redirects(&client, &format!("{}/loop", server.uri()), |_| async {
-                Ok(())
-            })
-            .await
-            .expect_err("a redirect loop must end");
+        let err = get_with_checked_redirects(
+            &client,
+            &format!("{}/loop", server.uri()),
+            later(),
+            |_| async { Ok(()) },
+        )
+        .await
+        .expect_err("a redirect loop must end");
         assert!(err.to_string().contains("Too many redirects"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_follow_a_raw_utf8_location() {
+        let server = MockServer::start().await;
+        let location = reqwest::header::HeaderValue::from_bytes("/café".as_bytes()).unwrap();
+        Mock::given(method("GET"))
+            .and(path("/start"))
+            .respond_with(ResponseTemplate::new(301).insert_header("location", location))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/caf%C3%A9"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("followed"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        let resp = get_with_checked_redirects(
+            &client,
+            &format!("{}/start", server.uri()),
+            later(),
+            |_| async { Ok(()) },
+        )
+        .await
+        .unwrap();
+        assert_eq!(resp.text().await.unwrap(), "followed");
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_return_non_redirect_3xx_responses() {
+        let server = MockServer::start().await;
+        for status in [300, 304] {
+            Mock::given(method("GET"))
+                .and(path(format!("/{status}")))
+                .respond_with(ResponseTemplate::new(status).insert_header("location", "/target"))
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("GET"))
+            .and(path("/target"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(0)
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        for status in [300, 304] {
+            let resp = get_with_checked_redirects(
+                &client,
+                &format!("{}/{status}", server.uri()),
+                later(),
+                |_| async { Ok(()) },
+            )
+            .await
+            .unwrap();
+            assert_eq!(resp.status().as_u16(), status);
+        }
+    }
+
+    #[tokio::test]
+    async fn checked_redirects_share_one_deadline_across_hops() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/slow"))
+            .respond_with(
+                ResponseTemplate::new(302)
+                    .insert_header("location", "/slow")
+                    .set_delay(Duration::from_millis(150)),
+            )
+            .mount(&server)
+            .await;
+        let client = SimpleExtractBackend::new().client;
+        let deadline = tokio::time::Instant::now() + Duration::from_millis(400);
+        let err = get_with_checked_redirects(
+            &client,
+            &format!("{}/slow", server.uri()),
+            deadline,
+            |_| async { Ok(()) },
+        )
+        .await
+        .expect_err("the hops together outlast the deadline");
+        assert!(matches!(err, ToolError::Timeout(_)), "{err}");
     }
 }

@@ -321,6 +321,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_web_extract_execute() {
+        let _home = IsolatedHome::new();
         let handler = WebExtractHandler::new(Box::new(MockExtractBackend));
         let result = handler
             .execute(json!({"url": "https://93.184.215.14/page", "include_links": false}))
@@ -339,6 +340,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_web_crawl_execute() {
+        let _home = IsolatedHome::new();
         let handler = WebCrawlHandler::new(Box::new(MockCrawlBackend));
         let result = handler
             .execute(json!({
@@ -359,6 +361,37 @@ mod tests {
         let handler = WebCrawlHandler::new(Box::new(MockCrawlBackend));
         let result = handler.execute(json!({})).await;
         assert!(result.is_err());
+    }
+
+    /// Points `HERMES_HOME` at an empty directory under the shared env lock,
+    /// so the URL check reads no real `config.yaml`.
+    struct IsolatedHome {
+        _dir: tempfile::TempDir,
+        original: Option<String>,
+        _lock: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl IsolatedHome {
+        fn new() -> Self {
+            let lock = hermes_config::managed_gateway::test_lock::lock();
+            let dir = tempfile::tempdir().unwrap();
+            let original = std::env::var("HERMES_HOME").ok();
+            std::env::set_var("HERMES_HOME", dir.path());
+            Self {
+                _dir: dir,
+                original,
+                _lock: lock,
+            }
+        }
+    }
+
+    impl Drop for IsolatedHome {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
     }
 
     struct RecordingBackend(std::sync::Arc<std::sync::atomic::AtomicBool>);
