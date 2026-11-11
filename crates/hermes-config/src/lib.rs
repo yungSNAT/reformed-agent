@@ -35,9 +35,9 @@ pub use loader::{
     apply_user_config_patch, atomic_json_write, atomic_json_write_pretty, atomic_write_bytes,
     atomic_yaml_write, load_config, load_effective_config_yaml_value, load_prefill_messages,
     load_prefill_messages_file, load_user_config_file, managed_scope_dir,
-    resolve_prefill_messages_file, resolve_prefill_messages_path, save_config_yaml,
-    set_user_config_value, user_config_field_display, validate_config, ConfigError,
-    ConfigSetResult,
+    resolve_prefill_messages_file, resolve_prefill_messages_path, resolve_symlink_target,
+    save_config_yaml, set_user_config_value, user_config_field_display, validate_config,
+    ConfigError, ConfigSetResult,
 };
 pub use managed_gateway::{
     build_vendor_gateway_url, coerce_modal_mode, env_var_enabled, get_tool_gateway_scheme,
@@ -55,7 +55,8 @@ pub use managed_node::{
 pub use merge::{deep_merge, merge_configs};
 pub use paths::{
     cli_config_path, config_path, cron_dir, env_path, gateway_json_path, gateway_pid_path,
-    gateway_pid_path_in, hermes_home, memory_path, sessions_dir, skills_dir, state_dir, user_path,
+    gateway_pid_path_in, hermes_home, memory_path, normalize_hermes_home_env, sessions_dir,
+    skills_dir, state_dir, user_path,
 };
 pub use platform::{PlatformConfig, UnauthorizedDmBehavior};
 pub use session::{DailyReset, IdleReset, SessionConfig, SessionResetPolicy, SessionType};

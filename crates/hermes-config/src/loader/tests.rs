@@ -439,6 +439,85 @@ personalities: null
     assert_eq!(cfg.agent, default.agent);
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_write_through_a_symlink_updates_the_target_and_keeps_the_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let real_dir = dir.path().join("dotfiles");
+    std::fs::create_dir(&real_dir).unwrap();
+    let real = real_dir.join("config.yaml");
+    std::fs::write(&real, "old").unwrap();
+    let link = dir.path().join("config.yaml");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+
+    atomic_write_bytes(&link, b"new").unwrap();
+
+    assert!(link.is_symlink(), "the link was replaced by a regular file");
+    assert_eq!(std::fs::read_to_string(&real).unwrap(), "new");
+    // The temp file was staged beside the target and renamed away.
+    let names = |dir: &Path| -> Vec<String> {
+        let mut names: Vec<String> = std::fs::read_dir(dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        names.sort();
+        names
+    };
+    assert_eq!(names(dir.path()), ["config.yaml", "dotfiles"]);
+    assert_eq!(names(&real_dir), ["config.yaml"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_through_a_dangling_symlink_creates_the_target_and_keeps_the_link() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("config.yaml");
+    // A relative target, resolved against the link's folder, in a folder not yet made.
+    std::os::unix::fs::symlink("dotfiles/config.yaml", &link).unwrap();
+
+    atomic_write_bytes(&link, b"new").unwrap();
+
+    assert!(link.is_symlink(), "the link was replaced by a regular file");
+    assert_eq!(
+        std::fs::read_to_string(dir.path().join("dotfiles/config.yaml")).unwrap(),
+        "new"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_follows_a_chain_of_40_symlinks() {
+    let dir = tempfile::tempdir().unwrap();
+    let real = dir.path().join("real.yaml");
+    std::fs::write(&real, "old").unwrap();
+    // Each link names the one made before it, so the last is 40 links from the file.
+    let mut target = "real.yaml".to_string();
+    for index in 0..40 {
+        let name = format!("link-{index}");
+        std::os::unix::fs::symlink(&target, dir.path().join(&name)).unwrap();
+        target = name;
+    }
+    let first = dir.path().join(target);
+
+    atomic_write_bytes(&first, b"new").unwrap();
+
+    assert!(first.is_symlink(), "the first link was replaced by a file");
+    assert_eq!(std::fs::read_to_string(&real).unwrap(), "new");
+}
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_replaces_a_symlink_loop() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("config.yaml");
+    std::os::unix::fs::symlink("config.yaml", &link).unwrap();
+
+    atomic_write_bytes(&link, b"new").unwrap();
+
+    assert!(!link.is_symlink());
+    assert_eq!(std::fs::read_to_string(&link).unwrap(), "new");
+}
+
 include!("tests/runtime_bridges.rs");
 include!("tests/managed_overlays.rs");
 

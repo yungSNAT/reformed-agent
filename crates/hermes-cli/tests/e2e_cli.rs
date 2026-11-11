@@ -117,6 +117,109 @@ fn e2e_cli_config_set_dotted_llm_and_get_masks_key() {
 }
 
 #[test]
+fn e2e_cli_expands_tilde_in_hermes_home() {
+    let user_home = tempfile::tempdir().expect("user home");
+    let cwd = tempfile::tempdir().expect("cwd");
+    let hermes_home = user_home.path().join("hermes-e2e");
+    fs::create_dir_all(&hermes_home).expect("create hermes home");
+    fs::write(
+        hermes_home.join("config.yaml"),
+        "model: local-test:tilde-home\n",
+    )
+    .expect("write config");
+
+    // The home is named by the variable, then by a quoted --config-dir.
+    for by_flag in [false, true] {
+        let mut get = Command::cargo_bin("hermes-agent-ultra").expect("binary exists");
+        get.current_dir(cwd.path());
+        get.env("HOME", user_home.path());
+        if by_flag {
+            get.env_remove("HERMES_HOME");
+            get.args(["--config-dir", "~/hermes-e2e"]);
+        } else {
+            get.env("HERMES_HOME", "~/hermes-e2e");
+        }
+        get.args(["config", "get", "model"]);
+        let out = get.assert().success().get_output().stdout.clone();
+        let text = std::str::from_utf8(&out).expect("utf8");
+        assert!(
+            text.contains("local-test:tilde-home"),
+            "expected the model from ~/hermes-e2e/config.yaml (by flag: {by_flag}): {text:?}"
+        );
+    }
+    assert!(
+        !cwd.path().join("~").exists(),
+        "a literal `~` directory was created under the working directory"
+    );
+}
+
+#[test]
+fn e2e_cli_config_check_reports_unknown_platform_toolsets() {
+    let check = |config: &str, mcp_servers_json: Option<&str>| -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("config.yaml"), config).expect("write config");
+        if let Some(json) = mcp_servers_json {
+            fs::write(dir.path().join("mcp_servers.json"), json).expect("write mcp config");
+        }
+        let mut cmd = Command::cargo_bin("hermes-agent-ultra").expect("binary exists");
+        cmd.env("HERMES_HOME", dir.path());
+        cmd.args(["config", "check"]);
+        let out = cmd.assert().success().get_output().stdout.clone();
+        String::from_utf8(out).expect("utf8")
+    };
+
+    // The default selections name only toolsets the runtime resolves.
+    let clean = check("model: local-test:deterministic\n", None);
+    assert!(
+        !clean.contains("platform_toolsets"),
+        "default toolsets were reported: {clean:?}"
+    );
+
+    let stale = check(
+        r#"
+model: local-test:deterministic
+mcp_servers:
+  - name: yaml-server
+    command: "true"
+platform_toolsets:
+  cli:
+    - hermes-cli
+    - web
+    - todo
+    - yaml-server
+    - mcp_yaml_server_search
+    - mcp-json_server
+    - retired-toolset
+  telegram:
+    - hermes-telegram
+    - mcp-removed
+"#,
+        Some(r#"{"servers": [{"name": "json-server", "command": "true"}]}"#),
+    );
+    for expected in [
+        "platform_toolsets.cli names 'retired-toolset'",
+        "platform_toolsets.telegram names 'mcp-removed'",
+    ] {
+        assert!(stale.contains(expected), "missing {expected:?}: {stale:?}");
+    }
+    assert_eq!(
+        stale.matches("platform_toolsets.").count(),
+        2,
+        "known names were reported: {stale:?}"
+    );
+
+    // An unreadable MCP file is named, not passed over.
+    let unreadable = check(
+        "model: local-test:deterministic\nplatform_toolsets:\n  cli:\n    - json-server\n",
+        Some("{not json"),
+    );
+    assert!(
+        unreadable.contains("MCP servers were not read") && unreadable.contains("mcp_servers.json"),
+        "the unreadable file was not reported: {unreadable:?}"
+    );
+}
+
+#[test]
 fn e2e_cli_model_switch_warns_on_stale_auxiliary_provider() {
     let dir = tempfile::tempdir().expect("tempdir");
     let home = dir.path();

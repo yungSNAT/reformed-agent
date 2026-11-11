@@ -23,7 +23,7 @@ fn main() {
 }
 
 async fn run_main() {
-    let cli = Cli::parse();
+    let mut cli = Cli::parse();
     let effective_command = cli.effective_command();
     if let CliCommand::ImportHermesSessions(ImportHermesSessionsArgs {
         export,
@@ -44,6 +44,12 @@ async fn run_main() {
     }
     if let Some(config_dir) = cli.config_dir.as_deref() {
         std::env::set_var("HERMES_HOME", config_dir);
+    }
+    hermes_config::normalize_hermes_home_env();
+    // The flag's later readers get the folder the environment now names, so a
+    // quoted `~/x` is one folder for the configuration and for the state.
+    if let (Some(config_dir), Ok(home)) = (cli.config_dir.as_mut(), std::env::var("HERMES_HOME")) {
+        *config_dir = home;
     }
     if cli.ignore_user_config {
         std::env::set_var("HERMES_IGNORE_USER_CONFIG", "1");

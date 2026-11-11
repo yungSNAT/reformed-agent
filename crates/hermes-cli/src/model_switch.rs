@@ -820,8 +820,16 @@ mod tests {
         let models = provider_curated_models("openrouter");
         assert!(models.contains(&"openai/gpt-5.5"));
         assert!(models.contains(&"openai/gpt-5.5-pro"));
-        assert!(models.contains(&"tencent/hy3-preview:free"));
         assert!(models.contains(&"tencent/hy3-preview"));
+    }
+
+    #[test]
+    fn openrouter_curated_free_models_are_ones_openrouter_serves() {
+        // OpenRouter's model list on 11 November 2026 has the Nemotron free
+        // variant and no longer has `tencent/hy3-preview:free`.
+        let models = provider_curated_models("openrouter");
+        assert!(models.contains(&"nvidia/nemotron-3.5-lightning:free"));
+        assert!(!models.contains(&"tencent/hy3-preview:free"));
     }
 
     #[test]

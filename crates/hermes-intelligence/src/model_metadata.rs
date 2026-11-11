@@ -116,6 +116,9 @@ static DEFAULT_CONTEXT_LENGTHS: &[(&str, u64)] = &[
     ("mimo-v2.5", 1_000_000),
     // Tencent TokenHub
     ("hy3-preview", 128_000),
+    // NVIDIA Nemotron 3.5 Lightning: OpenRouter serves the free variant with a
+    // 1M window and the paid one with 262K (its model list, 11 November 2026).
+    ("nemotron-3.5-lightning:free", 1_000_000),
 ];
 
 // ---------------------------------------------------------------------------
@@ -759,6 +762,19 @@ mod tests {
         assert_eq!(
             get_model_context_length("unknown-model"),
             CONTEXT_PROBE_TIERS[0]
+        );
+    }
+
+    #[test]
+    fn free_nemotron_lightning_has_its_own_context_length() {
+        assert_eq!(
+            get_model_context_length("nvidia/nemotron-3.5-lightning:free"),
+            1_000_000
+        );
+        // The paid variant has a 262K window, so it must not take the free entry.
+        assert_eq!(
+            get_model_context_length("nvidia/nemotron-3.5-lightning"),
+            DEFAULT_FALLBACK_CONTEXT
         );
     }
 

@@ -167,6 +167,47 @@ fn coding_focus_toolsets(
     Some(requested)
 }
 
+/// Tool names a `platform_toolsets` token stands for, or `None` when it names
+/// no toolset or tool in the registry.
+fn resolve_toolset_token(
+    token: &str,
+    manager: &ToolsetManager,
+    registry: &ToolRegistry,
+) -> Option<Vec<String>> {
+    let canonical = canonical_toolset_token(token);
+    candidate_toolset_tokens(&canonical, token)
+        .into_iter()
+        .find_map(|candidate| {
+            manager.resolve_toolset(candidate).ok().or_else(|| {
+                registry
+                    .get_tool(candidate)
+                    .is_some()
+                    .then(|| vec![candidate.to_string()])
+            })
+        })
+}
+
+/// `platform_toolsets` entries that name no toolset or tool in `registry`, as
+/// sorted `(platform, token)` pairs. The runtime skips these with only a log
+/// line, so `hermes config check` reports them.
+pub fn unknown_platform_toolset_tokens(
+    config: &GatewayConfig,
+    registry: &Arc<ToolRegistry>,
+) -> Vec<(String, String)> {
+    let manager = ToolsetManager::new(Arc::clone(registry));
+    let mut unknown: Vec<(String, String)> = config
+        .platform_toolsets
+        .iter()
+        .flat_map(|(platform, tokens)| tokens.iter().map(move |token| (platform, token.trim())))
+        .filter(|(_, token)| {
+            !token.is_empty() && resolve_toolset_token(token, &manager, registry).is_none()
+        })
+        .map(|(platform, token)| (platform.clone(), token.to_string()))
+        .collect();
+    unknown.sort();
+    unknown
+}
+
 /// Resolve tool names allowed for this platform based on configured toolsets.
 pub fn resolve_platform_tool_names(
     config: &GatewayConfig,
@@ -188,28 +229,13 @@ pub fn resolve_platform_tool_names(
         if original.is_empty() {
             continue;
         }
-        let canonical = canonical_toolset_token(original);
-        let mut matched = false;
-        for candidate in candidate_toolset_tokens(&canonical, original) {
-            if let Ok(resolved) = manager.resolve_toolset(candidate) {
-                for name in resolved {
-                    names.insert(name);
-                }
-                matched = true;
-                break;
-            }
-            if registry.get_tool(candidate).is_some() {
-                names.insert(candidate.to_string());
-                matched = true;
-                break;
-            }
-        }
-        if !matched {
-            tracing::warn!(
+        match resolve_toolset_token(original, &manager, registry) {
+            Some(resolved) => names.extend(resolved),
+            None => tracing::warn!(
                 "Unknown platform toolset/token '{}' for platform '{}'",
                 original,
                 platform
-            );
+            ),
         }
     }
 
@@ -448,6 +474,37 @@ mod tests {
         assert_eq!(
             configured_platform_toolsets(&cfg, "cron"),
             vec!["hermes-cron".to_string()]
+        );
+    }
+
+    #[test]
+    fn unknown_platform_toolset_tokens_lists_what_the_runtime_skips() {
+        let reg = registry_with_minimal_tools();
+        let mut cfg = GatewayConfig::default();
+        assert_eq!(unknown_platform_toolset_tokens(&cfg, &reg), Vec::new());
+
+        cfg.platform_toolsets.insert(
+            "telegram".to_string(),
+            vec!["hermes-telegram".to_string(), "retired-toolset".to_string()],
+        );
+        cfg.platform_toolsets.insert(
+            "cli".to_string(),
+            vec![
+                "hermes-cli".to_string(),
+                // A toolset alias, a registry toolset, a tool name and a blank entry.
+                "browser-use".to_string(),
+                "web".to_string(),
+                "todo".to_string(),
+                "  ".to_string(),
+                " no-such-toolset ".to_string(),
+            ],
+        );
+        assert_eq!(
+            unknown_platform_toolset_tokens(&cfg, &reg),
+            vec![
+                ("cli".to_string(), "no-such-toolset".to_string()),
+                ("telegram".to_string(), "retired-toolset".to_string()),
+            ]
         );
     }
 
