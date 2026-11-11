@@ -4,9 +4,10 @@
 //! One test function, because it changes process environment variables.
 
 use std::path::Path;
+use std::sync::Arc;
 
 use hermes_core::types::Skill;
-use hermes_skills::{FileSkillStore, SkillGuard, SkillStore};
+use hermes_skills::{FileSkillStore, SkillGuard, SkillManager, SkillStore, SkillsHubClient};
 
 fn write_skill(root: &Path, name: &str, body: &str) {
     let dir = root.join(name);
@@ -51,6 +52,17 @@ async fn load_guard_mode_is_separate_from_install_mode() {
     // Install and creation scanning keep the strict global mode.
     assert!(SkillGuard::default()
         .scan_security_only(&probe(ORDINARY))
+        .is_err());
+    // Hub sync loads at the relaxed mode but vets each upload at install
+    // strength. Nothing listens on port 9, so an unvetted upload would fail
+    // quietly and the sync would report success.
+    let upload_root = tempfile::tempdir().unwrap();
+    write_skill(upload_root.path(), "pr-body", ORDINARY);
+    let upload_store = Arc::new(FileSkillStore::new(upload_root.path().to_path_buf()));
+    let hub = SkillsHubClient::with_base_url("http://127.0.0.1:9", "test-key");
+    assert!(SkillManager::with_hub(upload_store, hub)
+        .sync_with_hub()
+        .await
         .is_err());
 
     std::env::set_var("HERMES_SKILL_LOAD_GUARD_MODE", "off");

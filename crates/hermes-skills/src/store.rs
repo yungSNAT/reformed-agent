@@ -808,6 +808,22 @@ mod tests {
         assert!(metas.iter().any(|m| m.name == "top"));
     }
 
+    #[tokio::test]
+    async fn test_category_link_outside_root_is_not_followed() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let store = FileSkillStore::new(root.path().to_path_buf());
+
+        write_skill(&outside.path().join("escaped"), "escaped").await;
+        let category = root.path().join("software-development");
+        link_dir(outside.path(), &category);
+
+        assert_symlink(&category);
+        assert!(store.load("escaped").await.unwrap().is_none());
+        let metas = store.list().await.unwrap();
+        assert!(!metas.iter().any(|m| m.name == "escaped"));
+    }
+
     /// The fix relies on std reporting a junction as a symlink.
     fn assert_symlink(path: &Path) {
         let meta = std::fs::symlink_metadata(path).unwrap();
