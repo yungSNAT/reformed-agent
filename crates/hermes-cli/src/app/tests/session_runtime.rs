@@ -200,39 +200,124 @@
         assert_eq!(hits("mill"), 1, "second turn indexed");
     }
 
+    const SNAPSHOT_LIMIT_KEYS: [&str; 3] = [
+        "HERMES_SESSION_SNAPSHOT_MAX_FILES",
+        "HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES",
+        "HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES",
+    ];
+
+    /// Set the snapshot count, size and free-space limits; 0 disables one.
+    fn set_snapshot_limits(max_files: u64, max_total_bytes: u64, min_free_bytes: u64) {
+        for (key, value) in SNAPSHOT_LIMIT_KEYS
+            .iter()
+            .zip([max_files, max_total_bytes, min_free_bytes])
+        {
+            std::env::set_var(key, value.to_string());
+        }
+    }
+
+    /// Write a snapshot for `stem`, a one-shot when it has the `oneshot-` prefix.
+    fn write_test_snapshot(root: &Path, stem: &str) -> Result<PathBuf, AgentError> {
+        let info = SessionInfo {
+            session_id: stem.to_string(),
+            model: "test".to_string(),
+            personality: None,
+            message_count: 1,
+            created_at: String::new(),
+        };
+        let source = stem.starts_with("oneshot-").then_some("oneshot");
+        let messages = [hermes_core::Message::user("snapshot payload")];
+        write_session_snapshot(root, stem, &info, source, &messages)
+    }
+
+    /// Date a snapshot `age_minutes` ago, so retention order never depends on
+    /// timer resolution.
+    fn date_snapshot(path: &Path, age_minutes: u64) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open snapshot")
+            .set_modified(SystemTime::now() - Duration::from_secs(age_minutes * 60))
+            .expect("date snapshot");
+    }
+
+    /// Interactive snapshots `a` (oldest) and `b` (newest) around one-shot `old`.
+    fn snapshots_around_a_oneshot(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        set_snapshot_limits(0, 0, 0);
+        let [a, old, b] = ["interactive-a", "oneshot-old", "interactive-b"]
+            .map(|stem| write_test_snapshot(root, stem).expect("write snapshot"));
+        for (path, age) in [(&a, 30), (&old, 20), (&b, 10)] {
+            date_snapshot(path, age);
+        }
+        (a, old, b)
+    }
+
     #[test]
-    fn oneshot_snapshots_never_evict_interactive_snapshots() {
+    fn interactive_saves_prune_oneshot_snapshots_first() {
         let _guard = env_test_lock();
-        let _env = EnvSnapshot::capture(&[
-            "HERMES_SESSION_SNAPSHOT_MAX_FILES",
-            "HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES",
-            "HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES",
-        ]);
-        std::env::set_var("HERMES_SESSION_SNAPSHOT_MAX_FILES", "3");
-        std::env::set_var("HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES", "999999999");
-        std::env::set_var("HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES", "0");
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+
+        set_snapshot_limits(3, 0, 0);
+        let c = write_test_snapshot(tmp.path(), "interactive-c").expect("write snapshot");
+        assert!(!old.exists(), "the one-shot goes before the older interactive snapshot");
+        assert!(a.exists() && b.exists() && c.exists());
+    }
+
+    #[test]
+    fn oneshot_saves_never_evict_interactive_snapshots_under_count_or_size_limits() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let size = |path: &Path| std::fs::metadata(path).expect("snapshot size").len();
+        for limit in ["count", "size"] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+            // Room for the new one-shot only by pruning the older one.
+            match limit {
+                "count" => set_snapshot_limits(3, 0, 0),
+                _ => set_snapshot_limits(0, size(&a) + size(&old) + size(&b), 0),
+            }
+            let new = write_test_snapshot(tmp.path(), "oneshot-new").expect("write snapshot");
+            assert!(!old.exists() && new.exists(), "{limit}: older one-shot replaced");
+            date_snapshot(&new, 5);
+
+            // Interactive snapshots fill the limit: the one-shot is not kept.
+            match limit {
+                "count" => set_snapshot_limits(2, 0, 0),
+                _ => set_snapshot_limits(0, size(&a) + size(&b), 0),
+            }
+            let last = write_test_snapshot(tmp.path(), "oneshot-nxt").expect("write snapshot");
+            assert!(!new.exists() && !last.exists(), "{limit}: one-shots pruned");
+            assert!(a.exists() && b.exists(), "{limit}: interactive snapshots kept");
+        }
+    }
+
+    // The free-space check reads statvfs, so it has no effect off Unix.
+    #[cfg(unix)]
+    #[test]
+    fn oneshot_saves_never_evict_interactive_snapshots_when_disk_is_low() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+
+        set_snapshot_limits(0, 0, u64::MAX);
+        let new = write_test_snapshot(tmp.path(), "oneshot-new")
+            .expect("a one-shot save does not fail on low disk");
+        assert!(!new.exists() && !old.exists(), "one-shots pruned");
+        assert!(a.exists() && b.exists(), "interactive snapshots kept");
+    }
+
+    #[test]
+    fn named_snapshots_cannot_use_the_oneshot_prefix() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
-        let snapshot = |stem: &str| {
-            std::thread::sleep(std::time::Duration::from_millis(20));
-            app.persist_session_snapshot(Some(stem))
-                .expect("persist snapshot")
-        };
-
-        let a = snapshot("interactive-a");
-        let b = snapshot("interactive-b");
-        let one = snapshot("oneshot-1");
-        let two = snapshot("oneshot-2");
-        assert!(!one.exists(), "older one-shot pruned first");
-        assert!(a.exists() && b.exists() && two.exists());
-
-        let c = snapshot("interactive-c");
-        assert!(!two.exists(), "one-shot pruned before interactive");
-        assert!(a.exists() && b.exists() && c.exists());
-
-        let three = snapshot("oneshot-3");
-        assert!(!three.exists(), "a new one-shot is not exempt");
-        assert!(a.exists() && b.exists() && c.exists());
+        let err = app
+            .persist_session_snapshot(Some("oneshot-x"))
+            .expect_err("reserved prefix");
+        assert!(err.to_string().contains("reserved for one-shot runs"), "{err}");
+        assert!(!tmp.path().join("sessions").join("oneshot-x.json").exists());
     }
 
     #[test]

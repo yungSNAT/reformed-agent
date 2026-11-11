@@ -131,8 +131,7 @@ fn resolve_resume_session_file_latest_skips_oneshot_runs() {
     let cli = cli_for_temp_state_root(tmp.path());
     let sessions_dir = hermes_state_root(&cli).join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
-    let snapshot = |id: &str| {
-        std::thread::sleep(std::time::Duration::from_millis(20));
+    let snapshot = |id: &str, age_minutes: u64| {
         let path = sessions_dir.join(format!("{id}.json"));
         std::fs::write(
             &path,
@@ -141,11 +140,21 @@ fn resolve_resume_session_file_latest_skips_oneshot_runs() {
             ),
         )
         .expect("write snapshot");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| {
+                file.set_modified(
+                    std::time::SystemTime::now()
+                        - std::time::Duration::from_secs(age_minutes * 60),
+                )
+            })
+            .expect("date snapshot");
         path
     };
 
-    let interactive = snapshot("c0ffee00-0000-4000-8000-000000000002");
-    snapshot("oneshot-c0ffee00-0000-4000-8000-000000000003");
+    let interactive = snapshot("c0ffee00-0000-4000-8000-000000000002", 20);
+    snapshot("oneshot-c0ffee00-0000-4000-8000-000000000003", 10);
 
     let latest = resolve_resume_session_file(&sessions_dir, None).expect("resolve latest");
     assert_eq!(latest.1, interactive);

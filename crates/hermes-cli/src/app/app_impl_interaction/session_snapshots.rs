@@ -149,11 +149,20 @@ impl App {
         sessions_dir: &Path,
         preserve_path: &Path,
     ) -> Result<(), AgentError> {
-        // Prune one-shot snapshots first, oldest first, and do not exempt a new
-        // one: one-shot runs then never evict an interactive snapshot under the
-        // count or size limits. Their sessions.db rows remain.
-        let preserve =
-            (!is_oneshot_snapshot_path(preserve_path)).then(|| preserve_path.to_path_buf());
+        // An interactive save may prune any other snapshot, one-shot snapshots
+        // first, so one-shot runs do not shorten interactive retention. A
+        // one-shot save prunes only one-shot snapshots, itself last, so it never
+        // evicts an interactive snapshot; when that cannot meet a limit, its own
+        // snapshot is removed and the caller reports it. sessions.db is untouched.
+        let preserve = preserve_path.to_path_buf();
+        let oneshot_save = is_oneshot_snapshot_path(preserve_path);
+        let prunable = |entry: &SessionSnapshotEntry| {
+            if oneshot_save {
+                is_oneshot_snapshot_path(&entry.path)
+            } else {
+                entry.path != preserve
+            }
+        };
         let mut entries = list_session_snapshot_entries(sessions_dir);
         entries.sort_by_key(|entry| !is_oneshot_snapshot_path(&entry.path));
         let mut total_bytes = entries.iter().map(|e| e.size_bytes).sum::<u64>();
@@ -161,10 +170,7 @@ impl App {
         let max_files = snapshot_max_files();
         if max_files > 0 {
             while entries.len() > max_files {
-                let Some(idx) = entries
-                    .iter()
-                    .position(|entry| Some(&entry.path) != preserve.as_ref())
-                else {
+                let Some(idx) = entries.iter().position(&prunable) else {
                     break;
                 };
                 let removed = entries.remove(idx);
@@ -175,10 +181,7 @@ impl App {
         let max_total_bytes = snapshot_max_total_bytes();
         if max_total_bytes > 0 {
             while total_bytes > max_total_bytes {
-                let Some(idx) = entries
-                    .iter()
-                    .position(|entry| Some(&entry.path) != preserve.as_ref())
-                else {
+                let Some(idx) = entries.iter().position(&prunable) else {
                     break;
                 };
                 let removed = entries.remove(idx);
@@ -190,17 +193,14 @@ impl App {
         if min_free_bytes > 0 {
             if let Some(mut free_bytes) = available_disk_space_bytes(sessions_dir) {
                 while free_bytes < min_free_bytes {
-                    let Some(idx) = entries
-                        .iter()
-                        .position(|entry| Some(&entry.path) != preserve.as_ref())
-                    else {
+                    let Some(idx) = entries.iter().position(&prunable) else {
                         break;
                     };
                     let removed = entries.remove(idx);
                     Self::prune_session_snapshot_entry(&removed, &mut total_bytes)?;
                     free_bytes = available_disk_space_bytes(sessions_dir).unwrap_or(free_bytes);
                 }
-                if free_bytes < min_free_bytes {
+                if free_bytes < min_free_bytes && !oneshot_save {
                     return Err(AgentError::Io(format!(
                         "Session snapshot write blocked by disk guardrail: free={} bytes, required_min={} bytes (dir={})",
                         free_bytes,
@@ -237,6 +237,11 @@ impl App {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or(self.session_id.as_str());
+        if stem.starts_with(ONESHOT_SESSION_ID_PREFIX) {
+            return Err(AgentError::Config(format!(
+                "Session names starting with '{ONESHOT_SESSION_ID_PREFIX}' are reserved for one-shot runs."
+            )));
+        }
         let path = write_session_snapshot(
             &self.state_root,
             stem,
@@ -319,30 +324,17 @@ fn write_session_snapshot(
     Ok(path)
 }
 
-/// Save a finished one-shot run as a session: a snapshot for `sessions list`
-/// and a `sessions.db` row (platform `oneshot`, no title) for `session_search`.
-/// Returns the new session id.
+/// Save a finished one-shot run as a session: a `sessions.db` row (platform
+/// `oneshot`, no title) for `session_search`, then a snapshot for `sessions list`.
+/// Returns whether the snapshot was kept: it is not when only interactive
+/// snapshots could be pruned to meet the snapshot limits.
 pub fn save_oneshot_session(
     state_root: &Path,
     model: &str,
     personality: Option<String>,
     messages: &[hermes_core::Message],
-) -> Result<String, AgentError> {
+) -> Result<bool, AgentError> {
     let session_id = format!("{ONESHOT_SESSION_ID_PREFIX}{}", Uuid::new_v4());
-    let session_info = SessionInfo {
-        session_id: session_id.clone(),
-        model: model.to_string(),
-        personality,
-        message_count: messages.len(),
-        created_at: chrono::Utc::now().to_rfc3339(),
-    };
-    write_session_snapshot(
-        state_root,
-        &session_id,
-        &session_info,
-        Some("oneshot"),
-        messages,
-    )?;
     SessionPersistence::new(state_root).persist_session(
         &session_id,
         messages,
@@ -351,5 +343,19 @@ pub fn save_oneshot_session(
         None,
         None,
     )?;
-    Ok(session_id)
+    let session_info = SessionInfo {
+        session_id: session_id.clone(),
+        model: model.to_string(),
+        personality,
+        message_count: messages.len(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    let path = write_session_snapshot(
+        state_root,
+        &session_id,
+        &session_info,
+        Some("oneshot"),
+        messages,
+    )?;
+    Ok(path.exists())
 }

@@ -214,13 +214,17 @@ pub async fn handle_cli_chat(
             println!("{}", outcome.reply);
             // Scripts parse one-shot stdout and exit codes, so a failed save
             // only warns on stderr.
-            if let Err(err) = crate::app::save_oneshot_session(
+            match crate::app::save_oneshot_session(
                 &hermes_config::hermes_home(),
                 &outcome.active_model,
                 config.personality.clone(),
                 &outcome.result.messages,
             ) {
-                eprintln!("Warning: one-shot session not saved: {err}");
+                Ok(true) => {}
+                Ok(false) => eprintln!(
+                    "Warning: one-shot session saved for session search but not kept in `sessions list`: the session snapshot limits are full."
+                ),
+                Err(err) => eprintln!("Warning: one-shot session not saved: {err}"),
             }
         }
         None => {
