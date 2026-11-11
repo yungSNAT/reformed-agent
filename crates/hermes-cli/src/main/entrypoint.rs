@@ -25,6 +25,13 @@ fn main() {
 async fn run_main() {
     let cli = Cli::parse();
     let effective_command = cli.effective_command();
+    if cli.oneshot.is_some() && matches!(effective_command, CliCommand::Resume(_)) {
+        eprintln!(
+            "Error: `resume` cannot be combined with -z/--oneshot, which starts a fresh session \
+             without the saved history. Run `hermes-ultra resume <id>` in a terminal instead."
+        );
+        std::process::exit(1);
+    }
     if let CliCommand::ImportHermesSessions(ImportHermesSessionsArgs {
         export,
         profile_dir,

@@ -50,7 +50,9 @@ use crate::auth::{
 use crate::cli::Cli;
 use crate::commands::recover_queued_background_jobs;
 use crate::model_switch::{provider_model_ids, MOA_DEFAULT_PRESET, MOA_PROVIDER};
-use crate::runtime_tool_wiring::{wire_cron_scheduler_backend, wire_stdio_clarify_backend};
+use crate::runtime_tool_wiring::{
+    connect_configured_mcp_servers, wire_cron_scheduler_backend, wire_stdio_clarify_backend,
+};
 use crate::terminal_backend::build_terminal_backend;
 use crate::tui::StreamHandle;
 

@@ -76,6 +76,7 @@ impl App {
             Arc::new(SkillManager::new(skill_store));
         hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
         wire_stdio_clarify_backend(&tool_registry);
+        connect_configured_mcp_servers(&config, &state_root, &tool_registry).await;
         let cron_data_dir = state_root.join("cron");
         std::fs::create_dir_all(&cron_data_dir)
             .map_err(|e| AgentError::Io(format!("cron dir {}: {}", cron_data_dir.display(), e)))?;

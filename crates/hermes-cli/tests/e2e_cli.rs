@@ -248,6 +248,33 @@ fn e2e_cli_interactive_without_tty_reports_actionable_diagnostic() {
 }
 
 #[test]
+fn e2e_cli_resume_refuses_oneshot_prompt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    fs::write(
+        dir.path().join("config.yaml"),
+        r#"
+model: local-test:deterministic
+llm_providers:
+  local-test:
+    base_url: http://127.0.0.1:9/v1
+    discover_models: false
+    models:
+      deterministic: {}
+"#,
+    )
+    .expect("write config");
+    let mut cmd = Command::cargo_bin("hermes").expect("binary exists");
+    cmd.env("HERMES_HOME", dir.path());
+    cmd.args(["resume", "latest", "-z", "reply with 1"]);
+    let assert = cmd.assert().failure();
+    let stderr = String::from_utf8_lossy(&assert.get_output().stderr);
+    assert!(
+        stderr.contains("`resume` cannot be combined with -z/--oneshot"),
+        "expected resume/oneshot refusal in stderr, got: {stderr:?}"
+    );
+}
+
+#[test]
 fn e2e_cli_systems_status_and_reports_are_json() {
     let dir = tempfile::tempdir().expect("tempdir");
     for args in [

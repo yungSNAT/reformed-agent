@@ -1,20 +1,30 @@
 //! Runtime wiring helpers for swapping signal backends to live implementations.
 
 use std::io::IsTerminal;
+use std::path::Path;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
+use hermes_config::GatewayConfig;
 use hermes_core::ToolHandler;
 use hermes_cron::{CronScheduler, ScheduledCronjobBackend};
 use hermes_gateway::tool_backends::{
     ChannelClarifyBackend, ClarifyDispatcher, GatewayMessagingBackend,
 };
 use hermes_gateway::Gateway;
+use hermes_mcp::{McpManager, McpServerConfig};
 use hermes_tools::tools::clarify::{ClarifyBackend, ClarifyHandler};
 use hermes_tools::tools::cronjob::CronjobHandler;
 use hermes_tools::tools::messaging::SendMessageHandler;
 use hermes_tools::ToolRegistry;
 use serde_json::json;
+
+use crate::mcp_config::{load_mcp_config_if_exists, McpConfig};
+
+/// Upper bound on MCP discovery when a session starts: the 60-second default
+/// `connect_timeout` given in the Nix setup and bundled MCP skill docs.
+const MCP_STARTUP_TIMEOUT: Duration = Duration::from_secs(60);
 
 fn register_runtime_tool(
     tool_registry: &Arc<ToolRegistry>,
@@ -205,6 +215,108 @@ pub fn wire_stdio_clarify_backend(tool_registry: &Arc<ToolRegistry>) {
         "Ask the user a clarification question. Optionally provide choices for the user to select from.",
         "❓",
     );
+}
+
+/// Launch configs for the servers listed under `mcp_servers` in config.yaml.
+///
+/// config.yaml holds each server's URL or command line. `hermes mcp add` also
+/// writes a `mcp_servers.json` record, which alone keeps `args`, `env` and
+/// `enabled`; a same-named record applies only while it names the same target.
+fn session_mcp_server_configs(
+    servers: &[hermes_config::McpServerEntry],
+    records: Option<&McpConfig>,
+) -> Vec<(String, McpServerConfig)> {
+    let mut configs = Vec::new();
+    for server in servers {
+        let name = server.name.trim();
+        if name.is_empty() {
+            tracing::warn!("Skipping an MCP server in config.yaml with no name");
+            continue;
+        }
+        let url = server
+            .url
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let command = server
+            .command
+            .as_deref()
+            .map(str::trim)
+            .filter(|v| !v.is_empty());
+        let (mut config, target) = match (url, command) {
+            (Some(url), _) => (McpServerConfig::http(url), url),
+            (None, Some(command)) => (McpServerConfig::stdio(command, Vec::new()), command),
+            (None, None) => {
+                tracing::warn!("Skipping MCP server '{name}': it has neither 'command' nor 'url'");
+                continue;
+            }
+        };
+        config.supports_parallel_tool_calls = server.supports_parallel_tool_calls;
+        config.keepalive_interval = server.keepalive_interval;
+
+        if let Some(record) = records.and_then(|records| records.get(name)) {
+            let record_command = record.command.as_deref().unwrap_or_default();
+            let record_line = std::iter::once(record_command)
+                .chain(record.args.iter().map(String::as_str))
+                .collect::<Vec<_>>()
+                .join(" ");
+            let same_target = match record.url.as_deref() {
+                Some(record_url) => url == Some(record_url),
+                None => url.is_none() && (target == record_command || target == record_line),
+            };
+            if !same_target {
+                tracing::warn!(
+                    "MCP server '{name}': mcp_servers.json names a different target; using config.yaml"
+                );
+            } else if !record.enabled {
+                continue;
+            } else {
+                if url.is_none() {
+                    config.command = Some(record_command.to_string());
+                    config.args = record.args.clone();
+                }
+                config.env = record.env.clone().into_iter().collect();
+            }
+        }
+        configs.push((name.to_string(), config));
+    }
+    configs
+}
+
+/// Connect the MCP servers configured in config.yaml and register their tools
+/// in `tool_registry`, as ACP does for the servers its client supplies.
+///
+/// Servers that fail or time out are logged and skipped. Each registered tool
+/// holds its own client, so connections last as long as `tool_registry`.
+pub async fn connect_configured_mcp_servers(
+    config: &GatewayConfig,
+    state_root: &Path,
+    tool_registry: &Arc<ToolRegistry>,
+) {
+    if config.mcp_servers.is_empty() {
+        return;
+    }
+    let records =
+        load_mcp_config_if_exists(&state_root.join("mcp_servers.json")).unwrap_or_else(|err| {
+            tracing::warn!("Ignoring MCP launch records: {err}");
+            None
+        });
+    let servers = session_mcp_server_configs(&config.mcp_servers, records.as_ref());
+    if servers.is_empty() {
+        return;
+    }
+    let mut manager = McpManager::new(Arc::clone(tool_registry));
+    let discovery = manager.connect_all_parallel(servers);
+    if tokio::time::timeout(MCP_STARTUP_TIMEOUT, discovery)
+        .await
+        .is_err()
+    {
+        tracing::warn!(
+            "MCP discovery timed out after {}s; continuing with {:?}",
+            MCP_STARTUP_TIMEOUT.as_secs(),
+            manager.connected_servers()
+        );
+    }
 }
 
 #[cfg(test)]
@@ -419,6 +531,89 @@ mod tests {
             serde_json::from_str(&list).expect("list output should be json");
         assert_eq!(listed["action"], "list");
         assert_eq!(listed["count"], 1);
+    }
+
+    fn yaml_server(
+        name: &str,
+        command: Option<&str>,
+        url: Option<&str>,
+    ) -> hermes_config::McpServerEntry {
+        hermes_config::McpServerEntry {
+            name: name.to_string(),
+            command: command.map(str::to_string),
+            url: url.map(str::to_string),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn session_mcp_servers_launch_config_yaml_entries() {
+        let configs = session_mcp_server_configs(
+            &[
+                yaml_server("pentagi", Some("/opt/pentagi-mcp"), None),
+                yaml_server("remote", None, Some("https://mcp.example.com/mcp")),
+                yaml_server("unconfigured", None, None),
+                yaml_server(" ", Some("nameless-mcp"), None),
+            ],
+            None,
+        );
+
+        assert_eq!(
+            configs,
+            vec![
+                (
+                    "pentagi".to_string(),
+                    McpServerConfig::stdio("/opt/pentagi-mcp", Vec::new()),
+                ),
+                (
+                    "remote".to_string(),
+                    McpServerConfig::http("https://mcp.example.com/mcp"),
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn session_mcp_servers_take_launch_details_from_matching_json_records() {
+        let records = crate::mcp_config::parse_mcp_config_json(
+            r#"{
+              "sentrux": {"command": "sentrux", "args": ["mcp"], "env": {"RUST_LOG": "warn"}},
+              "node": {"command": "node", "args": ["server.mjs"]},
+              "off": {"command": "off-mcp", "enabled": false},
+              "moved": {"command": "old-mcp", "enabled": false},
+              "json-only": {"command": "unlisted-mcp"}
+            }"#,
+        )
+        .expect("valid records");
+
+        let configs = session_mcp_server_configs(
+            &[
+                yaml_server("sentrux", Some("sentrux mcp"), None),
+                yaml_server("node", Some("node"), None),
+                yaml_server("off", Some("off-mcp"), None),
+                yaml_server("moved", None, Some("https://mcp.example.com/mcp")),
+            ],
+            Some(&records),
+        );
+
+        assert_eq!(
+            configs,
+            vec![
+                (
+                    "sentrux".to_string(),
+                    McpServerConfig::stdio("sentrux", vec!["mcp".to_string()])
+                        .with_env("RUST_LOG", "warn"),
+                ),
+                (
+                    "node".to_string(),
+                    McpServerConfig::stdio("node", vec!["server.mjs".to_string()]),
+                ),
+                (
+                    "moved".to_string(),
+                    McpServerConfig::http("https://mcp.example.com/mcp"),
+                ),
+            ]
+        );
     }
 
     #[tokio::test]

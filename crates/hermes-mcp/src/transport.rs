@@ -386,7 +386,10 @@ impl McpTransport for StdioTransport {
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(Stdio::piped())
+            // A server dropped mid-handshake (startup timeout, failed
+            // reconnect) may never read stdin to see EOF.
+            .kill_on_drop(true);
 
         if let Some(cwd) = sandbox_cwd(sandbox_profile) {
             cmd.current_dir(cwd);
@@ -1035,6 +1038,35 @@ impl McpTransport for HttpSseTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_started_stdio_transport_stops_child() {
+        let mut transport =
+            StdioTransport::new("sleep", &["30".to_string()], &HashMap::new(), false);
+        transport.start().await.expect("start sleep");
+        let pid = transport
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .expect("child pid");
+        drop(transport);
+
+        // Gone, or a zombie awaiting reaping, once the kill lands.
+        let stopped = || match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit_once(") ")
+                .is_some_and(|(_, rest)| rest.starts_with('Z')),
+            Err(_) => true,
+        };
+        for _ in 0..50 {
+            if stopped() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("stdio MCP child {pid} still running after its transport was dropped");
+    }
 
     #[test]
     fn test_stdio_transport_new() {

@@ -56,7 +56,9 @@ pub async fn handle_cli_chat(
     provider_override: Option<String>,
     allow_tools_flag: bool,
 ) -> Result<(), hermes_core::AgentError> {
-    use crate::runtime_tool_wiring::{wire_cron_scheduler_backend, wire_stdio_clarify_backend};
+    use crate::runtime_tool_wiring::{
+        connect_configured_mcp_servers, wire_cron_scheduler_backend, wire_stdio_clarify_backend,
+    };
     use crate::terminal_backend::build_terminal_backend;
     use hermes_cli_ui::tool_preview::{build_tool_preview_from_value, tool_emoji};
     use hermes_config::load_config;
@@ -101,6 +103,8 @@ pub async fn handle_cli_chat(
             Arc::new(SkillManager::new(skill_store));
         hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
         wire_stdio_clarify_backend(&tool_registry);
+        connect_configured_mcp_servers(&config, &hermes_config::hermes_home(), &tool_registry)
+            .await;
         let cron_data_dir = hermes_config::cron_dir();
         std::fs::create_dir_all(&cron_data_dir)
             .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
