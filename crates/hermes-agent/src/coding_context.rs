@@ -558,6 +558,9 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 /// `git status` from writing the index, so no index hook runs. Disable every
 /// configured filter too: status can run clean/process commands while hashing
 /// tracked files. Reading config names itself does not execute those commands.
+/// `--no-lazy-fetch` stops git fetching an object the repository lacks from a
+/// promisor remote, which runs `core.sshCommand` or a remote helper. Git before
+/// 2.45 rejects that option, so the snapshot is omitted there.
 fn workspace_git(root: &Path) -> Option<Command> {
     let filters = Command::new("git")
         .arg("-C")
@@ -592,7 +595,7 @@ fn workspace_git(root: &Path) -> Option<Command> {
     cmd.arg("-C")
         .arg(root)
         .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
-        .arg("--no-optional-locks")
+        .args(["--no-optional-locks", "--no-lazy-fetch"])
         .stdin(std::process::Stdio::null())
         .suppress_windows_console();
     let mut config_count = 0;
@@ -1046,5 +1049,81 @@ mod tests {
             !gpg_ran.exists(),
             "git log ran the repository's gpg.program"
         );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_fetch_missing_objects() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        // A promisor remote makes git fetch any object the repository lacks,
+        // through `core.sshCommand`. `mailmap.blob` sends `git log` after one;
+        // a HEAD commit without its tree sends `git status`.
+        for missing in ["mailmap blob", "HEAD tree"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            git_init(&repo);
+            let git = |args: &[&str]| {
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "git {args:?}: {output:?}");
+            };
+            // Before the remote is configured, so the fixture itself fetches nothing.
+            if missing == "HEAD tree" {
+                let commit = format!(
+                    "tree {}\nauthor T <t@example.com> 1700000000 +0000\n\
+                     committer T <t@example.com> 1700000000 +0000\n\nno tree\n",
+                    "2".repeat(40)
+                );
+                let mut hash = Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+                    .stdin(std::process::Stdio::piped())
+                    .stdout(std::process::Stdio::piped())
+                    .spawn()
+                    .unwrap();
+                hash.stdin
+                    .take()
+                    .unwrap()
+                    .write_all(commit.as_bytes())
+                    .unwrap();
+                let sha = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap();
+                git(&["update-ref", "HEAD", sha.trim()]);
+            } else {
+                git(&["config", "mailmap.blob", &"1".repeat(40)]);
+            }
+            let marker = tmp.path().join("ssh-ran");
+            let program = tmp.path().join("ssh.sh");
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            git(&["config", "remote.croft.promisor", "true"]);
+            git(&[
+                "config",
+                "remote.croft.url",
+                "ssh://manor.invalid/croft.git",
+            ]);
+            git(&["config", "core.sshCommand", program.to_str().unwrap()]);
+
+            let block = build_coding_workspace_block(&repo);
+            assert!(
+                !marker.exists(),
+                "the snapshot fetched a missing {missing} through core.sshCommand"
+            );
+            // The mailmap is optional, so git still reports the commit without it.
+            if missing == "mailmap blob" {
+                let block = block.expect("workspace block");
+                assert!(block.contains("Last commit:"), "{block}");
+            }
+        }
     }
 }
