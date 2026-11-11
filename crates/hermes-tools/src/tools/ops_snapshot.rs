@@ -6,7 +6,6 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -17,24 +16,27 @@ use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use crate::repo::detect_repo_root_from_cwd;
 use crate::tool_policy::{default_tool_policy_counters_path, load_tool_policy_counters};
 use crate::tools::telemetry_snapshot::telemetry_gate_snapshot;
-use crate::{ToolPolicyCounters, ToolRegistry};
+use crate::{ToolPolicyCounters, ToolRegistry, WeakToolRegistry};
 
 const TOOL_NAME: &str = "ops_snapshot";
 
 #[derive(Clone)]
 pub struct OpsSnapshotHandler {
-    registry: Arc<ToolRegistry>,
+    registry: WeakToolRegistry,
 }
 
 impl OpsSnapshotHandler {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: &ToolRegistry) -> Self {
+        Self {
+            registry: registry.downgrade(),
+        }
     }
 }
 
 #[async_trait]
 impl ToolHandler for OpsSnapshotHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        let registry = self.registry.upgrade_for_call()?;
         let action = params
             .get("action")
             .and_then(Value::as_str)
@@ -54,11 +56,11 @@ impl ToolHandler for OpsSnapshotHandler {
             .unwrap_or(true);
 
         let payload = match action.as_str() {
-            "status" => ops_snapshot(&self.registry, repo_root.as_deref(), include_tools),
+            "status" => ops_snapshot(&registry, repo_root.as_deref(), include_tools),
             "policy" => json!({
                 "status": "ok",
-                "policy": policy_snapshot(&self.registry),
-                "tools": if include_tools { Some(tool_registry_snapshot(&self.registry)) } else { None },
+                "policy": policy_snapshot(&registry),
+                "tools": if include_tools { Some(tool_registry_snapshot(&registry)) } else { None },
             }),
             "qos" => json!({
                 "status": "ok",
@@ -345,12 +347,14 @@ fn env_f64(key: &str, default: f64, min: f64, max: f64) -> f64 {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use super::*;
 
     #[tokio::test]
     async fn handler_returns_read_only_status_snapshot() {
         let registry = ToolRegistry::new();
-        let handler = OpsSnapshotHandler::new(Arc::new(registry));
+        let handler = OpsSnapshotHandler::new(&registry);
         let payload: Value = serde_json::from_str(
             &handler
                 .execute(json!({"include_tools": false}))
@@ -378,7 +382,7 @@ mod tests {
                 "unit test tool",
                 JsonSchema::object(IndexMap::new(), vec![]),
             ),
-            Arc::new(OpsSnapshotHandler::new(Arc::new(registry.clone()))),
+            Arc::new(OpsSnapshotHandler::new(&registry)),
             Arc::new(|| true),
             vec![],
             true,
@@ -386,7 +390,7 @@ mod tests {
             "u",
             None,
         );
-        let handler = OpsSnapshotHandler::new(Arc::new(registry));
+        let handler = OpsSnapshotHandler::new(&registry);
         let payload: Value =
             serde_json::from_str(&handler.execute(json!({})).await.unwrap()).expect("json");
 

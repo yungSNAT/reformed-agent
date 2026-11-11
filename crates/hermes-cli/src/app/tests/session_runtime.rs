@@ -506,7 +506,7 @@
         register_test_tool(&tools, "cronjob");
         register_test_tool(&tools, "terminal");
 
-        let agent_registry = bridge_tool_registry_excluding(&tools, &["cronjob"]);
+        let agent_registry = bridge_tool_registry_for_cron(&tools);
         let names = agent_registry.names();
 
         assert!(!names.contains(&"cronjob".to_string()));

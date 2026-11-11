@@ -12,25 +12,43 @@ fn sorted_tool_schema_names(schemas: &[ToolSchema]) -> Vec<String> {
 }
 
 pub fn bridge_tool_registry(tools: &ToolRegistry) -> AgentToolRegistry {
-    bridge_tool_registry_excluding(tools, &[])
+    let tools_clone = tools.clone();
+    bridge_tool_schemas(tools, &[], move |name, params| {
+        Ok(tools_clone.dispatch(name, params))
+    })
 }
 
-fn bridge_tool_registry_excluding(tools: &ToolRegistry, excluded: &[&str]) -> AgentToolRegistry {
+/// Bridge for the runner of a cron scheduler that `tools` itself holds, as the
+/// `cronjob` tool's backend. It omits that tool, so jobs cannot schedule jobs,
+/// and holds `tools` weakly: a strong handle would keep the registry, and so
+/// its MCP clients and their server processes, alive for good.
+fn bridge_tool_registry_for_cron(tools: &ToolRegistry) -> AgentToolRegistry {
+    let weak = tools.downgrade();
+    bridge_tool_schemas(tools, &["cronjob"], move |name, params| {
+        Ok(weak.upgrade_for_call()?.dispatch(name, params))
+    })
+}
+
+fn bridge_tool_schemas(
+    tools: &ToolRegistry,
+    excluded: &[&str],
+    dispatch: impl Fn(&str, Value) -> Result<String, hermes_core::ToolError>
+        + Clone
+        + Send
+        + Sync
+        + 'static,
+) -> AgentToolRegistry {
     let mut agent_registry = AgentToolRegistry::new();
     for schema in tools.get_definitions() {
         if excluded.iter().any(|name| schema.name == *name) {
             continue;
         }
         let name = schema.name.clone();
-        let tools_clone = tools.clone();
+        let dispatch = dispatch.clone();
         agent_registry.register(
             name.clone(),
             schema,
-            Arc::new(
-                move |params: Value| -> Result<String, hermes_core::ToolError> {
-                    Ok(tools_clone.dispatch(&name, params))
-                },
-            ),
+            Arc::new(move |params: Value| dispatch(&name, params)),
         );
     }
     agent_registry
@@ -55,7 +73,7 @@ pub fn build_runtime_cron_scheduler(
     let provider = build_provider(config, &model);
     let runner = Arc::new(CronRunner::new(
         provider,
-        Arc::new(bridge_tool_registry_excluding(tools, &["cronjob"])),
+        Arc::new(bridge_tool_registry_for_cron(tools)),
     ));
     CronScheduler::new(persistence, runner)
 }

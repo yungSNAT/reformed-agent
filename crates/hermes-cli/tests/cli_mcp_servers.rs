@@ -129,6 +129,7 @@ fn app_session_registers_configured_server_tools(home: &Path) {
     // The binary drops its runtime like this when a session ends. On Windows
     // a stderr pipe drained through tokio stalled that drop while the server
     // lived.
+    let registry = app.tool_registry.downgrade();
     drop(app);
     let bound = Duration::from_secs(20);
     let shutdown = Instant::now();
@@ -136,6 +137,11 @@ fn app_session_registers_configured_server_tools(home: &Path) {
     assert!(
         shutdown.elapsed() < bound,
         "the session's runtime took over {bound:?} to shut down"
+    );
+    // Its MCP clients, and so the server processes, go with the registry.
+    assert!(
+        registry.upgrade().is_none(),
+        "the session's tool registry outlived the session"
     );
 }
 

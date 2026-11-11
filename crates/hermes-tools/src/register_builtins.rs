@@ -813,11 +813,7 @@ fn register_builtin_tools_with_data_dir(
     reg(
         registry,
         "system",
-        Arc::new(
-            crate::tools::integrations_snapshot::IntegrationsSnapshotHandler::new(Arc::new(
-                registry.clone(),
-            )),
-        ),
+        Arc::new(crate::tools::integrations_snapshot::IntegrationsSnapshotHandler::new(registry)),
         "🧩",
         vec![],
     );
@@ -842,11 +838,7 @@ fn register_builtin_tools_with_data_dir(
     reg(
         registry,
         "system",
-        Arc::new(
-            crate::tools::tool_policy_simulate::ToolPolicySimulateHandler::new(Arc::new(
-                registry.clone(),
-            )),
-        ),
+        Arc::new(crate::tools::tool_policy_simulate::ToolPolicySimulateHandler::new(registry)),
         "🧭",
         vec![],
     );
@@ -855,11 +847,7 @@ fn register_builtin_tools_with_data_dir(
     reg(
         registry,
         "system",
-        Arc::new(
-            crate::tools::raw_trace_control::RawTraceControlHandler::new(Arc::new(
-                registry.clone(),
-            )),
-        ),
+        Arc::new(crate::tools::raw_trace_control::RawTraceControlHandler::new(registry)),
         "🧾",
         vec![],
     );
@@ -896,7 +884,7 @@ fn register_builtin_tools_with_data_dir(
         registry,
         "system",
         Arc::new(crate::tools::ops_snapshot::OpsSnapshotHandler::new(
-            Arc::new(registry.clone()),
+            registry,
         )),
         "🛰️",
         vec![],
@@ -1073,6 +1061,22 @@ mod tests {
         async fn delete_skill(&self, _name: &str) -> Result<(), AgentError> {
             Ok(())
         }
+    }
+
+    #[test]
+    fn dropping_a_registry_frees_its_builtin_tools() {
+        let registry = ToolRegistry::new();
+        register_builtin_tools(
+            &registry,
+            Arc::new(MockTerminalBackend),
+            Arc::new(MockSkillProvider),
+        );
+        let weak = registry.downgrade();
+        drop(registry);
+        assert!(
+            weak.upgrade().is_none(),
+            "a builtin tool keeps the registry that holds it alive"
+        );
     }
 
     fn registered_names() -> Vec<String> {

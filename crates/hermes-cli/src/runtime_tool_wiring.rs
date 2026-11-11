@@ -500,6 +500,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn dropping_a_registry_frees_its_runtime_cron_scheduler() {
+        let tmp = TempDir::new().expect("tempdir");
+        let registry = Arc::new(ToolRegistry::new());
+        // The scheduler's runner bridges the tools registered before it.
+        wire_stdio_clarify_backend(&registry);
+        let scheduler = crate::app::build_runtime_cron_scheduler(
+            &hermes_config::GatewayConfig::default(),
+            "dynamic",
+            tmp.path().to_path_buf(),
+            &registry,
+        );
+        wire_cron_scheduler_backend(&registry, Arc::new(scheduler));
+        let weak = registry.downgrade();
+        drop(registry);
+        assert!(
+            weak.upgrade().is_none(),
+            "the cronjob tool's runner keeps the registry that holds it alive"
+        );
+    }
+
     #[tokio::test]
     async fn cron_scheduler_backend_handles_create_and_list() {
         let tmp = TempDir::new().expect("tempdir");

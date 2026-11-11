@@ -28,7 +28,7 @@ pub mod verification_evidence;
 pub mod website_policy;
 
 // Re-export registry types
-pub use registry::{ToolEntry, ToolEntryInfo, ToolRegistry};
+pub use registry::{ToolEntry, ToolEntryInfo, ToolRegistry, WeakToolRegistry};
 pub use rtk_filter::RawModeState;
 pub use tool_policy::{
     default_tool_policy_counters_path, load_tool_policy_counters, persist_tool_policy_counters,

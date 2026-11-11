@@ -4,7 +4,6 @@
 //! operator surface to the Rust tool registry without dispatching target tools.
 
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
 
 use async_trait::async_trait;
 use indexmap::IndexMap;
@@ -13,7 +12,7 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
-use crate::ToolRegistry;
+use crate::{ToolRegistry, WeakToolRegistry};
 
 const TOOL_NAME: &str = "raw_trace_control";
 const DEFAULT_TAIL_LIMIT: usize = 20;
@@ -24,18 +23,21 @@ const PREVIEW_CHARS: usize = 2_000;
 
 #[derive(Clone)]
 pub struct RawTraceControlHandler {
-    registry: Arc<ToolRegistry>,
+    registry: WeakToolRegistry,
 }
 
 impl RawTraceControlHandler {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: &ToolRegistry) -> Self {
+        Self {
+            registry: registry.downgrade(),
+        }
     }
 }
 
 #[async_trait]
 impl ToolHandler for RawTraceControlHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        let registry = self.registry.upgrade_for_call()?;
         let action = params
             .get("action")
             .and_then(Value::as_str)
@@ -44,35 +46,35 @@ impl ToolHandler for RawTraceControlHandler {
             .to_ascii_lowercase();
 
         match action.as_str() {
-            "status" => Ok(status_payload(&self.registry).to_string()),
+            "status" => Ok(status_payload(&registry).to_string()),
             "on" | "enable" => {
-                self.registry.set_raw_mode(true);
-                Ok(status_payload(&self.registry).to_string())
+                registry.set_raw_mode(true);
+                Ok(status_payload(&registry).to_string())
             }
             "off" | "disable" => {
-                self.registry.set_raw_mode(false);
-                Ok(status_payload(&self.registry).to_string())
+                registry.set_raw_mode(false);
+                Ok(status_payload(&registry).to_string())
             }
             "toggle" => {
-                let state = self.registry.raw_mode_state();
-                self.registry.set_raw_mode(!state.enabled);
-                Ok(status_payload(&self.registry).to_string())
+                let state = registry.raw_mode_state();
+                registry.set_raw_mode(!state.enabled);
+                Ok(status_payload(&registry).to_string())
             }
             "once" => {
-                self.registry.set_raw_mode_once();
-                Ok(status_payload(&self.registry).to_string())
+                registry.set_raw_mode_once();
+                Ok(status_payload(&registry).to_string())
             }
             "path" => Ok(json!({
                 "status": "ok",
-                "rtk_log_dir": self.registry.rtk_log_dir().display().to_string(),
-                "raw_log": log_path(&self.registry, StreamKind::Raw).display().to_string(),
-                "filtered_log": log_path(&self.registry, StreamKind::Filtered).display().to_string(),
+                "rtk_log_dir": registry.rtk_log_dir().display().to_string(),
+                "raw_log": log_path(&registry, StreamKind::Raw).display().to_string(),
+                "filtered_log": log_path(&registry, StreamKind::Filtered).display().to_string(),
             })
             .to_string()),
             "tail" => {
                 let stream = stream_kind(&params)?;
                 let limit = parse_limit(&params, DEFAULT_TAIL_LIMIT, MAX_TAIL_LIMIT);
-                let path = log_path(&self.registry, stream);
+                let path = log_path(&registry, stream);
                 let rows = tail_log_rows(&path, limit)?;
                 Ok(json!({
                     "status": "ok",
@@ -84,22 +86,22 @@ impl ToolHandler for RawTraceControlHandler {
                 .to_string())
             }
             "verify" => {
-                let raw = verify_log(&log_path(&self.registry, StreamKind::Raw))?;
-                let filtered = verify_log(&log_path(&self.registry, StreamKind::Filtered))?;
+                let raw = verify_log(&log_path(&registry, StreamKind::Raw))?;
+                let filtered = verify_log(&log_path(&registry, StreamKind::Filtered))?;
                 let ok = raw.parse_errors == 0 && filtered.parse_errors == 0;
                 Ok(json!({
                     "status": if ok { "pass" } else { "fail" },
                     "raw": raw.to_json(),
                     "filtered": filtered.to_json(),
-                    "rtk_log_dir": self.registry.rtk_log_dir().display().to_string(),
+                    "rtk_log_dir": registry.rtk_log_dir().display().to_string(),
                 })
                 .to_string())
             }
             "export" => {
                 let stream = stream_kind(&params)?;
                 let limit = parse_limit(&params, DEFAULT_EXPORT_LIMIT, MAX_EXPORT_LIMIT);
-                let source = log_path(&self.registry, stream);
-                let output_path = export_path(&self.registry.rtk_log_dir(), &params, stream)?;
+                let source = log_path(&registry, stream);
+                let output_path = export_path(&registry.rtk_log_dir(), &params, stream)?;
                 let written = export_rows(&source, &output_path, stream, limit)?;
                 Ok(json!({
                     "status": "ok",
@@ -480,19 +482,21 @@ mod tests {
         }
     }
 
-    fn handler_with_temp_home() -> (tempfile::TempDir, RawTraceControlHandler) {
+    /// The handler holds its registry weakly, so callers keep the registry.
+    fn handler_with_temp_home() -> (tempfile::TempDir, ToolRegistry, RawTraceControlHandler) {
         let dir = tempfile::tempdir().expect("temp rtk dir");
         let _guard = ENV_LOCK.lock().expect("env lock");
         let _env = EnvGuard::set("HERMES_RTK_LOG_DIR", dir.path().to_string_lossy().as_ref());
-        let registry = Arc::new(ToolRegistry::new());
+        let registry = ToolRegistry::new();
         drop(_env);
         drop(_guard);
-        (dir, RawTraceControlHandler::new(registry))
+        let handler = RawTraceControlHandler::new(&registry);
+        (dir, registry, handler)
     }
 
     #[tokio::test]
     async fn status_and_mode_actions_mutate_registry_state() {
-        let (_dir, handler) = handler_with_temp_home();
+        let (_dir, _registry, handler) = handler_with_temp_home();
 
         let on: Value =
             serde_json::from_str(&handler.execute(json!({"action":"on"})).await.unwrap())
@@ -514,7 +518,7 @@ mod tests {
 
     #[tokio::test]
     async fn tail_verify_and_export_are_bounded_and_redacted() {
-        let (dir, handler) = handler_with_temp_home();
+        let (dir, _registry, handler) = handler_with_temp_home();
         std::fs::create_dir_all(dir.path()).expect("mkdir");
         let filtered = dir.path().join("filtered.jsonl");
         std::fs::write(
@@ -561,7 +565,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_rejects_absolute_paths_outside_rtk_dir() {
-        let (_dir, handler) = handler_with_temp_home();
+        let (_dir, _registry, handler) = handler_with_temp_home();
         // `/tmp/...` is not absolute on Windows, so use the platform's own
         // absolute temp path; the Windows-only forms are tested below.
         let outside = std::env::temp_dir().join("hermes-raw-trace-export.json");
@@ -582,7 +586,7 @@ mod tests {
 
     #[tokio::test]
     async fn export_rejects_parent_components() {
-        let (dir, handler) = handler_with_temp_home();
+        let (dir, _registry, handler) = handler_with_temp_home();
         let inside_escape = dir.path().join("../escape.json");
         for output_path in [
             "../escape.json".to_string(),
@@ -607,7 +611,7 @@ mod tests {
     #[cfg(windows)]
     #[tokio::test]
     async fn export_rejects_windows_rooted_drive_unc_and_verbatim_paths() {
-        let (_dir, handler) = handler_with_temp_home();
+        let (_dir, _registry, handler) = handler_with_temp_home();
         for output_path in [
             r"\hermes-escape\out.json",
             "/hermes-escape/out.json",

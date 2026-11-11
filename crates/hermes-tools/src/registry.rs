@@ -8,9 +8,9 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, Weak};
 
-use hermes_core::{ToolHandler, ToolSchema};
+use hermes_core::{ToolError, ToolHandler, ToolSchema};
 use serde_json::Value;
 use tracing::warn;
 
@@ -81,7 +81,46 @@ pub struct ToolRegistry {
     disk_cleanup_auto: DiskCleanupAutoTracker,
 }
 
+/// A handle to a [`ToolRegistry`] that does not keep it alive.
+///
+/// Anything stored in a registry that needs that same registry, such as a
+/// tool that inspects it or a cron runner wired in as the `cronjob` tool,
+/// holds this instead. A strong handle there is a reference cycle, so the
+/// registry, its tools and their MCP clients and server processes would
+/// never be freed.
+#[derive(Clone)]
+pub struct WeakToolRegistry {
+    inner: Weak<Mutex<ToolRegistryInner>>,
+    disk_cleanup_auto: DiskCleanupAutoTracker,
+}
+
+impl WeakToolRegistry {
+    /// The registry, unless every strong handle to it has been dropped.
+    pub fn upgrade(&self) -> Option<ToolRegistry> {
+        Some(ToolRegistry {
+            inner: self.inner.upgrade()?,
+            disk_cleanup_auto: self.disk_cleanup_auto.clone(),
+        })
+    }
+
+    /// The registry for a tool call, or the error the call returns once every
+    /// strong handle to it has been dropped.
+    pub fn upgrade_for_call(&self) -> Result<ToolRegistry, ToolError> {
+        self.upgrade().ok_or_else(|| {
+            ToolError::ExecutionFailed("the tool registry has been dropped".to_string())
+        })
+    }
+}
+
 impl ToolRegistry {
+    /// A handle that does not keep this registry alive; see [`WeakToolRegistry`].
+    pub fn downgrade(&self) -> WeakToolRegistry {
+        WeakToolRegistry {
+            inner: Arc::downgrade(&self.inner),
+            disk_cleanup_auto: self.disk_cleanup_auto.clone(),
+        }
+    }
+
     /// Create a new empty registry with default global max result size.
     pub fn new() -> Self {
         Self {

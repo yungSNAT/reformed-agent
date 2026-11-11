@@ -1,32 +1,33 @@
 //! Policy preview tool for simulating tool-governance decisions without
 //! dispatching the target tool.
 
-use std::sync::Arc;
-
 use async_trait::async_trait;
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
-use crate::{ToolPolicyDecision, ToolRegistry};
+use crate::{ToolPolicyDecision, ToolRegistry, WeakToolRegistry};
 
 pub const TOOL_POLICY_SIMULATE_TOOL_NAME: &str = "tool_policy_simulate";
 
 #[derive(Clone)]
 pub struct ToolPolicySimulateHandler {
-    registry: Arc<ToolRegistry>,
+    registry: WeakToolRegistry,
 }
 
 impl ToolPolicySimulateHandler {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: &ToolRegistry) -> Self {
+        Self {
+            registry: registry.downgrade(),
+        }
     }
 }
 
 #[async_trait]
 impl ToolHandler for ToolPolicySimulateHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        let registry = self.registry.upgrade_for_call()?;
         let target_tool = params
             .get("tool")
             .and_then(Value::as_str)
@@ -35,9 +36,9 @@ impl ToolHandler for ToolPolicySimulateHandler {
             .ok_or_else(|| ToolError::InvalidParams("Missing 'tool'".into()))?;
 
         let args = params.get("args").cloned().unwrap_or_else(|| json!({}));
-        let decision = self.registry.evaluate_policy_preview(target_tool, &args);
-        let target = self.registry.get_tool(target_tool);
-        let available = self.registry.is_available(target_tool);
+        let decision = registry.evaluate_policy_preview(target_tool, &args);
+        let target = registry.get_tool(target_tool);
+        let available = registry.is_available(target_tool);
 
         Ok(json!({
             "status": "preview",
@@ -165,6 +166,7 @@ fn value_type(value: &Value) -> &'static str {
 #[cfg(test)]
 mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
 
     use super::*;
     use crate::tool_policy::{ToolPolicyEngine, ToolPolicyMode};
@@ -202,7 +204,7 @@ mod tests {
     }
 
     fn register_simulator(registry: &ToolRegistry) {
-        let handler = Arc::new(ToolPolicySimulateHandler::new(Arc::new(registry.clone())));
+        let handler = Arc::new(ToolPolicySimulateHandler::new(registry));
         registry.register(
             TOOL_POLICY_SIMULATE_TOOL_NAME,
             "system",
@@ -255,8 +257,8 @@ mod tests {
 
     #[tokio::test]
     async fn preview_summarizes_argument_shape_without_values() {
-        let registry = Arc::new(ToolRegistry::new());
-        let handler = ToolPolicySimulateHandler::new(registry);
+        let registry = ToolRegistry::new();
+        let handler = ToolPolicySimulateHandler::new(&registry);
 
         let output = handler
             .execute(json!({
@@ -283,7 +285,8 @@ mod tests {
 
     #[tokio::test]
     async fn missing_tool_param_is_invalid() {
-        let handler = ToolPolicySimulateHandler::new(Arc::new(ToolRegistry::new()));
+        let registry = ToolRegistry::new();
+        let handler = ToolPolicySimulateHandler::new(&registry);
         let err = handler.execute(json!({})).await.expect_err("missing tool");
         match err {
             ToolError::InvalidParams(message) => assert!(message.contains("tool")),
