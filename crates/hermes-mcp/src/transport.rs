@@ -16,12 +16,10 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tokio::fs::OpenOptions;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
 use tokio::process::{Child, Command};
-use tokio::task::JoinHandle;
 use tracing::{error, info, trace};
 
 use hermes_core::subprocess::CommandNoWindowExt;
@@ -224,19 +222,37 @@ fn hermes_home_dir() -> PathBuf {
     PathBuf::from(".hermes-agent-ultra")
 }
 
-async fn mcp_stderr_log_file() -> Option<tokio::fs::File> {
+/// Stderr for a stdio MCP server: `logs/mcp-stderr.log`, opened for append
+/// with a start banner, or discarded if the log cannot be opened.
+///
+/// The child writes the log itself. Draining a pipe through tokio instead
+/// parks a read on the blocking pool on Windows, and runtime shutdown waits
+/// for that read until the server exits.
+fn mcp_stderr_log(command: &str) -> Stdio {
+    use std::io::Write;
+
     let path = hermes_home_dir().join("logs").join("mcp-stderr.log");
-    if let Some(parent) = path.parent() {
-        if tokio::fs::create_dir_all(parent).await.is_err() {
-            return None;
-        }
-    }
-    OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(path)
-        .await
-        .ok()
+    let log = path
+        .parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| {
+            std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(&path)
+        });
+    let Ok(mut log) = log else {
+        return Stdio::null();
+    };
+    let ts = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let _ = writeln!(
+        log,
+        "\n===== [ts={ts}] starting MCP stdio server '{command}' ====="
+    );
+    Stdio::from(log)
 }
 
 fn classify_http_status_error(status: reqwest::StatusCode, body: &str) -> McpError {
@@ -308,8 +324,6 @@ pub struct StdioTransport {
     env: HashMap<String, String>,
     /// The child process.
     child: Option<Child>,
-    /// Background task draining child stderr to an MCP log file.
-    stderr_drain_task: Option<JoinHandle<()>>,
     /// Background discovery should not let OAuth helpers prompt on stdin.
     suppress_interactive_oauth: bool,
     /// Whether the transport has been started.
@@ -329,7 +343,6 @@ impl StdioTransport {
             args: args.to_vec(),
             env: env.clone(),
             child: None,
-            stderr_drain_task: None,
             suppress_interactive_oauth,
             started: false,
         }
@@ -386,7 +399,10 @@ impl McpTransport for StdioTransport {
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
+            .stderr(mcp_stderr_log(&self.command))
+            // A server dropped mid-handshake (startup timeout, failed
+            // reconnect) may never read stdin to see EOF.
+            .kill_on_drop(true);
 
         if let Some(cwd) = sandbox_cwd(sandbox_profile) {
             cmd.current_dir(cwd);
@@ -402,45 +418,6 @@ impl McpTransport for StdioTransport {
         let child = cmd.spawn().map_err(|e| {
             McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
         })?;
-
-        let mut child = child;
-        if let Some(stderr) = child.stderr.take() {
-            let command = self.command.clone();
-            self.stderr_drain_task = Some(tokio::spawn(async move {
-                let mut reader = tokio::io::BufReader::new(stderr);
-                let mut line = String::new();
-                let mut log = mcp_stderr_log_file().await;
-                if let Some(file) = log.as_mut() {
-                    let ts = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .map(|d| d.as_secs())
-                        .unwrap_or(0);
-                    let _ = file
-                        .write_all(
-                            format!(
-                                "\n===== [ts={}] starting MCP stdio server '{}' =====\n",
-                                ts, command
-                            )
-                            .as_bytes(),
-                        )
-                        .await;
-                }
-                loop {
-                    line.clear();
-                    let Ok(bytes) = reader.read_line(&mut line).await else {
-                        break;
-                    };
-                    if bytes == 0 {
-                        break;
-                    }
-                    if let Some(file) = log.as_mut() {
-                        if file.write_all(line.as_bytes()).await.is_err() {
-                            log = None;
-                        }
-                    }
-                }
-            }));
-        }
 
         self.child = Some(child);
         self.started = true;
@@ -553,9 +530,6 @@ impl McpTransport for StdioTransport {
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
-        if let Some(task) = self.stderr_drain_task.take() {
-            task.abort();
-        }
         if let Some(mut child) = self.child.take() {
             info!("Shutting down MCP stdio process");
             // Try graceful shutdown first
@@ -1035,6 +1009,35 @@ impl McpTransport for HttpSseTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn dropping_started_stdio_transport_stops_child() {
+        let mut transport =
+            StdioTransport::new("sleep", &["30".to_string()], &HashMap::new(), false);
+        transport.start().await.expect("start sleep");
+        let pid = transport
+            .child
+            .as_ref()
+            .and_then(Child::id)
+            .expect("child pid");
+        drop(transport);
+
+        // Gone, or a zombie awaiting reaping, once the kill lands.
+        let stopped = || match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+            Ok(stat) => stat
+                .rsplit_once(") ")
+                .is_some_and(|(_, rest)| rest.starts_with('Z')),
+            Err(_) => true,
+        };
+        for _ in 0..50 {
+            if stopped() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        panic!("stdio MCP child {pid} still running after its transport was dropped");
+    }
 
     #[test]
     fn test_stdio_transport_new() {

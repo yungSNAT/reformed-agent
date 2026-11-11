@@ -136,3 +136,8 @@ chrono = { workspace = true }
 hermes-core = { workspace = true }
 hermes-cron = { workspace = true }
 rusqlite = { workspace = true }
+
+# Doubles as the stdio MCP server it configures, so it supplies its own main.
+[[test]]
+name = "cli_mcp_servers"
+harness = false
