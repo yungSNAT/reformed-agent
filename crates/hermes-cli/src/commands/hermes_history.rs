@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use hermes_agent::session_persistence::SessionPersistence;
 use hermes_core::{AgentError, FunctionCall, Message, MessageRole, ToolCall};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -192,7 +193,11 @@ fn validate_tool_history(messages: &[Message]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, AgentError> {
+fn import_records(
+    input: File,
+    sessions: &Path,
+    store: &SessionPersistence,
+) -> Result<HermesHistorySummary, AgentError> {
     let mut summary = HermesHistorySummary::default();
     let mut reader = BufReader::new(input);
     let mut bytes = Vec::new();
@@ -224,13 +229,12 @@ fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, 
         }
         let created_at =
             epoch_text(exported.started_at).ok_or_else(|| invalid("invalid start time"))?;
-        let modified = epoch_time(
-            exported
-                .last_activity_at
-                .or(exported.ended_at)
-                .unwrap_or(exported.started_at),
-        )
-        .ok_or_else(|| invalid("invalid activity time"))?;
+        let activity = exported
+            .last_activity_at
+            .or(exported.ended_at)
+            .unwrap_or(exported.started_at);
+        let modified = epoch_time(activity).ok_or_else(|| invalid("invalid activity time"))?;
+        let updated_at = epoch_text(activity).ok_or_else(|| invalid("invalid activity time"))?;
         let mut messages = Vec::with_capacity(exported.messages.len());
         for row in exported.messages {
             match convert_message(row).map_err(invalid)? {
@@ -260,6 +264,21 @@ fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, 
         writer.flush().map_err(io_error)?;
         file.set_times(FileTimes::new().set_modified(modified))
             .map_err(io_error)?;
+        // The session database is what `session_search` reads.
+        store.persist_session(
+            &exported.id,
+            &messages,
+            exported.model.as_deref(),
+            exported.source.as_deref(),
+            exported.title.as_deref(),
+            exported.system_prompt.as_deref(),
+        )?;
+        store.restore_imported_session(
+            &exported.id,
+            &created_at,
+            &updated_at,
+            exported.parent_session_id.as_deref(),
+        )?;
         summary.sessions += 1;
         summary.messages += messages.len();
     }
@@ -393,12 +412,18 @@ pub fn import_hermes_sessions(
         let stage = tempfile::tempdir_in(&profile).map_err(io_error)?;
         let sessions = stage.path().join("sessions");
         fs::create_dir(&sessions).map_err(io_error)?;
-        let summary = import_records(input, &sessions)?;
+        let store = SessionPersistence::new(stage.path());
+        let summary = import_records(input, &sessions, &store)?;
+        if summary.sessions > 0 {
+            fs::rename(store.db_path(), profile.join("sessions.db")).map_err(io_error)?;
+        }
         fs::rename(sessions, profile.join("sessions")).map_err(io_error)?;
         Ok(summary)
     })();
     if result.is_err() {
-        // Only remove the empty directory reserved by this invocation.
+        // Only remove what this invocation created: a database already moved
+        // in when the sessions rename failed, then the reserved directory.
+        let _ = fs::remove_file(profile.join("sessions.db"));
         let _ = fs::remove_dir(&profile);
     }
     result

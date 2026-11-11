@@ -606,6 +606,10 @@ fn imported_hermes_history_resumes_from_native_snapshots() {
         snapshot["session_info"]["parent_session_id"],
         parent.session_id
     );
+    // session_search reads the session database, not the snapshots.
+    let store = hermes_agent::session_persistence::SessionPersistence::new(&profile);
+    assert_eq!(store.load_session(&parent.session_id).unwrap().len(), 3);
+    assert_eq!(store.load_session(&child.session_id).unwrap().len(), 2);
     assert!(hermes_cli::commands::import_hermes_sessions(&source, &profile).is_err());
     assert_eq!(std::fs::read_to_string(&source).unwrap(), fixture);
 }

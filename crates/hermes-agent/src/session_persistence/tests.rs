@@ -1264,3 +1264,48 @@ fn test_auto_maintenance_corrupt_marker_is_ignored() {
     assert!(!result.skipped);
     assert_eq!(result.pruned, 1);
 }
+
+#[test]
+fn restore_imported_session_keeps_original_times_and_parent() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let messages = vec![
+        Message::user("imported question"),
+        Message::assistant("imported answer"),
+    ];
+    sp.persist_session("child", &messages, Some("glm-5.3"), Some("cli"), None, None)
+        .unwrap();
+    sp.restore_imported_session(
+        "child",
+        "2026-10-01T09:00:00+00:00",
+        "2026-10-01T09:30:00+00:00",
+        Some("parent"),
+    )
+    .unwrap();
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let row: (String, String, Option<String>) = conn
+        .query_row(
+            "SELECT created_at, updated_at, parent_session_id FROM sessions WHERE id = 'child'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            "2026-10-01T09:00:00+00:00".to_string(),
+            "2026-10-01T09:30:00+00:00".to_string(),
+            Some("parent".to_string())
+        )
+    );
+    let message_times: Vec<String> = conn
+        .prepare("SELECT created_at FROM messages WHERE session_id = 'child'")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(message_times, vec!["2026-10-01T09:30:00+00:00"; 2]);
+    assert_eq!(fts_match_rows(&sp, "imported").len(), 2);
+}

@@ -45,6 +45,32 @@ impl SessionPersistence {
         Ok(())
     }
 
+    /// Give a session persisted from history recorded elsewhere its original
+    /// start and last-activity times and its parent, which `persist_session`
+    /// sets from the current run. Active messages take the last-activity time.
+    pub fn restore_imported_session(
+        &self,
+        session_id: &str,
+        created_at: &str,
+        updated_at: &str,
+        parent_session_id: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let conn = rusqlite::Connection::open(&self.db_path)
+            .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+        conn.execute(
+            "UPDATE sessions SET created_at = ?2, updated_at = ?3, parent_session_id = ?4 WHERE id = ?1",
+            rusqlite::params![session_id, created_at, updated_at, parent_session_id],
+        )
+        .and_then(|_| {
+            conn.execute(
+                "UPDATE messages SET created_at = ?2 WHERE session_id = ?1 AND active = 1",
+                rusqlite::params![session_id, updated_at],
+            )
+        })
+        .map_err(|e| AgentError::Io(format!("Failed to restore imported session: {e}")))?;
+        Ok(())
+    }
+
     /// Update the persisted model for an existing session after a mid-session switch.
     ///
     /// This intentionally does not create a new session row: callers use it as a
