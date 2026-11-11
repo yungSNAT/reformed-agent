@@ -1048,6 +1048,62 @@ mod tests {
             .any(|summary| summary.name == "release-captain"));
     }
 
+    fn link_skill_dir(target: &std::path::Path, link: &std::path::Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink");
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(target)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .expect("mklink");
+            assert!(status.success(), "mklink /J failed");
+        }
+    }
+
+    #[test]
+    fn local_skill_summaries_include_linked_skill_folders() {
+        let tmp = tempdir().expect("tempdir");
+        let skills_dir = tmp.path().join("skills");
+        let category = skills_dir.join("software-development");
+        std::fs::create_dir_all(&category).expect("create category");
+        let shared = tmp.path().join("shared").join("trail");
+        std::fs::create_dir_all(&shared).expect("create shared skill dir");
+        std::fs::write(
+            shared.join("SKILL.md"),
+            "---\nname: trail\ndescription: Code graph search\n---\n# Trail\n",
+        )
+        .expect("write shared skill");
+        link_skill_dir(&shared, &category.join("trail"));
+
+        let summaries = collect_local_skill_summaries(&skills_dir);
+        assert!(summaries.iter().any(|summary| {
+            summary.name == "trail" && summary.relative_dir == "software-development/trail"
+        }));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_skill_summaries_skip_linked_skill_whose_file_escapes() {
+        let tmp = tempdir().expect("tempdir");
+        let skills_dir = tmp.path().join("skills");
+        std::fs::create_dir_all(&skills_dir).expect("create skills dir");
+        let outside = tmp.path().join("outside.md");
+        std::fs::write(&outside, "---\nname: escaped\n---\n# Escaped\n").expect("write outside");
+        let shared = tmp.path().join("shared").join("escaped");
+        std::fs::create_dir_all(&shared).expect("create shared skill dir");
+        std::os::unix::fs::symlink(&outside, shared.join("SKILL.md")).expect("symlink file");
+        link_skill_dir(&shared, &skills_dir.join("escaped"));
+
+        let summaries = collect_local_skill_summaries(&skills_dir);
+        assert!(!summaries.iter().any(|summary| summary.name == "escaped"));
+    }
+
     #[test]
     fn local_skill_markdown_resolves_by_name_and_relative_path() {
         let tmp = tempdir().expect("tempdir");
