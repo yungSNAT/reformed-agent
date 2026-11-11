@@ -1126,4 +1126,41 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn workspace_snapshot_is_omitted_past_the_filter_key_limit() {
+        // Each driver has 4 keys, so 65 pass the 256 keys the snapshot will
+        // override. The machine's own config can add drivers (Git LFS adds
+        // one), so the kept case stays well under the limit.
+        for (drivers, snapshot) in [(8, true), (65, false)] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            git_init(&repo);
+            let config: String = (0..drivers)
+                .map(|n| {
+                    format!(
+                        "[filter \"croft-{n}\"]\n\tclean = cat\n\tsmudge = cat\n\
+                         \tprocess = cat\n\trequired = false\n"
+                    )
+                })
+                .collect();
+            let filter_config = tmp.path().join("filters.config");
+            std::fs::write(&filter_config, config).unwrap();
+            let included = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "include.path"])
+                .arg(&filter_config)
+                .status()
+                .unwrap();
+            assert!(included.success());
+
+            let block = build_coding_workspace_block(&repo);
+            assert_eq!(
+                block.is_some_and(|block| block.contains("Status:")),
+                snapshot,
+                "{drivers} filter drivers"
+            );
+        }
+    }
 }
