@@ -461,7 +461,7 @@ fn build_cron_skill_prompt(identifiers: &[String]) -> Result<Option<String>, Cro
             category: Some("cron".to_string()),
             description: None,
         };
-        SkillGuard::default()
+        SkillGuard::for_loaded_skills()
             .scan_security_only(&probe)
             .map_err(|e| CronError::InvalidJob(format!("blocked cron skill '{name}': {e}")))?;
         if let Some(rule) = detect_cron_prompt_injection(body) {
