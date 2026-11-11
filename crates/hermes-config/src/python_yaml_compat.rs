@@ -16,6 +16,13 @@ fn as_str(v: &Value) -> Option<&str> {
     v.as_str()
 }
 
+fn trimmed_str(value: Option<&Value>) -> Option<&str> {
+    value
+        .and_then(as_str)
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
 fn as_u64(v: &Value) -> Option<u64> {
     v.as_u64().or_else(|| v.as_i64().map(|i| i as u64))
 }
@@ -125,17 +132,22 @@ fn normalize_model_block(map: &mut Mapping) {
                 switch_map.insert(key("persist_switch_by_default"), persist);
                 map.insert(switch_key, Value::Mapping(switch_map));
             }
-            let default = ["default", "name", "model"].iter().find_map(|field| {
-                m.get(key(field))
-                    .and_then(as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-            });
-            let provider = m
-                .get(key("provider"))
-                .and_then(as_str)
-                .map(str::trim)
-                .filter(|s| !s.is_empty());
+            // A mapping-valued default pairs the model with the provider it is
+            // routed through; that provider outranks the outer one (often `auto`).
+            let (default, nested_provider) = ["default", "name", "model"]
+                .iter()
+                .find_map(|field| match m.get(key(field))? {
+                    // A mapping that names no model is skipped, as an empty scalar is.
+                    Value::Mapping(nested) => {
+                        let model = trimmed_str(nested.get(key("model")))
+                            .or_else(|| trimmed_str(nested.get(key("default"))))?;
+                        Some((Some(model), trimmed_str(nested.get(key("provider")))))
+                    }
+                    scalar => trimmed_str(Some(scalar)).map(|model| (Some(model), None)),
+                })
+                .unwrap_or((None, None));
+            let outer_provider = trimmed_str(m.get(key("provider")));
+            let provider = nested_provider.or(outer_provider);
             let base_url = m.get(key("base_url")).and_then(normalized_base_url);
             let api_key = m
                 .get(key("api_key"))
@@ -159,7 +171,11 @@ fn normalize_model_block(map: &mut Mapping) {
             };
             map.insert(model_key, Value::String(model_str));
 
-            if let Some(p) = provider
+            // Credentials written beside the outer provider belong to it, not to
+            // a different provider nested in the default; with no outer provider
+            // they belong to the nested one.
+            if let Some(p) = outer_provider
+                .or(nested_provider)
                 .filter(|_| base_url.is_some() || api_key.is_some() || api_key_env.is_some())
             {
                 let provider_name = canonical_custom_provider_name(p);
@@ -666,6 +682,84 @@ model:
         normalize_config_yaml_root(m);
         let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
         assert_eq!(cfg.model.as_deref(), Some("openrouter:canonical/model"));
+    }
+
+    #[test]
+    fn python_model_block_keeps_the_provider_nested_in_a_mapping_default() {
+        for (model_block, expected) in [
+            // The nested provider stays with its model instead of the outer `auto`.
+            (
+                "default: {provider: anthropic, model: claude-sonnet-4-6}\n  provider: auto",
+                "anthropic:claude-sonnet-4-6",
+            ),
+            (
+                "default: {provider: anthropic, default: claude-sonnet-4-6}",
+                "anthropic:claude-sonnet-4-6",
+            ),
+            (
+                "model: {provider: deepseek, model: deepseek-chat}\n  provider: openrouter",
+                "deepseek:deepseek-chat",
+            ),
+            // A nested default without a provider keeps the outer one.
+            (
+                "default: {model: z-ai/glm-5.1}\n  provider: openrouter",
+                "openrouter:z-ai/glm-5.1",
+            ),
+            // An empty mapping names nothing, so the next alias is used.
+            (
+                "default: {}\n  model: z-ai/glm-5.1\n  provider: openrouter",
+                "openrouter:z-ai/glm-5.1",
+            ),
+            // So is a mapping that names only a provider, which is dropped with it.
+            (
+                "default: {provider: anthropic}\n  name: z-ai/glm-5.1\n  provider: openrouter",
+                "openrouter:z-ai/glm-5.1",
+            ),
+        ] {
+            let raw = format!("model:\n  {model_block}\n");
+            let mut root: Value = serde_yaml::from_str(&raw).unwrap();
+            let Value::Mapping(ref mut m) = root else {
+                panic!();
+            };
+            normalize_config_yaml_root(m);
+            let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+            assert_eq!(cfg.model.as_deref(), Some(expected), "{raw}");
+        }
+
+        // The outer provider keeps the credentials written beside it.
+        let raw = "model:\n  default: {provider: anthropic, model: claude-sonnet-4-6}\n  \
+                   provider: openrouter\n  api_key: sk-outer\n";
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        assert_eq!(cfg.model.as_deref(), Some("anthropic:claude-sonnet-4-6"));
+        assert_eq!(
+            cfg.llm_providers
+                .get("openrouter")
+                .and_then(|provider| provider.api_key.as_deref()),
+            Some("sk-outer")
+        );
+        assert!(!cfg.llm_providers.contains_key("anthropic"));
+
+        // With no outer provider they go to the nested one.
+        let raw = "model:\n  default: {provider: deepseek, model: deepseek-chat}\n  \
+                   base_url: https://api.deepseek.com/\n";
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+        assert_eq!(cfg.model.as_deref(), Some("deepseek:deepseek-chat"));
+        assert_eq!(
+            cfg.llm_providers
+                .get("deepseek")
+                .and_then(|provider| provider.base_url.as_deref()),
+            Some("https://api.deepseek.com")
+        );
     }
 
     #[test]
