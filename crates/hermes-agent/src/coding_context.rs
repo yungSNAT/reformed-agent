@@ -770,10 +770,23 @@ fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Whether git takes `--no-lazy-fetch`. The tests ask git, not
+    /// `lazy_fetch_guard`, so that a guard which wrongly refuses a supported
+    /// git fails them instead of quietly dropping the snapshot.
+    fn git_has_no_lazy_fetch() -> bool {
+        Command::new("git")
+            .args(["--no-lazy-fetch", "version"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
     /// Whether this git can produce the snapshot of a repository without a
     /// promisor remote.
     fn git_snapshot_supported() -> bool {
-        lazy_fetch_guard().is_some()
+        git_has_no_lazy_fetch() || {
+            let version = Command::new("git").arg("version").output().unwrap();
+            is_git_2_39_1_or_later(&String::from_utf8_lossy(&version.stdout))
+        }
     }
 
     #[test]
@@ -1312,7 +1325,7 @@ mod tests {
                 if missing == "mailmap blob" {
                     assert_eq!(
                         block.is_some_and(|block| block.contains("Last commit:")),
-                        lazy_fetch_guard() == Some(LazyFetchGuard::Flag),
+                        git_has_no_lazy_fetch(),
                         "{promisor:?}"
                     );
                 }
