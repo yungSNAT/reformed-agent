@@ -260,9 +260,12 @@ fn session_mcp_server_configs(
                 .chain(record.args.iter().map(String::as_str))
                 .collect::<Vec<_>>()
                 .join(" ");
+            // A config.yaml command naming an existing file is the whole
+            // executable path, never a command line the record may split.
+            let same_line = target == record_line && !Path::new(target).is_file();
             let same_target = match record.url.as_deref() {
                 Some(record_url) => url == Some(record_url),
-                None => url.is_none() && (target == record_command || target == record_line),
+                None => url.is_none() && (target == record_command || same_line),
             };
             if !same_target {
                 tracing::warn!(
@@ -613,6 +616,36 @@ mod tests {
                     McpServerConfig::http("https://mcp.example.com/mcp"),
                 ),
             ]
+        );
+    }
+
+    #[test]
+    fn session_mcp_servers_keep_an_existing_executable_path_with_spaces() {
+        let dir = TempDir::new().expect("temp dir");
+        let executable = dir.path().join("My MCP");
+        std::fs::write(&executable, b"").expect("write executable");
+        let executable = executable.to_str().expect("UTF-8 path");
+        let (command, arg) = executable.rsplit_once(' ').expect("path has a space");
+        // The record splits the path into a different executable and argument.
+        let records = crate::mcp_config::parse_mcp_config_json(
+            &serde_json::json!({
+                "spaced": {"command": command, "args": [arg], "enabled": false}
+            })
+            .to_string(),
+        )
+        .expect("valid records");
+
+        let configs = session_mcp_server_configs(
+            &[yaml_server("spaced", Some(executable), None)],
+            Some(&records),
+        );
+
+        assert_eq!(
+            configs,
+            vec![(
+                "spaced".to_string(),
+                McpServerConfig::stdio(executable, Vec::new()),
+            )]
         );
     }
 
