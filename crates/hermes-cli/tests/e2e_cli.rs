@@ -117,6 +117,43 @@ fn e2e_cli_config_set_dotted_llm_and_get_masks_key() {
 }
 
 #[test]
+fn e2e_cli_expands_tilde_in_hermes_home() {
+    let user_home = tempfile::tempdir().expect("user home");
+    let cwd = tempfile::tempdir().expect("cwd");
+    let hermes_home = user_home.path().join("hermes-e2e");
+    fs::create_dir_all(&hermes_home).expect("create hermes home");
+    fs::write(
+        hermes_home.join("config.yaml"),
+        "model: local-test:tilde-home\n",
+    )
+    .expect("write config");
+
+    // The home is named by the variable, then by a quoted --config-dir.
+    for by_flag in [false, true] {
+        let mut get = Command::cargo_bin("hermes-agent-ultra").expect("binary exists");
+        get.current_dir(cwd.path());
+        get.env("HOME", user_home.path());
+        if by_flag {
+            get.env_remove("HERMES_HOME");
+            get.args(["--config-dir", "~/hermes-e2e"]);
+        } else {
+            get.env("HERMES_HOME", "~/hermes-e2e");
+        }
+        get.args(["config", "get", "model"]);
+        let out = get.assert().success().get_output().stdout.clone();
+        let text = std::str::from_utf8(&out).expect("utf8");
+        assert!(
+            text.contains("local-test:tilde-home"),
+            "expected the model from ~/hermes-e2e/config.yaml (by flag: {by_flag}): {text:?}"
+        );
+    }
+    assert!(
+        !cwd.path().join("~").exists(),
+        "a literal `~` directory was created under the working directory"
+    );
+}
+
+#[test]
 fn e2e_cli_model_switch_warns_on_stale_auxiliary_provider() {
     let dir = tempfile::tempdir().expect("tempdir");
     let home = dir.path();
