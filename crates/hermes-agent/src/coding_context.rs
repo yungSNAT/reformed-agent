@@ -693,6 +693,15 @@ fn git_last_commit(root: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
+    /// Whether this git can produce the snapshot: git before 2.45 rejects
+    /// `--no-lazy-fetch`, so the snapshot is omitted there.
+    fn git_snapshot_supported() -> bool {
+        Command::new("git")
+            .args(["--no-lazy-fetch", "version"])
+            .output()
+            .is_ok_and(|output| output.status.success())
+    }
+
     fn git_init(path: &Path) {
         std::fs::create_dir_all(path).unwrap();
         Command::new("git")
@@ -787,7 +796,7 @@ mod tests {
         assert!(block.contains("pnpm run lint"));
         assert!(!block.contains("run dev"));
         assert!(block.contains("Context files: AGENTS.md"));
-        assert!(block.contains("Status:"));
+        assert_eq!(block.contains("Status:"), git_snapshot_supported());
     }
 
     #[test]
@@ -919,7 +928,10 @@ mod tests {
             !marker.exists(),
             "the parent snapshot ran a submodule filter"
         );
-        assert!(block.expect("workspace block").contains("Status:"));
+        assert_eq!(
+            block.is_some_and(|block| block.contains("Status:")),
+            git_snapshot_supported()
+        );
     }
 
     #[cfg(unix)]
@@ -974,8 +986,11 @@ mod tests {
                 !marker.exists(),
                 "git status ran the repository's {kind} filter"
             );
-            let block = block.expect("workspace block");
-            assert!(block.contains("Status:"), "{kind}: {block}");
+            assert_eq!(
+                block.is_some_and(|block| block.contains("Status:")),
+                git_snapshot_supported(),
+                "{kind}"
+            );
         }
     }
 
@@ -1039,8 +1054,11 @@ mod tests {
         git(&["config", "log.showSignature", "true"]);
         git(&["config", "gpg.program", &gpg]);
 
-        let block = build_coding_workspace_block(&repo).expect("workspace block");
-        assert!(block.contains("Status:"), "{block}");
+        let block = build_coding_workspace_block(&repo);
+        assert_eq!(
+            block.is_some_and(|block| block.contains("Status:")),
+            git_snapshot_supported()
+        );
         assert!(
             !fsmonitor_ran.exists(),
             "git status ran the repository's core.fsmonitor program"
@@ -1121,8 +1139,10 @@ mod tests {
             );
             // The mailmap is optional, so git still reports the commit without it.
             if missing == "mailmap blob" {
-                let block = block.expect("workspace block");
-                assert!(block.contains("Last commit:"), "{block}");
+                assert_eq!(
+                    block.is_some_and(|block| block.contains("Last commit:")),
+                    git_snapshot_supported()
+                );
             }
         }
     }
@@ -1158,7 +1178,7 @@ mod tests {
             let block = build_coding_workspace_block(&repo);
             assert_eq!(
                 block.is_some_and(|block| block.contains("Status:")),
-                snapshot,
+                snapshot && git_snapshot_supported(),
                 "{drivers} filter drivers"
             );
         }
