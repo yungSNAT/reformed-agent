@@ -66,5 +66,12 @@ async fn load_guard_mode_is_separate_from_install_mode() {
     std::env::remove_var("HERMES_SKILL_LOAD_GUARD_MODE");
     assert!(store.load("pr-body").await.unwrap().is_some());
 
+    // Empty behaves as unset; an unknown value means strict.
+    std::env::set_var("HERMES_SKILL_LOAD_GUARD_MODE", "");
+    assert!(store.load("pr-body").await.unwrap().is_some());
+    std::env::set_var("HERMES_SKILL_LOAD_GUARD_MODE", "bogus");
+    assert!(store.load("pr-body").await.is_err());
+
+    std::env::remove_var("HERMES_SKILL_LOAD_GUARD_MODE");
     std::env::remove_var("HERMES_SKILL_GUARD_MODE");
 }

@@ -267,10 +267,10 @@ impl SkillStore for FileSkillStore {
         for dir in candidates {
             let path = dir.join("SKILL.md");
             if fs::try_exists(&path).await.unwrap_or(false) {
-                if !Self::skill_file_contained(&dir, &root).await? {
+                let Some(real) = Self::contained_skill_file(&dir, &root).await? else {
                     continue;
-                }
-                let raw = fs::read_to_string(&path)
+                };
+                let raw = fs::read_to_string(&real)
                     .await
                     .map_err(|e| SkillError::Io(e.to_string()))?;
 
@@ -316,8 +316,10 @@ impl SkillStore for FileSkillStore {
                     .await
                     .map_err(|e| SkillError::Io(e.to_string()))?;
                 if !real.starts_with(&root) {
-                    tracing::warn!("Refusing to delete skill outside root: {}", dir.display());
-                    continue;
+                    return Err(SkillError::GuardViolation(format!(
+                        "Refusing to delete linked skill '{name}' outside the skills root: {}",
+                        dir.display()
+                    )));
                 }
                 // Remove the whole skill directory.
                 fs::remove_dir_all(&dir)
@@ -333,10 +335,11 @@ impl SkillStore for FileSkillStore {
 }
 
 impl FileSkillStore {
-    /// Whether `dir/SKILL.md` resolves inside its boundary: the link target
-    /// when the skill folder `dir` is itself a symlink or junction (std
-    /// reports a junction as a symlink), otherwise the canonical skills root.
-    async fn skill_file_contained(dir: &Path, root: &Path) -> Result<bool, SkillError> {
+    /// The real path of `dir/SKILL.md` when it resolves inside its boundary:
+    /// the link target when the skill folder `dir` is itself a symlink or
+    /// junction (std reports a junction as a symlink), otherwise the
+    /// canonical skills root. `None` when it escapes.
+    async fn contained_skill_file(dir: &Path, root: &Path) -> Result<Option<PathBuf>, SkillError> {
         let is_link = fs::symlink_metadata(dir)
             .await
             .map_err(|e| SkillError::Io(e.to_string()))?
@@ -352,14 +355,14 @@ impl FileSkillStore {
         let real = fs::canonicalize(dir.join("SKILL.md"))
             .await
             .map_err(|e| SkillError::Io(e.to_string()))?;
-        let contained = real.starts_with(&boundary);
-        if !contained {
+        if !real.starts_with(&boundary) {
             tracing::warn!(
                 "Skipping skill file outside its boundary: {}",
                 dir.display()
             );
+            return Ok(None);
         }
-        Ok(contained)
+        Ok(Some(real))
     }
 
     /// Build a list of candidate directories where a skill named `name`
@@ -479,10 +482,10 @@ impl FileSkillStore {
 
                 let skill_file = path.join("SKILL.md");
                 if fs::try_exists(&skill_file).await.unwrap_or(false) {
-                    if !Self::skill_file_contained(&path, &root).await? {
+                    let Some(real) = Self::contained_skill_file(&path, &root).await? else {
                         continue;
-                    }
-                    let raw = fs::read_to_string(&skill_file)
+                    };
+                    let raw = fs::read_to_string(&real)
                         .await
                         .map_err(|e| SkillError::Io(e.to_string()))?;
 
@@ -809,6 +812,42 @@ mod tests {
     fn assert_symlink(path: &Path) {
         let meta = std::fs::symlink_metadata(path).unwrap();
         assert!(meta.file_type().is_symlink(), "{}", path.display());
+    }
+
+    #[tokio::test]
+    async fn test_delete_linked_skill_outside_root_fails_and_keeps_target() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let store = FileSkillStore::new(root.path().to_path_buf());
+
+        write_skill(&outside.path().join("trail"), "trail").await;
+        link_dir(&outside.path().join("trail"), &root.path().join("trail"));
+
+        let err = store.delete("trail").await.unwrap_err().to_string();
+        assert!(err.contains("linked skill 'trail'"), "{err}");
+        assert!(outside.path().join("trail").join("SKILL.md").exists());
+        assert!(store.load("trail").await.unwrap().is_some());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_real_skill_folder_with_escaping_skill_file_is_refused() {
+        let root = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let store = FileSkillStore::new(root.path().to_path_buf());
+
+        write_skill(&outside.path().join("elsewhere"), "sneaky").await;
+        let skill = root.path().join("sneaky");
+        fs::create_dir_all(&skill).await.unwrap();
+        std::os::unix::fs::symlink(
+            outside.path().join("elsewhere").join("SKILL.md"),
+            skill.join("SKILL.md"),
+        )
+        .unwrap();
+
+        assert!(store.load("sneaky").await.unwrap().is_none());
+        let metas = store.list().await.unwrap();
+        assert!(!metas.iter().any(|m| m.name == "sneaky"));
     }
 
     #[cfg(unix)]

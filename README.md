@@ -351,6 +351,7 @@ OpenHuman runbooks and matrices:
 Operator runtime overrides (env):
 
 - `HERMES_SKILL_GUARD_MODE=relaxed`
+- `HERMES_SKILL_LOAD_GUARD_MODE=relaxed` (scan mode for skills already on disk when loaded for use; `strict`, `relaxed` or `off`, unknown values mean `strict`; when unset, loading follows `HERMES_SKILL_GUARD_MODE`, which still governs install and creation)
 - `HERMES_TOOL_POLICY_PRESET=relaxed`
 - `HERMES_MAX_TURNS_UNLIMITED=1` (or set `max_turns: 0` in config/profile)
 - `HERMES_FORCE_RUNTIME_AUTH_REFRESH=1`

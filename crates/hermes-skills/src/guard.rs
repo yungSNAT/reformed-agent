@@ -785,7 +785,8 @@ impl SkillGuard {
     /// Guard for skills already on disk that are being loaded for use.
     ///
     /// `HERMES_SKILL_LOAD_GUARD_MODE` (`strict`, `relaxed` or `off`) sets its
-    /// mode; when unset it follows the install mode, `HERMES_SKILL_GUARD_MODE`.
+    /// mode, and an unknown value means `strict`; when unset or empty it
+    /// follows the install mode, `HERMES_SKILL_GUARD_MODE`.
     /// Vetting new content (install, creation, update) keeps `default()`.
     pub fn for_loaded_skills() -> Self {
         Self {
