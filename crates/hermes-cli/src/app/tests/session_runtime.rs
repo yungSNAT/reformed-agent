@@ -150,6 +150,92 @@
     }
 
     #[test]
+    fn interactive_turns_upsert_one_searchable_sessions_db_row() {
+        let _guard = env_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
+        app.session_id = "interactive-search".to_string();
+        let turn = |messages: Vec<hermes_core::Message>| hermes_core::AgentResult {
+            messages,
+            finished_naturally: true,
+            total_turns: 1,
+            ..Default::default()
+        };
+        let first = vec![
+            hermes_core::Message::user("where did the heron nest"),
+            hermes_core::Message::assistant("under the willow bridge"),
+        ];
+        let mut second = first.clone();
+        second.push(hermes_core::Message::user("and the kingfisher"));
+        second.push(hermes_core::Message::assistant("beside the old mill"));
+
+        app.apply_agent_result_and_persist(turn(first))
+            .expect("persist first turn");
+        app.apply_agent_result_and_persist(turn(second))
+            .expect("persist second turn");
+
+        let persistence = SessionPersistence::new(tmp.path());
+        let stored = persistence
+            .load_session("interactive-search")
+            .expect("load session");
+        assert_eq!(stored.len(), 4);
+        let conn = rusqlite::Connection::open(persistence.db_path()).expect("open db");
+        let (rows, platform): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), MAX(platform) FROM sessions WHERE id = 'interactive-search'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("session rows");
+        assert_eq!((rows, platform.as_str()), (1, "cli"));
+        let hits = |term: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                [term],
+                |row| row.get(0),
+            )
+            .expect("search")
+        };
+        assert_eq!(hits("willow"), 1, "first turn indexed once");
+        assert_eq!(hits("mill"), 1, "second turn indexed");
+    }
+
+    #[test]
+    fn oneshot_snapshots_never_evict_interactive_snapshots() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&[
+            "HERMES_SESSION_SNAPSHOT_MAX_FILES",
+            "HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES",
+            "HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES",
+        ]);
+        std::env::set_var("HERMES_SESSION_SNAPSHOT_MAX_FILES", "3");
+        std::env::set_var("HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES", "999999999");
+        std::env::set_var("HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES", "0");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
+        let snapshot = |stem: &str| {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+            app.persist_session_snapshot(Some(stem))
+                .expect("persist snapshot")
+        };
+
+        let a = snapshot("interactive-a");
+        let b = snapshot("interactive-b");
+        let one = snapshot("oneshot-1");
+        let two = snapshot("oneshot-2");
+        assert!(!one.exists(), "older one-shot pruned first");
+        assert!(a.exists() && b.exists() && two.exists());
+
+        let c = snapshot("interactive-c");
+        assert!(!two.exists(), "one-shot pruned before interactive");
+        assert!(a.exists() && b.exists() && c.exists());
+
+        let three = snapshot("oneshot-3");
+        assert!(!three.exists(), "a new one-shot is not exempt");
+        assert!(a.exists() && b.exists() && c.exists());
+    }
+
+    #[test]
     fn finalize_interrupted_tui_session_persists_user_and_partial_stream() {
         let _guard = env_test_lock();
         let tmp = tempfile::tempdir().expect("tempdir");

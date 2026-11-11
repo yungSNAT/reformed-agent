@@ -146,18 +146,25 @@ impl App {
     }
 
     fn enforce_session_snapshot_guardrails(
-        &self,
         sessions_dir: &Path,
         preserve_path: &Path,
     ) -> Result<(), AgentError> {
-        let preserve = preserve_path.to_path_buf();
+        // Prune one-shot snapshots first, oldest first, and do not exempt a new
+        // one: one-shot runs then never evict an interactive snapshot under the
+        // count or size limits. Their sessions.db rows remain.
+        let preserve =
+            (!is_oneshot_snapshot_path(preserve_path)).then(|| preserve_path.to_path_buf());
         let mut entries = list_session_snapshot_entries(sessions_dir);
+        entries.sort_by_key(|entry| !is_oneshot_snapshot_path(&entry.path));
         let mut total_bytes = entries.iter().map(|e| e.size_bytes).sum::<u64>();
 
         let max_files = snapshot_max_files();
         if max_files > 0 {
             while entries.len() > max_files {
-                let Some(idx) = entries.iter().position(|entry| entry.path != preserve) else {
+                let Some(idx) = entries
+                    .iter()
+                    .position(|entry| Some(&entry.path) != preserve.as_ref())
+                else {
                     break;
                 };
                 let removed = entries.remove(idx);
@@ -168,7 +175,10 @@ impl App {
         let max_total_bytes = snapshot_max_total_bytes();
         if max_total_bytes > 0 {
             while total_bytes > max_total_bytes {
-                let Some(idx) = entries.iter().position(|entry| entry.path != preserve) else {
+                let Some(idx) = entries
+                    .iter()
+                    .position(|entry| Some(&entry.path) != preserve.as_ref())
+                else {
                     break;
                 };
                 let removed = entries.remove(idx);
@@ -180,7 +190,10 @@ impl App {
         if min_free_bytes > 0 {
             if let Some(mut free_bytes) = available_disk_space_bytes(sessions_dir) {
                 while free_bytes < min_free_bytes {
-                    let Some(idx) = entries.iter().position(|entry| entry.path != preserve) else {
+                    let Some(idx) = entries
+                        .iter()
+                        .position(|entry| Some(&entry.path) != preserve.as_ref())
+                    else {
                         break;
                     };
                     let removed = entries.remove(idx);
@@ -214,48 +227,129 @@ impl App {
     /// Persist a JSON session snapshot to `<state_root>/sessions`.
     ///
     /// When `name_override` is provided, that value is used as the file stem.
-    /// Otherwise the active `session_id` is used.
+    /// Otherwise the active `session_id` is used, and a non-empty session is
+    /// also written to `sessions.db` so `session_search` can find it.
     pub fn persist_session_snapshot(
         &self,
         name_override: Option<&str>,
     ) -> Result<PathBuf, AgentError> {
-        let sessions_dir = self.state_root.join("sessions");
-        std::fs::create_dir_all(&sessions_dir).map_err(|e| {
-            AgentError::Io(format!(
-                "Failed to create sessions dir {}: {}",
-                sessions_dir.display(),
-                e
-            ))
-        })?;
         let stem = name_override
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or(self.session_id.as_str());
-        let path = sessions_dir.join(format!("{stem}.json"));
-        let payload = serde_json::json!({
-            "session_info": self.session_info(),
-            "messages": self.messages.iter().map(|m| {
-                serde_json::json!({
-                    "role": format!("{:?}", m.role),
-                    "content": m.content.as_deref().unwrap_or(""),
-                    "tool_call_id": m.tool_call_id,
-                    "tool_calls": m.tool_calls,
-                    "name": m.name,
-                    "reasoning_content": m.reasoning_content,
-                })
-            }).collect::<Vec<_>>(),
-        });
-        let json = serde_json::to_string_pretty(&payload).map_err(|e| {
-            AgentError::Config(format!("Failed to serialize session snapshot: {e}"))
-        })?;
-        std::fs::write(&path, json).map_err(|e| {
-            AgentError::Io(format!(
-                "Failed to write session snapshot {}: {}",
-                path.display(),
-                e
-            ))
-        })?;
-        self.enforce_session_snapshot_guardrails(&sessions_dir, &path)?;
+        let path = write_session_snapshot(
+            &self.state_root,
+            stem,
+            &self.session_info(),
+            None,
+            &self.messages,
+        )?;
+        if name_override.is_none() && !self.messages.is_empty() {
+            if let Err(err) = SessionPersistence::new(&self.state_root).persist_session(
+                &self.session_id,
+                &self.messages,
+                Some(&self.current_model),
+                None,
+                None,
+                None,
+            ) {
+                tracing::warn!(
+                    "session {} not written to sessions.db: {}",
+                    self.session_id,
+                    err
+                );
+            }
+        }
         Ok(path)
     }
+}
+
+const ONESHOT_SESSION_ID_PREFIX: &str = "oneshot-";
+
+/// Whether a snapshot file belongs to a one-shot run (`hermes -z`, `chat "<q>"`).
+pub fn is_oneshot_snapshot_path(path: &Path) -> bool {
+    path.file_stem()
+        .and_then(|stem| stem.to_str())
+        .is_some_and(|stem| stem.starts_with(ONESHOT_SESSION_ID_PREFIX))
+}
+
+/// Write `<state_root>/sessions/<stem>.json`, then apply the snapshot limits.
+fn write_session_snapshot(
+    state_root: &Path,
+    stem: &str,
+    session_info: &SessionInfo,
+    source: Option<&str>,
+    messages: &[hermes_core::Message],
+) -> Result<PathBuf, AgentError> {
+    let sessions_dir = state_root.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).map_err(|e| {
+        AgentError::Io(format!(
+            "Failed to create sessions dir {}: {}",
+            sessions_dir.display(),
+            e
+        ))
+    })?;
+    let path = sessions_dir.join(format!("{stem}.json"));
+    let mut payload = serde_json::json!({
+        "session_info": session_info,
+        "messages": messages.iter().map(|m| {
+            serde_json::json!({
+                "role": format!("{:?}", m.role),
+                "content": m.content.as_deref().unwrap_or(""),
+                "tool_call_id": m.tool_call_id,
+                "tool_calls": m.tool_calls,
+                "name": m.name,
+                "reasoning_content": m.reasoning_content,
+            })
+        }).collect::<Vec<_>>(),
+    });
+    if let Some(source) = source {
+        payload["source"] = Value::from(source);
+    }
+    let json = serde_json::to_string_pretty(&payload)
+        .map_err(|e| AgentError::Config(format!("Failed to serialize session snapshot: {e}")))?;
+    std::fs::write(&path, json).map_err(|e| {
+        AgentError::Io(format!(
+            "Failed to write session snapshot {}: {}",
+            path.display(),
+            e
+        ))
+    })?;
+    App::enforce_session_snapshot_guardrails(&sessions_dir, &path)?;
+    Ok(path)
+}
+
+/// Save a finished one-shot run as a session: a snapshot for `sessions list`
+/// and a `sessions.db` row (platform `oneshot`, no title) for `session_search`.
+/// Returns the new session id.
+pub fn save_oneshot_session(
+    state_root: &Path,
+    model: &str,
+    personality: Option<String>,
+    messages: &[hermes_core::Message],
+) -> Result<String, AgentError> {
+    let session_id = format!("{ONESHOT_SESSION_ID_PREFIX}{}", Uuid::new_v4());
+    let session_info = SessionInfo {
+        session_id: session_id.clone(),
+        model: model.to_string(),
+        personality,
+        message_count: messages.len(),
+        created_at: chrono::Utc::now().to_rfc3339(),
+    };
+    write_session_snapshot(
+        state_root,
+        &session_id,
+        &session_info,
+        Some("oneshot"),
+        messages,
+    )?;
+    SessionPersistence::new(state_root).persist_session(
+        &session_id,
+        messages,
+        Some(model),
+        Some("oneshot"),
+        None,
+        None,
+    )?;
+    Ok(session_id)
 }

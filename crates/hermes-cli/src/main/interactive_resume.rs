@@ -543,7 +543,9 @@ fn resolve_latest_nonempty_session_file(
     })?;
     for entry in rd.filter_map(|entry| entry.ok()) {
         let path = entry.path();
-        if !path.extension().map(|ext| ext == "json").unwrap_or(false) {
+        if !path.extension().map(|ext| ext == "json").unwrap_or(false)
+            || hermes_cli::app::is_oneshot_snapshot_path(&path)
+        {
             continue;
         }
         let modified = std::fs::metadata(&path)
@@ -710,7 +712,9 @@ fn resolve_resume_session_file(
         })?;
         for entry in rd.filter_map(|entry| entry.ok()) {
             let path = entry.path();
-            if !path.extension().map(|ext| ext == "json").unwrap_or(false) {
+            if !path.extension().map(|ext| ext == "json").unwrap_or(false)
+                || hermes_cli::app::is_oneshot_snapshot_path(&path)
+            {
                 continue;
             }
             let modified = std::fs::metadata(&path)

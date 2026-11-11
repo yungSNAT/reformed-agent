@@ -11,13 +11,18 @@ impl SessionPersistence {
     ) -> Result<(), AgentError> {
         self.ensure_db()?;
 
-        let conn = rusqlite::Connection::open(&self.db_path)
+        let mut conn = rusqlite::Connection::open(&self.db_path)
             .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+        // One commit for the row and its transcript: readers never see a
+        // half-written session, and each message insert skips its own sync.
+        let tx = conn
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(|e| AgentError::Io(format!("Failed to begin session write: {e}")))?;
 
         let now = Utc::now().to_rfc3339();
 
         // Upsert session record
-        conn.execute(
+        tx.execute(
             "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count, system_prompt)
              VALUES (?1, COALESCE(?2, 'unknown'), COALESCE(?3, 'cli'), ?4, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
@@ -40,9 +45,10 @@ impl SessionPersistence {
         .map_err(|e| AgentError::Io(format!("Failed to upsert session: {e}")))?;
 
         // Batch insert messages
-        self.flush_messages_to_session_db(&conn, session_id, messages)?;
+        self.flush_messages_to_session_db(&tx, session_id, messages)?;
 
-        Ok(())
+        tx.commit()
+            .map_err(|e| AgentError::Io(format!("Failed to commit session write: {e}")))
     }
 
     /// Write sessions recorded elsewhere in one transaction, committed only
