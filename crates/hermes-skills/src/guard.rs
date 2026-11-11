@@ -157,6 +157,19 @@ impl SkillGuardMode {
             .ok()
             .or_else(|| std::env::var("HERMES_GUARD_MODE").ok())
             .unwrap_or_else(|| "strict".to_string());
+        Self::parse(&raw)
+    }
+
+    /// Mode for scanning skills already on disk when loaded for use, from
+    /// `HERMES_SKILL_LOAD_GUARD_MODE`; `None` when unset or empty.
+    fn load_from_env() -> Option<Self> {
+        std::env::var("HERMES_SKILL_LOAD_GUARD_MODE")
+            .ok()
+            .filter(|raw| !raw.trim().is_empty())
+            .map(|raw| Self::parse(&raw))
+    }
+
+    fn parse(raw: &str) -> Self {
         match raw.trim().to_ascii_lowercase().as_str() {
             "off" | "disabled" | "none" => Self::Off,
             "relaxed" | "loose" | "permissive" => Self::Relaxed,
@@ -766,6 +779,19 @@ impl SkillGuard {
             blocked_patterns,
             blocked_urls,
             mode_override: None,
+        }
+    }
+
+    /// Guard for skills already on disk that are being loaded for use.
+    ///
+    /// `HERMES_SKILL_LOAD_GUARD_MODE` (`strict`, `relaxed` or `off`) sets its
+    /// mode, and an unknown value means `strict`; when unset or empty it
+    /// follows the install mode, `HERMES_SKILL_GUARD_MODE`.
+    /// Vetting new content (install, creation, update) keeps `default()`.
+    pub fn for_loaded_skills() -> Self {
+        Self {
+            mode_override: SkillGuardMode::load_from_env(),
+            ..Self::default()
         }
     }
 

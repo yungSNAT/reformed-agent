@@ -182,6 +182,8 @@ impl SkillManager {
                 .await
                 .map_err(AgentError::from)?
             {
+                // Loading may use a laxer mode; vet uploads at install strength.
+                self.guard.scan_security_only(&skill)?;
                 if hub.upload_skill(&skill).await.is_ok() {
                     synced += 1;
                 }
@@ -325,6 +327,27 @@ mod tests {
     fn make_manager(dir: &Path) -> SkillManager {
         let store = Arc::new(FileSkillStore::new(dir.to_path_buf()));
         SkillManager::new(store)
+    }
+
+    #[tokio::test]
+    async fn test_sync_with_hub_refuses_content_the_manager_guard_blocks() {
+        let dir = tempdir().unwrap();
+        let store = Arc::new(FileSkillStore::new(dir.path().to_path_buf()));
+        let skill = Skill {
+            name: "marked".to_string(),
+            content: "# Marked\nFORBIDDEN-MARKER".to_string(),
+            category: None,
+            description: None,
+        };
+        store.save(&skill).await.unwrap();
+        // Nothing listens on port 9, so an unguarded upload fails quietly.
+        let hub = SkillsHubClient::with_base_url("http://127.0.0.1:9", "test-key");
+        let mgr = SkillManager::with_hub(store, hub).with_guard(SkillGuard::new(
+            vec!["FORBIDDEN-MARKER".to_string()],
+            vec![],
+        ));
+
+        assert!(mgr.sync_with_hub().await.is_err());
     }
 
     #[tokio::test]

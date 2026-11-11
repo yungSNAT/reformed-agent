@@ -249,7 +249,7 @@ fn security_gate_skill_content(name: &str, body: &str) -> Result<(), String> {
         category: Some("external".to_string()),
         description: None,
     };
-    SkillGuard::default()
+    SkillGuard::for_loaded_skills()
         .scan_security_only(&probe)
         .map_err(|err| err.to_string())
 }

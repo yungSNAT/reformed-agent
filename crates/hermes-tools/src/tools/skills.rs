@@ -763,6 +763,67 @@ mod tests {
         assert!(error.contains("escapes") || error.contains("boundary"));
     }
 
+    /// Link `link` to the directory `target`: a symlink on Unix, a junction
+    /// (which needs no privilege) on Windows.
+    fn link_dir(target: &Path, link: &Path) {
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).unwrap();
+        #[cfg(windows)]
+        {
+            let status = std::process::Command::new("cmd")
+                .arg("/C")
+                .arg("mklink")
+                .arg("/J")
+                .arg(link)
+                .arg(target)
+                .stdout(std::process::Stdio::null())
+                .status()
+                .unwrap();
+            assert!(status.success(), "mklink /J failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn test_skill_view_file_path_reads_linked_skill_and_blocks_escape() {
+        let tmp = tempdir().unwrap();
+        let skills_root = tmp.path().join("skills");
+        let category = skills_root.join("software-development");
+        fs::create_dir_all(&category).unwrap();
+        let target = tmp.path().join("shared").join("trail");
+        fs::create_dir_all(target.join("references")).unwrap();
+        fs::write(target.join("SKILL.md"), "# Trail").unwrap();
+        fs::write(target.join("references/usage.md"), "Trail usage").unwrap();
+        let secret_dir = tmp.path().join("secret");
+        fs::create_dir_all(&secret_dir).unwrap();
+        fs::write(secret_dir.join("secret.txt"), "TOP SECRET DATA").unwrap();
+        link_dir(&secret_dir, &target.join("evil-dir"));
+        link_dir(&target, &category.join("trail"));
+
+        let handler =
+            SkillViewHandler::with_skill_roots(Arc::new(MockSkillProvider), vec![skills_root]);
+        let read = |file_path: &'static str| {
+            let handler = &handler;
+            async move {
+                let result = handler
+                    .execute(json!({"name": "trail", "file_path": file_path}))
+                    .await
+                    .unwrap();
+                serde_json::from_str::<Value>(&result).unwrap()
+            }
+        };
+
+        let payload = read("references/usage.md").await;
+        assert_eq!(payload["success"], Value::Bool(true), "{payload}");
+        assert_eq!(payload["content"], Value::String("Trail usage".into()));
+
+        let payload = read("evil-dir/secret.txt").await;
+        assert_eq!(payload["success"], Value::Bool(false), "{payload}");
+        assert!(!payload.to_string().contains("TOP SECRET"));
+
+        let payload = read("../../secret/secret.txt").await;
+        assert_eq!(payload["success"], Value::Bool(false), "{payload}");
+    }
+
     #[tokio::test]
     async fn test_skill_manage_create() {
         let handler = SkillManageHandler::new(Arc::new(MockSkillProvider));
