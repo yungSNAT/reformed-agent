@@ -381,14 +381,27 @@ fn collect_local_skill_summaries_rec(root: &Path, dir: &Path, out: &mut Vec<Loca
         let Ok(file_type) = entry.file_type() else {
             continue;
         };
-        if !file_type.is_dir() {
+        let path = entry.path();
+        // A linked skill folder lists, as the skill store loads it, when its
+        // SKILL.md stays inside the link's target.
+        if !file_type.is_dir() && !(file_type.is_symlink() && linked_skill_is_contained(&path)) {
             continue;
         }
         let name = entry.file_name();
         if name.to_string_lossy().starts_with('.') {
             continue;
         }
-        collect_local_skill_summaries_rec(root, &entry.path(), out);
+        collect_local_skill_summaries_rec(root, &path, out);
+    }
+}
+
+fn linked_skill_is_contained(link: &Path) -> bool {
+    match (
+        std::fs::canonicalize(link),
+        std::fs::canonicalize(link.join("SKILL.md")),
+    ) {
+        (Ok(target), Ok(skill_md)) => skill_md.starts_with(target),
+        _ => false,
     }
 }
 
