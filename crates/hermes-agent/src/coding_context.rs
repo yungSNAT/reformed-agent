@@ -672,9 +672,13 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
         .arg("--no-optional-locks")
         .stdin(std::process::Stdio::null())
         .suppress_windows_console();
-    if guard == LazyFetchGuard::Flag {
-        cmd.arg("--no-lazy-fetch");
-    }
+    match guard {
+        LazyFetchGuard::Flag => cmd.arg("--no-lazy-fetch"),
+        // A second barrier. Git 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1
+        // and the releases after each refuse to fetch when this is set; the
+        // ones before them ignore it.
+        LazyFetchGuard::NoPromisorRemote => cmd.env("GIT_NO_LAZY_FETCH", "1"),
+    };
     let mut config_count = 0;
     for driver in drivers.keys() {
         for (setting, value) in [
@@ -1434,9 +1438,13 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         git_init(tmp.path());
 
-        // An older git rejects the option, so the command must leave it off.
+        // An older git rejects the option, so the command must leave it off
+        // and set the variable that its later maintenance releases obey.
         let git = workspace_git(tmp.path(), LazyFetchGuard::NoPromisorRemote).unwrap();
         assert!(!git.get_args().any(|arg| arg == "--no-lazy-fetch"));
+        assert!(git
+            .get_envs()
+            .any(|(name, value)| name == "GIT_NO_LAZY_FETCH" && value == Some("1".as_ref())));
 
         let mut lines = Vec::new();
         append_git_snapshot(tmp.path(), LazyFetchGuard::NoPromisorRemote, &mut lines);
