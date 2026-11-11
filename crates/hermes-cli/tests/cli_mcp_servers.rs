@@ -4,7 +4,7 @@
 
 use std::io::{BufRead, Write};
 use std::path::Path;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use clap::Parser;
 use hermes_cli::app::App;
@@ -125,6 +125,18 @@ fn app_session_registers_configured_server_tools(home: &Path) {
     );
     let reply = runtime.block_on(app.tool_registry.dispatch_async(SESSION_TOOL, json!({})));
     assert!(reply.contains(FIXTURE_REPLY), "unexpected reply: {reply}");
+
+    // The binary drops its runtime like this when a session ends. On Windows
+    // a stderr pipe drained through tokio stalled that drop while the server
+    // lived.
+    drop(app);
+    let bound = Duration::from_secs(20);
+    let shutdown = Instant::now();
+    runtime.shutdown_timeout(bound);
+    assert!(
+        shutdown.elapsed() < bound,
+        "the session's runtime took over {bound:?} to shut down"
+    );
 }
 
 /// `-z` without the app runtime builds its session in `handle_cli_chat`. The
