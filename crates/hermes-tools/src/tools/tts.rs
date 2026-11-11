@@ -6,7 +6,10 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
+
+use crate::credential_guard::CredentialGuard;
 
 // ---------------------------------------------------------------------------
 // TtsBackend trait
@@ -41,6 +44,27 @@ impl TextToSpeechHandler {
     }
 }
 
+/// Refuse an `output_path` that the file tools would not write to.
+///
+/// The backends write the path as given, relative to the working directory, so
+/// the guard is shown that absolute form. The guard compares paths as text: a
+/// path containing `..` is refused outright, and the rest is rebuilt from its
+/// components so that `//etc/passwd` and `/etc/./passwd` read as `/etc/passwd`.
+/// Links are not resolved, which is the guard's limit for the file tools too.
+fn check_output_path(raw: &str) -> Result<(), ToolError> {
+    let path = Path::new(raw);
+    if path.components().any(|part| part == Component::ParentDir) {
+        return Err(ToolError::InvalidParams(format!(
+            "output_path must not contain '..': {raw}"
+        )));
+    }
+    let absolute: PathBuf = std::path::absolute(path)
+        .map_err(|e| ToolError::InvalidParams(format!("Invalid output_path '{raw}': {e}")))?
+        .components()
+        .collect();
+    CredentialGuard::path_only().check_write_access(&absolute, "")
+}
+
 #[async_trait]
 impl ToolHandler for TextToSpeechHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
@@ -52,6 +76,9 @@ impl ToolHandler for TextToSpeechHandler {
         let voice = params.get("voice").and_then(|v| v.as_str());
         let provider = params.get("provider").and_then(|v| v.as_str());
         let output_path = params.get("output_path").and_then(|v| v.as_str());
+        if let Some(path) = output_path {
+            check_output_path(path)?;
+        }
         let speed = params.get("speed").and_then(|v| v.as_f64());
 
         self.backend
@@ -140,5 +167,95 @@ mod tests {
             .await
             .unwrap();
         assert!(result.contains("Hello world"));
+    }
+
+    /// Records whether synthesis ran; writes nothing.
+    #[derive(Default)]
+    struct RecordingTtsBackend {
+        called: std::sync::atomic::AtomicBool,
+    }
+    #[async_trait]
+    impl TtsBackend for RecordingTtsBackend {
+        async fn synthesize(
+            &self,
+            _text: &str,
+            _voice: Option<&str>,
+            _provider: Option<&str>,
+            _output_path: Option<&str>,
+            _speed: Option<f64>,
+        ) -> Result<String, ToolError> {
+            self.called.store(true, std::sync::atomic::Ordering::SeqCst);
+            Ok("synthesized".into())
+        }
+    }
+
+    /// Runs the tool with `output_path`; returns its result and whether synthesis ran.
+    async fn run_with_output_path(output_path: &str) -> (Result<String, ToolError>, bool) {
+        let backend = Arc::new(RecordingTtsBackend::default());
+        let handler = TextToSpeechHandler::new(backend.clone());
+        let result = handler
+            .execute(json!({"text": "hello", "output_path": output_path}))
+            .await;
+        let called = backend.called.load(std::sync::atomic::Ordering::SeqCst);
+        (result, called)
+    }
+
+    #[tokio::test]
+    async fn output_path_on_a_protected_path_is_refused_before_synthesis() {
+        let temp = std::env::temp_dir();
+        let protected = [
+            temp.join(".ssh").join("speech.mp3"),
+            temp.join(".aws").join("credentials"),
+            temp.join(".env"),
+            // Relative paths are judged where the backend would write them.
+            PathBuf::from(".env"),
+        ];
+        for path in protected {
+            let (result, called) = run_with_output_path(&path.to_string_lossy()).await;
+            assert!(
+                matches!(&result, Err(ToolError::ExecutionFailed(message)) if message.contains("Write denied")),
+                "{} was not refused: {result:?}",
+                path.display()
+            );
+            assert!(!called, "synthesis ran for {}", path.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn output_path_on_a_system_path_is_refused_before_synthesis() {
+        for path in [
+            "/etc/passwd",
+            "/etc/sudoers.d/speech.mp3",
+            "//etc/passwd",
+            "/etc/./passwd",
+        ] {
+            let (result, called) = run_with_output_path(path).await;
+            assert!(
+                matches!(&result, Err(ToolError::ExecutionFailed(message)) if message.contains("Write denied")),
+                "{path} was not refused: {result:?}"
+            );
+            assert!(!called, "synthesis ran for {path}");
+        }
+    }
+
+    #[tokio::test]
+    async fn output_path_with_a_parent_component_is_refused_before_synthesis() {
+        let (result, called) = run_with_output_path("audio/../../etc/passwd").await;
+        assert!(
+            matches!(&result, Err(ToolError::InvalidParams(message)) if message.contains("'..'")),
+            "{result:?}"
+        );
+        assert!(!called);
+    }
+
+    #[tokio::test]
+    async fn an_ordinary_output_path_reaches_the_backend() {
+        let path = std::env::temp_dir()
+            .join("hermes-tts-test")
+            .join("speech.mp3");
+        let (result, called) = run_with_output_path(&path.to_string_lossy()).await;
+        assert_eq!(result.unwrap(), "synthesized");
+        assert!(called);
     }
 }

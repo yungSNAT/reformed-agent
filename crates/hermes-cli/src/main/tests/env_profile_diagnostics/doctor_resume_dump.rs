@@ -610,6 +610,90 @@ fn imported_hermes_history_resumes_from_native_snapshots() {
     assert_eq!(std::fs::read_to_string(&source).unwrap(), fixture);
 }
 
+#[tokio::test]
+async fn imported_hermes_history_is_searchable_as_recorded() {
+    use hermes_tools::SessionSearchBackend;
+
+    let workspace = tempfile::tempdir().unwrap();
+    let source = workspace.path().join("hermes-export.jsonl");
+    let profile = workspace.path().join("reformed");
+    // A repaired tool row without its own time takes the session's last activity,
+    // here its rewound turn, as in Hermes.
+    let fixture = HERMES_EXPORT_FIXTURE.replace(r#""timestamp":1794220203,"#, "");
+    std::fs::write(&source, fixture).unwrap();
+    hermes_cli::commands::import_hermes_sessions(&source, &profile).unwrap();
+    let db = profile.join("sessions.db");
+    let backend = hermes_tools::SqliteSessionSearchBackend::new(db.to_str().unwrap()).unwrap();
+
+    // Both sessions mention the notes; the compression chain is one result at its tip.
+    let found: serde_json::Value =
+        serde_json::from_str(&backend.search(Some("notes"), None, 5, None).await.unwrap())
+            .unwrap();
+    assert_eq!(found["count"], 1);
+    assert_eq!(found["sessions_searched"], 1);
+    assert_eq!(found["results"][0]["session_id"], "20261109_103200_c0ffeed1");
+
+    // Recent sessions list the chain's root with its start and its latest row.
+    let recent: serde_json::Value =
+        serde_json::from_str(&backend.search(None, None, 5, None).await.unwrap()).unwrap();
+    assert_eq!(recent["count"], 1);
+    let root = &recent["results"][0];
+    assert_eq!(root["session_id"], "20261109_103000_c0ffeed0");
+    assert_eq!(root["started_at"], "2026-11-09T10:30:00.125+00:00");
+    assert_eq!(root["last_active"], "2026-11-09T10:30:04+00:00");
+
+    // The child's last activity is its latest message, not its lagging heartbeat.
+    let conn = rusqlite::Connection::open(&db).unwrap();
+    let sessions: Vec<[Option<String>; 5]> = conn
+        .prepare(
+            "SELECT id, updated_at, ended_at, end_reason, model_config FROM sessions ORDER BY id",
+        )
+        .unwrap()
+        .query_map([], |row| {
+            Ok([row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?])
+        })
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    let expected = [
+        [
+            Some("20261109_103000_c0ffeed0"),
+            Some("2026-11-09T10:30:04+00:00"),
+            Some("2026-11-09T10:31:00.500+00:00"),
+            Some("compression"),
+            Some(r#"{"reasoning_effort":"medium"}"#),
+        ],
+        [
+            Some("20261109_103200_c0ffeed1"),
+            Some("2026-11-09T10:32:50.500+00:00"),
+            None,
+            None,
+            None,
+        ],
+    ];
+    assert_eq!(
+        sessions,
+        expected.map(|row| row.map(|cell| cell.map(String::from)))
+    );
+    let message_times: Vec<String> = conn
+        .prepare("SELECT created_at FROM messages ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(
+        message_times,
+        [
+            "2026-11-09T10:30:01+00:00",
+            "2026-11-09T10:30:02+00:00",
+            "2026-11-09T10:30:04+00:00",
+            "2026-11-09T10:32:02+00:00",
+            "2026-11-09T10:32:50.500+00:00",
+        ]
+    );
+}
+
 #[test]
 fn rejected_hermes_history_never_publishes_partial_snapshots() {
     let workspace = tempfile::tempdir().unwrap();
@@ -622,6 +706,11 @@ fn rejected_hermes_history_never_publishes_partial_snapshots() {
         r#"{"id":"orphan","started_at":1700000000,"messages":[{"role":"assistant","active":0,"tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":""}]}"#,
         r#"{"id":"pending","started_at":1700000000,"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]}]}"#,
         r#"{"id":"duplicate","started_at":1700000000,"messages":[{"role":"assistant","tool_calls":[{"id":"call_1","function":{"name":"read_file","arguments":"{}"}}]},{"role":"tool","tool_call_id":"call_1","content":""},{"role":"tool","tool_call_id":"call_1","content":""}]}"#,
+        r#"{"id":"ended","started_at":1700000000,"last_activity_at":1700000100,"ended_at":-1,"messages":[]}"#,
+        r#"{"id":"heartbeat","started_at":1700000000,"last_activity_at":-1,"messages":[{"role":"user","content":"Hello.","timestamp":1700000001}]}"#,
+        r#"{"id":"stamped","started_at":1700000000,"messages":[{"role":"user","content":"When?","timestamp":"noon"}]}"#,
+        r#"{"id":"rewound","started_at":1700000000,"messages":[{"role":"user","content":"Undone.","timestamp":-1,"active":0}]}"#,
+        r#"{"id":"far-future","started_at":1700000000,"messages":[{"role":"user","content":"Later.","timestamp":4200000001}]}"#,
     ] {
         std::fs::write(&source, format!("{HERMES_EXPORT_FIXTURE}\n{malformed}")).unwrap();
         let error = hermes_cli::commands::import_hermes_sessions(&source, &profile).unwrap_err();

@@ -39,7 +39,81 @@ fn env_var_path(var: &str) -> Option<PathBuf> {
         .ok()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
-        .map(PathBuf::from)
+        .map(|s| expand_home_spelling(&s))
+}
+
+/// Expand `$VAR`, `${VAR}` and a leading `~` in a home path taken from the
+/// environment.
+///
+/// fish does not expand `~` in `VAR=~/...`, and every shell passes a quoted
+/// value through as written, so the literal spelling can reach the process and
+/// would name a directory under the working directory. Unset variables and
+/// `~user` are left as written.
+fn expand_home_spelling(raw: &str) -> PathBuf {
+    let expanded = expand_env_vars(raw);
+    match expanded.strip_prefix('~') {
+        Some("") => user_home_dir(),
+        Some(rest) if rest.starts_with(std::path::is_separator) => {
+            user_home_dir().join(rest.trim_start_matches(std::path::is_separator))
+        }
+        _ => PathBuf::from(expanded),
+    }
+}
+
+fn expand_env_vars(input: &str) -> String {
+    let mut output = String::with_capacity(input.len());
+    let mut rest = input;
+    while let Some(dollar) = rest.find('$') {
+        output.push_str(&rest[..dollar]);
+        let after = &rest[dollar + 1..];
+        // `reference` is the text after `$` that names the variable.
+        let (name, reference) = match after.strip_prefix('{') {
+            Some(braced) => match braced.find('}') {
+                Some(end) => (&braced[..end], &after[..end + 2]),
+                None => ("", ""),
+            },
+            None => {
+                let end = after
+                    .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+                    .unwrap_or(after.len());
+                (&after[..end], &after[..end])
+            }
+        };
+        match (!name.is_empty())
+            .then(|| std::env::var(name).ok())
+            .flatten()
+        {
+            Some(value) => output.push_str(&value),
+            None => {
+                output.push('$');
+                output.push_str(reference);
+            }
+        }
+        rest = &after[reference.len()..];
+    }
+    output.push_str(rest);
+    output
+}
+
+/// Rewrite `HERMES_HOME` and `HERMES_AGENT_ULTRA_HOME` with `~` and `$VAR`
+/// expanded. Call once at process entry.
+///
+/// Many callers read these variables directly; without this each would resolve
+/// a literal `~` against the working directory whilst [`hermes_home`] expands it.
+pub fn normalize_hermes_home_env() {
+    for var in ["HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"] {
+        let Ok(raw) = std::env::var(var) else {
+            continue;
+        };
+        let trimmed = raw.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        let expanded = expand_home_spelling(trimmed);
+        if expanded.as_os_str() != raw.as_str() {
+            std::env::set_var(var, expanded);
+        }
+    }
 }
 
 /// Best-effort home directory resolution.
@@ -189,6 +263,68 @@ mod tests {
         std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
 
         // Restore
+        match original {
+            Some(v) => std::env::set_var("HERMES_HOME", v),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        match original_ultra {
+            Some(v) => std::env::set_var("HERMES_AGENT_ULTRA_HOME", v),
+            None => std::env::remove_var("HERMES_AGENT_ULTRA_HOME"),
+        }
+    }
+
+    #[test]
+    fn hermes_home_expands_tilde_and_variables() {
+        const ROOT_VAR: &str = "HERMES_PATHS_TEST_ROOT";
+        let _guard = crate::managed_gateway::test_lock::lock();
+        let original = std::env::var_os("HERMES_HOME");
+        let original_ultra = std::env::var_os("HERMES_AGENT_ULTRA_HOME");
+        std::env::set_var(ROOT_VAR, "/tmp/hermes-paths-root");
+        std::env::remove_var("HERMES_PATHS_TEST_UNSET");
+        let user_home = user_home_dir();
+        let root = PathBuf::from("/tmp/hermes-paths-root");
+
+        let cases = [
+            ("~", user_home.clone()),
+            ("~/profiles/work", user_home.join("profiles/work")),
+            ("$HERMES_PATHS_TEST_ROOT/home", root.join("home")),
+            ("${HERMES_PATHS_TEST_ROOT}/home", root.join("home")),
+            (" $HERMES_PATHS_TEST_ROOT ", root.clone()),
+            // Left as written: unset variables, `~user`, a bare `$` and plain paths.
+            (
+                "$HERMES_PATHS_TEST_UNSET/home",
+                PathBuf::from("$HERMES_PATHS_TEST_UNSET/home"),
+            ),
+            (
+                "${HERMES_PATHS_TEST_UNSET}/home",
+                PathBuf::from("${HERMES_PATHS_TEST_UNSET}/home"),
+            ),
+            ("~other/home", PathBuf::from("~other/home")),
+            ("/tmp/cost$/${open", PathBuf::from("/tmp/cost$/${open")),
+            ("relative/home", PathBuf::from("relative/home")),
+        ];
+        for (raw, expected) in &cases {
+            std::env::set_var("HERMES_HOME", raw);
+            assert_eq!(&hermes_home(), expected, "HERMES_HOME={raw:?}");
+        }
+
+        // The entry-point rewrite gives direct readers of either variable the same path.
+        std::env::set_var("HERMES_HOME", "~/profiles/work");
+        std::env::set_var("HERMES_AGENT_ULTRA_HOME", "~/profiles/ultra");
+        normalize_hermes_home_env();
+        assert_eq!(
+            std::env::var_os("HERMES_HOME").map(PathBuf::from),
+            Some(user_home.join("profiles/work"))
+        );
+        assert_eq!(
+            std::env::var_os("HERMES_AGENT_ULTRA_HOME").map(PathBuf::from),
+            Some(user_home.join("profiles/ultra"))
+        );
+        std::env::set_var("HERMES_HOME", "relative/home");
+        normalize_hermes_home_env();
+        assert_eq!(std::env::var("HERMES_HOME").unwrap(), "relative/home");
+
+        std::env::remove_var(ROOT_VAR);
         match original {
             Some(v) => std::env::set_var("HERMES_HOME", v),
             None => std::env::remove_var("HERMES_HOME"),

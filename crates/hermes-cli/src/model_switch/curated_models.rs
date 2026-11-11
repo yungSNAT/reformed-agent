@@ -7,7 +7,7 @@ const CURATED_PROVIDER_MODELS: &[(&str, &[&str])] = &[
             "moonshotai/kimi-k2.6",
             "anthropic/claude-opus-4.7",
             "openai/gpt-5.4",
-            "tencent/hy3-preview:free",
+            "nvidia/nemotron-3.5-lightning:free",
             "tencent/hy3-preview",
         ],
     ),

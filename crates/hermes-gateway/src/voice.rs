@@ -101,6 +101,9 @@ const MISTRAL_STT_MODELS: &[&str] = &[
     "voxtral-mini-2507",
     "voxtral-mini-2602",
 ];
+/// Groq shut `distil-whisper-large-v3-en` down on 23 August 2025, so a
+/// configuration that still names it gets the Groq default.
+const RETIRED_GROQ_STT_MODELS: &[&str] = &["distil-whisper-large-v3-en"];
 
 fn env_trimmed(key: &str) -> Option<String> {
     std::env::var(key)
@@ -132,11 +135,15 @@ fn normalize_gateway_stt_model(provider: &str, requested: Option<&str>) -> Strin
     let requested = requested.map(str::trim).filter(|s| !s.is_empty());
     match provider {
         "groq" => {
-            let default = env_or_default(&["STT_GROQ_MODEL"], "whisper-large-v3-turbo");
+            // `STT_GROQ_MODEL` can itself still name the retired model.
+            let default = env_trimmed("STT_GROQ_MODEL")
+                .filter(|model| !known_model(model, RETIRED_GROQ_STT_MODELS))
+                .unwrap_or_else(|| "whisper-large-v3-turbo".to_string());
             match requested {
                 Some(model)
                     if known_model(model, OPENAI_STT_MODELS)
-                        || known_model(model, MISTRAL_STT_MODELS) =>
+                        || known_model(model, MISTRAL_STT_MODELS)
+                        || known_model(model, RETIRED_GROQ_STT_MODELS) =>
                 {
                     default
                 }
@@ -1246,6 +1253,27 @@ mod tests {
             normalize_gateway_stt_model("openai", Some("gpt-4o-mini-transcribe")),
             "gpt-4o-mini-transcribe"
         );
+    }
+
+    #[test]
+    fn gateway_stt_model_remaps_the_retired_groq_model() {
+        let _g = EnvGuard::new();
+        assert_eq!(
+            normalize_gateway_stt_model("groq", Some("distil-whisper-large-v3-en")),
+            "whisper-large-v3-turbo"
+        );
+        // The gateway takes its model from these variables.
+        for key in ["STT_GROQ_MODEL", "HERMES_STT_MODEL", "STT_MODEL"] {
+            std::env::set_var(key, "distil-whisper-large-v3-en");
+            assert_eq!(
+                configured_gateway_stt_model("groq"),
+                "whisper-large-v3-turbo",
+                "{key}"
+            );
+            std::env::remove_var(key);
+        }
+        std::env::set_var("STT_GROQ_MODEL", "whisper-large-v3");
+        assert_eq!(configured_gateway_stt_model("groq"), "whisper-large-v3");
     }
 
     #[test]

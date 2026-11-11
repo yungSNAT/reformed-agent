@@ -4,6 +4,7 @@ use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
+use hermes_agent::session_persistence::{ImportedSession, SessionImport, SessionPersistence};
 use hermes_core::{AgentError, FunctionCall, Message, MessageRole, ToolCall};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -23,10 +24,12 @@ struct ExportSession {
     id: String,
     started_at: f64,
     ended_at: Option<f64>,
+    end_reason: Option<String>,
     last_activity_at: Option<f64>,
     parent_session_id: Option<String>,
     title: Option<String>,
     model: Option<String>,
+    model_config: Option<String>,
     source: Option<String>,
     system_prompt: Option<String>,
     messages: Vec<Value>,
@@ -91,13 +94,21 @@ fn windows_device_name(name: &str) -> bool {
         })
 }
 
+/// Hermes trusts epoch times up to early 2103; later ones are corrupt rows.
+const EPOCH_MAX: f64 = 4_200_000_000.0;
+
+fn epoch(seconds: f64) -> Option<Duration> {
+    Duration::try_from_secs_f64(seconds)
+        .ok()
+        .filter(|_| seconds <= EPOCH_MAX)
+}
+
 fn epoch_time(seconds: f64) -> Option<SystemTime> {
-    let elapsed = Duration::try_from_secs_f64(seconds).ok()?;
-    SystemTime::UNIX_EPOCH.checked_add(elapsed)
+    SystemTime::UNIX_EPOCH.checked_add(epoch(seconds)?)
 }
 
 fn epoch_text(seconds: f64) -> Option<String> {
-    let elapsed = Duration::try_from_secs_f64(seconds).ok()?;
+    let elapsed = epoch(seconds)?;
     chrono::DateTime::from_timestamp(
         i64::try_from(elapsed.as_secs()).ok()?,
         elapsed.subsec_nanos(),
@@ -192,7 +203,11 @@ fn validate_tool_history(messages: &[Message]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, AgentError> {
+fn import_records(
+    input: File,
+    sessions: &Path,
+    store: &SessionImport<'_>,
+) -> Result<HermesHistorySummary, AgentError> {
     let mut summary = HermesHistorySummary::default();
     let mut reader = BufReader::new(input);
     let mut bytes = Vec::new();
@@ -224,21 +239,47 @@ fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, 
         }
         let created_at =
             epoch_text(exported.started_at).ok_or_else(|| invalid("invalid start time"))?;
-        let modified = epoch_time(
-            exported
-                .last_activity_at
-                .or(exported.ended_at)
-                .unwrap_or(exported.started_at),
-        )
-        .ok_or_else(|| invalid("invalid activity time"))?;
+        let ended_at = exported
+            .ended_at
+            .map(|time| epoch_text(time).ok_or_else(|| invalid("invalid end time")))
+            .transpose()?;
+        if exported
+            .last_activity_at
+            .is_some_and(|time| epoch_time(time).is_none())
+        {
+            return Err(invalid("invalid activity time"));
+        }
+        // Like Hermes, last activity is the freshest of the rate-limited
+        // `last_activity_at` heartbeat and every row's time, else the start.
+        let mut activity = exported.last_activity_at;
         let mut messages = Vec::with_capacity(exported.messages.len());
+        let mut recorded = Vec::with_capacity(exported.messages.len());
         for row in exported.messages {
+            let time = row
+                .get("timestamp")
+                .filter(|time| !time.is_null())
+                .map(|time| {
+                    let seconds = time.as_f64();
+                    seconds
+                        .zip(seconds.and_then(epoch_text))
+                        .ok_or_else(|| invalid("invalid message time"))
+                })
+                .transpose()?;
+            if let Some((seconds, _)) = &time {
+                activity = Some(activity.map_or(*seconds, |latest| latest.max(*seconds)));
+            }
             match convert_message(row).map_err(invalid)? {
-                Some(message) => messages.push(message),
+                Some(message) => {
+                    messages.push(message);
+                    recorded.push(time.map(|(_, text)| text));
+                }
                 None => summary.excluded_rows += 1,
             }
         }
         validate_tool_history(&messages).map_err(invalid)?;
+        let activity = activity.unwrap_or(exported.started_at);
+        let modified = epoch_time(activity).ok_or_else(|| invalid("invalid activity time"))?;
+        let updated_at = epoch_text(activity).ok_or_else(|| invalid("invalid activity time"))?;
         let snapshot = json!({
             "session_info": {
                 "session_id": exported.id,
@@ -260,6 +301,27 @@ fn import_records(input: File, sessions: &Path) -> Result<HermesHistorySummary, 
         writer.flush().map_err(io_error)?;
         file.set_times(FileTimes::new().set_modified(modified))
             .map_err(io_error)?;
+        // A message without its own time takes the session's last activity.
+        let messages: Vec<(Message, String)> = messages
+            .into_iter()
+            .zip(recorded)
+            .map(|(message, time)| (message, time.unwrap_or_else(|| updated_at.clone())))
+            .collect();
+        // The session database is what `session_search` reads.
+        store.add_session(&ImportedSession {
+            id: &exported.id,
+            model: exported.model.as_deref(),
+            platform: exported.source.as_deref(),
+            title: exported.title.as_deref(),
+            system_prompt: exported.system_prompt.as_deref(),
+            model_config: exported.model_config.as_deref(),
+            parent_session_id: exported.parent_session_id.as_deref(),
+            created_at: &created_at,
+            updated_at: &updated_at,
+            ended_at: ended_at.as_deref(),
+            end_reason: exported.end_reason.as_deref(),
+            messages: &messages,
+        })?;
         summary.sessions += 1;
         summary.messages += messages.len();
     }
@@ -356,7 +418,8 @@ fn create_private_profile(path: &Path) -> io::Result<()> {
     fs::DirBuilder::new().mode(0o700).create(path)
 }
 
-/// Convert the export in a fresh profile, publishing the sessions directory only after validation.
+/// Convert the export in a fresh profile, publishing the snapshots and session
+/// database only after every record validates.
 pub fn import_hermes_sessions(
     export: &Path,
     profile: &Path,
@@ -393,12 +456,16 @@ pub fn import_hermes_sessions(
         let stage = tempfile::tempdir_in(&profile).map_err(io_error)?;
         let sessions = stage.path().join("sessions");
         fs::create_dir(&sessions).map_err(io_error)?;
-        let summary = import_records(input, &sessions)?;
+        let store = SessionPersistence::new(stage.path());
+        let summary = store.import_sessions(|import| import_records(input, &sessions, import))?;
+        fs::rename(store.db_path(), profile.join("sessions.db")).map_err(io_error)?;
         fs::rename(sessions, profile.join("sessions")).map_err(io_error)?;
         Ok(summary)
     })();
     if result.is_err() {
-        // Only remove the empty directory reserved by this invocation.
+        // Only remove what this invocation created: a database already moved
+        // in when the sessions rename failed, then the reserved directory.
+        let _ = fs::remove_file(profile.join("sessions.db"));
         let _ = fs::remove_dir(&profile);
     }
     result

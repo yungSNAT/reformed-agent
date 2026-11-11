@@ -593,6 +593,68 @@ async fn run_optional_setup_sections(
     Ok(())
 }
 
+/// One line for each `platform_toolsets` entry that names no built-in toolset
+/// or tool and no configured MCP server, after one for an unreadable
+/// `mcp_servers.json`.
+///
+/// An MCP server's toolset and tools exist only once the server is connected,
+/// so the names a configured server answers to are accepted unchecked.
+fn stale_platform_toolset_diagnostics(
+    config: &hermes_config::GatewayConfig,
+    home: &std::path::Path,
+) -> Vec<String> {
+    let registry = Arc::new(hermes_tools::ToolRegistry::new());
+    let skill_store = Arc::new(FileSkillStore::new(hermes_config::skills_dir()));
+    let skill_provider: Arc<dyn hermes_core::SkillProvider> =
+        Arc::new(SkillManager::new(skill_store));
+    hermes_tools::register_builtin_tools(&registry, build_terminal_backend(config), skill_provider);
+
+    let mut diagnostics = Vec::new();
+    let json_path = home.join("mcp_servers.json");
+    let json_servers = match hermes_cli::mcp_config::load_mcp_config_if_exists(&json_path) {
+        Ok(servers) => servers.unwrap_or_default(),
+        Err(error) => {
+            diagnostics.push(format!(
+                "MCP servers were not read, so their names are not recognised below: {error}"
+            ));
+            Default::default()
+        }
+    };
+    let mut mcp_names = std::collections::HashSet::new();
+    let mut mcp_tool_prefixes = Vec::new();
+    for name in config
+        .mcp_servers
+        .iter()
+        .map(|server| &server.name)
+        .chain(json_servers.servers.iter().map(|server| &server.name))
+    {
+        let safe = hermes_mcp::sanitize_mcp_name_component(name);
+        mcp_tool_prefixes.push(format!("mcp_{safe}_"));
+        mcp_names.insert(format!("mcp-{safe}"));
+        mcp_names.insert(safe);
+        mcp_names.insert(name.clone());
+    }
+
+    diagnostics.extend(
+        hermes_tool_planning::unknown_platform_toolset_tokens(config, &registry)
+            .into_iter()
+            .filter(|(_, token)| {
+                !mcp_names.contains(token)
+                    && !mcp_tool_prefixes
+                        .iter()
+                        .any(|prefix| token.starts_with(prefix))
+            })
+            .map(|(platform, token)| {
+                format!(
+                    "platform_toolsets.{platform} names '{token}', which is not a built-in toolset \
+                     or tool or a configured MCP server. Run `hermes config edit` to remove or \
+                     replace it."
+                )
+            }),
+    );
+    diagnostics
+}
+
 /// Handle `hermes config [action] [key] [value]`.
 async fn run_config(
     cli: Cli,
@@ -682,6 +744,18 @@ async fn run_config(
             match validate_config(&config) {
                 Ok(()) => println!("Configuration is valid. ✓"),
                 Err(e) => println!("Configuration error: {}", e),
+            }
+            let base: PathBuf = cli
+                .config_dir
+                .as_ref()
+                .map(PathBuf::from)
+                .unwrap_or_else(hermes_home);
+            let stale = stale_platform_toolset_diagnostics(&config, &base);
+            if !stale.is_empty() {
+                println!("Platform toolset warnings:");
+                for diagnostic in &stale {
+                    println!("  ⚠ {diagnostic}");
+                }
             }
         }
         Some("edit") => {

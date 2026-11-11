@@ -1264,3 +1264,108 @@ fn test_auto_maintenance_corrupt_marker_is_ignored() {
     assert!(!result.skipped);
     assert_eq!(result.pruned, 1);
 }
+
+fn imported_child(messages: &[(Message, String)]) -> ImportedSession<'_> {
+    ImportedSession {
+        id: "child",
+        model: Some("glm-5.3"),
+        platform: Some("cli"),
+        title: None,
+        system_prompt: None,
+        model_config: Some(r#"{"reasoning_effort":"high"}"#),
+        parent_session_id: Some("parent"),
+        created_at: "2026-10-01T09:00:00+00:00",
+        updated_at: "2026-10-01T09:30:00+00:00",
+        ended_at: Some("2026-10-01T09:31:00+00:00"),
+        end_reason: Some("compression"),
+        messages,
+    }
+}
+
+#[test]
+fn import_sessions_keeps_recorded_times_lineage_and_end_state() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let transcript = [
+        Message::user("imported question"),
+        Message::assistant("imported answer"),
+    ];
+    let message_times = ["2026-10-01T09:00:05+00:00", "2026-10-01T09:29:00.500+00:00"];
+    let messages: Vec<(Message, String)> = transcript
+        .iter()
+        .cloned()
+        .zip(message_times.map(String::from))
+        .collect();
+    sp.import_sessions(|import| import.add_session(&imported_child(&messages)))
+        .unwrap();
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let row: (String, String, String, String, String, String, i64) = conn
+        .query_row(
+            "SELECT created_at, updated_at, parent_session_id, model_config, end_reason,
+                    ended_at, message_count
+             FROM sessions WHERE id = 'child'",
+            [],
+            |row| {
+                Ok((
+                    row.get(0)?,
+                    row.get(1)?,
+                    row.get(2)?,
+                    row.get(3)?,
+                    row.get(4)?,
+                    row.get(5)?,
+                    row.get(6)?,
+                ))
+            },
+        )
+        .unwrap();
+    assert_eq!(
+        row,
+        (
+            "2026-10-01T09:00:00+00:00".to_string(),
+            "2026-10-01T09:30:00+00:00".to_string(),
+            "parent".to_string(),
+            r#"{"reasoning_effort":"high"}"#.to_string(),
+            "compression".to_string(),
+            "2026-10-01T09:31:00+00:00".to_string(),
+            2
+        )
+    );
+    let stored_times: Vec<String> = conn
+        .prepare("SELECT created_at FROM messages WHERE session_id = 'child' ORDER BY id")
+        .unwrap()
+        .query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap();
+    assert_eq!(stored_times, message_times);
+    assert_eq!(sp.load_session("child").unwrap(), transcript);
+    assert_eq!(fts_match_rows(&sp, "imported").len(), 2);
+}
+
+#[test]
+fn import_sessions_writes_nothing_when_the_import_fails() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let messages = [(
+        Message::user("imported question"),
+        "2026-10-01T09:00:05+00:00".to_string(),
+    )];
+    let error = sp
+        .import_sessions(|import| {
+            import.add_session(&imported_child(&messages))?;
+            Err::<(), _>(AgentError::Config("later record is invalid".into()))
+        })
+        .unwrap_err();
+    assert!(error.to_string().contains("later record is invalid"));
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let rows: i64 = conn
+        .query_row(
+            "SELECT (SELECT COUNT(*) FROM sessions) + (SELECT COUNT(*) FROM messages)",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(rows, 0);
+}

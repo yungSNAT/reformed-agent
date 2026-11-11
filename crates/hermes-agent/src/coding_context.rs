@@ -292,7 +292,9 @@ pub fn build_coding_workspace_block(root: &Path) -> Option<String> {
     }
 
     if git_root(&root).as_deref() == Some(root.as_path()) {
-        append_git_snapshot(&root, &mut lines);
+        if let Some(guard) = lazy_fetch_guard() {
+            append_git_snapshot(&root, guard, &mut lines);
+        }
     }
 
     (lines.len() > 2).then(|| lines.join("\n"))
@@ -551,6 +553,59 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
     seen.into_keys().take(MAX_VERIFY_COMMANDS).collect()
 }
 
+/// How `workspace_git` keeps git from fetching an object the repository lacks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum LazyFetchGuard {
+    /// Git 2.45 and later take `--no-lazy-fetch`.
+    Flag,
+    /// Git 2.39.1 to 2.44 have no such option, and fetch only from a promisor
+    /// remote, so the snapshot is kept for a repository whose config names none.
+    NoPromisorRemote,
+}
+
+/// The guard the installed git supports, or `None` for a git that cannot
+/// produce the snapshot safely.
+fn lazy_fetch_guard() -> Option<LazyFetchGuard> {
+    // `git version` reads no repository.
+    let version = |option: Option<&str>| {
+        Command::new("git")
+            .args(option)
+            .arg("version")
+            .stdin(std::process::Stdio::null())
+            .suppress_windows_console()
+            .output()
+            .ok()
+            .filter(|output| output.status.success())
+    };
+    if version(Some("--no-lazy-fetch")).is_some() {
+        return Some(LazyFetchGuard::Flag);
+    }
+    let printed = version(None)?;
+    is_git_2_39_1_or_later(&String::from_utf8_lossy(&printed.stdout))
+        .then_some(LazyFetchGuard::NoPromisorRemote)
+}
+
+/// Whether `git version` printed 2.39.1 or a later version. An older git gets
+/// no snapshot. `git status` reads the workspace's `.gitattributes`, and a
+/// hostile one can overflow the attribute parser before 2.39.1
+/// (CVE-2022-23521). Before 2.31 git also ignores the indexed `GIT_CONFIG_*`
+/// variables that carry the filter overrides. A distribution's patched build
+/// of an older version is refused too, as its number does not show the patch.
+fn is_git_2_39_1_or_later(version: &str) -> bool {
+    let mut numbers = version
+        .trim()
+        .strip_prefix("git version ")
+        .unwrap_or_default()
+        .split(|c: char| c == '.' || c.is_whitespace())
+        .map(|number| number.parse::<u32>().ok());
+    let (Some(Some(major)), Some(Some(minor)), Some(Some(patch))) =
+        (numbers.next(), numbers.next(), numbers.next())
+    else {
+        return false;
+    };
+    (major, minor, patch) >= (2, 39, 1)
+}
+
 /// A `git` command for reading the workspace that the workspace's own
 /// `.git/config` cannot use to run a program: an empty `core.fsmonitor`
 /// disables the fsmonitor program on every git version, `log.showSignature`
@@ -558,46 +613,72 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 /// `git status` from writing the index, so no index hook runs. Disable every
 /// configured filter too: status can run clean/process commands while hashing
 /// tracked files. Reading config names itself does not execute those commands.
-/// `--no-lazy-fetch` stops git fetching an object the repository lacks from a
-/// promisor remote, which runs `core.sshCommand` or a remote helper. Git before
-/// 2.45 rejects that option, so the snapshot is omitted there.
-fn workspace_git(root: &Path) -> Option<Command> {
-    let filters = Command::new("git")
+/// Git must not fetch an object the repository lacks from a promisor remote
+/// either, which runs `core.sshCommand` or a remote helper: `guard` says how.
+fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
+    // Every config key git reads for this repository, from every scope and
+    // included file. `git config` alone reads the file `GIT_CONFIG` names in
+    // their place, so that variable is dropped. The keys are matched here,
+    // byte for byte: git's own `--get-regexp` passes over a key holding a byte
+    // its locale cannot decode, so a repository could hide a filter or a
+    // remote from it.
+    let listed = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args([
-            "config",
-            "--includes",
-            "--null",
-            "--name-only",
-            "--get-regexp",
-            r"^filter\..*\.(clean|smudge|process|required)$",
-        ])
+        .args(["config", "--includes", "--null", "--name-only", "--list"])
+        .env_remove("GIT_CONFIG")
         .stdin(std::process::Stdio::null())
         .suppress_windows_console()
         .output()
         .ok()?;
-    // Exit 1 means no matching keys. Refuse the snapshot if discovery fails,
-    // rather than running status with an incomplete set of overrides.
-    if !filters.status.success() && filters.status.code() != Some(1) {
+    // Refuse the snapshot if the listing fails, rather than running status
+    // with an incomplete set of overrides.
+    if !listed.status.success() {
         return None;
     }
-    let keys = std::str::from_utf8(&filters.stdout).ok()?;
     let mut drivers = BTreeMap::new();
-    for (index, key) in keys.split_terminator('\0').enumerate() {
-        if index >= 256 {
-            return None;
+    let mut filter_keys = 0;
+    for key in listed.stdout.split(|byte| *byte == 0) {
+        // Git prints a key as `section.name` or `section.subsection.name`, with
+        // the section and the name in lower case. Only a subsection holds dots.
+        let Some(first) = key.iter().position(|byte| *byte == b'.') else {
+            continue;
+        };
+        let last = key.iter().rposition(|byte| *byte == b'.').unwrap_or(first);
+        match (&key[..first], &key[last + 1..]) {
+            (b"filter", b"clean" | b"smudge" | b"process" | b"required") => {
+                if filter_keys == 256 {
+                    return None;
+                }
+                filter_keys += 1;
+                drivers.insert(std::str::from_utf8(&key[..last]).ok()?, ());
+            }
+            // Any of these keys can make a promisor remote, with or without a
+            // remote name, and nothing on the command line switches one off.
+            // Whatever its value, without `--no-lazy-fetch` the repository
+            // gets no snapshot.
+            (b"remote", b"promisor" | b"partialclonefilter") | (b"extensions", b"partialclone")
+                if guard == LazyFetchGuard::NoPromisorRemote =>
+            {
+                return None;
+            }
+            _ => {}
         }
-        let (driver, _) = key.rsplit_once('.')?;
-        drivers.insert(driver, ());
     }
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(root)
         .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
-        .args(["--no-optional-locks", "--no-lazy-fetch"])
+        .arg("--no-optional-locks")
         .stdin(std::process::Stdio::null())
         .suppress_windows_console();
+    match guard {
+        LazyFetchGuard::Flag => cmd.arg("--no-lazy-fetch"),
+        // A second barrier. Git 2.39.4, 2.40.2, 2.41.1, 2.42.2, 2.43.4, 2.44.1
+        // and the releases after each refuse to fetch when this is set; the
+        // ones before them ignore it.
+        LazyFetchGuard::NoPromisorRemote => cmd.env("GIT_NO_LAZY_FETCH", "1"),
+    };
     let mut config_count = 0;
     for driver in drivers.keys() {
         for (setting, value) in [
@@ -621,8 +702,8 @@ fn workspace_git(root: &Path) -> Option<Command> {
     Some(cmd)
 }
 
-fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
-    let Some(mut git) = workspace_git(root) else {
+fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<String>) {
+    let Some(mut git) = workspace_git(root, guard) else {
         return;
     };
     // A submodule has its own config and filter drivers. Read its committed
@@ -667,13 +748,13 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
             .join(", ");
         lines.push(format!("Status: {rendered}"));
     }
-    if let Some(commit) = git_last_commit(root) {
+    if let Some(commit) = git_last_commit(root, guard) {
         lines.push(format!("Last commit: {commit}"));
     }
 }
 
-fn git_last_commit(root: &Path) -> Option<String> {
-    let output = workspace_git(root)?
+fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
+    let output = workspace_git(root, guard)?
         .args(["log", "-1", "--oneline"])
         .output()
         .ok()?;
@@ -693,13 +774,129 @@ fn git_last_commit(root: &Path) -> Option<String> {
 mod tests {
     use super::*;
 
-    /// Whether this git can produce the snapshot: git before 2.45 rejects
-    /// `--no-lazy-fetch`, so the snapshot is omitted there.
-    fn git_snapshot_supported() -> bool {
+    /// Whether git takes `--no-lazy-fetch`. The tests ask git, not
+    /// `lazy_fetch_guard`, so that a guard which wrongly refuses a supported
+    /// git fails them instead of quietly dropping the snapshot.
+    fn git_has_no_lazy_fetch() -> bool {
         Command::new("git")
             .args(["--no-lazy-fetch", "version"])
             .output()
             .is_ok_and(|output| output.status.success())
+    }
+
+    /// Whether this git can produce the snapshot of a repository without a
+    /// promisor remote.
+    fn git_snapshot_supported() -> bool {
+        git_has_no_lazy_fetch() || {
+            let version = Command::new("git").arg("version").output().unwrap();
+            is_git_2_39_1_or_later(&String::from_utf8_lossy(&version.stdout))
+        }
+    }
+
+    #[test]
+    fn only_git_2_39_1_or_later_gets_the_older_git_fallback() {
+        for (version, expected) in [
+            ("git version 2.39.1\n", true),
+            ("git version 2.39.3 (Apple Git-146)\n", true),
+            ("git version 2.40.0.rc0\n", true),
+            ("git version 2.43.0.windows.1\n", true),
+            ("git version 2.44.1\n", true),
+            ("git version 3.0.0\n", true),
+            ("git version 2.39.0\n", false),
+            ("git version 2.39.0.56.g57e2c6ebbe\n", false),
+            ("git version 2.34.1\n", false),
+            ("git version 2.30.9\n", false),
+            ("git version 2.39\n", false),
+            ("git version unknown\n", false),
+            ("2.44.1\n", false),
+            ("", false),
+        ] {
+            assert_eq!(is_git_2_39_1_or_later(version), expected, "{version:?}");
+        }
+    }
+
+    /// Each way a repository's config can name a promisor remote. Git reads
+    /// the 2 `remote` keys without a remote name too.
+    #[cfg(unix)]
+    const PROMISOR_CONFIG: [[&str; 2]; 5] = [
+        ["remote.croft.promisor", "true"],
+        ["remote.croft.partialclonefilter", "blob:none"],
+        ["extensions.partialclone", "croft"],
+        ["remote.promisor", "true"],
+        ["remote.partialclonefilter", "blob:none"],
+    ];
+
+    /// A repository that lacks an object its snapshot reads, with a promisor
+    /// remote to fetch it from through `core.sshCommand`. `mailmap.blob` sends
+    /// `git log` after a missing object; a HEAD commit without its tree sends
+    /// `git status`. Returns the repository and the marker file the
+    /// `core.sshCommand` program leaves when it runs.
+    #[cfg(unix)]
+    fn repo_missing_an_object(
+        tmp: &Path,
+        missing: &str,
+        promisor: [&str; 2],
+    ) -> (PathBuf, PathBuf) {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+
+        let repo = tmp.join("repo");
+        git_init(&repo);
+        let git = |args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        };
+        // Before the remote is configured, so the fixture itself fetches nothing.
+        if missing == "HEAD tree" {
+            let commit = format!(
+                "tree {}\nauthor T <t@example.com> 1700000000 +0000\n\
+                 committer T <t@example.com> 1700000000 +0000\n\nno tree\n",
+                "2".repeat(40)
+            );
+            let mut hash = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .spawn()
+                .unwrap();
+            hash.stdin
+                .take()
+                .unwrap()
+                .write_all(commit.as_bytes())
+                .unwrap();
+            let sha = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap();
+            git(&["update-ref", "HEAD", sha.trim()]);
+        } else {
+            git(&["config", "mailmap.blob", &"1".repeat(40)]);
+        }
+        let marker = tmp.join("ssh-ran");
+        let program = tmp.join("ssh.sh");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(&["config", promisor[0], promisor[1]]);
+        git(&[
+            "config",
+            "remote.croft.url",
+            "ssh://manor.invalid/croft.git",
+        ]);
+        // A remote without a name is fetched as the empty URL, which an empty
+        // `insteadOf` rewrites to this one.
+        if matches!(promisor[0], "remote.promisor" | "remote.partialclonefilter") {
+            git(&["config", "url.ssh://manor.invalid/croft.git.insteadOf", ""]);
+        }
+        git(&["config", "core.sshCommand", program.to_str().unwrap()]);
+        (repo, marker)
     }
 
     fn git_init(path: &Path) {
@@ -996,6 +1193,51 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn workspace_snapshot_does_not_run_a_filter_whose_name_is_not_utf8() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        git_init(&repo);
+        let marker = tmp.path().join("filter-ran");
+        let program = tmp.path().join("filter.sh");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // In a UTF-8 locale git's own key matching passes over this driver,
+        // yet git runs it, so only there does this test tell the full listing
+        // from `--get-regexp`. Its name cannot go into an override either, so
+        // the repository gets no snapshot.
+        let mut config = b"[filter \"croft\x80\"]\n\tclean = ".to_vec();
+        config.extend_from_slice(program.to_str().unwrap().as_bytes());
+        config.extend_from_slice(b"\n\trequired = true\n");
+        let filter_config = tmp.path().join("filters.config");
+        std::fs::write(&filter_config, config).unwrap();
+        let included = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["config", "include.path"])
+            .arg(&filter_config)
+            .status()
+            .unwrap();
+        assert!(included.success());
+        std::fs::write(repo.join(".gitattributes"), b"README.md filter=croft\x80\n").unwrap();
+        // The same size, so status must hash the file through the filter.
+        std::fs::write(repo.join("README.md"), "best").unwrap();
+
+        let block = build_coding_workspace_block(&repo);
+        assert!(
+            !marker.exists(),
+            "git status ran a filter the snapshot could not override"
+        );
+        assert!(!block.is_some_and(|block| block.contains("Status:")));
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn workspace_snapshot_runs_no_program_the_repository_config_names() {
         use std::io::Write;
         use std::os::unix::fs::PermissionsExt;
@@ -1072,79 +1314,149 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn workspace_snapshot_does_not_fetch_missing_objects() {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-
-        // A promisor remote makes git fetch any object the repository lacks,
-        // through `core.sshCommand`. `mailmap.blob` sends `git log` after one;
-        // a HEAD commit without its tree sends `git status`.
         for missing in ["mailmap blob", "HEAD tree"] {
+            for promisor in PROMISOR_CONFIG {
+                let tmp = tempfile::tempdir().unwrap();
+                let (repo, marker) = repo_missing_an_object(tmp.path(), missing, promisor);
+
+                let block = build_coding_workspace_block(&repo);
+                assert!(
+                    !marker.exists(),
+                    "the snapshot fetched a missing {missing} through core.sshCommand ({promisor:?})"
+                );
+                // The mailmap is optional, so git still reports the commit
+                // without it. A git without `--no-lazy-fetch` is not asked.
+                if missing == "mailmap blob" {
+                    assert_eq!(
+                        block.is_some_and(|block| block.contains("Last commit:")),
+                        git_has_no_lazy_fetch(),
+                        "{promisor:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn older_git_gets_no_snapshot_of_a_repository_with_a_promisor_remote() {
+        // Without `--no-lazy-fetch`, git would fetch through `core.sshCommand`.
+        for missing in ["mailmap blob", "HEAD tree"] {
+            for promisor in PROMISOR_CONFIG {
+                let tmp = tempfile::tempdir().unwrap();
+                let (repo, marker) = repo_missing_an_object(tmp.path(), missing, promisor);
+
+                let mut lines = Vec::new();
+                append_git_snapshot(&repo, LazyFetchGuard::NoPromisorRemote, &mut lines);
+                assert!(
+                    !marker.exists(),
+                    "the snapshot fetched a missing {missing} through core.sshCommand ({promisor:?})"
+                );
+                assert_eq!(lines, Vec::<String>::new(), "{promisor:?}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn older_git_finds_a_promisor_remote_despite_an_inherited_git_config() {
+        // `git config` alone reads the file `GIT_CONFIG` names in place of the
+        // repository's config. Only a child test process inherits the
+        // variable, and it runs nothing but the snapshot, so no other test
+        // and no fixture command sees it.
+        const REPO: &str = "HERMES_TEST_SNAPSHOT_REPO";
+        if let Some(repo) = std::env::var_os(REPO) {
+            let mut lines = Vec::new();
+            append_git_snapshot(
+                Path::new(&repo),
+                LazyFetchGuard::NoPromisorRemote,
+                &mut lines,
+            );
+            assert_eq!(lines, Vec::<String>::new());
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, marker) = repo_missing_an_object(tmp.path(), "mailmap blob", PROMISOR_CONFIG[0]);
+        let empty = tmp.path().join("empty.config");
+        std::fs::write(&empty, "").unwrap();
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg(format!(
+                "{module}::older_git_finds_a_promisor_remote_despite_an_inherited_git_config"
+            ))
+            .env("GIT_CONFIG", &empty)
+            .env(REPO, &repo)
+            .output()
+            .unwrap();
+        assert!(child.status.success(), "{child:?}");
+        // The child ran this test, not an empty selection.
+        assert!(
+            String::from_utf8_lossy(&child.stdout).contains("1 passed"),
+            "{child:?}"
+        );
+        assert!(
+            !marker.exists(),
+            "the snapshot fetched through core.sshCommand"
+        );
+    }
+
+    #[test]
+    fn older_git_finds_a_promisor_remote_wherever_it_is_named() {
+        // In an included file, and under a name that is not UTF-8, which git's
+        // own key matching passes over in a UTF-8 locale.
+        for config in [
+            &b"[remote \"croft\"]\n\tpromisor = true\n"[..],
+            b"[remote \"croft\x80\"]\n\tpromisor = true\n",
+        ] {
             let tmp = tempfile::tempdir().unwrap();
             let repo = tmp.path().join("repo");
             git_init(&repo);
-            let git = |args: &[&str]| {
-                let output = Command::new("git")
-                    .arg("-C")
-                    .arg(&repo)
-                    .args(args)
-                    .output()
-                    .unwrap();
-                assert!(output.status.success(), "git {args:?}: {output:?}");
-            };
-            // Before the remote is configured, so the fixture itself fetches nothing.
-            if missing == "HEAD tree" {
-                let commit = format!(
-                    "tree {}\nauthor T <t@example.com> 1700000000 +0000\n\
-                     committer T <t@example.com> 1700000000 +0000\n\nno tree\n",
-                    "2".repeat(40)
-                );
-                let mut hash = Command::new("git")
-                    .arg("-C")
-                    .arg(&repo)
-                    .args(["hash-object", "-t", "commit", "-w", "--stdin"])
-                    .stdin(std::process::Stdio::piped())
-                    .stdout(std::process::Stdio::piped())
-                    .spawn()
-                    .unwrap();
-                hash.stdin
-                    .take()
-                    .unwrap()
-                    .write_all(commit.as_bytes())
-                    .unwrap();
-                let sha = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap();
-                git(&["update-ref", "HEAD", sha.trim()]);
-            } else {
-                git(&["config", "mailmap.blob", &"1".repeat(40)]);
-            }
-            let marker = tmp.path().join("ssh-ran");
-            let program = tmp.path().join("ssh.sh");
-            std::fs::write(
-                &program,
-                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
-            )
-            .unwrap();
-            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
-            git(&["config", "remote.croft.promisor", "true"]);
-            git(&[
-                "config",
-                "remote.croft.url",
-                "ssh://manor.invalid/croft.git",
-            ]);
-            git(&["config", "core.sshCommand", program.to_str().unwrap()]);
+            assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some());
 
-            let block = build_coding_workspace_block(&repo);
+            let included = tmp.path().join("promisor.config");
+            std::fs::write(&included, config).unwrap();
+            let status = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", "include.path"])
+                .arg(&included)
+                .status()
+                .unwrap();
+            assert!(status.success());
             assert!(
-                !marker.exists(),
-                "the snapshot fetched a missing {missing} through core.sshCommand"
+                workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_none(),
+                "{}",
+                String::from_utf8_lossy(config)
             );
-            // The mailmap is optional, so git still reports the commit without it.
-            if missing == "mailmap blob" {
-                assert_eq!(
-                    block.is_some_and(|block| block.contains("Last commit:")),
-                    git_snapshot_supported()
-                );
-            }
         }
+    }
+
+    #[test]
+    fn older_git_gets_the_snapshot_without_a_promisor_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+
+        // An older git rejects the option, so the command must leave it off
+        // and set the variable that its later maintenance releases obey.
+        let git = workspace_git(tmp.path(), LazyFetchGuard::NoPromisorRemote).unwrap();
+        assert!(!git.get_args().any(|arg| arg == "--no-lazy-fetch"));
+        assert!(git
+            .get_envs()
+            .any(|(name, value)| name == "GIT_NO_LAZY_FETCH" && value == Some("1".as_ref())));
+
+        let mut lines = Vec::new();
+        append_git_snapshot(tmp.path(), LazyFetchGuard::NoPromisorRemote, &mut lines);
+        assert!(
+            lines.iter().any(|line| line.starts_with("Branch: ")),
+            "{lines:?}"
+        );
+        assert!(lines.contains(&"Status: clean".to_string()), "{lines:?}");
+        assert!(
+            lines.iter().any(|line| line.ends_with("init commit")),
+            "{lines:?}"
+        );
     }
 
     #[test]
