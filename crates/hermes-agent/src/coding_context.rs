@@ -622,7 +622,11 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
     let Some(mut git) = workspace_git(root) else {
         return;
     };
-    let status = git.args(["status", "--short", "--branch"]).output();
+    // A submodule has its own config and filter drivers. Read its committed
+    // gitlink state, but never run status inside its dirty worktree.
+    let status = git
+        .args(["status", "--short", "--branch", "--ignore-submodules=dirty"])
+        .output();
     let Ok(output) = status else {
         return;
     };
@@ -846,6 +850,73 @@ mod tests {
         }
         assert_eq!(model_family(Some("acme/foo-1")), None);
         assert_eq!(model_family(None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_run_submodule_filters() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let source = tmp.path().join("source");
+        git_init(&repo);
+        git_init(&source);
+        let git = |root: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        };
+        git(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "nested",
+            ],
+        );
+        git(&repo, &["commit", "-qm", "add submodule"]);
+        let nested = repo.join("nested");
+        let marker = tmp.path().join("submodule-filter-ran");
+        let program = tmp.path().join("filter.sh");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(
+            &nested,
+            &[
+                "config",
+                "filter.croft-submodule.clean",
+                program.to_str().unwrap(),
+            ],
+        );
+        git(
+            &nested,
+            &["config", "filter.croft-submodule.required", "true"],
+        );
+        std::fs::write(
+            nested.join(".gitattributes"),
+            "README.md filter=croft-submodule\n",
+        )
+        .unwrap();
+        std::fs::write(nested.join("README.md"), "best").unwrap();
+
+        let block = build_coding_workspace_block(&repo);
+        assert!(
+            !marker.exists(),
+            "the parent snapshot ran a submodule filter"
+        );
+        assert!(block.expect("workspace block").contains("Status:"));
     }
 
     #[cfg(unix)]
