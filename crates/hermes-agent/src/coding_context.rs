@@ -558,7 +558,7 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 enum LazyFetchGuard {
     /// Git 2.45 and later take `--no-lazy-fetch`.
     Flag,
-    /// Git 2.31 to 2.44 have no such option, and fetch only from a promisor
+    /// Git 2.39.1 to 2.44 have no such option, and fetch only from a promisor
     /// remote, so the snapshot is kept for a repository whose config names none.
     NoPromisorRemote,
 }
@@ -567,24 +567,43 @@ enum LazyFetchGuard {
 /// produce the snapshot safely.
 fn lazy_fetch_guard() -> Option<LazyFetchGuard> {
     // `git version` reads no repository.
-    let accepts = |option: &str| {
+    let version = |option: Option<&str>| {
         Command::new("git")
-            .args([option, "version"])
-            .env("HERMES_GIT_PROBE", "1")
+            .args(option)
+            .arg("version")
             .stdin(std::process::Stdio::null())
             .suppress_windows_console()
             .output()
-            .is_ok_and(|output| output.status.success())
+            .ok()
+            .filter(|output| output.status.success())
     };
-    if accepts("--no-lazy-fetch") {
+    if version(Some("--no-lazy-fetch")).is_some() {
         return Some(LazyFetchGuard::Flag);
     }
-    // Git 2.31 brought `--config-env` together with the indexed `GIT_CONFIG_*`
-    // variables that carry the filter overrides. An older git ignores those
-    // variables without a word and would run the repository's filters, so it
-    // gets no snapshot.
-    accepts("--config-env=hermes.probe=HERMES_GIT_PROBE")
+    let printed = version(None)?;
+    is_git_2_39_1_or_later(&String::from_utf8_lossy(&printed.stdout))
         .then_some(LazyFetchGuard::NoPromisorRemote)
+}
+
+/// Whether `git version` printed 2.39.1 or a later version. An older git gets
+/// no snapshot. `git status` reads the workspace's `.gitattributes`, and a
+/// hostile one can overflow the attribute parser before 2.39.1
+/// (CVE-2022-23521). Before 2.31 git also ignores the indexed `GIT_CONFIG_*`
+/// variables that carry the filter overrides. A distribution's patched build
+/// of an older version is refused too, as its number does not show the patch.
+fn is_git_2_39_1_or_later(version: &str) -> bool {
+    let mut numbers = version
+        .trim()
+        .strip_prefix("git version ")
+        .unwrap_or_default()
+        .split(|c: char| c == '.' || c.is_whitespace())
+        .map(|number| number.parse::<u32>().ok());
+    let (Some(Some(major)), Some(Some(minor)), Some(Some(patch))) =
+        (numbers.next(), numbers.next(), numbers.next())
+    else {
+        return false;
+    };
+    (major, minor, patch) >= (2, 39, 1)
 }
 
 /// A `git` command for reading the workspace that the workspace's own
@@ -598,13 +617,16 @@ fn lazy_fetch_guard() -> Option<LazyFetchGuard> {
 /// either, which runs `core.sshCommand` or a remote helper: `guard` says how.
 fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     // Every config key git reads for this repository, from every scope and
-    // included file. The keys are matched here, byte for byte: git's own
-    // `--get-regexp` passes over a key holding a byte its locale cannot
-    // decode, so a repository could hide a filter or a remote from it.
+    // included file. `git config` alone reads the file `GIT_CONFIG` names in
+    // their place, so that variable is dropped. The keys are matched here,
+    // byte for byte: git's own `--get-regexp` passes over a key holding a byte
+    // its locale cannot decode, so a repository could hide a filter or a
+    // remote from it.
     let listed = Command::new("git")
         .arg("-C")
         .arg(root)
         .args(["config", "--includes", "--null", "--name-only", "--list"])
+        .env_remove("GIT_CONFIG")
         .stdin(std::process::Stdio::null())
         .suppress_windows_console()
         .output()
@@ -748,19 +770,32 @@ fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
 mod tests {
     use super::*;
 
-    fn git_accepts(option: &str) -> bool {
-        Command::new("git")
-            .args([option, "version"])
-            .env("HERMES_GIT_PROBE", "1")
-            .output()
-            .is_ok_and(|output| output.status.success())
+    /// Whether this git can produce the snapshot of a repository without a
+    /// promisor remote.
+    fn git_snapshot_supported() -> bool {
+        lazy_fetch_guard().is_some()
     }
 
-    /// Whether this git can produce the snapshot of a repository without a
-    /// promisor remote: it needs `--no-lazy-fetch` (Git 2.45) or, failing
-    /// that, `--config-env` (Git 2.31).
-    fn git_snapshot_supported() -> bool {
-        git_accepts("--no-lazy-fetch") || git_accepts("--config-env=hermes.probe=HERMES_GIT_PROBE")
+    #[test]
+    fn only_git_2_39_1_or_later_gets_the_older_git_fallback() {
+        for (version, expected) in [
+            ("git version 2.39.1\n", true),
+            ("git version 2.39.3 (Apple Git-146)\n", true),
+            ("git version 2.40.0.rc0\n", true),
+            ("git version 2.43.0.windows.1\n", true),
+            ("git version 2.44.1\n", true),
+            ("git version 3.0.0\n", true),
+            ("git version 2.39.0\n", false),
+            ("git version 2.39.0.56.g57e2c6ebbe\n", false),
+            ("git version 2.34.1\n", false),
+            ("git version 2.30.9\n", false),
+            ("git version 2.39\n", false),
+            ("git version unknown\n", false),
+            ("2.44.1\n", false),
+            ("", false),
+        ] {
+            assert_eq!(is_git_2_39_1_or_later(version), expected, "{version:?}");
+        }
     }
 
     /// Each way a repository's config can name a promisor remote. Git reads
@@ -1277,7 +1312,7 @@ mod tests {
                 if missing == "mailmap blob" {
                     assert_eq!(
                         block.is_some_and(|block| block.contains("Last commit:")),
-                        git_accepts("--no-lazy-fetch"),
+                        lazy_fetch_guard() == Some(LazyFetchGuard::Flag),
                         "{promisor:?}"
                     );
                 }
@@ -1303,6 +1338,51 @@ mod tests {
                 assert_eq!(lines, Vec::<String>::new(), "{promisor:?}");
             }
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn older_git_finds_a_promisor_remote_despite_an_inherited_git_config() {
+        // `git config` alone reads the file `GIT_CONFIG` names in place of the
+        // repository's config. Only a child test process inherits the
+        // variable, and it runs nothing but the snapshot, so no other test
+        // and no fixture command sees it.
+        const REPO: &str = "HERMES_TEST_SNAPSHOT_REPO";
+        if let Some(repo) = std::env::var_os(REPO) {
+            let mut lines = Vec::new();
+            append_git_snapshot(
+                Path::new(&repo),
+                LazyFetchGuard::NoPromisorRemote,
+                &mut lines,
+            );
+            assert_eq!(lines, Vec::<String>::new());
+            return;
+        }
+
+        let tmp = tempfile::tempdir().unwrap();
+        let (repo, marker) = repo_missing_an_object(tmp.path(), "mailmap blob", PROMISOR_CONFIG[0]);
+        let empty = tmp.path().join("empty.config");
+        std::fs::write(&empty, "").unwrap();
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let child = Command::new(std::env::current_exe().unwrap())
+            .arg("--exact")
+            .arg(format!(
+                "{module}::older_git_finds_a_promisor_remote_despite_an_inherited_git_config"
+            ))
+            .env("GIT_CONFIG", &empty)
+            .env(REPO, &repo)
+            .output()
+            .unwrap();
+        assert!(child.status.success(), "{child:?}");
+        // The child ran this test, not an empty selection.
+        assert!(
+            String::from_utf8_lossy(&child.stdout).contains("1 passed"),
+            "{child:?}"
+        );
+        assert!(
+            !marker.exists(),
+            "the snapshot fetched through core.sshCommand"
+        );
     }
 
     #[test]
