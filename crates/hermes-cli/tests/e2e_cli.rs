@@ -154,6 +154,72 @@ fn e2e_cli_expands_tilde_in_hermes_home() {
 }
 
 #[test]
+fn e2e_cli_config_check_reports_unknown_platform_toolsets() {
+    let check = |config: &str, mcp_servers_json: Option<&str>| -> String {
+        let dir = tempfile::tempdir().expect("tempdir");
+        fs::write(dir.path().join("config.yaml"), config).expect("write config");
+        if let Some(json) = mcp_servers_json {
+            fs::write(dir.path().join("mcp_servers.json"), json).expect("write mcp config");
+        }
+        let mut cmd = Command::cargo_bin("hermes-agent-ultra").expect("binary exists");
+        cmd.env("HERMES_HOME", dir.path());
+        cmd.args(["config", "check"]);
+        let out = cmd.assert().success().get_output().stdout.clone();
+        String::from_utf8(out).expect("utf8")
+    };
+
+    // The default selections name only toolsets the runtime resolves.
+    let clean = check("model: local-test:deterministic\n", None);
+    assert!(
+        !clean.contains("platform_toolsets"),
+        "default toolsets were reported: {clean:?}"
+    );
+
+    let stale = check(
+        r#"
+model: local-test:deterministic
+mcp_servers:
+  - name: yaml-server
+    command: "true"
+platform_toolsets:
+  cli:
+    - hermes-cli
+    - web
+    - todo
+    - yaml-server
+    - mcp_yaml_server_search
+    - mcp-json_server
+    - retired-toolset
+  telegram:
+    - hermes-telegram
+    - mcp-removed
+"#,
+        Some(r#"{"servers": [{"name": "json-server", "command": "true"}]}"#),
+    );
+    for expected in [
+        "platform_toolsets.cli names 'retired-toolset'",
+        "platform_toolsets.telegram names 'mcp-removed'",
+    ] {
+        assert!(stale.contains(expected), "missing {expected:?}: {stale:?}");
+    }
+    assert_eq!(
+        stale.matches("platform_toolsets.").count(),
+        2,
+        "known names were reported: {stale:?}"
+    );
+
+    // An unreadable MCP file is named, not passed over.
+    let unreadable = check(
+        "model: local-test:deterministic\nplatform_toolsets:\n  cli:\n    - json-server\n",
+        Some("{not json"),
+    );
+    assert!(
+        unreadable.contains("MCP servers were not read") && unreadable.contains("mcp_servers.json"),
+        "the unreadable file was not reported: {unreadable:?}"
+    );
+}
+
+#[test]
 fn e2e_cli_model_switch_warns_on_stale_auxiliary_provider() {
     let dir = tempfile::tempdir().expect("tempdir");
     let home = dir.path();
