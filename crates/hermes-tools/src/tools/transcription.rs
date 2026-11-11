@@ -41,6 +41,9 @@ const MISTRAL_STT_MODELS: &[&str] = &[
     "voxtral-mini-2507",
     "voxtral-mini-2602",
 ];
+/// Groq shut `distil-whisper-large-v3-en` down on 23 August 2025, so a
+/// configuration that still names it gets the Groq default.
+const RETIRED_GROQ_STT_MODELS: &[&str] = &["distil-whisper-large-v3-en"];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct TranscriptionEndpoint {
@@ -123,11 +126,15 @@ pub(crate) fn normalize_stt_model(provider: &str, requested: Option<&str>) -> St
     let requested = requested.map(str::trim).filter(|s| !s.is_empty());
     match provider {
         "groq" => {
-            let default = env_or_default(&["STT_GROQ_MODEL"], "whisper-large-v3-turbo");
+            // `STT_GROQ_MODEL` can itself still name the retired model.
+            let default = env_trimmed("STT_GROQ_MODEL")
+                .filter(|model| !known_model(model, RETIRED_GROQ_STT_MODELS))
+                .unwrap_or_else(|| "whisper-large-v3-turbo".to_string());
             match requested {
                 Some(model)
                     if known_model(model, OPENAI_STT_MODELS)
-                        || known_model(model, MISTRAL_STT_MODELS) =>
+                        || known_model(model, MISTRAL_STT_MODELS)
+                        || known_model(model, RETIRED_GROQ_STT_MODELS) =>
                 {
                     default
                 }
@@ -574,6 +581,36 @@ mod tests {
         assert_eq!(
             normalize_stt_model("openai", Some("gpt-4o-transcribe")),
             "gpt-4o-transcribe"
+        );
+    }
+
+    #[test]
+    fn normalize_stt_model_remaps_the_retired_groq_model() {
+        let _g = EnvScope::new();
+        for retired in ["distil-whisper-large-v3-en", "Distil-Whisper-Large-V3-EN"] {
+            assert_eq!(
+                normalize_stt_model("groq", Some(retired)),
+                "whisper-large-v3-turbo"
+            );
+        }
+        // Other providers still treat it as a Groq-only name.
+        assert_eq!(
+            normalize_stt_model("openai", Some("distil-whisper-large-v3-en")),
+            "whisper-1"
+        );
+
+        // A configured Groq default replaces it.
+        std::env::set_var("STT_GROQ_MODEL", "whisper-large-v3");
+        assert_eq!(
+            normalize_stt_model("groq", Some("distil-whisper-large-v3-en")),
+            "whisper-large-v3"
+        );
+        // The configured default can be the retired model too.
+        std::env::set_var("STT_GROQ_MODEL", "distil-whisper-large-v3-en");
+        assert_eq!(normalize_stt_model("groq", None), "whisper-large-v3-turbo");
+        assert_eq!(
+            normalize_stt_model("groq", Some("whisper-1")),
+            "whisper-large-v3-turbo"
         );
     }
 
