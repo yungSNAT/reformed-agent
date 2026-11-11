@@ -6,7 +6,6 @@
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -18,25 +17,28 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::tools::auth_snapshot::auth_status_snapshot;
-use crate::ToolRegistry;
+use crate::{ToolRegistry, WeakToolRegistry};
 
 const TOOL_NAME: &str = "integrations_snapshot";
 const DEFAULT_CONTEXTLATTICE_URL: &str = "http://127.0.0.1:8075";
 
 #[derive(Clone)]
 pub struct IntegrationsSnapshotHandler {
-    registry: Arc<ToolRegistry>,
+    registry: WeakToolRegistry,
 }
 
 impl IntegrationsSnapshotHandler {
-    pub fn new(registry: Arc<ToolRegistry>) -> Self {
-        Self { registry }
+    pub fn new(registry: &ToolRegistry) -> Self {
+        Self {
+            registry: registry.downgrade(),
+        }
     }
 }
 
 #[async_trait]
 impl ToolHandler for IntegrationsSnapshotHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        let registry = self.registry.upgrade_for_call()?;
         let action = params
             .get("action")
             .and_then(Value::as_str)
@@ -73,7 +75,7 @@ impl ToolHandler for IntegrationsSnapshotHandler {
         let payload = match action.as_str() {
             "status" | "all" | "snapshot" => {
                 integration_snapshot(
-                    &self.registry,
+                    &registry,
                     provider,
                     model,
                     &memory_url,
@@ -104,7 +106,7 @@ impl ToolHandler for IntegrationsSnapshotHandler {
                 "status": "ok",
                 "action": action,
                 "captured_at": Utc::now().to_rfc3339(),
-                "gateway": gateway_panel(&self.registry, include_plugins),
+                "gateway": gateway_panel(&registry, include_plugins),
                 "mutable": false,
             }),
             "memory" => json!({
@@ -591,7 +593,7 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::OnceLock;
+    use std::sync::{Arc, OnceLock};
 
     use hermes_core::{AgentError, CommandOutput, Skill, SkillMeta, TerminalBackend};
     use tempfile::tempdir;
@@ -803,7 +805,7 @@ mod tests {
             let _legacy_key = EnvGuard::remove("HERMES_OPENAI_API_KEY");
 
             let registry = ToolRegistry::new();
-            let handler = IntegrationsSnapshotHandler::new(Arc::new(registry));
+            let handler = IntegrationsSnapshotHandler::new(&registry);
             handler
                 .execute(json!({
                     "action": "repair",
