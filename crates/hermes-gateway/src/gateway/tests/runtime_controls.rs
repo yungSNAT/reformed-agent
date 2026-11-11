@@ -1226,6 +1226,8 @@ async fn gateway_slack_reactions_skip_non_dm_non_mentions() {
 
 #[tokio::test]
 async fn gateway_context_handler_receives_structured_runtime_context() {
+    let home = tempfile::tempdir().unwrap();
+    let _home_guard = HermesHomeEnvGuard::set(home.path());
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
         messages: sent.clone(),
