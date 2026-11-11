@@ -102,16 +102,17 @@ impl FileJobPersistence {
         self.data_dir.join(format!("{}.json", id))
     }
 
-    /// Return a temporary file path for atomic writes.
-    fn temp_job_path(&self, id: &str) -> PathBuf {
-        self.data_dir
-            .join(format!(".{}.{}.tmp", id, uuid::Uuid::new_v4()))
-    }
-
     /// Atomically write a job file by writing to a temporary file and renaming.
+    ///
+    /// A symlinked job file keeps its link: the temporary file is staged
+    /// beside the link's target and renamed over the target.
     async fn atomic_write_job(&self, id: &str, contents: &str) -> Result<(), std::io::Error> {
-        let tmp = self.temp_job_path(id);
-        let dst = self.job_path(id);
+        let dst = hermes_config::resolve_symlink_target(&self.job_path(id));
+        // A dangling link can name a folder that does not exist yet.
+        if let Some(parent) = dst.parent() {
+            fs::create_dir_all(parent).await?;
+        }
+        let tmp = dst.with_file_name(format!(".{}.{}.tmp", id, uuid::Uuid::new_v4()));
         fs::write(&tmp, contents).await?;
         secure_file(&tmp).await?;
         fs::rename(&tmp, &dst).await?;
@@ -453,6 +454,53 @@ mod tests {
             let name = name.to_string_lossy();
             assert!(!name.ends_with(".tmp"), "unexpected temp file: {name}");
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_save_job_through_a_symlink_updates_the_target_and_keeps_the_link() {
+        let dir = tempdir().unwrap();
+        let cron_dir = dir.path().join("cron");
+        let real_dir = dir.path().join("dotfiles");
+        std::fs::create_dir_all(&cron_dir).unwrap();
+        std::fs::create_dir_all(&real_dir).unwrap();
+        let persistence = FileJobPersistence::with_dir(cron_dir.clone());
+        let job = crate::job::CronJob::new("0 9 * * *", "Linked job");
+        let real = real_dir.join("job.json");
+        std::fs::write(&real, "{}").unwrap();
+        let link = persistence.job_path(&job.id);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        persistence.save_job(&job).await.unwrap();
+
+        assert!(link.is_symlink(), "the link was replaced by a regular file");
+        assert!(std::fs::read_to_string(&real).unwrap().contains(&job.id));
+        for folder in [&cron_dir, &real_dir] {
+            for entry in std::fs::read_dir(folder).unwrap() {
+                let name = entry.unwrap().file_name();
+                let name = name.to_string_lossy();
+                assert!(!name.ends_with(".tmp"), "unexpected temp file: {name}");
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn test_save_job_through_a_dangling_symlink_creates_the_target() {
+        let dir = tempdir().unwrap();
+        let cron_dir = dir.path().join("cron");
+        std::fs::create_dir_all(&cron_dir).unwrap();
+        let persistence = FileJobPersistence::with_dir(cron_dir);
+        let job = crate::job::CronJob::new("0 9 * * *", "Linked job");
+        // Neither the target nor its folder exists yet.
+        let real = dir.path().join("dotfiles").join("job.json");
+        let link = persistence.job_path(&job.id);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        persistence.save_job(&job).await.unwrap();
+
+        assert!(link.is_symlink(), "the link was replaced by a regular file");
+        assert!(std::fs::read_to_string(&real).unwrap().contains(&job.id));
     }
 
     #[cfg(unix)]

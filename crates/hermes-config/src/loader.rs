@@ -57,8 +57,35 @@ fn atomic_temp_path(path: &Path) -> Result<PathBuf, ConfigError> {
     Ok(parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), nonce)))
 }
 
+/// The file an atomic write to `path` must replace.
+///
+/// Renaming onto a symlink replaces the link and leaves its target stale, so a
+/// link is followed to the file it names, whether or not that file exists yet.
+pub fn resolve_symlink_target(path: &Path) -> PathBuf {
+    let mut current = path.to_path_buf();
+    // Linux follows at most 40 links, so the 41st read must find the file. A
+    // longer chain is a loop, and the write then replaces the first link, as a
+    // plain rename would.
+    for _ in 0..=40 {
+        let Ok(target) = std::fs::read_link(&current) else {
+            return current;
+        };
+        // A relative target is resolved against the link's folder.
+        current = match current.parent() {
+            Some(parent) => parent.join(target),
+            None => target,
+        };
+    }
+    path.to_path_buf()
+}
+
 /// Atomically write bytes to a path by writing a sibling temp file then renaming.
+///
+/// A symlinked `path` keeps its link: the temp file is staged beside the
+/// link's target, on the target's filesystem, and renamed over the target.
 pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
+    let path = resolve_symlink_target(path);
+    let path = path.as_path();
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
     let tmp_path = atomic_temp_path(path)?;
