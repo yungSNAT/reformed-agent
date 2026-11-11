@@ -110,7 +110,7 @@ fn maybe_nous_401_diagnostic(
 
     let response = err.replace('\n', " ");
     let response_snippet = if response.len() > 200 {
-        format!("{}...", &response[..200])
+        format!("{}...", &response[..response.floor_char_boundary(200)])
     } else {
         response
     };

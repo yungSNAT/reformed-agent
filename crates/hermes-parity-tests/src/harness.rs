@@ -191,10 +191,7 @@ fn extract_shortstat_count(stat_line: &str, marker: &str) -> u64 {
         return 0;
     };
     let prefix = stat_line[..marker_idx].trim_end();
-    let digits_start = prefix
-        .rfind(|c: char| !c.is_ascii_digit())
-        .map(|idx| idx + 1)
-        .unwrap_or(0);
+    let digits_start = prefix.trim_end_matches(|c: char| c.is_ascii_digit()).len();
     prefix[digits_start..].parse::<u64>().unwrap_or(0)
 }
 

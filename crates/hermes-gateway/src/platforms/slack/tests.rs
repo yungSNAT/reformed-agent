@@ -40,6 +40,15 @@ fn split_message_long() {
 }
 
 #[test]
+fn split_message_multi_byte_text_cuts_on_character_boundaries() {
+    // 3-byte characters with no newline: 4000 falls inside a character.
+    let text = "日本語".repeat(2000);
+    let chunks = split_message(&text, 4000);
+    assert_eq!(chunks.concat(), text);
+    assert!(chunks.iter().all(|c| c.len() <= 4000));
+}
+
+#[test]
 fn parse_event_message() {
     let env = SocketModeEnvelope {
         envelope_type: "events_api".into(),

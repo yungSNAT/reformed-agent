@@ -84,7 +84,7 @@ impl SingularityBackend {
 
     fn truncate_output(&self, s: String) -> String {
         if s.len() > self.max_output_size {
-            s[..self.max_output_size].to_string()
+            s[..s.floor_char_boundary(self.max_output_size)].to_string()
         } else {
             s
         }

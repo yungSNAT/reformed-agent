@@ -276,8 +276,8 @@ impl MemoryProviderPlugin for ByteRoverPlugin {
 
         let combined = format!(
             "User: {}\nAssistant: {}",
-            &user_content[..user_content.len().min(2000)],
-            &assistant_content[..assistant_content.len().min(2000)]
+            &user_content[..user_content.floor_char_boundary(2000)],
+            &assistant_content[..assistant_content.floor_char_boundary(2000)]
         );
         std::thread::spawn(move || {
             let (ok, _) = run_brv(&["curate", "--", &combined], CURATE_TIMEOUT_SECS, &cwd);

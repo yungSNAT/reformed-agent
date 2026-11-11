@@ -551,12 +551,81 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
     seen.into_keys().take(MAX_VERIFY_COMMANDS).collect()
 }
 
-fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
-    let status = Command::new("git")
+/// A `git` command for reading the workspace that the workspace's own
+/// `.git/config` cannot use to run a program: an empty `core.fsmonitor`
+/// disables the fsmonitor program on every git version, `log.showSignature`
+/// off stops `git log` running `gpg.program`, and `--no-optional-locks` keeps
+/// `git status` from writing the index, so no index hook runs. Disable every
+/// configured filter too: status can run clean/process commands while hashing
+/// tracked files. Reading config names itself does not execute those commands.
+fn workspace_git(root: &Path) -> Option<Command> {
+    let filters = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args(["status", "--short", "--branch"])
+        .args([
+            "config",
+            "--includes",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\..*\.(clean|smudge|process|required)$",
+        ])
+        .stdin(std::process::Stdio::null())
         .suppress_windows_console()
+        .output()
+        .ok()?;
+    // Exit 1 means no matching keys. Refuse the snapshot if discovery fails,
+    // rather than running status with an incomplete set of overrides.
+    if !filters.status.success() && filters.status.code() != Some(1) {
+        return None;
+    }
+    let keys = std::str::from_utf8(&filters.stdout).ok()?;
+    let mut drivers = BTreeMap::new();
+    for (index, key) in keys.split_terminator('\0').enumerate() {
+        if index >= 256 {
+            return None;
+        }
+        let (driver, _) = key.rsplit_once('.')?;
+        drivers.insert(driver, ());
+    }
+    let mut cmd = Command::new("git");
+    cmd.arg("-C")
+        .arg(root)
+        .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
+        .arg("--no-optional-locks")
+        .stdin(std::process::Stdio::null())
+        .suppress_windows_console();
+    let mut config_count = 0;
+    for driver in drivers.keys() {
+        for (setting, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            // -c splits on '=', which is also valid inside a driver name.
+            // Indexed environment entries keep the key separate from its value.
+            cmd.env(
+                format!("GIT_CONFIG_KEY_{config_count}"),
+                format!("{driver}.{setting}"),
+            )
+            .env(format!("GIT_CONFIG_VALUE_{config_count}"), value);
+            config_count += 1;
+        }
+    }
+    cmd.env("GIT_CONFIG_COUNT", config_count.to_string())
+        .env_remove("GIT_CONFIG_PARAMETERS");
+    Some(cmd)
+}
+
+fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
+    let Some(mut git) = workspace_git(root) else {
+        return;
+    };
+    // A submodule has its own config and filter drivers. Read its committed
+    // gitlink state, but never run status inside its dirty worktree.
+    let status = git
+        .args(["status", "--short", "--branch", "--ignore-submodules=dirty"])
         .output();
     let Ok(output) = status else {
         return;
@@ -601,11 +670,8 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
 }
 
 fn git_last_commit(root: &Path) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
+    let output = workspace_git(root)?
         .args(["log", "-1", "--oneline"])
-        .suppress_windows_console()
         .output()
         .ok()?;
     if !output.status.success() {
@@ -784,5 +850,201 @@ mod tests {
         }
         assert_eq!(model_family(Some("acme/foo-1")), None);
         assert_eq!(model_family(None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_run_submodule_filters() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let source = tmp.path().join("source");
+        git_init(&repo);
+        git_init(&source);
+        let git = |root: &Path, args: &[&str]| {
+            let output = Command::new("git")
+                .arg("-C")
+                .arg(root)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(output.status.success(), "git {args:?}: {output:?}");
+        };
+        git(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "nested",
+            ],
+        );
+        git(&repo, &["commit", "-qm", "add submodule"]);
+        let nested = repo.join("nested");
+        let marker = tmp.path().join("submodule-filter-ran");
+        let program = tmp.path().join("filter.sh");
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        git(
+            &nested,
+            &[
+                "config",
+                "filter.croft-submodule.clean",
+                program.to_str().unwrap(),
+            ],
+        );
+        git(
+            &nested,
+            &["config", "filter.croft-submodule.required", "true"],
+        );
+        std::fs::write(
+            nested.join(".gitattributes"),
+            "README.md filter=croft-submodule\n",
+        )
+        .unwrap();
+        std::fs::write(nested.join("README.md"), "best").unwrap();
+
+        let block = build_coding_workspace_block(&repo);
+        assert!(
+            !marker.exists(),
+            "the parent snapshot ran a submodule filter"
+        );
+        assert!(block.expect("workspace block").contains("Status:"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_run_repository_filters() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for kind in ["clean", "process"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            git_init(&repo);
+            let git = |args: &[&str]| {
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "git {args:?}: {output:?}");
+            };
+            let marker = tmp.path().join("filter-ran");
+            let program = tmp.path().join("filter.sh");
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(
+                repo.join(".gitattributes"),
+                "README.md filter=croft-manor=x\n",
+            )
+            .unwrap();
+            // Include a separate config file, as filter commands need not live
+            // directly in .git/config. Git must not execute either variant.
+            let filter_config = tmp.path().join("filters.config");
+            std::fs::write(
+                &filter_config,
+                format!(
+                    "[filter \"croft-manor=x\"]\n\t{kind} = {}\n\trequired = true\n",
+                    program.display()
+                ),
+            )
+            .unwrap();
+            git(&["config", "include.path", filter_config.to_str().unwrap()]);
+            // Keep its size unchanged so status must hash it instead of
+            // reporting a size mismatch without consulting the filter.
+            std::fs::write(repo.join("README.md"), "best").unwrap();
+
+            let block = build_coding_workspace_block(&repo);
+            assert!(
+                !marker.exists(),
+                "git status ran the repository's {kind} filter"
+            );
+            let block = block.expect("workspace block");
+            assert!(block.contains("Status:"), "{kind}: {block}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_runs_no_program_the_repository_config_names() {
+        use std::io::Write;
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        git_init(&repo);
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        let marker_program = |name: &str| {
+            let marker = tmp.path().join(format!("{name}-ran"));
+            let program = tmp.path().join(format!("{name}.sh"));
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            (marker, program.display().to_string())
+        };
+
+        // A HEAD commit carrying a signature makes `git log` verify it with
+        // `gpg.program` when `log.showSignature` is on.
+        let tree = git(&["rev-parse", "HEAD^{tree}"]);
+        let commit = format!(
+            "tree {tree}\nauthor T <t@example.com> 1700000000 +0000\n\
+             committer T <t@example.com> 1700000000 +0000\n\
+             gpgsig -----BEGIN PGP SIGNATURE-----\n \n -----END PGP SIGNATURE-----\n\nsigned\n"
+        );
+        let mut hash = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(["hash-object", "-t", "commit", "-w", "--stdin"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        hash.stdin
+            .take()
+            .unwrap()
+            .write_all(commit.as_bytes())
+            .unwrap();
+        let sha = String::from_utf8(hash.wait_with_output().unwrap().stdout).unwrap();
+        git(&["update-ref", "HEAD", sha.trim()]);
+
+        let (fsmonitor_ran, fsmonitor) = marker_program("fsmonitor");
+        let (gpg_ran, gpg) = marker_program("gpg");
+        git(&["config", "core.fsmonitor", &fsmonitor]);
+        git(&["config", "log.showSignature", "true"]);
+        git(&["config", "gpg.program", &gpg]);
+
+        let block = build_coding_workspace_block(&repo).expect("workspace block");
+        assert!(block.contains("Status:"), "{block}");
+        assert!(
+            !fsmonitor_ran.exists(),
+            "git status ran the repository's core.fsmonitor program"
+        );
+        assert!(
+            !gpg_ran.exists(),
+            "git log ran the repository's gpg.program"
+        );
     }
 }

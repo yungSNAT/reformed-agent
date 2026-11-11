@@ -1,5 +1,5 @@
 fn render_header(frame: &mut Frame, app: &App, area: Rect, colors: &crate::theme::RatatuiColors) {
-    let session_short = &app.session_id[..8.min(app.session_id.len())];
+    let session_short = &app.session_id[..app.session_id.floor_char_boundary(8)];
     let chrome = format!(
         "  ·  Printing press 2.0  ·  session {}  ·  Enter send  ·  Shift+Enter/Ctrl+J newline  ·  / commands  ·  Ctrl+L lane  ·  Ctrl+O cockpit  ·  Ctrl+G refresh-tail",
         session_short

@@ -382,7 +382,10 @@ impl ContextCompressor {
                                 let safe_args =
                                     redact_sensitive_summary_text(&tc.function.arguments);
                                 let args = if safe_args.len() > TOOL_ARGS_MAX {
-                                    format!("{}...", &safe_args[..TOOL_ARGS_HEAD])
+                                    format!(
+                                        "{}...",
+                                        &safe_args[..safe_args.floor_char_boundary(TOOL_ARGS_HEAD)]
+                                    )
                                 } else {
                                     safe_args
                                 };

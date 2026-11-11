@@ -113,8 +113,17 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
             cmd.arg(flag).arg(code);
         }
 
+        // Model-written code gets the environment without provider keys and
+        // other credentials, except those the user passed through, as the
+        // terminal tool does.
+        let passthrough = crate::tools::env_passthrough::get_all_passthrough();
+        cmd.env_clear().envs(
+            hermes_core::subprocess_env::hermes_subprocess_env_with_passthrough(&passthrough),
+        );
         apply_code_subprocess_home(&mut cmd);
-        cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
+        cmd.stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped());
         cmd.suppress_windows_console();
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
@@ -219,6 +228,60 @@ mod tests {
         );
     }
 
+    /// Sets `OPENAI_API_KEY` to `canary` with no passthrough in force (an
+    /// empty `HERMES_HOME`, so no configured list), runs `setup`, then returns
+    /// what model code sees for it. Callers hold `test_lock`.
+    fn openai_key_seen_by_model_code(canary: &str, setup: impl FnOnce()) -> String {
+        let home = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::set("HERMES_HOME", home.path().to_str().unwrap());
+        crate::tools::env_passthrough::reset_config_passthrough_cache_for_tests();
+        let _key = EnvGuard::set("OPENAI_API_KEY", canary);
+        let _force = EnvGuard::remove("_HERMES_FORCE_OPENAI_API_KEY");
+        crate::tools::env_passthrough::clear_env_passthrough();
+        let _pass = EnvGuard::remove("HERMES_SUBPROCESS_ENV_PASSTHROUGH");
+        setup();
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("test runtime");
+        let raw = runtime
+            .block_on(LocalCodeExecutionBackend::default().execute(
+                "printf '%s' \"${OPENAI_API_KEY:-absent}\"",
+                Some("bash"),
+                Some(5),
+            ))
+            .expect("bash should run");
+        crate::tools::env_passthrough::clear_env_passthrough();
+        let payload: serde_json::Value = serde_json::from_str(&raw).expect("json payload");
+        payload["stdout"].as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn model_code_does_not_see_provider_credentials() {
+        let _global_env = test_lock::lock();
+        assert_eq!(openai_key_seen_by_model_code("sk-canary", || {}), "absent");
+    }
+
+    #[test]
+    fn model_code_sees_credentials_the_user_passed_through() {
+        let _global_env = test_lock::lock();
+        let seen = openai_key_seen_by_model_code("sk-canary", || {
+            std::env::set_var("HERMES_SUBPROCESS_ENV_PASSTHROUGH", "OPENAI_API_KEY");
+        });
+        assert_eq!(seen, "sk-canary");
+    }
+
+    #[test]
+    fn model_code_sees_credentials_on_the_passthrough_list() {
+        let _global_env = test_lock::lock();
+        let seen = openai_key_seen_by_model_code("sk-canary", || {
+            crate::tools::env_passthrough::register_env_passthrough(["OPENAI_API_KEY"]);
+            // Only the list, not the variable it is mirrored to.
+            std::env::remove_var("HERMES_SUBPROCESS_ENV_PASSTHROUGH");
+        });
+        assert_eq!(seen, "sk-canary");
+    }
+
     struct EnvGuard {
         key: &'static str,
         original: Option<String>,
@@ -228,6 +291,12 @@ mod tests {
         fn set(key: &'static str, value: &str) -> Self {
             let original = std::env::var(key).ok();
             std::env::set_var(key, value);
+            Self { key, original }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::remove_var(key);
             Self { key, original }
         }
     }

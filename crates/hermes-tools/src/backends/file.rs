@@ -363,28 +363,26 @@ impl LocalPatchBackend {
         s.split_whitespace().collect::<Vec<_>>().join(" ")
     }
 
+    /// Maps a byte position in `normalize_whitespace(original)` back to
+    /// `original`. Mirrors `split_whitespace`: leading whitespace is dropped,
+    /// each inner run of Unicode whitespace becomes one space, and other
+    /// characters keep their UTF-8 width.
     fn map_normalized_pos(original: &str, _normalized: &str, norm_pos: usize) -> usize {
-        let mut orig_idx = 0;
+        let mut chars = original.char_indices().peekable();
+        while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
         let mut norm_idx = 0;
-        let orig_bytes = original.as_bytes();
-
-        while norm_idx < norm_pos && orig_idx < orig_bytes.len() {
-            if orig_bytes[orig_idx].is_ascii_whitespace() {
-                orig_idx += 1;
-                if norm_idx < norm_pos {
-                    while orig_idx < orig_bytes.len() && orig_bytes[orig_idx].is_ascii_whitespace()
-                    {
-                        orig_idx += 1;
-                    }
-                    norm_idx += 1;
-                }
-            } else {
-                orig_idx += 1;
+        while let Some((idx, c)) = chars.next() {
+            if norm_idx >= norm_pos {
+                return idx;
+            }
+            if c.is_whitespace() {
+                while chars.next_if(|(_, c)| c.is_whitespace()).is_some() {}
                 norm_idx += 1;
+            } else {
+                norm_idx += c.len_utf8();
             }
         }
-
-        orig_idx.min(original.len())
+        original.len()
     }
 
     /// Calculate start and end byte positions from line indices.
@@ -394,10 +392,16 @@ impl LocalPatchBackend {
         start_line: usize,
         end_line: usize,
     ) -> (usize, usize) {
-        let start: usize = lines[..start_line].iter().map(|l| l.len() + 1).sum();
-        let end: usize = lines[..end_line].iter().map(|l| l.len() + 1).sum();
-        let end = (end.saturating_sub(1)).min(content.len());
-        (start, end)
+        // `lines` are slices of `content` from `str::lines`, which drops both
+        // `\n` and `\r\n`, so take each line's offset from its slice rather
+        // than assuming 1-byte line endings.
+        let offset = |line: &str| line.as_ptr() as usize - content.as_ptr() as usize;
+        let start = lines.get(start_line).map_or(content.len(), |l| offset(l));
+        let end = match end_line.checked_sub(1).and_then(|i| lines.get(i)) {
+            Some(last) => offset(last) + last.len(),
+            None => start,
+        };
+        (start, end.max(start))
     }
 
     /// Simple sequence similarity ratio (0.0 to 1.0).
@@ -485,7 +489,7 @@ impl PatchBackend for LocalPatchBackend {
             if !content.contains(old_string) {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Could not find '{}' in '{}'",
-                    &old_string[..old_string.len().min(100)],
+                    &old_string[..old_string.floor_char_boundary(100)],
                     path
                 )));
             }
@@ -842,6 +846,24 @@ impl LocalSearchBackend {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn fuzzy_line_match_spans_the_right_bytes_in_crlf_text() {
+        // `old_string` uses `\n`, so only the line-trimmed strategy matches.
+        let haystack = "héllo\r\n  wörld\r\nend\r\n";
+        let found = LocalPatchBackend::fuzzy_find(haystack, "wörld\nend").expect("match");
+        assert_eq!(found.strategy, "line_trimmed");
+        assert_eq!(&haystack[found.start..found.end], "  wörld\r\nend");
+    }
+
+    #[test]
+    fn fuzzy_whitespace_match_maps_back_through_unicode_whitespace() {
+        // A leading space and an ideographic space (3 bytes) precede the match.
+        let haystack = " a\u{3000}b  c";
+        let found = LocalPatchBackend::fuzzy_find(haystack, "b c").expect("match");
+        assert_eq!(found.strategy, "whitespace_normalized");
+        assert_eq!(&haystack[found.start..found.end], "b  c");
+    }
 
     #[tokio::test]
     async fn search_content_supports_offset_and_output_modes() {

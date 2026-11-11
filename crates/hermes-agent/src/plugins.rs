@@ -641,7 +641,7 @@ fn scan_plugin_root(
                         let init_file = path.join("__init__.py");
                         if let Ok(source_text) = std::fs::read_to_string(&init_file) {
                             let probe = if source_text.len() > 8192 {
-                                &source_text[..8192]
+                                &source_text[..source_text.floor_char_boundary(8192)]
                             } else {
                                 source_text.as_str()
                             };

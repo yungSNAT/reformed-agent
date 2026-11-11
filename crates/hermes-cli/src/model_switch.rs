@@ -1088,6 +1088,7 @@ mod tests {
 
     #[tokio::test]
     async fn moa_provider_model_ids_bypass_dynamic_catalog_cache() {
+        let _guard = test_env_lock::lock_async().await;
         let tmp = tempfile::tempdir().expect("tempdir");
         let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({

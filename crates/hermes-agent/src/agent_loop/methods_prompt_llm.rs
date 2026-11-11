@@ -632,7 +632,7 @@ impl AgentLoop {
                         attempt,
                         error_class = ?class,
                         "LLM API error: {}",
-                        &err_str[..err_str.len().min(200)]
+                        &err_str[..err_str.floor_char_boundary(200)]
                     );
 
                     match class {

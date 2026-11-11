@@ -200,7 +200,12 @@ fn split_message(text: &str, max_len: usize) -> Vec<String> {
     let mut start = 0;
 
     while start < text.len() {
-        let end = (start + max_len).min(text.len());
+        // Cut on a character boundary; a cut inside a multi-byte character
+        // panics. Take at least one character so a tiny limit still advances.
+        let mut end = text.floor_char_boundary((start + max_len).min(text.len()));
+        if end == start {
+            end = text.ceil_char_boundary(start + 1);
+        }
 
         if end >= text.len() {
             chunks.push(text[start..].to_string());

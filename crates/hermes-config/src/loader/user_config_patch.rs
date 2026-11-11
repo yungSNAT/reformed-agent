@@ -7,7 +7,7 @@ fn mask_secret(s: &str) -> String {
     if s.len() <= 4 {
         "***".to_string()
     } else {
-        format!("***{}", &s[s.len() - 4..])
+        format!("***{}", &s[s.ceil_char_boundary(s.len() - 4)..])
     }
 }
 

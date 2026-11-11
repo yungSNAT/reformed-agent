@@ -171,6 +171,13 @@ fn ip_allowed(host: &str, scheme: &str, ip: &IpAddr, allow_private_urls: bool) -
     allow_private_urls || !is_blocked_ip(ip) || qq_multimedia_benchmark_exception(host, scheme, ip)
 }
 
+/// `Url::host_str` keeps the brackets of an IPv6 literal (`[::1]`).
+fn ip_literal(host: &str) -> &str {
+    host.strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host)
+}
+
 fn is_safe_url_with_resolver<F, E>(url: &str, mut resolver: F) -> bool
 where
     F: FnMut(&str, u16) -> Result<Vec<IpAddr>, E>,
@@ -194,13 +201,15 @@ where
     }
 
     let allow_private_urls = global_allow_private_urls();
-    if let Ok(ip) = IpAddr::from_str(&host) {
+    if let Ok(ip) = IpAddr::from_str(ip_literal(&host)) {
         return ip_allowed(&host, scheme, &ip, allow_private_urls);
     }
 
     let port = parsed.port_or_known_default().unwrap_or(80);
     let ips = match resolver(&host, port) {
         Ok(ips) if !ips.is_empty() => ips,
+        // Proxy-side DNS cannot establish that the destination is public.
+        // Refuse an unverified hostname even when a proxy is configured.
         Ok(_) | Err(_) => return false,
     };
     ips.iter()
@@ -227,7 +236,7 @@ where
     if is_metadata_hostname(&host) {
         return true;
     }
-    if let Ok(ip) = IpAddr::from_str(&host) {
+    if let Ok(ip) = IpAddr::from_str(ip_literal(&host)) {
         return is_always_blocked_ip(&ip);
     }
 
@@ -239,6 +248,42 @@ where
 
 pub fn is_always_blocked_url(url: &str) -> bool {
     is_always_blocked_url_with_resolver(url, resolve_host_ips)
+}
+
+/// Refuses a URL the agent must not fetch: a private, internal or metadata
+/// address, as `is_safe_url` judges it, or a host on
+/// `security.website_blocklist`. Fails closed when either check cannot run.
+///
+/// shortcut: the address is resolved here and again by the HTTP client, so a
+/// DNS answer that changes in between (rebinding) is not caught; pinning the
+/// resolved address on the request would close that.
+pub async fn ensure_url_fetch_allowed(url: &str) -> Result<(), ToolError> {
+    let owned = url.to_string();
+    tokio::task::spawn_blocking(move || check_url_fetch_allowed(&owned))
+        .await
+        .unwrap_or_else(|e| {
+            Err(ToolError::ExecutionFailed(format!(
+                "Blocked: URL check did not complete: {e}"
+            )))
+        })
+}
+
+fn check_url_fetch_allowed(url: &str) -> Result<(), ToolError> {
+    if !is_safe_url(url) {
+        return Err(ToolError::ExecutionFailed(format!(
+            "Blocked: '{url}' is invalid, could not be resolved, or targets a private or internal address"
+        )));
+    }
+    match crate::website_policy::check_website_access(url, None) {
+        Ok(None) => Ok(()),
+        Ok(Some(block)) => Err(ToolError::ExecutionFailed(format!(
+            "Blocked: '{}' matches website blocklist rule '{}'",
+            block.url, block.rule
+        ))),
+        Err(e) => Err(ToolError::ExecutionFailed(format!(
+            "Blocked: website blocklist could not be read: {e}"
+        ))),
+    }
 }
 
 #[async_trait]
@@ -307,6 +352,67 @@ mod tests {
             }
             reset_allow_private_cache_for_tests();
         }
+    }
+
+    fn without_proxy() -> Vec<EnvVarGuard> {
+        [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ]
+        .iter()
+        .map(|key| EnvVarGuard::remove(key))
+        .collect()
+    }
+
+    #[test]
+    fn dns_failure_is_blocked_even_behind_a_configured_proxy() {
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "false");
+        let _no_proxy = without_proxy();
+        assert!(!is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            resolver_err
+        ));
+        let _proxy = EnvVarGuard::set("HTTPS_PROXY", "http://proxy.internal:3128");
+        assert!(!is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            resolver_err
+        ));
+        assert!(!is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            with_ips(&[])
+        ));
+        assert!(is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            with_ip("93.184.216.34")
+        ));
+        assert!(!is_safe_url_with_resolver(
+            "http://metadata.google.internal/computeMetadata/v1/",
+            resolver_err
+        ));
+    }
+
+    #[test]
+    fn ipv6_literals_are_judged_by_address() {
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "false");
+        let _no_proxy = without_proxy();
+        assert!(is_safe_url_with_resolver(
+            "https://[2606:4700:4700::1111]/",
+            resolver_err
+        ));
+        assert!(!is_safe_url_with_resolver(
+            "http://[::1]:8080/",
+            resolver_err
+        ));
+        assert!(is_always_blocked_url_with_resolver(
+            "http://[fd00:ec2::254]/latest/",
+            resolver_err
+        ));
     }
 
     fn ips(values: &[&str]) -> Vec<IpAddr> {
@@ -413,6 +519,7 @@ mod tests {
     fn qq_multimedia_exact_https_exception_allows_benchmark_ip() {
         let _lock = ENV_TEST_LOCK.lock().expect("lock env");
         let _env = EnvVarGuard::remove("HERMES_ALLOW_PRIVATE_URLS");
+        let _no_proxy = without_proxy();
         assert!(is_safe_url_with_resolver(
             "https://multimedia.nt.qq.com.cn/download?id=123",
             with_ips(&["198.18.0.23"])
@@ -449,6 +556,7 @@ mod tests {
     fn allow_private_toggle_permits_private_but_not_metadata() {
         let _lock = ENV_TEST_LOCK.lock().expect("lock env");
         let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "true");
+        let _no_proxy = without_proxy();
         assert!(is_safe_url_with_resolver(
             "http://router.local",
             with_ips(&["192.168.1.1"])

@@ -42,7 +42,7 @@ fn coerce_memory_provider_kind(path: &Path, kind: Option<String>) -> Option<Stri
         return None;
     };
     let probe = if source.len() > 8192 {
-        &source[..8192]
+        &source[..source.floor_char_boundary(8192)]
     } else {
         source.as_str()
     };

@@ -133,7 +133,7 @@ impl SlackAdapter {
         let body = serde_json::json!({
             "channel": channel,
             "ts": ts,
-            "text": &text[..text.len().min(MAX_MESSAGE_LENGTH)],
+            "text": &text[..text.floor_char_boundary(MAX_MESSAGE_LENGTH)],
         });
 
         self.slack_post("chat.update", &body).await?;

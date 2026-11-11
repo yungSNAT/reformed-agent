@@ -607,8 +607,8 @@ fn mask_secret(secret: &str) -> String {
     }
     format!(
         "{}***{}",
-        &secret[..4],
-        &secret[secret.len().saturating_sub(4)..]
+        &secret[..secret.floor_char_boundary(4)],
+        &secret[secret.ceil_char_boundary(secret.len().saturating_sub(4))..]
     )
 }
 
