@@ -135,3 +135,4 @@ wiremock = "0.6"
 chrono = { workspace = true }
 hermes-core = { workspace = true }
 hermes-cron = { workspace = true }
+rusqlite = { workspace = true }

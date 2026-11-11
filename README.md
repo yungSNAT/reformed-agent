@@ -26,7 +26,7 @@ The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). 
 ## What Reformed Agent Changes
 
 - `Reformation skin`: the default terminal theme, a palette for a pure black canvas
-- `Hermes history import`: `hermes-ultra import-hermes-sessions <export.jsonl> --profile-dir <dir>` converts a Hermes JSONL session export into resumable snapshots in a new profile
+- `Hermes history import`: `hermes-ultra import-hermes-sessions <export.jsonl> --profile-dir <dir>` converts a Hermes JSONL session export into resumable, searchable sessions in a new profile
 - `Tool guard`: `security.tool_guard` names a program that speaks Claude Code's PreToolUse hook format; when it is set, local terminal commands, `write_file`, `patch` and cron scripts ask it first and run only on a clean allow (see [security.md](./website/docs/user-guide/security.md))
 - `Stream lifetime cap`: `agent.stream_max_lifetime`, ported from Hermes
 - `Pinned parity reference`: the parity gates compare against one recorded upstream revision, so a day's upstream commits cannot fail an unrelated change
