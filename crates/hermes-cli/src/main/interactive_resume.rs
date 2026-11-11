@@ -300,7 +300,7 @@ async fn run_resume(cli: Cli, requested_session_id: Option<String>) -> Result<()
         .personality
         .clone()
         .filter(|name| !name.trim().is_empty());
-    app.session_id = payload.session_id.clone();
+    app.session_id = hermes_cli::app::resumed_session_id(&payload.session_id);
     app.messages = payload.messages;
     app.ui_messages.clear();
     app.input_history.clear();

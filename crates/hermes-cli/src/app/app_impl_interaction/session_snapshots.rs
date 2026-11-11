@@ -164,7 +164,14 @@ impl App {
             }
         };
         let mut entries = list_session_snapshot_entries(sessions_dir);
-        entries.sort_by_key(|entry| !is_oneshot_snapshot_path(&entry.path));
+        // Oldest first within each group, from list_session_snapshot_entries;
+        // the new snapshot goes last whatever the other files' dates.
+        entries.sort_by_key(|entry| {
+            (
+                entry.path == preserve,
+                !is_oneshot_snapshot_path(&entry.path),
+            )
+        });
         let mut total_bytes = entries.iter().map(|e| e.size_bytes).sum::<u64>();
 
         let max_files = snapshot_max_files();
@@ -237,9 +244,9 @@ impl App {
             .map(str::trim)
             .filter(|name| !name.is_empty())
             .unwrap_or(self.session_id.as_str());
-        if stem.starts_with(ONESHOT_SESSION_ID_PREFIX) {
+        if is_oneshot_session_id(stem) {
             return Err(AgentError::Config(format!(
-                "Session names starting with '{ONESHOT_SESSION_ID_PREFIX}' are reserved for one-shot runs."
+                "Session names of the form '{ONESHOT_SESSION_ID_PREFIX}<uuid>' are reserved for one-shot runs."
             )));
         }
         let path = write_session_snapshot(
@@ -271,11 +278,30 @@ impl App {
 
 const ONESHOT_SESSION_ID_PREFIX: &str = "oneshot-";
 
-/// Whether a snapshot file belongs to a one-shot run (`hermes -z`, `chat "<q>"`).
+/// Whether `id` names a one-shot run (`hermes -z`, `chat "<q>"`): the
+/// `oneshot-` prefix and a UUID, as `save_oneshot_session` assigns. Other
+/// names with the prefix stay ordinary sessions, as they were before.
+pub fn is_oneshot_session_id(id: &str) -> bool {
+    id.strip_prefix(ONESHOT_SESSION_ID_PREFIX)
+        .is_some_and(|rest| Uuid::parse_str(rest).is_ok())
+}
+
+/// Whether a snapshot file belongs to a one-shot run.
 pub fn is_oneshot_snapshot_path(path: &Path) -> bool {
     path.file_stem()
         .and_then(|stem| stem.to_str())
-        .is_some_and(|stem| stem.starts_with(ONESHOT_SESSION_ID_PREFIX))
+        .is_some_and(is_oneshot_session_id)
+}
+
+/// The session id to save under after resuming the snapshot of session `id`.
+/// A one-shot run is finished, so resuming one starts a new session and its
+/// own snapshot and `sessions.db` row stay as saved.
+pub fn resumed_session_id(id: &str) -> String {
+    if is_oneshot_session_id(id) {
+        Uuid::new_v4().to_string()
+    } else {
+        id.to_string()
+    }
 }
 
 /// Write `<state_root>/sessions/<stem>.json`, then apply the snapshot limits.

@@ -161,6 +161,11 @@ fn resolve_resume_session_file_latest_skips_oneshot_runs() {
     let nonempty =
         resolve_latest_nonempty_session_file(&sessions_dir).expect("resolve latest non-empty");
     assert_eq!(nonempty.1, interactive);
+
+    // Other names with the prefix stay ordinary sessions.
+    let named = snapshot("oneshot-notes", 5);
+    let latest = resolve_resume_session_file(&sessions_dir, None).expect("resolve latest");
+    assert_eq!(latest.1, named);
 }
 
 #[test]

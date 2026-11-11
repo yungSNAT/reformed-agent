@@ -449,12 +449,14 @@ fn e2e_cli_runs_with_one_mib_main_thread_stack() {
 }
 
 /// Run `hermes -z <prompt>` with HERMES_HOME `dir` and `env` against a mock
-/// `/chat/completions` that answers with `status` and `body`.
+/// `/chat/completions` that answers with `status` and `body`. stdout is
+/// captured; stderr goes to `stderr`.
 async fn run_oneshot_against_mock(
     dir: tempfile::TempDir,
     env: &'static [(&'static str, &'static str)],
     status: u16,
     body: serde_json::Value,
+    stderr: std::process::Stdio,
 ) -> (tempfile::TempDir, std::process::Output) {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -484,14 +486,14 @@ llm_providers:
     .expect("write config");
     let home = dir.path().to_path_buf();
     let output = tokio::task::spawn_blocking(move || {
-        Command::cargo_bin("hermes")
-            .expect("binary exists")
+        std::process::Command::new(env!("CARGO_BIN_EXE_hermes"))
             .current_dir(&home)
             .env("HERMES_HOME", &home)
             .env_remove("HERMES_ONESHOT_APP_RUNTIME")
             .env_remove("HERMES_QUORUM_AUTO_ARM")
             .envs(env.iter().copied())
             .args(["-z", "where did the heron nest"])
+            .stderr(stderr)
             .output()
             .expect("run hermes")
     })
@@ -522,14 +524,15 @@ async fn e2e_cli_oneshot_saves_session() {
         &[],
         200,
         oneshot_reply(),
+        std::process::Stdio::piped(),
     )
     .await;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "stderr: {stderr}");
-    assert!(
-        String::from_utf8_lossy(&output.stdout).contains("under the willow bridge"),
-        "stdout: {:?}",
-        String::from_utf8_lossy(&output.stdout)
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
     );
     assert!(!stderr.contains("not saved"), "stderr: {stderr}");
 
@@ -598,6 +601,7 @@ async fn e2e_cli_failed_oneshot_saves_no_session() {
         &[],
         400,
         serde_json::json!({"error": {"message": "bad request", "type": "invalid_request_error"}}),
+        std::process::Stdio::piped(),
     )
     .await;
     assert!(!output.status.success());
@@ -613,8 +617,8 @@ async fn e2e_cli_failed_oneshot_saves_no_session() {
     }
 }
 
-#[tokio::test(flavor = "multi_thread")]
-async fn e2e_cli_oneshot_at_snapshot_limit_warns_and_keeps_interactive_snapshot() {
+/// A home whose one interactive snapshot fills a one-file snapshot limit.
+fn home_with_one_interactive_snapshot() -> (tempfile::TempDir, std::path::PathBuf) {
     let dir = tempfile::tempdir().expect("tempdir");
     let sessions = dir.path().join("sessions");
     fs::create_dir_all(&sessions).expect("sessions dir");
@@ -624,17 +628,29 @@ async fn e2e_cli_oneshot_at_snapshot_limit_warns_and_keeps_interactive_snapshot(
         r#"{"session_info":{"session_id":"interactive-a"},"messages":[]}"#,
     )
     .expect("write interactive snapshot");
+    (dir, interactive)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_oneshot_at_snapshot_limit_warns_and_keeps_interactive_snapshot() {
+    let (dir, interactive) = home_with_one_interactive_snapshot();
+    let sessions = dir.path().join("sessions");
 
     let (dir, output) = run_oneshot_against_mock(
         dir,
         &[("HERMES_SESSION_SNAPSHOT_MAX_FILES", "1")],
         200,
         oneshot_reply(),
+        std::process::Stdio::piped(),
     )
     .await;
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(output.status.success(), "stderr: {stderr}");
-    assert!(String::from_utf8_lossy(&output.stdout).contains("under the willow bridge"));
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
+    );
     assert!(
         stderr.contains("not kept in `sessions list`"),
         "stderr: {stderr}"
@@ -654,4 +670,30 @@ async fn e2e_cli_oneshot_at_snapshot_limit_warns_and_keeps_interactive_snapshot(
         )
         .expect("count sessions");
     assert_eq!(rows, 1, "the run stays searchable");
+}
+
+// The save warning cannot be written when stderr is /dev/full; the run still
+// prints its reply and exits 0.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_oneshot_save_warning_on_unwritable_stderr_keeps_exit_code() {
+    let (dir, _) = home_with_one_interactive_snapshot();
+    let full = fs::File::options()
+        .write(true)
+        .open("/dev/full")
+        .expect("open /dev/full");
+    let (_dir, output) = run_oneshot_against_mock(
+        dir,
+        &[("HERMES_SESSION_SNAPSHOT_MAX_FILES", "1")],
+        200,
+        oneshot_reply(),
+        full.into(),
+    )
+    .await;
+    assert!(output.status.success(), "status: {:?}", output.status);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
+    );
 }
