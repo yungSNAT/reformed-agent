@@ -178,21 +178,6 @@ fn ip_literal(host: &str) -> &str {
         .unwrap_or(host)
 }
 
-const PROXY_ENV_VARS: &[&str] = &[
-    "HTTPS_PROXY",
-    "https_proxy",
-    "HTTP_PROXY",
-    "http_proxy",
-    "ALL_PROXY",
-    "all_proxy",
-];
-
-fn proxy_is_configured() -> bool {
-    PROXY_ENV_VARS
-        .iter()
-        .any(|key| std::env::var_os(key).is_some_and(|v| !v.is_empty()))
-}
-
 fn is_safe_url_with_resolver<F, E>(url: &str, mut resolver: F) -> bool
 where
     F: FnMut(&str, u16) -> Result<Vec<IpAddr>, E>,
@@ -223,9 +208,9 @@ where
     let port = parsed.port_or_known_default().unwrap_or(80);
     let ips = match resolver(&host, port) {
         Ok(ips) if !ips.is_empty() => ips,
-        // As upstream: where direct DNS fails behind a configured proxy, the
-        // proxy resolves the name (metadata hostnames were refused above).
-        Ok(_) | Err(_) => return proxy_is_configured(),
+        // Proxy-side DNS cannot establish that the destination is public.
+        // Refuse an unverified hostname even when a proxy is configured.
+        Ok(_) | Err(_) => return false,
     };
     ips.iter()
         .all(|ip| ip_allowed(&host, scheme, ip, allow_private_urls))
@@ -370,14 +355,21 @@ mod tests {
     }
 
     fn without_proxy() -> Vec<EnvVarGuard> {
-        PROXY_ENV_VARS
-            .iter()
-            .map(|key| EnvVarGuard::remove(key))
-            .collect()
+        [
+            "HTTPS_PROXY",
+            "https_proxy",
+            "HTTP_PROXY",
+            "http_proxy",
+            "ALL_PROXY",
+            "all_proxy",
+        ]
+        .iter()
+        .map(|key| EnvVarGuard::remove(key))
+        .collect()
     }
 
     #[test]
-    fn dns_failure_is_allowed_only_behind_a_configured_proxy() {
+    fn dns_failure_is_blocked_even_behind_a_configured_proxy() {
         let _lock = ENV_TEST_LOCK.lock().expect("lock env");
         let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "false");
         let _no_proxy = without_proxy();
@@ -386,9 +378,17 @@ mod tests {
             resolver_err
         ));
         let _proxy = EnvVarGuard::set("HTTPS_PROXY", "http://proxy.internal:3128");
-        assert!(is_safe_url_with_resolver(
+        assert!(!is_safe_url_with_resolver(
             "https://docs.example.com/",
             resolver_err
+        ));
+        assert!(!is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            with_ips(&[])
+        ));
+        assert!(is_safe_url_with_resolver(
+            "https://docs.example.com/",
+            with_ip("93.184.216.34")
         ));
         assert!(!is_safe_url_with_resolver(
             "http://metadata.google.internal/computeMetadata/v1/",

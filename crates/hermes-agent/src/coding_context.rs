@@ -555,25 +555,74 @@ fn dedup_truncate(commands: Vec<String>) -> Vec<String> {
 /// `.git/config` cannot use to run a program: an empty `core.fsmonitor`
 /// disables the fsmonitor program on every git version, `log.showSignature`
 /// off stops `git log` running `gpg.program`, and `--no-optional-locks` keeps
-/// `git status` from writing the index, so no index hook runs.
-///
-/// shortcut: clean and process filters named in that config can still run
-/// when `git status` re-reads a racily clean file; upstream Hermes neutralises
-/// them in `noninteractive_repo_git_env`, which is the port to make.
-fn workspace_git(root: &Path) -> Command {
+/// `git status` from writing the index, so no index hook runs. Disable every
+/// configured filter too: status can run clean/process commands while hashing
+/// tracked files. Reading config names itself does not execute those commands.
+fn workspace_git(root: &Path) -> Option<Command> {
+    let filters = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "config",
+            "--includes",
+            "--null",
+            "--name-only",
+            "--get-regexp",
+            r"^filter\..*\.(clean|smudge|process|required)$",
+        ])
+        .stdin(std::process::Stdio::null())
+        .suppress_windows_console()
+        .output()
+        .ok()?;
+    // Exit 1 means no matching keys. Refuse the snapshot if discovery fails,
+    // rather than running status with an incomplete set of overrides.
+    if !filters.status.success() && filters.status.code() != Some(1) {
+        return None;
+    }
+    let keys = std::str::from_utf8(&filters.stdout).ok()?;
+    let mut drivers = BTreeMap::new();
+    for (index, key) in keys.split_terminator('\0').enumerate() {
+        if index >= 256 {
+            return None;
+        }
+        let (driver, _) = key.rsplit_once('.')?;
+        drivers.insert(driver, ());
+    }
     let mut cmd = Command::new("git");
     cmd.arg("-C")
         .arg(root)
         .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
         .arg("--no-optional-locks")
+        .stdin(std::process::Stdio::null())
         .suppress_windows_console();
-    cmd
+    let mut config_count = 0;
+    for driver in drivers.keys() {
+        for (setting, value) in [
+            ("clean", ""),
+            ("smudge", ""),
+            ("process", ""),
+            ("required", "false"),
+        ] {
+            // -c splits on '=', which is also valid inside a driver name.
+            // Indexed environment entries keep the key separate from its value.
+            cmd.env(
+                format!("GIT_CONFIG_KEY_{config_count}"),
+                format!("{driver}.{setting}"),
+            )
+            .env(format!("GIT_CONFIG_VALUE_{config_count}"), value);
+            config_count += 1;
+        }
+    }
+    cmd.env("GIT_CONFIG_COUNT", config_count.to_string())
+        .env_remove("GIT_CONFIG_PARAMETERS");
+    Some(cmd)
 }
 
 fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
-    let status = workspace_git(root)
-        .args(["status", "--short", "--branch"])
-        .output();
+    let Some(mut git) = workspace_git(root) else {
+        return;
+    };
+    let status = git.args(["status", "--short", "--branch"]).output();
     let Ok(output) = status else {
         return;
     };
@@ -617,7 +666,7 @@ fn append_git_snapshot(root: &Path, lines: &mut Vec<String>) {
 }
 
 fn git_last_commit(root: &Path) -> Option<String> {
-    let output = workspace_git(root)
+    let output = workspace_git(root)?
         .args(["log", "-1", "--oneline"])
         .output()
         .ok()?;
@@ -797,6 +846,63 @@ mod tests {
         }
         assert_eq!(model_family(Some("acme/foo-1")), None);
         assert_eq!(model_family(None), None);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_does_not_run_repository_filters() {
+        use std::os::unix::fs::PermissionsExt;
+
+        for kind in ["clean", "process"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            git_init(&repo);
+            let git = |args: &[&str]| {
+                let output = Command::new("git")
+                    .arg("-C")
+                    .arg(&repo)
+                    .args(args)
+                    .output()
+                    .unwrap();
+                assert!(output.status.success(), "git {args:?}: {output:?}");
+            };
+            let marker = tmp.path().join("filter-ran");
+            let program = tmp.path().join("filter.sh");
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            std::fs::write(
+                repo.join(".gitattributes"),
+                "README.md filter=croft-manor=x\n",
+            )
+            .unwrap();
+            // Include a separate config file, as filter commands need not live
+            // directly in .git/config. Git must not execute either variant.
+            let filter_config = tmp.path().join("filters.config");
+            std::fs::write(
+                &filter_config,
+                format!(
+                    "[filter \"croft-manor=x\"]\n\t{kind} = {}\n\trequired = true\n",
+                    program.display()
+                ),
+            )
+            .unwrap();
+            git(&["config", "include.path", filter_config.to_str().unwrap()]);
+            // Keep its size unchanged so status must hash it instead of
+            // reporting a size mismatch without consulting the filter.
+            std::fs::write(repo.join("README.md"), "best").unwrap();
+
+            let block = build_coding_workspace_block(&repo);
+            assert!(
+                !marker.exists(),
+                "git status ran the repository's {kind} filter"
+            );
+            let block = block.expect("workspace block");
+            assert!(block.contains("Status:"), "{kind}: {block}");
+        }
     }
 
     #[cfg(unix)]

@@ -5,7 +5,7 @@
 
 use hermes_core::{BudgetConfig, ToolResult};
 
-/// Truncate a single result string to `max_chars`.
+/// Truncate a single result string to a UTF-8 boundary within `max_chars` bytes.
 ///
 /// If the content exceeds `max_chars`, it is truncated and a sentinel
 /// message is appended indicating how many characters were removed.
@@ -17,7 +17,7 @@ pub fn truncate_result(content: &str, max_chars: usize) -> String {
     // multi-byte character panics.
     let cut = content.floor_char_boundary(max_chars);
     let truncated = &content[..cut];
-    let removed = content.len() - cut;
+    let removed = content[cut..].chars().count();
     format!("{truncated}\n\n[... truncated {removed} characters ...]")
 }
 
@@ -70,9 +70,10 @@ mod tests {
     fn test_truncate_result_over_limit() {
         let content = "a".repeat(200);
         let truncated = truncate_result(&content, 100);
-        assert!(truncated.len() < 300); // original + suffix
-        assert!(truncated.contains("truncated"));
-        assert!(truncated.starts_with(&"a".repeat(100)));
+        assert_eq!(
+            truncated,
+            format!("{}\n\n[... truncated 100 characters ...]", "a".repeat(100))
+        );
     }
 
     #[test]
@@ -81,7 +82,7 @@ mod tests {
         let content = "é".repeat(10);
         let truncated = truncate_result(&content, 5);
         assert!(truncated.starts_with("éé\n"), "{truncated}");
-        assert!(truncated.contains("[... truncated 16 characters ...]"));
+        assert!(truncated.contains("[... truncated 8 characters ...]"));
     }
 
     #[test]
