@@ -77,6 +77,30 @@ pub struct UserMessageRef {
     pub content: Option<String>,
 }
 
+/// A session recorded by another install, written with its recorded times,
+/// lineage and end state.
+pub struct ImportedSession<'a> {
+    pub id: &'a str,
+    pub model: Option<&'a str>,
+    pub platform: Option<&'a str>,
+    pub title: Option<&'a str>,
+    pub system_prompt: Option<&'a str>,
+    pub model_config: Option<&'a str>,
+    pub parent_session_id: Option<&'a str>,
+    pub created_at: &'a str,
+    pub updated_at: &'a str,
+    pub ended_at: Option<&'a str>,
+    pub end_reason: Option<&'a str>,
+    /// Active messages in order, each with the time it was recorded.
+    pub messages: &'a [(Message, String)],
+}
+
+/// Adds imported sessions inside the transaction opened by
+/// [`SessionPersistence::import_sessions`].
+pub struct SessionImport<'a> {
+    conn: &'a rusqlite::Connection,
+}
+
 /// Result of a malformed `sessions.db` schema repair attempt.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SchemaRepairReport {

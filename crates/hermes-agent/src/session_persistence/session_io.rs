@@ -45,6 +45,24 @@ impl SessionPersistence {
         Ok(())
     }
 
+    /// Write sessions recorded elsewhere in one transaction, committed only
+    /// when `write` succeeds.
+    pub fn import_sessions<T>(
+        &self,
+        write: impl FnOnce(&SessionImport<'_>) -> Result<T, AgentError>,
+    ) -> Result<T, AgentError> {
+        self.ensure_db()?;
+        let mut conn = rusqlite::Connection::open(&self.db_path)
+            .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+        let tx = conn
+            .transaction()
+            .map_err(|e| AgentError::Io(format!("Failed to open import transaction: {e}")))?;
+        let written = write(&SessionImport { conn: &tx })?;
+        tx.commit()
+            .map_err(|e| AgentError::Io(format!("Failed to commit import transaction: {e}")))?;
+        Ok(written)
+    }
+
     /// Update the persisted model for an existing session after a mid-session switch.
     ///
     /// This intentionally does not create a new session row: callers use it as a
@@ -429,7 +447,19 @@ impl SessionPersistence {
         .map_err(|e| AgentError::Io(format!("Failed to clear old messages: {e}")))?;
 
         let now = Utc::now().to_rfc3339();
+        Self::insert_messages(
+            conn,
+            session_id,
+            messages.iter().map(|msg| (msg, now.as_str())),
+        )
+    }
 
+    /// Insert active messages, each with the time it was recorded.
+    fn insert_messages<'m>(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+        messages: impl IntoIterator<Item = (&'m Message, &'m str)>,
+    ) -> Result<(), AgentError> {
         let mut stmt = conn
             .prepare(
                 "INSERT INTO messages (session_id, role, content, tool_call_id, name, tool_calls, reasoning_content, created_at, active)
@@ -437,7 +467,7 @@ impl SessionPersistence {
             )
             .map_err(|e| AgentError::Io(format!("Failed to prepare insert: {e}")))?;
 
-        for msg in messages {
+        for (msg, created_at) in messages {
             let role = match msg.role {
                 MessageRole::System => "system",
                 MessageRole::User => "user",
@@ -458,7 +488,7 @@ impl SessionPersistence {
                 msg.name.as_deref(),
                 tool_calls_json.as_deref(),
                 msg.reasoning_content.as_deref(),
-                now,
+                created_at,
             ])
             .map_err(|e| AgentError::Io(format!("Failed to insert message: {e}")))?;
         }
@@ -621,5 +651,40 @@ impl SessionPersistence {
             .map_err(|e| AgentError::Io(format!("Failed to read messages: {e}")))?;
 
         Ok(messages)
+    }
+}
+
+impl SessionImport<'_> {
+    /// Add one session as recorded, with each message's own time.
+    pub fn add_session(&self, session: &ImportedSession<'_>) -> Result<(), AgentError> {
+        self.conn
+            .execute(
+                "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count,
+                     system_prompt, parent_session_id, model_config, end_reason, ended_at)
+                 VALUES (?1, COALESCE(?2, 'unknown'), COALESCE(?3, 'cli'), ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12)",
+                rusqlite::params![
+                    session.id,
+                    session.model,
+                    session.platform,
+                    session.created_at,
+                    session.updated_at,
+                    session.title,
+                    session.messages.len() as i64,
+                    session.system_prompt,
+                    session.parent_session_id,
+                    session.model_config,
+                    session.end_reason,
+                    session.ended_at,
+                ],
+            )
+            .map_err(|e| AgentError::Io(format!("Failed to insert imported session: {e}")))?;
+        SessionPersistence::insert_messages(
+            self.conn,
+            session.id,
+            session
+                .messages
+                .iter()
+                .map(|(message, time)| (message, time.as_str())),
+        )
     }
 }
