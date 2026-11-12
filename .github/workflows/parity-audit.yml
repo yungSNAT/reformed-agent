@@ -42,15 +42,16 @@ jobs:
           python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-ref origin/main --report-path "$report" || test -f "$report"
           jq -r '"- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
       # The harness imports upstream's hermes_cli.commands, which needs upstream's
-      # core dependencies; they go in a venv so the system Python stays untouched.
+      # core dependencies. Upstream's uv.lock applies its dependency overrides,
+      # which pip cannot, and the venv keeps them off the system Python.
+      - name: Install uv
+        uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86  # v5
       - name: Install upstream dependencies for the golden harness
-        run: |
-          python3 -m venv "$RUNNER_TEMP/upstream-venv"
-          "$RUNNER_TEMP/upstream-venv/bin/pip" install --quiet --disable-pip-version-check ../hermes-agent
+        run: uv sync --frozen --no-dev --no-install-project --project ../hermes-agent
       - name: Golden parity harness
         run: |
           report=.sync-reports/golden-parity-harness.json
-          "$RUNNER_TEMP/upstream-venv/bin/python" scripts/run-golden-parity-harness.py \
+          ../hermes-agent/.venv/bin/python scripts/run-golden-parity-harness.py \
             --repo-root . \
             --upstream-root ../hermes-agent \
             --report "$report" || test -f "$report"
