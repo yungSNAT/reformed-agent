@@ -1275,6 +1275,19 @@ mod tests {
     }
 
     #[test]
+    fn data_dir_defaults_to_the_own_home_not_upstreams() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _hermes_home = EnvGuard::remove("HERMES_HOME");
+        let _ultra_home = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+
+        assert_eq!(hermes_data_dir(), home.path().join(".hermes-agent-ultra"));
+        assert!(!home.path().join(".hermes").exists());
+    }
+
+    #[test]
     fn builtin_registry_registers_core_tool_surfaces_for_parity() {
         let _lock = lock_env();
         let home = tempfile::tempdir().expect("temp home");
