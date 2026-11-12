@@ -185,6 +185,24 @@ mod tests {
     }
 
     #[test]
+    fn test_compress_leaves_a_kept_result_without_its_call_uncompressed() {
+        // The last 4 messages hold a result whose call is not in the history.
+        let history = vec![
+            Message::system("System prompt"),
+            Message::user("First."),
+            Message::assistant("One."),
+            Message::user("Second."),
+            Message::assistant("Two."),
+            Message::user("Third."),
+            Message::tool_result("call_gone", "x".repeat(200_000)),
+            Message::assistant("Three."),
+        ];
+        let (compressions, kept) = compress_default(history.clone());
+        assert_eq!(compressions, 0);
+        assert_eq!(kept, history);
+    }
+
+    #[test]
     fn test_compress_keeps_the_user_turn_before_kept_calls() {
         // One call per turn: the last 4 messages are 2 whole tool turns and
         // the only user message is older.
