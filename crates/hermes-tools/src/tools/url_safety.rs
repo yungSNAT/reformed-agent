@@ -99,8 +99,22 @@ fn mapped_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
     ip.to_ipv4_mapped()
 }
 
+/// The IPv4 address an IPv6 address delivers to: IPv4-mapped and
+/// IPv4-compatible (`::ffff:a.b.c.d`, `::a.b.c.d`), NAT64's well-known prefix
+/// (`64:ff9b::/96`, RFC 6052) or 6to4 (`2002::/16`, RFC 3056).
+fn embedded_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = ip.segments();
+    match segments {
+        [0x2002, high, low, ..] => Some(Ipv4Addr::from(
+            (u32::from(high) << 16) | u32::from(low),
+        )),
+        [0x64, 0xff9b, 0, 0, 0, 0, ..] => Some(Ipv4Addr::from(u128::from(*ip) as u32)),
+        _ => ip.to_ipv4(),
+    }
+}
+
 fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
-    if let Some(v4) = mapped_ipv4(ip) {
+    if let Some(v4) = embedded_ipv4(ip) {
         return is_blocked_ipv4(&v4);
     }
 
@@ -110,6 +124,8 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] & 0xfe00) == 0xfc00
+        // NAT64 local-use prefix (RFC 8215): the operator's translator picks the IPv4 address.
+        || segments[..3] == [0x64, 0xff9b, 1]
 }
 
 fn is_blocked_ip(ip: &IpAddr) -> bool {
@@ -128,7 +144,7 @@ fn is_always_blocked_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_always_blocked_ipv4(v4),
         IpAddr::V6(v6) => {
-            if let Some(v4) = mapped_ipv4(v6) {
+            if let Some(v4) = embedded_ipv4(v6) {
                 return is_always_blocked_ipv4(&v4);
             }
             *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
