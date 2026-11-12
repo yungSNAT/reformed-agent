@@ -81,6 +81,20 @@ fn load_dotenv_file_reads_export_lines() {
 }
 
 #[test]
+fn save_env_key_value_replaces_an_export_line() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = dir.path().join(".env");
+    std::fs::write(&env, "export GLM_API_KEY=fake-old\nOTHER=kept\n").expect("write env");
+
+    save_env_key_value(&env, "GLM_API_KEY", "fake-new").expect("save env key");
+
+    assert_eq!(
+        std::fs::read_to_string(&env).expect("read env"),
+        "GLM_API_KEY=fake-new\nOTHER=kept\n"
+    );
+}
+
+#[test]
 fn project_env_only_fills_missing_when_user_env_loaded() {
     use tempfile::tempdir;
 

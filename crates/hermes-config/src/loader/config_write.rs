@@ -351,11 +351,7 @@ fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigE
     let mut replaced = false;
 
     for line in original.lines() {
-        let line_key = line
-            .split_once('=')
-            .map(|(k, _)| k.trim())
-            .filter(|k| !k.is_empty());
-        if line_key == Some(key) {
+        if dotenv_assignment(line).is_some_and(|(line_key, _)| line_key == key) {
             if !replaced {
                 lines.push(format!("{key}={sanitized_value}"));
                 replaced = true;

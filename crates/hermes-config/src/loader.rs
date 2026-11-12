@@ -85,14 +85,17 @@ pub fn resolve_symlink_target(path: &Path) -> PathBuf {
 /// link's target, on the target's filesystem, and renamed over the target.
 ///
 /// A rewritten file keeps its access: on Unix the temp file takes the
-/// existing file's mode before any bytes are written (the owner becomes the
-/// writer); on Windows the replacement keeps the existing file's DACL.
+/// existing file's permission bits before any bytes are written (the owner
+/// becomes the writer; where the filesystem refuses the change, the file gets
+/// the default mode, as before); on Windows the replacement keeps the
+/// existing file's DACL.
 pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     let path = resolve_symlink_target(path);
     let path = path.as_path();
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
     let tmp_path = atomic_temp_path(path)?;
+    let existed = path.exists();
 
     let result = (|| -> Result<(), ConfigError> {
         let mut options = std::fs::OpenOptions::new();
@@ -100,8 +103,11 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
         let mut file = options.open(&tmp_path).map_err(io_to_config_error)?;
         #[cfg(unix)]
         if let Ok(existing) = std::fs::metadata(path) {
-            file.set_permissions(existing.permissions())
-                .map_err(io_to_config_error)?;
+            use std::os::unix::fs::PermissionsExt;
+            let mode = existing.permissions().mode() & 0o777;
+            if let Err(err) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
+                tracing::warn!("could not keep mode {mode:o} for {}: {err}", path.display());
+            }
         }
         file.write_all(bytes).map_err(io_to_config_error)?;
         file.sync_all().map_err(io_to_config_error)?;
@@ -110,10 +116,20 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
         Ok(())
     })();
 
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
+    match result {
+        // A failed Windows replace can remove the target before the rename
+        // fallback fails; the temp file then holds the only copy, so keep it.
+        Err(err) if existed && !path.exists() => Err(ConfigError::ParseError(format!(
+            "{err}; {} was removed and its new content is in {}",
+            path.display(),
+            tmp_path.display()
+        ))),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(err)
+        }
+        Ok(()) => Ok(()),
     }
-    result
 }
 
 fn replace_temp_file(tmp_path: &Path, path: &Path) -> Result<(), ConfigError> {
