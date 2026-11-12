@@ -231,6 +231,8 @@ pub struct ContextManager {
     max_context_chars: usize,
     /// Compressor used when the context exceeds the budget threshold.
     compressor: ContextCompressor,
+    /// The history before each compression that changed it, oldest first.
+    compressed_transcripts: Vec<Vec<Message>>,
 }
 
 impl ContextManager {
@@ -240,6 +242,7 @@ impl ContextManager {
             messages: Vec::new(),
             max_context_chars,
             compressor: ContextCompressor::default(),
+            compressed_transcripts: Vec::new(),
         }
     }
 
@@ -254,6 +257,7 @@ impl ContextManager {
             messages: Vec::new(),
             max_context_chars,
             compressor,
+            compressed_transcripts: Vec::new(),
         }
     }
 
@@ -359,7 +363,15 @@ impl ContextManager {
         );
 
         let compressed = self.compressor.compress(&self.messages);
-        self.messages = compressed;
+        if compressed != self.messages {
+            let replaced = std::mem::replace(&mut self.messages, compressed);
+            self.compressed_transcripts.push(replaced);
+        }
+    }
+
+    /// Take the history as it stood before each compression, oldest first.
+    pub fn take_compressed_transcripts(&mut self) -> Vec<Vec<Message>> {
+        std::mem::take(&mut self.compressed_transcripts)
     }
 
     /// Reset the conversation history, clearing all messages.

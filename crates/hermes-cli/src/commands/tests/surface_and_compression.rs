@@ -773,3 +773,105 @@
         assert!(output.contains("tokens"));
         assert!(output.contains("removed 4 messages, kept 2"));
     }
+
+    /// Search `app`'s sessions.db as `session_search` does, offline: without
+    /// a summary key each result shows the matched session's own turns.
+    async fn search_sessions(app: &App, query: Option<&str>) -> serde_json::Value {
+        use hermes_tools::SessionSearchBackend;
+        let _key = EnvVarGuard::set("HERMES_SESSION_SEARCH_SUMMARY_API_KEY", " ");
+        let _url = EnvVarGuard::set("HERMES_SESSION_SEARCH_SUMMARY_BASE_URL", "http://127.0.0.1:9");
+        let db = app.state_root.join("sessions.db");
+        let backend = hermes_tools::SqliteSessionSearchBackend::new(db.to_str().expect("utf-8"))
+            .expect("open session search");
+        let found = backend
+            .search(query, None, 5, None)
+            .await
+            .expect("session search");
+        serde_json::from_str(&found).expect("search json")
+    }
+
+    #[tokio::test]
+    async fn compress_command_keeps_the_compressed_turns_searchable_under_the_session() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        app.session_id = "c0ffee00-0000-4000-8000-000000000003".to_string();
+        app.messages = vec![
+            hermes_core::Message::user("where did the heron nest"),
+            hermes_core::Message::assistant("under the willow bridge"),
+            hermes_core::Message::user("and the kingfisher"),
+            hermes_core::Message::assistant("beside the old mill"),
+            hermes_core::Message::user("and the otter"),
+            hermes_core::Message::assistant("in the reeds"),
+        ];
+        app.persist_session_snapshot(None).expect("save session");
+
+        handle_slash_command(&mut app, "/compress", &[])
+            .await
+            .expect("compress command");
+        // A later autosave must not drop the compressed turns.
+        app.persist_session_snapshot(None)
+            .expect("save compressed session");
+
+        let found = search_sessions(&app, Some("willow")).await;
+        assert_eq!(found["count"], 1);
+        assert_eq!(found["results"][0]["session_id"], app.session_id.as_str());
+        let summary = found["results"][0]["summary"].as_str().expect("summary");
+        assert!(summary.contains("willow"), "{summary}");
+
+        let recent = search_sessions(&app, None).await;
+        assert_eq!(recent["count"], 1, "the session is listed once");
+        assert_eq!(recent["results"][0]["session_id"], app.session_id.as_str());
+    }
+
+    #[tokio::test]
+    async fn compressed_agent_runs_keep_the_replaced_turns_searchable_under_the_session() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        app.session_id = "c0ffee00-0000-4000-8000-000000000004".to_string();
+        let first = vec![
+            hermes_core::Message::user("where did the heron nest"),
+            hermes_core::Message::assistant("under the willow bridge"),
+        ];
+        app.apply_agent_result_and_persist(hermes_core::AgentResult {
+            messages: first.clone(),
+            finished_naturally: true,
+            total_turns: 1,
+            ..Default::default()
+        })
+        .expect("save first run");
+
+        let mut replaced = first;
+        replaced.push(hermes_core::Message::user("and the kingfisher"));
+        app.apply_agent_result_and_persist(hermes_core::AgentResult {
+            messages: vec![
+                hermes_core::Message::system("summary"),
+                hermes_core::Message::user("and the kingfisher"),
+                hermes_core::Message::assistant("beside the old mill"),
+            ],
+            finished_naturally: true,
+            total_turns: 1,
+            compressed_transcripts: vec![replaced],
+            ..Default::default()
+        })
+        .expect("save compressed run");
+
+        for query in ["willow", "mill", "kingfisher"] {
+            let found = search_sessions(&app, Some(query)).await;
+            assert_eq!(found["count"], 1, "{query}");
+            assert_eq!(
+                found["results"][0]["session_id"],
+                app.session_id.as_str(),
+                "{query}"
+            );
+            let summary = found["results"][0]["summary"].as_str().expect("summary");
+            assert!(summary.contains(query), "{query}: {summary}");
+        }
+
+        let recent = search_sessions(&app, None).await;
+        assert_eq!(recent["count"], 1, "the session is listed once");
+        assert_eq!(recent["results"][0]["session_id"], app.session_id.as_str());
+    }

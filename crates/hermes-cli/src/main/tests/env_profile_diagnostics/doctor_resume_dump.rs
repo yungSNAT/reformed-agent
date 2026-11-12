@@ -398,6 +398,47 @@ fn load_resume_payload_follows_compression_tip_snapshot() {
 }
 
 #[test]
+fn load_resume_payload_continues_the_session_from_a_compressed_row() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cli = cli_for_temp_state_root(tmp.path());
+    let state_root = hermes_state_root(&cli);
+    let sessions_dir = state_root.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+    std::fs::write(
+        sessions_dir.join("live.json"),
+        r#"{
+  "session_info": {"session_id":"live","model":"nous:openai/gpt-5.5"},
+  "messages":[{"role":"Assistant","content":"post-compression reply"}]
+}"#,
+    )
+    .expect("write session");
+    let persistence = SessionPersistence::new(&state_root);
+    persistence
+        .persist_session_after_compression(
+            "live",
+            &[vec![hermes_core::Message::user("pre-compression turn")]],
+            &[hermes_core::Message::assistant("post-compression reply")],
+            Some("nous:openai/gpt-5.5"),
+            None,
+        )
+        .unwrap();
+    // The row holding the compressed turns has no snapshot of its own.
+    let older: String = rusqlite::Connection::open(persistence.db_path())
+        .unwrap()
+        .query_row(
+            "SELECT parent_session_id FROM sessions WHERE id = 'live'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+
+    let payload = load_resume_payload(&cli, Some(&older)).expect("load payload");
+
+    assert_eq!(payload.session_id, "live");
+    assert_eq!(payload.source_path, sessions_dir.join("live.json"));
+}
+
+#[test]
 fn load_resume_payload_falls_back_to_legacy_sessions_dir() {
     let _guard = env_lock();
     let prev_home = std::env::var("HOME").ok();
@@ -676,14 +717,15 @@ async fn imported_hermes_history_is_searchable_as_recorded() {
     assert_eq!(found["sessions_searched"], 1);
     assert_eq!(found["results"][0]["session_id"], "20261109_103200_c0ffeed1");
 
-    // Recent sessions list the chain's root with its start and its latest row.
+    // As in Hermes, recent sessions list the chain once, at its tip, with the
+    // root's start.
     let recent: serde_json::Value =
         serde_json::from_str(&backend.search(None, None, 5, None).await.unwrap()).unwrap();
     assert_eq!(recent["count"], 1);
-    let root = &recent["results"][0];
-    assert_eq!(root["session_id"], "20261109_103000_c0ffeed0");
-    assert_eq!(root["started_at"], "2026-11-09T10:30:00.125+00:00");
-    assert_eq!(root["last_active"], "2026-11-09T10:30:04+00:00");
+    let chain = &recent["results"][0];
+    assert_eq!(chain["session_id"], "20261109_103200_c0ffeed1");
+    assert_eq!(chain["started_at"], "2026-11-09T10:30:00.125+00:00");
+    assert_eq!(chain["last_active"], "2026-11-09T10:32:50.500+00:00");
 
     // The child's last activity is its latest message, not its lagging heartbeat.
     let conn = rusqlite::Connection::open(&db).unwrap();

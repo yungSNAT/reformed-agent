@@ -849,6 +849,8 @@ impl SessionPersistence {
     }
 
     /// Delete sessions whose `updated_at` is older than the retention window.
+    /// As in Hermes Agent, a row that ended with compression goes only with
+    /// every continuation after it, so a session keeps its compressed turns.
     ///
     /// Returns the number of deleted sessions.
     pub fn prune_sessions(&self, older_than_days: u32) -> Result<u64, AgentError> {
@@ -860,7 +862,20 @@ impl SessionPersistence {
         let mut session_ids: Vec<String> = Vec::new();
         {
             let mut stmt = conn
-                .prepare("SELECT id FROM sessions WHERE updated_at < ?1")
+                .prepare(
+                    "WITH RECURSIVE kept(id) AS (
+                         SELECT s.parent_session_id FROM sessions s
+                         JOIN sessions p ON p.id = s.parent_session_id
+                         WHERE s.updated_at >= ?1 AND p.end_reason = 'compression'
+                         UNION
+                         SELECT p.parent_session_id FROM kept k
+                         JOIN sessions p ON p.id = k.id
+                         JOIN sessions g ON g.id = p.parent_session_id
+                         WHERE g.end_reason = 'compression'
+                     )
+                     SELECT id FROM sessions
+                     WHERE updated_at < ?1 AND id NOT IN (SELECT id FROM kept)",
+                )
                 .map_err(|e| AgentError::Io(format!("Failed to prepare prune query: {e}")))?;
             let rows = stmt
                 .query_map(rusqlite::params![cutoff], |row| row.get::<_, String>(0))

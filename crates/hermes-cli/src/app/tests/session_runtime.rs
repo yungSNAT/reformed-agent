@@ -85,6 +85,7 @@
             interrupted: false,
             session_cost_usd: Some(0.002),
             session_started_hooks_fired: false,
+            compressed_transcripts: Vec::new(),
         });
         app.apply_agent_result(hermes_core::AgentResult {
             messages: vec![hermes_core::Message::assistant("second")],
@@ -95,6 +96,7 @@
             interrupted: false,
             session_cost_usd: None,
             session_started_hooks_fired: false,
+            compressed_transcripts: Vec::new(),
         });
 
         assert_eq!(app.last_usage, Some(second));

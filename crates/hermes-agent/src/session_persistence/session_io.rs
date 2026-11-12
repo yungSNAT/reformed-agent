@@ -9,20 +9,65 @@ impl SessionPersistence {
         title: Option<&str>,
         system_prompt: Option<&str>,
     ) -> Result<(), AgentError> {
-        self.ensure_db()?;
+        self.write_session(|tx| {
+            Self::upsert_session(tx, session_id, messages, model, platform, title, system_prompt)
+        })
+    }
 
+    /// Persist a session whose context was compressed, keeping the turns the
+    /// compression replaced searchable.
+    ///
+    /// Each transcript in `compressed`, oldest first, becomes its own row
+    /// ended with `end_reason = 'compression'` and chained between the
+    /// session's parent and the session, the shape of Hermes Agent's
+    /// compression continuations. The session keeps its id, and
+    /// `session_search` resolves hits in those rows to it.
+    pub fn persist_session_after_compression(
+        &self,
+        session_id: &str,
+        compressed: &[Vec<Message>],
+        messages: &[Message],
+        model: Option<&str>,
+        platform: Option<&str>,
+    ) -> Result<(), AgentError> {
+        self.write_session(|tx| {
+            Self::upsert_session(tx, session_id, messages, model, platform, None, None)?;
+            for transcript in compressed {
+                Self::insert_compressed_parent(tx, session_id, transcript)?;
+            }
+            Ok(())
+        })
+    }
+
+    /// Run `write` in one transaction: readers never see a half-written
+    /// session, and each message insert skips its own sync.
+    fn write_session(
+        &self,
+        write: impl FnOnce(&rusqlite::Transaction<'_>) -> Result<(), AgentError>,
+    ) -> Result<(), AgentError> {
+        self.ensure_db()?;
         let mut conn = rusqlite::Connection::open(&self.db_path)
             .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
-        // One commit for the row and its transcript: readers never see a
-        // half-written session, and each message insert skips its own sync.
         let tx = conn
             .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
             .map_err(|e| AgentError::Io(format!("Failed to begin session write: {e}")))?;
+        write(&tx)?;
+        tx.commit()
+            .map_err(|e| AgentError::Io(format!("Failed to commit session write: {e}")))
+    }
 
+    /// Upsert a session row and replace its active transcript.
+    fn upsert_session(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+        messages: &[Message],
+        model: Option<&str>,
+        platform: Option<&str>,
+        title: Option<&str>,
+        system_prompt: Option<&str>,
+    ) -> Result<(), AgentError> {
         let now = Utc::now().to_rfc3339();
-
-        // Upsert session record
-        tx.execute(
+        conn.execute(
             "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count, system_prompt)
              VALUES (?1, COALESCE(?2, 'unknown'), COALESCE(?3, 'cli'), ?4, ?4, ?5, ?6, ?7)
              ON CONFLICT(id) DO UPDATE SET
@@ -43,12 +88,39 @@ impl SessionPersistence {
             ],
         )
         .map_err(|e| AgentError::Io(format!("Failed to upsert session: {e}")))?;
+        Self::flush_messages_to_session_db(conn, session_id, messages)
+    }
 
-        // Batch insert messages
-        self.flush_messages_to_session_db(&tx, session_id, messages)?;
-
-        tx.commit()
-            .map_err(|e| AgentError::Io(format!("Failed to commit session write: {e}")))
+    /// Store `transcript` as a new row that ended with compression, between
+    /// session `session_id` and its parent. The new row takes the session's
+    /// lineage markers, which belong at the root of a compression chain.
+    fn insert_compressed_parent(
+        conn: &rusqlite::Connection,
+        session_id: &str,
+        transcript: &[Message],
+    ) -> Result<(), AgentError> {
+        let parent_id = uuid::Uuid::new_v4().to_string();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count,
+                                   system_prompt, parent_session_id, model_config, end_reason, ended_at)
+             SELECT ?1, model, platform, created_at, ?2, title, ?3,
+                    system_prompt, parent_session_id, model_config, 'compression', ?2
+             FROM sessions WHERE id = ?4",
+            rusqlite::params![parent_id, now, transcript.len() as i64, session_id],
+        )
+        .map_err(|e| AgentError::Io(format!("Failed to record compressed turns: {e}")))?;
+        Self::insert_messages(
+            conn,
+            &parent_id,
+            transcript.iter().map(|msg| (msg, now.as_str())),
+        )?;
+        conn.execute(
+            "UPDATE sessions SET parent_session_id = ?1, model_config = NULL WHERE id = ?2",
+            rusqlite::params![parent_id, session_id],
+        )
+        .map_err(|e| AgentError::Io(format!("Failed to link compressed turns: {e}")))?;
+        Ok(())
     }
 
     /// Write sessions recorded elsewhere in one transaction, committed only
@@ -439,7 +511,6 @@ impl SessionPersistence {
 
     /// Batch insert messages into the database for FTS5 indexing.
     fn flush_messages_to_session_db(
-        &self,
         conn: &rusqlite::Connection,
         session_id: &str,
         messages: &[Message],

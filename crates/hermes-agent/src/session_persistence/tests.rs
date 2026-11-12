@@ -490,6 +490,178 @@ fn failed_persist_keeps_the_previous_row_transcript_and_search() {
     assert!(fts_match_rows(&sp, "kingfisher").is_empty());
 }
 
+fn lineage_row(
+    sp: &SessionPersistence,
+    session_id: &str,
+) -> (Option<String>, Option<String>, String, Option<String>) {
+    rusqlite::Connection::open(&sp.db_path)
+        .unwrap()
+        .query_row(
+            "SELECT parent_session_id, end_reason, created_at, model_config
+             FROM sessions WHERE id = ?1",
+            [session_id],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+        )
+        .unwrap()
+}
+
+fn fts_hit_sessions(sp: &SessionPersistence, query: &str) -> Vec<String> {
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let mut stmt = conn
+        .prepare("SELECT session_id FROM messages_fts WHERE messages_fts MATCH ?1 ORDER BY rowid")
+        .unwrap();
+    stmt.query_map([query], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap()
+}
+
+#[test]
+fn compressed_turns_stay_searchable_and_resume_follows_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let before = vec![
+        Message::user("where did the heron nest"),
+        Message::assistant("under the willow bridge"),
+        Message::user("and the kingfisher"),
+    ];
+    sp.persist_session("live", &before[..2], Some("m"), None, None, None)
+        .unwrap();
+    // A branch of "origin": the marker belongs at the root of its chain.
+    let started = "2026-11-01T00:00:00+00:00";
+    set_session_lineage(&sp, "live", Some("origin"), None, started, None);
+    let marker = r#"{"_branched_from":"origin"}"#;
+    set_session_model_config(&sp, "live", marker);
+
+    let after = vec![
+        Message::system("summary"),
+        Message::user("and the kingfisher"),
+        Message::assistant("beside the old mill"),
+    ];
+    sp.persist_session_after_compression(
+        "live",
+        std::slice::from_ref(&before),
+        &after,
+        Some("m"),
+        None,
+    )
+    .unwrap();
+
+    let contents = |id: &str| -> Vec<Option<String>> {
+        sp.load_session(id)
+            .unwrap()
+            .into_iter()
+            .map(|m| m.content)
+            .collect()
+    };
+    let expected = |messages: &[Message]| -> Vec<Option<String>> {
+        messages.iter().map(|m| m.content.clone()).collect()
+    };
+    assert_eq!(contents("live"), expected(&after));
+    let hits = fts_hit_sessions(&sp, "willow");
+    assert_eq!(hits.len(), 1, "the replaced turn stays indexed once");
+    let parent = hits[0].clone();
+    assert_ne!(parent, "live");
+    assert_eq!(contents(&parent), expected(&before));
+    assert_eq!(
+        lineage_row(&sp, &parent),
+        (
+            Some("origin".to_string()),
+            Some("compression".to_string()),
+            started.to_string(),
+            Some(marker.to_string()),
+        )
+    );
+    assert_eq!(
+        lineage_row(&sp, "live"),
+        (Some(parent.clone()), None, started.to_string(), None)
+    );
+    assert_eq!(sp.resolve_resume_session_id(&parent).unwrap(), "live");
+}
+
+#[test]
+fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let first = vec![Message::user("heron"), Message::assistant("willow")];
+    let second = vec![Message::system("summary one"), Message::user("kingfisher")];
+    let after = vec![Message::system("summary two"), Message::user("otter")];
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+        .unwrap();
+    let older = fts_hit_sessions(&sp, "willow").remove(0);
+    let newer = fts_hit_sessions(&sp, "kingfisher").remove(0);
+    let rows = || -> i64 {
+        rusqlite::Connection::open(&sp.db_path)
+            .unwrap()
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .unwrap()
+    };
+
+    mark_session_old(&sp, &older, 40);
+    mark_session_old(&sp, &newer, 40);
+    assert_eq!(sp.prune_sessions(30).unwrap(), 0);
+    assert_eq!(rows(), 3);
+    assert_eq!(fts_hit_sessions(&sp, "willow"), [older]);
+
+    mark_session_old(&sp, "live", 40);
+    assert_eq!(sp.prune_sessions(30).unwrap(), 3);
+    assert_eq!(rows(), 0);
+}
+
+#[test]
+fn compressions_in_one_save_chain_oldest_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let first = vec![Message::user("heron"), Message::assistant("willow")];
+    let second = vec![
+        Message::system("summary one"),
+        Message::user("kingfisher"),
+        Message::assistant("mill"),
+    ];
+    let after = vec![Message::system("summary two"), Message::user("otter")];
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+        .unwrap();
+
+    let older = fts_hit_sessions(&sp, "willow").remove(0);
+    let newer = fts_hit_sessions(&sp, "kingfisher").remove(0);
+    assert_eq!(lineage_row(&sp, &older).0, None);
+    assert_eq!(lineage_row(&sp, &newer).0.as_deref(), Some(older.as_str()));
+    assert_eq!(lineage_row(&sp, "live").0.as_deref(), Some(newer.as_str()));
+    assert_eq!(sp.resolve_resume_session_id(&older).unwrap(), "live");
+}
+
+#[test]
+fn failed_compressed_save_keeps_the_previous_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let first = vec![Message::user("heron"), Message::assistant("willow")];
+    sp.persist_session("live", &first, None, None, None, None)
+        .unwrap();
+
+    // Fail while storing the replaced turns, after the session's own upsert.
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_insert BEFORE INSERT ON messages WHEN NEW.content = 'boom'
+         BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+    )
+    .unwrap();
+    let replaced = vec![Message::user("heron"), Message::assistant("boom")];
+    let after = vec![Message::system("summary"), Message::user("otter")];
+    sp.persist_session_after_compression("live", &[replaced], &after, None, None)
+        .expect_err("forced insert failure");
+    conn.execute_batch("DROP TRIGGER fail_insert").unwrap();
+
+    let loaded = sp.load_session("live").unwrap();
+    let contents: Vec<_> = loaded.iter().map(|m| m.content.as_deref()).collect();
+    assert_eq!(contents, [Some("heron"), Some("willow")]);
+    let rows: i64 = conn
+        .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+        .unwrap();
+    assert_eq!(rows, 1);
+    assert_eq!(lineage_row(&sp, "live").0, None);
+    assert!(fts_hit_sessions(&sp, "otter").is_empty());
+}
+
 #[test]
 fn test_persist_session_updates_existing_model() {
     let tmp = tempfile::tempdir().unwrap();

@@ -241,7 +241,7 @@ impl AgentLoop {
         loop {
             if self.interrupt.take_interrupt_graceful().is_some() {
                 return Ok(self.graceful_interrupt_result(
-                    &ctx,
+                    &mut ctx,
                     total_turns,
                     &tool_errors,
                     accumulated_usage.clone(),
@@ -284,6 +284,7 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
+                        compressed_transcripts: ctx.take_compressed_transcripts(),
                     });
                 }
             }
@@ -409,7 +410,7 @@ impl AgentLoop {
             let mut response = loop {
                 if self.interrupt.take_interrupt_graceful().is_some() {
                     return Ok(self.graceful_interrupt_result(
-                        &ctx,
+                        &mut ctx,
                         total_turns,
                         &tool_errors,
                         accumulated_usage.clone(),
@@ -449,7 +450,7 @@ impl AgentLoop {
                             }
                             ctx.add_message(partial.message);
                             return Ok(self.graceful_interrupt_result(
-                                &ctx,
+                                &mut ctx,
                                 total_turns,
                                 &tool_errors,
                                 accumulated_usage.clone(),
@@ -484,7 +485,7 @@ impl AgentLoop {
                         Ok(r) => r,
                         Err(AgentError::Interrupted { .. }) => {
                             return Ok(self.graceful_interrupt_result(
-                                &ctx,
+                                &mut ctx,
                                 total_turns,
                                 &tool_errors,
                                 accumulated_usage.clone(),
@@ -683,6 +684,7 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
+                        compressed_transcripts: ctx.take_compressed_transcripts(),
                     });
                 }
             }
@@ -981,6 +983,7 @@ impl AgentLoop {
                     interrupted: false,
                     session_cost_usd: Some(session_cost_usd),
                     session_started_hooks_fired,
+                    compressed_transcripts: ctx.take_compressed_transcripts(),
                 });
             }
 
@@ -1088,6 +1091,7 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
+                        compressed_transcripts: ctx.take_compressed_transcripts(),
                     });
                 }
                 for tc in &tool_calls {
@@ -1190,7 +1194,7 @@ impl AgentLoop {
             let mut steer_markers = Vec::new();
             if self.collect_tool_batch_interrupt(&mut steer_markers) {
                 return Ok(self.graceful_interrupt_result(
-                    &ctx,
+                    &mut ctx,
                     total_turns,
                     &tool_errors,
                     accumulated_usage.clone(),
@@ -1351,7 +1355,7 @@ impl AgentLoop {
             }
             if stop_after_tool_results {
                 return Ok(self.graceful_interrupt_result(
-                    &ctx,
+                    &mut ctx,
                     total_turns,
                     &tool_errors,
                     accumulated_usage.clone(),
@@ -1421,6 +1425,7 @@ impl AgentLoop {
                     interrupted: false,
                     session_cost_usd: Some(session_cost_usd),
                     session_started_hooks_fired,
+                    compressed_transcripts: ctx.take_compressed_transcripts(),
                 });
             }
             if !tool_calls.is_empty()

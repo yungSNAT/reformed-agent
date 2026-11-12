@@ -312,6 +312,11 @@ pub struct AgentResult {
     /// Hook / plugin parity: `on_session_start` ran this run (new session, not restored prompt).
     #[serde(default, skip_serializing_if = "is_false")]
     pub session_started_hooks_fired: bool,
+    /// The context as it stood before each compression in this run, oldest
+    /// first, for the caller that saves the session: `messages` keeps only a
+    /// summary of the turns these replaced. Not serialised.
+    #[serde(skip)]
+    pub compressed_transcripts: Vec<Vec<Message>>,
 }
 
 // ---------------------------------------------------------------------------

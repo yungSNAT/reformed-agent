@@ -665,7 +665,17 @@ impl App {
                             .should_force_objective_continuation(&result, baseline_len)
                             .await
                         {
+                            let compressed = result.compressed_transcripts;
                             self.messages = result.messages;
+                            // Save the turns this run compressed before the
+                            // continuation replaces its result.
+                            if !compressed.is_empty() {
+                                if let Err(err) =
+                                    self.persist_compressed_session_snapshot(&compressed)
+                                {
+                                    tracing::warn!("session autosave skipped: {}", err);
+                                }
+                            }
                             self.messages.push(hermes_core::Message::system(
                                 Self::objective_continuation_system_prompt(&reason),
                             ));
