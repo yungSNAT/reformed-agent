@@ -33,7 +33,8 @@ impl AgentLoop {
             self.config.persist_user_message.as_deref(),
         ) {
             // `idx` indexes the history before any compression; find that
-            // message again if one has moved it.
+            // message again if one has moved it. If one summarised it away,
+            // there is no message left to override.
             let idx = match ctx.compressed_transcripts().first() {
                 None => Some(idx),
                 Some(before) => before

@@ -749,6 +749,13 @@ impl AgentLoop {
                 .into_iter()
                 .filter(|tc| !tc.function.name.is_empty())
                 .collect();
+            if tool_calls.is_empty() {
+                // A call without a name never runs, so the stored turn
+                // keeps only its text.
+                if let Some(stored) = ctx.get_messages_mut().get_mut(assistant_idx) {
+                    stored.tool_calls = None;
+                }
+            }
 
             if tool_calls.is_empty() {
                 if !tool_schemas.is_empty()
@@ -1085,6 +1092,8 @@ impl AgentLoop {
                         "Max invalid tool retries reached ({}). Last invalid tool: {}",
                         self.config.invalid_tool_call_max_retries, invalid_tool_calls[0]
                     )));
+                    // None of this turn's calls ran.
+                    Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                     self.memory_on_session_end(ctx.get_messages());
                     return Ok(AgentResult {
                         messages: self.messages_for_persisted_result(
@@ -1187,6 +1196,12 @@ impl AgentLoop {
             }
             self.cap_delegates(&mut tool_calls);
             Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &tool_calls);
+            if tool_calls.is_empty() {
+                ctx.add_message(Message::system(
+                    "[SYSTEM] This turn's delegate_task calls were dropped because delegation is unavailable. Continue without delegating.",
+                ));
+                continue;
+            }
             let contextlattice_connect_intent =
                 detect_contextlattice_connect_intent(ctx.get_messages());
 
@@ -1203,6 +1218,7 @@ impl AgentLoop {
 
             let mut steer_markers = Vec::new();
             if self.collect_tool_batch_interrupt(&mut steer_markers) {
+                Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                 return Ok(self.graceful_interrupt_result(
                     &mut ctx,
                     total_turns,

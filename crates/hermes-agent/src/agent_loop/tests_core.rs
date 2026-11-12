@@ -1217,6 +1217,173 @@
         assert_eq!(kept.tool_calls, None);
     }
 
+    #[test]
+    fn replayed_tool_use_blocks_follow_the_calls_that_run() {
+        let call = |id: &str, name: &str, arguments: &str| hermes_core::ToolCall {
+            id: id.to_string(),
+            function: hermes_core::FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+            extra_content: None,
+        };
+        let mut stored = Message::assistant_with_tool_calls(
+            None,
+            vec![call("call_a", "Echo", r#"{"n":1}"#), call("call_b", "echo", "{}")],
+        );
+        let thinking = serde_json::json!({"type": "thinking", "thinking": "t", "signature": "s"});
+        stored.anthropic_content_blocks = Some(vec![
+            thinking.clone(),
+            serde_json::json!({"type": "tool_use", "id": "call_a", "name": "Echo", "input": {"n": 1}}),
+            serde_json::json!({"type": "tool_use", "id": "call_b", "name": "echo", "input": {}}),
+        ]);
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::user("echo"));
+        ctx.add_message(stored);
+
+        // call_a ran with a repaired name and rewritten arguments; call_b was dropped.
+        let ran = call("call_a", "echo", r#"{"n":2}"#);
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 1, std::slice::from_ref(&ran));
+        let stored = &ctx.get_messages()[1];
+        assert_eq!(stored.tool_calls, Some(vec![ran]));
+        assert_eq!(
+            stored.anthropic_content_blocks,
+            Some(vec![
+                thinking,
+                serde_json::json!({"type": "tool_use", "id": "call_a", "name": "echo", "input": {"n": 2}}),
+            ])
+        );
+    }
+
+    #[test]
+    fn runs_finish_when_every_call_is_dropped() {
+        // Delegation is paused, so the model's only call is dropped; a call to
+        // a missing tool ends the run after the retries; a streamed call has
+        // no name, so it never runs.
+        let _lock = env_test_lock();
+        let _paused = EnvVarGuard::set("HERMES_DELEGATION_PAUSED", "1");
+        const NOTE: &str = "delegation is unavailable";
+        const MISSING: &str = "use a missing tool";
+        fn has(messages: &[Message], text: &str) -> bool {
+            messages.iter().any(|m| m.content.as_deref() == Some(text))
+        }
+        struct DroppedCallProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for DroppedCallProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                let noted = messages
+                    .iter()
+                    .any(|m| m.content.as_deref().is_some_and(|c| c.contains(NOTE)));
+                let tool = if has(messages, MISSING) {
+                    "missing_tool"
+                } else {
+                    "delegate_task"
+                };
+                let message = if noted {
+                    Message::assistant("done")
+                } else {
+                    Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: format!("call_{tool}"),
+                            function: hermes_core::FunctionCall {
+                                name: tool.to_string(),
+                                arguments: r#"{"goal":"count the herons"}"#.to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    )
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("done")),
+                    Ok(stream_chunk_tool_name(0, "call_unnamed", "")),
+                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "delegate_task",
+            ToolSchema::new("delegate_task", "Delegate", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("delegated".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            max_turns: 4,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(DroppedCallProvider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let delegated = rt
+            .block_on(agent.run(vec![Message::user("hello")], None))
+            .expect("run");
+        let missing = rt
+            .block_on(agent.run(vec![Message::user(MISSING)], None))
+            .expect("run with a missing tool");
+        let streamed = rt
+            .block_on(agent.run_stream(
+                vec![Message::user("hello")],
+                None,
+                Some(Box::new(|_| {})),
+            ))
+            .expect("streamed run");
+        for result in [&delegated, &missing, &streamed] {
+            let calls: Vec<&str> = result
+                .messages
+                .iter()
+                .flat_map(|m| m.tool_calls.iter().flatten())
+                .map(|c| c.id.as_str())
+                .collect();
+            let answers: Vec<&str> = result
+                .messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Tool)
+                .filter_map(|m| m.tool_call_id.as_deref())
+                .collect();
+            assert_eq!(calls, answers, "{:?}", result.messages);
+        }
+        assert!(!missing.finished_naturally, "the retries ran out");
+        for result in [&delegated, &streamed] {
+            assert!(result.finished_naturally, "{:?}", result.messages);
+            let last = result.messages.last().and_then(|m| m.content.as_deref());
+            assert_eq!(last, Some("done"));
+        }
+    }
+
     include!("tests/llm_retry_stream.rs");
 
     #[test]
