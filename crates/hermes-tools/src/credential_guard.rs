@@ -734,6 +734,102 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_judges_the_path_after_folding_dots_and_separators() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).expect("home");
+
+        for path in [
+            "//etc/passwd",
+            "/etc/./shadow",
+            "/etc/../etc/sudoers.d/x",
+            "/tmp/../etc/systemd/system/evil.service",
+            "/etc/nonexistent/../hosts",
+        ] {
+            assert!(
+                is_write_denied_with_roots(Path::new(path), Some(&home), None),
+                "{path} should be denied"
+            );
+        }
+        assert!(is_write_denied_with_roots(
+            &home.join("project/../.ssh/authorized_keys"),
+            Some(&home),
+            None
+        ));
+        assert!(is_write_denied_with_roots(
+            Path::new("~/project/../.netrc"),
+            Some(&home),
+            None
+        ));
+        assert!(!is_write_denied_with_roots(
+            &home.join("project/./src/../main.rs"),
+            Some(&home),
+            None
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_symlinked_parents() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let workspace = tmp.path().join("workspace");
+        let outside = tmp.path().join("outside");
+        for dir in [home.join(".ssh"), workspace.clone(), outside.clone()] {
+            std::fs::create_dir_all(dir).expect("dir");
+        }
+        std::os::unix::fs::symlink(home.join(".ssh"), workspace.join("keys")).expect("symlink");
+        std::os::unix::fs::symlink(&outside, workspace.join("escape")).expect("symlink");
+
+        assert!(is_write_denied_with_roots(
+            &workspace.join("keys/authorized_keys"),
+            Some(&home),
+            None
+        ));
+        // A link out of the safe root does not keep its writes inside it.
+        assert!(is_write_denied_with_roots_and_safe_root(
+            &workspace.join("escape/file.txt"),
+            Some(&home),
+            None,
+            Some(&workspace)
+        ));
+        assert!(!is_write_denied_with_roots_and_safe_root(
+            &workspace.join("src/new/file.txt"),
+            Some(&home),
+            None,
+            Some(&workspace)
+        ));
+    }
+
+    #[test]
+    fn write_deny_keeps_home_rules_when_home_is_unset() {
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved = std::env::var_os("HOME");
+        std::env::remove_var("HOME");
+        let home = std::env::home_dir();
+        let denied = home
+            .as_ref()
+            .map(|home| is_write_denied(&home.join(".ssh/authorized_keys")));
+        if let Some(saved) = saved {
+            std::env::set_var("HOME", saved);
+        }
+        let home = home.expect("the account's home directory");
+        assert_eq!(denied, Some(true), "{}", home.display());
+    }
+
+    #[test]
+    fn write_deny_allows_the_temporary_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        // On macOS this resolves into /private/var/folders.
+        assert!(!is_write_denied_with_roots(
+            &std::env::temp_dir().join("scratch.txt"),
+            Some(&home),
+            None
+        ));
+    }
+
+    #[test]
     fn write_safe_root_expands_tilde_and_ignores_absent_root() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
