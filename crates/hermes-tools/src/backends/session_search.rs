@@ -1010,7 +1010,12 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                     .iter()
                     .map(|s| rusqlite::types::Value::Text((*s).to_string()))
                     .collect();
-                let scan_limit = (limit.saturating_mul(5).saturating_add(20)).max(limit);
+                // A compressed conversation has a row per compression but is
+                // listed once, so scan as many candidates as Hermes Agent's
+                // browse. shortcut: a window, as there; more recent rows of
+                // one conversation than this still crowd out older ones, until
+                // the query skips compressed rows that have a continuation.
+                let scan_limit = limit.saturating_mul(8).max(128);
                 params_values.push(rusqlite::types::Value::Integer(scan_limit as i64));
                 let params = rusqlite::params_from_iter(params_values.iter());
                 let rows = stmt
@@ -1036,14 +1041,15 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                 let current_lineage_root = current_session_id
                     .map(|sid| Self::logical_session_key_for_session_id(&conn, sid.trim()));
                 let mut results = Vec::new();
+                let mut listed = HashSet::new();
                 for row in rows.flatten() {
                     let (
-                        session_id,
-                        title,
-                        source,
-                        started_at,
-                        last_active,
-                        message_count,
+                        row_id,
+                        _,
+                        row_source,
+                        row_started_at,
+                        _,
+                        _,
                         parent_session_id,
                         model_config,
                         parent_end_reason,
@@ -1054,22 +1060,53 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                         .map(str::trim)
                         .filter(|parent| !parent.is_empty())
                         .is_some();
-                    if has_parent
+                    // As in Hermes Agent's browse, a compressed conversation is
+                    // listed once, at its latest row, under its live tip.
+                    let root = if Self::is_compression_child(
+                        model_config.as_deref(),
+                        Some(&row_source),
+                        parent_end_reason.as_deref(),
+                    ) {
+                        Self::compression_root(&conn, &row_id)
+                    } else if has_parent
                         && !Self::is_branch_child(
                             parent_session_id.as_deref(),
                             model_config.as_deref(),
-                            Some(&started_at),
+                            Some(&row_started_at),
                             parent_end_reason.as_deref(),
                             parent_ended_at.as_deref(),
                         )
                     {
                         continue;
+                    } else {
+                        row_id
+                    };
+                    if current_lineage_root.as_ref() == Some(&root) || !listed.insert(root.clone())
+                    {
+                        continue;
                     }
-                    if let Some(ref current_root) = current_lineage_root {
-                        if current_root == &session_id {
-                            continue;
-                        }
-                    }
+                    let session_id = Self::compression_tip(&conn, &root);
+                    let Ok((started_at, title, source, last_active, message_count)) = conn
+                        .query_row(
+                            "SELECT r.created_at, COALESCE(t.title, r.title),
+                                    COALESCE(t.platform, 'cli'), t.updated_at,
+                                    COALESCE(t.message_count, 0)
+                             FROM sessions r, sessions t
+                             WHERE r.id = ?1 AND t.id = ?2",
+                            rusqlite::params![root, session_id],
+                            |r| {
+                                Ok((
+                                    r.get::<_, String>(0)?,
+                                    r.get::<_, Option<String>>(1)?,
+                                    r.get::<_, String>(2)?,
+                                    r.get::<_, String>(3)?,
+                                    r.get::<_, i64>(4)?,
+                                ))
+                            },
+                        )
+                    else {
+                        continue;
+                    };
                     let preview: String = conn
                         .query_row(
                             "SELECT COALESCE(content, '') FROM messages
@@ -1255,9 +1292,13 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                             if !seen.insert(logical_key) {
                                 continue;
                             }
-                            if let Some(task) =
-                                Self::load_summary_task(&conn, &resolved_session_id, query, false)?
+                            // Show the matched row's turns, under the session that
+                            // holds them now: a compressed row's turns are no longer
+                            // in its session's own transcript.
+                            if let Some(mut task) =
+                                Self::load_summary_task(&conn, &row_context.id, query, false)?
                             {
+                                task.session_id = resolved_session_id;
                                 tasks.push(task);
                             }
                         }

@@ -219,6 +219,7 @@ pub async fn handle_cli_chat(
                 &outcome.active_model,
                 config.personality.clone(),
                 &outcome.result.messages,
+                &outcome.result.compressed_transcripts,
             ) {
                 Ok(true) => None,
                 Ok(false) => Some(

@@ -514,13 +514,17 @@ fn handle_compress_command(app: &mut App, args: &[&str]) -> Result<CommandResult
     );
 
     let split_at = app.messages.len() - keep;
-    let retained = app.messages.split_off(split_at);
-    app.messages.clear();
+    let replaced = std::mem::take(&mut app.messages);
     app.messages
         .push(hermes_core::Message::system(summary_text));
-    app.messages.extend(retained);
+    app.messages.extend_from_slice(&replaced[split_at..]);
     let after_count = app.messages.len();
     let after_tokens = estimate_message_tokens_for_compress(&app.messages);
+    // Save now: a later save without `replaced` would drop those turns from
+    // session search.
+    if let Err(err) = app.persist_compressed_session_snapshot(&[replaced]) {
+        tracing::warn!("compressed session not saved: {}", err);
+    }
 
     emit_command_output(
         app,

@@ -85,6 +85,7 @@
             interrupted: false,
             session_cost_usd: Some(0.002),
             session_started_hooks_fired: false,
+            compressed_transcripts: Vec::new(),
         });
         app.apply_agent_result(hermes_core::AgentResult {
             messages: vec![hermes_core::Message::assistant("second")],
@@ -95,6 +96,7 @@
             interrupted: false,
             session_cost_usd: None,
             session_started_hooks_fired: false,
+            compressed_transcripts: Vec::new(),
         });
 
         assert_eq!(app.last_usage, Some(second));
@@ -1099,6 +1101,135 @@
             None => std::env::remove_var("HERMES_HOME"),
         }
         std::env::remove_var("HERMES_OBJECTIVE_EXECUTION_ENFORCER");
+    }
+
+    #[test]
+    fn objective_continuation_keeps_the_turns_its_first_run_compressed() {
+        const STATUS: &str = "I will proceed with the next steps and share updates shortly.";
+        struct StatusProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for StatusProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: hermes_core::Message::assistant(STATUS),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[hermes_core::Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> futures::stream::BoxStream<'static, Result<hermes_core::StreamChunk, AgentError>>
+            {
+                use futures::StreamExt;
+                let content = hermes_core::StreamChunk {
+                    delta: Some(hermes_core::StreamDelta {
+                        content: Some(STATUS.to_string()),
+                        tool_calls: None,
+                        extra: None,
+                    }),
+                    finish_reason: None,
+                    usage: None,
+                };
+                let finish = hermes_core::StreamChunk {
+                    delta: None,
+                    finish_reason: Some("stop".to_string()),
+                    usage: None,
+                };
+                futures::stream::iter(vec![Ok(content), Ok(finish)]).boxed()
+            }
+        }
+
+        let _lock = env_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let previous: Vec<_> = [
+            ("HERMES_HOME", tmp.path().to_str().expect("utf-8")),
+            ("HERMES_OBJECTIVE_EXECUTION_ENFORCER", "1"),
+            // Otherwise the run pins a ContextLattice topic in the process env.
+            ("HERMES_OBJECTIVE_CONTEXT_AUTOPIN", "0"),
+            // Compression writes a checkpoint over HTTP: send it to a closed port.
+            ("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:9"),
+            // Search shows the matched turns rather than a model's summary.
+            ("HERMES_SESSION_SEARCH_SUMMARY_API_KEY", " "),
+            ("HERMES_SESSION_SEARCH_SUMMARY_BASE_URL", "http://127.0.0.1:9"),
+        ]
+        .into_iter()
+        .map(|(key, value)| {
+            let old = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            (key, old)
+        })
+        .collect();
+        upsert_objective_contract("Keep the river notes current", false).expect("set objective");
+        set_objective_contract_behavior_mode("mission").expect("set mission mode");
+
+        let mut app = build_minimal_test_app();
+        app.agent = Arc::new(AgentLoop::new(
+            hermes_agent::AgentConfig {
+                skip_memory: true,
+                skip_context_files: true,
+                ..Default::default()
+            },
+            Arc::new(AgentToolRegistry::new()),
+            Arc::new(StatusProvider),
+        ));
+        // Over 80% of the default context budget, so the first run compresses
+        // and its status-only reply triggers one continuation. Only the first
+        // turn mentions the otter, beyond the reach of the compression summary.
+        app.messages = (0..20)
+            .flat_map(|turn| {
+                let topic = if turn == 0 { "otter" } else { "heron" };
+                [
+                    hermes_core::Message::user(format!(
+                        "{topic} question {turn} {}",
+                        "x".repeat(5_000)
+                    )),
+                    hermes_core::Message::assistant(format!(
+                        "answer {turn} {}",
+                        "y".repeat(4_000)
+                    )),
+                ]
+            })
+            .collect();
+        app.messages.push(hermes_core::Message::user("and the kingfisher"));
+
+        let run = block_on_test(async {
+            app.run_agent().await?;
+            use hermes_tools::SessionSearchBackend;
+            let db = app.state_root.join("sessions.db");
+            let backend = hermes_tools::SqliteSessionSearchBackend::new(db.to_str().unwrap_or(""))
+                .map_err(|e| AgentError::Io(e.to_string()))?;
+            backend
+                .search(Some("otter"), None, 5, None)
+                .await
+                .map_err(|e| AgentError::Io(e.to_string()))
+        });
+        for (key, old) in previous {
+            match old {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+
+        let found: serde_json::Value =
+            serde_json::from_str(&run.expect("run and search")).expect("search json");
+        assert_eq!(found["count"], 1, "{found}");
+        assert_eq!(found["results"][0]["session_id"], app.session_id.as_str());
     }
 
     #[test]

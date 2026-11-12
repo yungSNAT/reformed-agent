@@ -61,10 +61,11 @@ impl App {
     /// Apply finalized messages and persist the session snapshot.
     pub fn apply_agent_result_and_persist(
         &mut self,
-        result: hermes_core::AgentResult,
+        mut result: hermes_core::AgentResult,
     ) -> Result<(), AgentError> {
+        let compressed = std::mem::take(&mut result.compressed_transcripts);
         self.apply_agent_result(result);
-        self.persist_session_snapshot(None).map(|_| ())
+        self.persist_compressed_session_snapshot(&compressed).map(|_| ())
     }
 
     /// Count background jobs currently queued/running.
@@ -240,6 +241,24 @@ impl App {
         &self,
         name_override: Option<&str>,
     ) -> Result<PathBuf, AgentError> {
+        self.save_session(name_override, &[])
+    }
+
+    /// Persist the session after compressions replaced the turns in
+    /// `compressed` (oldest first), keeping those turns searchable in
+    /// `sessions.db`.
+    pub fn persist_compressed_session_snapshot(
+        &self,
+        compressed: &[Vec<hermes_core::Message>],
+    ) -> Result<PathBuf, AgentError> {
+        self.save_session(None, compressed)
+    }
+
+    fn save_session(
+        &self,
+        name_override: Option<&str>,
+        compressed: &[Vec<hermes_core::Message>],
+    ) -> Result<PathBuf, AgentError> {
         let stem = name_override
             .map(str::trim)
             .filter(|name| !name.is_empty())
@@ -257,14 +276,15 @@ impl App {
             &self.messages,
         )?;
         if name_override.is_none() && !self.messages.is_empty() {
-            if let Err(err) = SessionPersistence::new(&self.state_root).persist_session(
-                &self.session_id,
-                &self.messages,
-                Some(&self.current_model),
-                None,
-                None,
-                None,
-            ) {
+            if let Err(err) = SessionPersistence::new(&self.state_root)
+                .persist_session_after_compression(
+                    &self.session_id,
+                    compressed,
+                    &self.messages,
+                    Some(&self.current_model),
+                    None,
+                )
+            {
                 tracing::warn!(
                     "session {} not written to sessions.db: {}",
                     self.session_id,
@@ -359,15 +379,15 @@ pub fn save_oneshot_session(
     model: &str,
     personality: Option<String>,
     messages: &[hermes_core::Message],
+    compressed: &[Vec<hermes_core::Message>],
 ) -> Result<bool, AgentError> {
     let session_id = format!("{ONESHOT_SESSION_ID_PREFIX}{}", Uuid::new_v4());
-    SessionPersistence::new(state_root).persist_session(
+    SessionPersistence::new(state_root).persist_session_after_compression(
         &session_id,
+        compressed,
         messages,
         Some(model),
         Some("oneshot"),
-        None,
-        None,
     )?;
     let session_info = SessionInfo {
         session_id: session_id.clone(),

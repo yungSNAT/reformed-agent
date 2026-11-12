@@ -741,6 +741,7 @@
             interrupted: false,
             session_cost_usd: Some(0.0123),
             session_started_hooks_fired: false,
+            compressed_transcripts: Vec::new(),
         });
 
         let result = handle_slash_command(&mut app, "/usage", &[])

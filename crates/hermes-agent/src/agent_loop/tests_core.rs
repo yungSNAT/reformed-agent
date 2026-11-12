@@ -862,6 +862,86 @@
             .any(|(kind, msg)| kind == "lifecycle" && msg.contains("triggering compression")));
     }
 
+    #[test]
+    fn compressing_runs_return_the_turns_they_replaced() {
+        // Compression writes a checkpoint over HTTP; send it to a closed
+        // local port so the test stays offline.
+        let _lock = env_test_lock();
+        let _url = EnvVarGuard::set("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:9");
+        let _key = EnvVarGuard::remove("CONTEXTLATTICE_API_KEY");
+        let _mode = EnvVarGuard::set("HERMES_CONTEXTLATTICE_COMPACTION_GOVERNANCE", "advisory");
+        struct StopProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for StopProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("by the mill"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("by the mill")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        // Over 80% of the default 200,000-character budget, so each run
+        // compresses before its first model call.
+        let mut history: Vec<Message> = (0..20)
+            .flat_map(|turn| {
+                [
+                    Message::user(format!("heron question {turn} {}", "x".repeat(5_000))),
+                    Message::assistant(format!("willow answer {turn} {}", "y".repeat(4_000))),
+                ]
+            })
+            .collect();
+        history.push(Message::user("and the kingfisher"));
+        let config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(StopProvider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let results = [
+            rt.block_on(agent.run(history.clone(), None)).expect("run"),
+            rt.block_on(agent.run_stream(history.clone(), None, Some(Box::new(|_| {}))))
+                .expect("streamed run"),
+        ];
+        for result in results {
+            assert_eq!(result.compressed_transcripts.len(), 1);
+            let replaced = &result.compressed_transcripts[0];
+            assert!(replaced.contains(&history[0]), "the replaced turns are returned");
+            assert!(!result.messages.contains(&history[0]), "the run's context was compressed");
+        }
+    }
+
     include!("tests/llm_retry_stream.rs");
 
     #[test]

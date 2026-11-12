@@ -73,7 +73,7 @@ impl AgentLoop {
     #[allow(clippy::too_many_arguments)]
     fn graceful_interrupt_result(
         &self,
-        ctx: &ContextManager,
+        ctx: &mut ContextManager,
         total_turns: u32,
         tool_errors: &[hermes_core::ToolErrorRecord],
         accumulated_usage: Option<UsageStats>,
@@ -92,6 +92,7 @@ impl AgentLoop {
             interrupted: true,
             session_cost_usd: Some(session_cost_usd),
             session_started_hooks_fired,
+            compressed_transcripts: ctx.take_compressed_transcripts(),
         }
     }
 

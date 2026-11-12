@@ -320,9 +320,27 @@ fn load_resume_payload(
     cli: &Cli,
     requested: Option<&str>,
 ) -> Result<ResumeSessionPayload, AgentError> {
-    let sessions_dir = hermes_state_root(cli).join("sessions");
+    let state_root = hermes_state_root(cli);
+    let sessions_dir = state_root.join("sessions");
     let (resolved_id, source_path) =
-        resolve_resume_session_file_with_legacy_fallback(&sessions_dir, requested)?;
+        match resolve_resume_session_file_with_legacy_fallback(&sessions_dir, requested) {
+            Ok(found) => found,
+            // A compressed session's older turns sit in rows without a
+            // snapshot; resuming one of them continues the session.
+            Err(err) => {
+                let tip = requested.and_then(|id| {
+                    SessionPersistence::new(&state_root)
+                        .resolve_resume_session_id(id)
+                        .ok()
+                        .filter(|tip| tip != id)
+                });
+                let Some(tip) = tip else {
+                    return Err(err);
+                };
+                resolve_resume_session_file_with_legacy_fallback(&sessions_dir, Some(&tip))
+                    .map_err(|_| err)?
+            }
+        };
     let mut payload = parse_resume_payload_file(resolved_id, source_path)?;
     if is_latest_resume_request(requested) && payload.messages.is_empty() {
         if let Ok((fallback_id, fallback_path)) =

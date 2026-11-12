@@ -314,7 +314,21 @@ impl AgentLoop {
             pressure_after
         );
 
-        match write_contextlattice_checkpoint(&topic, CONTEXTLATTICE_COMPACTION_FILE, &content) {
+        // Its blocking HTTP client panics inside the async runtime that runs
+        // the agent loop, so write from a plain thread.
+        let written = std::thread::scope(|scope| {
+            scope
+                .spawn(|| {
+                    write_contextlattice_checkpoint(
+                        &topic,
+                        CONTEXTLATTICE_COMPACTION_FILE,
+                        &content,
+                    )
+                })
+                .join()
+        })
+        .unwrap_or_else(|_| Err("checkpoint writer panicked".to_string()));
+        match written {
             Ok(()) => {
                 self.emit_status(
                     "lifecycle",
