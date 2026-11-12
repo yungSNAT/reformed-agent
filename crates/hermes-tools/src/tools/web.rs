@@ -438,6 +438,64 @@ mod tests {
         );
     }
 
+    /// A remote provider that followed a redirect or crawled a link onto a
+    /// blocklisted site.
+    struct ProviderPagesBackend;
+    const PROVIDER_PAGES: &str = r#"{"results": [
+        {"url": "https://1.1.1.1/docs", "content": "allowed page"},
+        {"url": "https://blocked.example/landing", "content": "blocklisted page"}
+    ]}"#;
+    #[async_trait]
+    impl WebExtractBackend for ProviderPagesBackend {
+        async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
+            Ok(PROVIDER_PAGES.into())
+        }
+    }
+    #[async_trait]
+    impl WebCrawlBackend for ProviderPagesBackend {
+        async fn crawl(
+            &self,
+            _url: &str,
+            _instructions: Option<&str>,
+            _depth: &str,
+            _limit: usize,
+        ) -> Result<String, ToolError> {
+            Ok(PROVIDER_PAGES.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_pages_on_blocklisted_sites_are_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        let seed = json!({"url": "https://1.1.1.1/"});
+        let outputs = [
+            WebExtractHandler::new(Box::new(ProviderPagesBackend))
+                .execute(seed.clone())
+                .await
+                .expect("extract"),
+            WebCrawlHandler::new(Box::new(ProviderPagesBackend))
+                .execute(seed)
+                .await
+                .expect("crawl"),
+        ];
+        for output in outputs {
+            let value: Value = serde_json::from_str(&output).expect("JSON results");
+            let pages = value["results"].as_array().expect("results");
+            assert_eq!(pages[0]["content"], "allowed page");
+            assert_eq!(pages[1]["url"], "https://blocked.example/landing");
+            assert!(
+                pages[1]["error"].as_str().is_some_and(|e| e.contains("blocked.example")),
+                "{output}"
+            );
+            assert!(!output.contains("blocklisted page"), "{output}");
+        }
+    }
+
     #[tokio::test]
     async fn test_web_search_missing_params() {
         let handler = WebSearchHandler::new(Box::new(MockSearchBackend));
