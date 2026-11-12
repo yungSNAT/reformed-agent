@@ -69,7 +69,10 @@ impl TelegramAdapter {
         self.approval_state
             .lock()
             .map_err(|_| GatewayError::Platform("telegram approval state poisoned".to_string()))?
-            .insert(approval_id, request.session_key.clone());
+            .insert(
+                approval_id,
+                (request.session_key.clone(), request.request_id.clone()),
+            );
 
         let command = truncate_chars(&request.command, 1800);
         let description = truncate_chars(&request.description, 1200);
@@ -116,23 +119,19 @@ impl TelegramAdapter {
         let Some((choice, approval_id)) = parse_approval_callback(callback_data) else {
             return Ok(false);
         };
-        let session_key = self
+        let card = self
             .approval_state
             .lock()
             .map_err(|_| GatewayError::Platform("telegram approval state poisoned".to_string()))?
             .remove(&approval_id);
-        let Some(session_key) = session_key else {
+        let Some((session_key, request_id)) = card else {
             self.answer_callback_query(callback_query_id, Some("Approval already resolved"), true)
                 .await?;
             return Ok(true);
         };
-        let resolved = approval::resolve_gateway_approval(
-            &session_key,
-            choice,
-            matches!(choice, ApprovalChoice::Session),
-        );
+        let resolved = approval::resolve_gateway_approval_card(&session_key, choice, &request_id);
         let answer = if resolved == 0 {
-            "No pending approval for this session"
+            "Approval expired: this command is no longer waiting"
         } else if choice == ApprovalChoice::Deny {
             "Denied"
         } else {

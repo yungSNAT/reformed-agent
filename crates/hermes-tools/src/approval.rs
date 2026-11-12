@@ -10,6 +10,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, LazyLock, Mutex};
 use std::time::Duration;
 
+mod pipe_shell;
+
 // ---------------------------------------------------------------------------
 // ApprovalDecision
 // ---------------------------------------------------------------------------
@@ -315,6 +317,9 @@ impl Default for CommandGuardContext {
 /// Approval payload queued for gateway-visible command confirmation.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GatewayApprovalRequest {
+    /// Identifies this request, so a native approval card resolves only the
+    /// request it showed (`resolve_gateway_approval_card`).
+    pub request_id: String,
     pub session_key: String,
     pub command: String,
     pub description: String,
@@ -600,6 +605,39 @@ pub fn resolve_gateway_approval(
     resolved.len()
 }
 
+/// Resolve the pending approval a native button card was rendered for.
+///
+/// A card whose request already settled (timed out, or answered with
+/// `/approve`) resolves nothing, instead of the next queued approval in the
+/// same session, which the user has not seen yet.
+pub fn resolve_gateway_approval_card(
+    session_key: &str,
+    choice: ApprovalChoice,
+    request_id: &str,
+) -> usize {
+    let entry = {
+        let mut queues = GATEWAY_QUEUES.lock().expect("gateway queue lock poisoned");
+        let Some(queue) = queues.get_mut(session_key.trim()) else {
+            return 0;
+        };
+        let Some(index) = queue
+            .iter()
+            .position(|entry| entry.request.request_id == request_id)
+        else {
+            return 0;
+        };
+        let entry = queue.remove(index);
+        if queue.is_empty() {
+            queues.remove(session_key.trim());
+        }
+        entry
+    };
+    entry.map_or(0, |entry| {
+        entry.resolve(choice);
+        1
+    })
+}
+
 /// Register an observer for approval lifecycle events.
 ///
 /// Observers are intentionally best-effort: a panic in one observer is
@@ -830,7 +868,7 @@ fn detect_dangerous_command_detail(command: &str) -> Option<DangerousCommandFind
         });
     }
     for rule in DANGEROUS_COMMAND_RULES.iter() {
-        if rule.regex.is_match(&normalized) {
+        if rule.is_match(&normalized) {
             return Some(DangerousCommandFinding {
                 pattern_key: rule.key.to_string(),
                 description: rule.description.to_string(),
@@ -1040,6 +1078,10 @@ pub fn check_all_command_guards_with_context(
         callback(prompt.clone())
     } else if context.gateway || context.ask {
         let request = GatewayApprovalRequest {
+            request_id: format!(
+                "approval-{}",
+                NEXT_GATEWAY_REQUEST_ID.fetch_add(1, Ordering::Relaxed)
+            ),
             session_key: session_key.clone(),
             command: command.to_string(),
             description: combined_desc.clone(),
@@ -1201,7 +1243,10 @@ impl ApprovalManager {
         }
 
         let normalized = collapse_command(command);
-        if delete_without_where(&normalized) {
+        if delete_without_where(&normalized)
+            || pipe_shell::pipes_remote_content_to_shell(&normalized)
+            || pipe_shell::sources_remote_process_substitution(&normalized)
+        {
             return ApprovalDecision::RequiresConfirmation;
         }
 

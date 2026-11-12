@@ -41,12 +41,8 @@ static CONFIRM_PATTERNS: LazyLock<Vec<Regex>> = LazyLock::new(|| {
         Regex::new(r"(?is)\b(?:bash|sh|zsh|ksh)\s+-l?c\b").unwrap(),
         // Shell pipe to sh
         Regex::new(r"\|\s*(ba)?sh\b").unwrap(),
-        // Curl pipe to shell
-        // DOTALL hardening: catch multiline curl payloads piped to shell.
-        Regex::new(r"(?is)curl\s+.*\|\s*(ba)?sh\b").unwrap(),
-        Regex::new(r"(?is)wget\s+.*\|\s*(ba)?sh\b").unwrap(),
         // Remote script process substitution
-        Regex::new(r"(?is)\b(?:bash|sh|zsh|ksh)\s+<\s*(?:<\s*)?\(\s*(?:curl|wget)\b").unwrap(),
+        Regex::new(SHELL_REMOTE_PROCESS_SUBSTITUTION).unwrap(),
         // Gateway restarts should go through the service manager so agents do
         // not strand unmanaged background gateway processes.
         Regex::new(r"(?is)\bgateway\s+run\b.*(?:--replace\b|&\s*disown\b|disown\b|&\s*$)")
@@ -129,8 +125,14 @@ static DELETE_FROM: LazyLock<Regex> =
 
 static CONTAINER_BACKENDS: &[&str] = &["docker", "singularity", "modal", "daytona"];
 
+enum RuleMatcher {
+    Regex(Regex),
+    /// A check a regex cannot express, such as one on quote-masked text.
+    Function(fn(&str) -> bool),
+}
+
 struct CommandPatternRule {
-    regex: Regex,
+    matcher: RuleMatcher,
     key: &'static str,
     description: &'static str,
 }
@@ -138,12 +140,23 @@ struct CommandPatternRule {
 impl CommandPatternRule {
     fn new(pattern: &str, key: &'static str, description: &'static str) -> Self {
         Self {
-            regex: Regex::new(pattern).unwrap(),
+            matcher: RuleMatcher::Regex(Regex::new(pattern).unwrap()),
             key,
             description,
         }
     }
+
+    fn is_match(&self, command: &str) -> bool {
+        match &self.matcher {
+            RuleMatcher::Regex(regex) => regex.is_match(command),
+            RuleMatcher::Function(matches) => matches(command),
+        }
+    }
 }
+
+/// `bash <(curl ...)` runs a remote script; `a.sh <(curl ...)` names a file.
+const SHELL_REMOTE_PROCESS_SUBSTITUTION: &str =
+    r"(?is)(?:^|[^\w.-])(?:bash|sh|zsh|ksh|dash)\s+<\s*(?:<\s*)?\(\s*(?:curl|wget)\b";
 
 static DANGEROUS_COMMAND_RULES: LazyLock<Vec<CommandPatternRule>> = LazyLock::new(|| {
     vec![
@@ -179,16 +192,21 @@ static DANGEROUS_COMMAND_RULES: LazyLock<Vec<CommandPatternRule>> = LazyLock::ne
             "shell command via -c/-lc flag",
             "shell command via -c/-lc flag",
         ),
+        CommandPatternRule {
+            matcher: RuleMatcher::Function(pipe_shell::pipes_remote_content_to_shell),
+            key: "pipe remote content to shell",
+            description: "pipe remote content to shell",
+        },
         CommandPatternRule::new(
-            r"(?is)\b(?:curl|wget)\b.*\|\s*(?:[/\w]*/)?(?:ba)?sh(?:\s|$|-c)",
-            "pipe remote content to shell",
-            "pipe remote content to shell",
-        ),
-        CommandPatternRule::new(
-            r"(?is)\b(?:bash|sh|zsh|ksh)\s+<\s*(?:<\s*)?\(\s*(?:curl|wget)\b",
+            SHELL_REMOTE_PROCESS_SUBSTITUTION,
             "execute remote script via process substitution",
             "execute remote script via process substitution",
         ),
+        CommandPatternRule {
+            matcher: RuleMatcher::Function(pipe_shell::sources_remote_process_substitution),
+            key: "execute remote script via process substitution",
+            description: "execute remote script via process substitution",
+        },
         CommandPatternRule::new(
             r"(?is)\bgateway\s+run\b.*(?:--replace\b|&\s*disown\b|disown\b|&\s*$)",
             "unmanaged gateway process start",
@@ -288,3 +306,4 @@ static GATEWAY_NOTIFY_CBS: LazyLock<Mutex<HashMap<String, GatewayNotifyCallback>
 static APPROVAL_OBSERVERS: LazyLock<Mutex<HashMap<u64, ApprovalObserverCallback>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static NEXT_APPROVAL_OBSERVER_ID: AtomicU64 = AtomicU64::new(1);
+static NEXT_GATEWAY_REQUEST_ID: AtomicU64 = AtomicU64::new(1);

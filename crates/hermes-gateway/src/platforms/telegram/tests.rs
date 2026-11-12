@@ -1318,3 +1318,175 @@ fn telegram_approval_callback_parses_and_tracks_state() {
 // -----------------------------------------------------------------------
 
 include!("tests/update_media_config.rs");
+
+#[tokio::test]
+async fn approval_card_answers_only_the_request_it_showed() {
+    // Upstream hermes-agent#87554: a card whose request already settled must not
+    // approve the next request queued in the same session.
+    let server = MockServer::start().await;
+    for (endpoint, result) in [
+        ("sendMessage", serde_json::json!({ "message_id": 77 })),
+        ("answerCallbackQuery", serde_json::json!(true)),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("/botfake_token_12345/{endpoint}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "ok": true, "result": result })),
+            )
+            .mount(&server)
+            .await;
+    }
+    let mut adapter = test_adapter(test_config());
+    adapter.api_base = format!("{}/botfake_token_12345", server.uri());
+
+    let session = "telegram-card-binding";
+    approval::clear_session(session);
+    let (tx, rx) = std::sync::mpsc::channel();
+    approval::register_gateway_notify(session, move |request| {
+        tx.send(request).expect("approval request should send");
+    });
+    let guard = std::thread::spawn(move || {
+        approval::check_all_command_guards_with_context(
+            "rm -rf /tmp/telegram-card-binding",
+            "local",
+            approval::CommandGuardContext {
+                gateway: true,
+                ask: true,
+                session_key: Some(session.to_string()),
+                gateway_approval_timeout: std::time::Duration::from_secs(10),
+                tirith_result: Ok(Some(approval::TirithResult::allow())),
+                ..approval::CommandGuardContext::default()
+            },
+            None,
+        )
+        .expect("approval guard should return")
+    });
+    let pending = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("gateway approval notify should fire");
+
+    // The card of an earlier request in this session, which already timed out.
+    let settled = GatewayApprovalRequest {
+        request_id: "settled-request".to_string(),
+        ..pending.clone()
+    };
+    let stale_card = adapter
+        .approval_counter
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter
+        .send_approval_request("123", &settled, None, None)
+        .await
+        .expect("stale card sent");
+    assert!(adapter
+        .handle_approval_callback("cb-stale", &format!("approval:once:{stale_card}"))
+        .await
+        .expect("stale press handled"));
+    assert!(
+        approval::has_blocking_approval(session),
+        "a stale card must not approve the pending request"
+    );
+
+    let card = adapter
+        .approval_counter
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter
+        .send_approval_request("123", &pending, None, None)
+        .await
+        .expect("card sent");
+    assert!(adapter
+        .handle_approval_callback("cb-live", &format!("approval:once:{card}"))
+        .await
+        .expect("press handled"));
+    let result = guard.join().expect("approval guard thread should join");
+    assert!(result.approved && result.user_approved);
+    approval::unregister_gateway_notify(session);
+    approval::clear_session(session);
+}
+
+#[tokio::test]
+async fn approve_session_card_resolves_only_its_own_request() {
+    // With two requests pending, 'Approve session' on one card answers that
+    // request only; the other waits for its own answer.
+    let server = MockServer::start().await;
+    for (endpoint, result) in [
+        ("sendMessage", serde_json::json!({ "message_id": 78 })),
+        ("answerCallbackQuery", serde_json::json!(true)),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(format!("/botfake_token_12345/{endpoint}")))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(serde_json::json!({ "ok": true, "result": result })),
+            )
+            .mount(&server)
+            .await;
+    }
+    let mut adapter = test_adapter(test_config());
+    adapter.api_base = format!("{}/botfake_token_12345", server.uri());
+
+    let session = "telegram-card-session-scope";
+    approval::clear_session(session);
+    let (tx, rx) = std::sync::mpsc::channel();
+    approval::register_gateway_notify(session, move |request| {
+        tx.send(request).expect("approval request should send");
+    });
+    let guard = |command: &'static str| {
+        std::thread::spawn(move || {
+            approval::check_all_command_guards_with_context(
+                command,
+                "local",
+                approval::CommandGuardContext {
+                    gateway: true,
+                    ask: true,
+                    session_key: Some(session.to_string()),
+                    gateway_approval_timeout: std::time::Duration::from_secs(10),
+                    tirith_result: Ok(Some(approval::TirithResult::allow())),
+                    ..approval::CommandGuardContext::default()
+                },
+                None,
+            )
+            .expect("approval guard should return")
+        })
+    };
+    let first = guard("rm -rf /tmp/telegram-card-first");
+    let first_request = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("first approval notify should fire");
+    let second = guard("git reset --hard");
+    let second_request = rx
+        .recv_timeout(std::time::Duration::from_secs(5))
+        .expect("second approval notify should fire");
+    assert_eq!(approval::pending_gateway_approval_count(session), 2);
+
+    let card = adapter
+        .approval_counter
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter
+        .send_approval_request("123", &second_request, None, None)
+        .await
+        .expect("card sent");
+    assert!(adapter
+        .handle_approval_callback("cb-session", &format!("approval:session:{card}"))
+        .await
+        .expect("press handled"));
+    let second = second.join().expect("second guard should join");
+    assert!(second.approved && second.user_approved);
+    assert_eq!(approval::pending_gateway_approval_count(session), 1);
+    assert!(!first.is_finished(), "the other request must still wait");
+
+    let card = adapter
+        .approval_counter
+        .load(std::sync::atomic::Ordering::SeqCst);
+    adapter
+        .send_approval_request("123", &first_request, None, None)
+        .await
+        .expect("card sent");
+    assert!(adapter
+        .handle_approval_callback("cb-deny", &format!("approval:deny:{card}"))
+        .await
+        .expect("press handled"));
+    assert!(!first.join().expect("first guard should join").approved);
+    approval::unregister_gateway_notify(session);
+    approval::clear_session(session);
+}
