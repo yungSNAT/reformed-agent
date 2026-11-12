@@ -34,15 +34,7 @@ fn discover_setup_env_sources() -> Vec<PathBuf> {
 }
 
 fn parse_env_assignment(line: &str) -> Option<(String, String)> {
-    let trimmed = line.trim();
-    if trimmed.is_empty() || trimmed.starts_with('#') {
-        return None;
-    }
-    let (key, value) = trimmed.split_once('=')?;
-    let key = key.trim();
-    if key.is_empty() {
-        return None;
-    }
+    let (key, value) = hermes_config::dotenv_assignment(line)?;
     Some((key.to_string(), value.trim().to_string()))
 }
 

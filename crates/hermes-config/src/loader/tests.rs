@@ -518,6 +518,65 @@ fn atomic_write_replaces_a_symlink_loop() {
     assert_eq!(std::fs::read_to_string(&link).unwrap(), "new");
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_write_keeps_the_file_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    // No single umask gives a new file both modes.
+    for mode in [0o600, 0o640] {
+        std::fs::write(&path, "OLD=fake").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+
+        atomic_write_bytes(&path, b"NEW=fake").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "NEW=fake");
+        let kept = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(kept, mode, "mode {mode:o} became {kept:o}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn atomic_write_keeps_an_explicit_acl_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    std::fs::write(&path, "OLD=fake").unwrap();
+    // Grant Builtin Guests read access by SID, then read the DACL back as SDDL,
+    // where Guests is `BG` in any display language.
+    let icacls = |args: &[&std::ffi::OsStr]| {
+        let status = std::process::Command::new("icacls")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls {args:?}");
+    };
+    let sddl = || {
+        let saved = dir.path().join("acl.txt");
+        icacls(&[path.as_os_str(), "/save".as_ref(), saved.as_os_str()]);
+        let bytes = std::fs::read(&saved).unwrap();
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    icacls(&[
+        path.as_os_str(),
+        "/grant".as_ref(),
+        "*S-1-5-32-546:(R)".as_ref(),
+    ]);
+    assert!(sddl().contains(";;;BG)"), "the grant did not apply");
+
+    atomic_write_bytes(&path, b"NEW=fake").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "NEW=fake");
+    assert!(sddl().contains(";;;BG)"), "the rewrite dropped the grant");
+}
+
 include!("tests/runtime_bridges.rs");
 include!("tests/managed_overlays.rs");
 

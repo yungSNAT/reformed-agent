@@ -12,7 +12,9 @@ use hermes_core::auth_gate::{
     load_oauth_runtime_gate_manifest_from_path, oauth_runtime_gate_for_provider,
     oauth_runtime_gate_manifest_default, OAuthRuntimeGateManifest,
 };
-use hermes_core::providers::{canonical_provider_id, known_providers, provider_capability_for};
+use hermes_core::providers::{
+    canonical_provider_id, known_providers, provider_api_key_env_vars, provider_capability_for,
+};
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
@@ -300,50 +302,17 @@ fn read_provider_auth_state_from_store_path(path: &Path, provider: &str) -> bool
         .is_some()
 }
 
+/// The variables a run reads the provider's key from (the shared list), or
+/// for providers whose runs look elsewhere, the variables listed here.
 fn credential_env_vars(provider: &str) -> Vec<&'static str> {
-    match normalize_auth_provider(provider).as_str() {
-        "openai" => vec!["HERMES_OPENAI_API_KEY", "OPENAI_API_KEY"],
-        "openai-codex" => vec!["HERMES_OPENAI_CODEX_API_KEY"],
-        "anthropic" => vec![
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_TOKEN",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-        ],
-        "google-gemini-cli" => vec![
-            "HERMES_GEMINI_OAUTH_API_KEY",
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-        ],
-        "gemini" => vec!["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-        "openrouter" => vec!["OPENROUTER_API_KEY"],
-        "qwen" => vec!["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
-        "qwen-oauth" => vec!["HERMES_QWEN_OAUTH_API_KEY", "DASHSCOPE_API_KEY"],
-        "kimi" => vec![
-            "KIMI_API_KEY",
-            "KIMI_CODING_API_KEY",
-            "MOONSHOT_API_KEY",
-            "KIMI_CN_API_KEY",
-        ],
-        "minimax" => vec!["MINIMAX_API_KEY", "MINIMAX_CN_API_KEY"],
-        "minimax-cn" => vec!["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"],
-        "stepfun" => vec!["HERMES_STEPFUN_API_KEY", "STEPFUN_API_KEY"],
-        "novita" => vec!["NOVITA_API_KEY"],
-        "nous" => vec!["NOUS_API_KEY"],
-        "copilot" => vec![
-            "COPILOT_GITHUB_TOKEN",
-            "GH_TOKEN",
-            "GITHUB_TOKEN",
-            "GITHUB_COPILOT_TOKEN",
-        ],
+    let configured = provider.trim().to_ascii_lowercase();
+    let canonical = normalize_auth_provider(provider);
+    let run_vars = provider_api_key_env_vars(&configured, &canonical);
+    if !run_vars.is_empty() {
+        return run_vars.to_vec();
+    }
+    match canonical.as_str() {
         "copilot-acp" => vec!["COPILOT_GITHUB_TOKEN", "GITHUB_COPILOT_TOKEN"],
-        "ai-gateway" => vec!["AI_GATEWAY_API_KEY"],
-        "arcee" => vec!["ARCEEAI_API_KEY", "ARCEE_API_KEY"],
-        "deepseek" => vec!["DEEPSEEK_API_KEY"],
-        "huggingface" => vec!["HF_TOKEN", "HUGGINGFACE_API_KEY"],
-        "gmi" => vec!["GMI_API_KEY"],
-        "kilocode" => vec!["KILOCODE_API_KEY"],
-        "nvidia" => vec!["NVIDIA_API_KEY"],
-        "ollama-cloud" => vec!["OLLAMA_API_KEY"],
         "ollama-local" => vec!["OLLAMA_LOCAL_API_KEY", "OLLAMA_API_KEY"],
         "llama-cpp" => vec!["LLAMA_CPP_API_KEY"],
         "vllm" => vec!["VLLM_API_KEY"],
@@ -357,12 +326,6 @@ fn credential_env_vars(provider: &str) -> Vec<&'static str> {
         "koboldcpp" => vec!["KOBOLDCPP_API_KEY"],
         "text-generation-webui" => vec!["TEXT_GENERATION_WEBUI_API_KEY"],
         "tabbyapi" => vec!["TABBYAPI_API_KEY"],
-        "opencode-go" => vec!["OPENCODE_GO_API_KEY"],
-        "opencode-zen" => vec!["OPENCODE_ZEN_API_KEY"],
-        "xai" => vec!["XAI_API_KEY"],
-        "xiaomi" => vec!["XIAOMI_API_KEY"],
-        "tencent-tokenhub" => vec!["TENCENT_TOKENHUB_API_KEY"],
-        "zai" => vec!["ZAI_API_KEY", "ZHIPU_API_KEY"],
         "bedrock" => vec![
             "AWS_ACCESS_KEY_ID",
             "AWS_PROFILE",
@@ -502,6 +465,40 @@ mod tests {
         assert_eq!(payload["credential"]["present"], true);
         assert_eq!(payload["secret_values_emitted"], false);
         assert!(!raw.contains("sk-secret-should-not-appear"));
+    }
+
+    #[test]
+    fn credential_checks_the_variables_runs_read() {
+        let _lock = env_lock();
+        let _cleared: Vec<EnvGuard> = [
+            "GLM_API_KEY",
+            "ZAI_API_KEY",
+            "Z_AI_API_KEY",
+            "TOKENHUB_API_KEY",
+            "DASHSCOPE_API_KEY",
+            "HF_TOKEN",
+        ]
+        .into_iter()
+        .map(EnvGuard::remove)
+        .collect();
+        // Names runs never read do not count.
+        let _zhipu = EnvGuard::set("ZHIPU_API_KEY", "fake-zhipu");
+        let _tencent = EnvGuard::set("TENCENT_TOKENHUB_API_KEY", "fake-tencent");
+        let _qwen = EnvGuard::set("QWEN_API_KEY", "fake-qwen");
+        let _hf = EnvGuard::set("HUGGINGFACE_API_KEY", "fake-hf");
+        for provider in ["zai", "tencent-tokenhub", "qwen", "huggingface"] {
+            assert_eq!(
+                credential_snapshot(provider)["present"],
+                false,
+                "{provider}"
+            );
+        }
+        // The names runs read first do.
+        let _glm = EnvGuard::set("GLM_API_KEY", "fake-glm");
+        let _tokenhub = EnvGuard::set("TOKENHUB_API_KEY", "fake-tokenhub");
+        for provider in ["zai", "glm", "tencent-tokenhub"] {
+            assert_eq!(credential_snapshot(provider)["present"], true, "{provider}");
+        }
     }
 
     #[test]
