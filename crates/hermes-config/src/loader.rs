@@ -95,7 +95,7 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
     let tmp_path = atomic_temp_path(path)?;
-    let existed = path.exists();
+    let mut written = false;
 
     let result = (|| -> Result<(), ConfigError> {
         let mut options = std::fs::OpenOptions::new();
@@ -112,14 +112,16 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
         file.write_all(bytes).map_err(io_to_config_error)?;
         file.sync_all().map_err(io_to_config_error)?;
         drop(file);
+        written = true;
         replace_temp_file(&tmp_path, path)?;
         Ok(())
     })();
 
     match result {
         // A failed Windows replace can remove the target before the rename
-        // fallback fails; the temp file then holds the only copy, so keep it.
-        Err(err) if existed && !path.exists() => Err(ConfigError::ParseError(format!(
+        // fallback fails. With the target gone, the fully written temp file
+        // may hold the only copy, so keep it.
+        Err(err) if written && !path.exists() => Err(ConfigError::ParseError(format!(
             "{err}; {} was removed and its new content is in {}",
             path.display(),
             tmp_path.display()
