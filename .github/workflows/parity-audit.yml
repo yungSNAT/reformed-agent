@@ -66,6 +66,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: parity-audit-artifacts
+          include-hidden-files: true
           path: |
             docs/parity/parity-matrix.json
             docs/parity/parity-matrix.md

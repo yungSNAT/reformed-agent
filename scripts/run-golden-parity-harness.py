@@ -129,7 +129,11 @@ def parse_upstream_slash_commands(upstream_root: pathlib.Path) -> set[str]:
 
 
 def parse_tui_tests(tui_rs: pathlib.Path) -> set[str]:
-    raw = tui_rs.read_text(encoding="utf-8")
+    # tui.rs includes its parts, tests among them, from the sibling tui/ directory.
+    raw = read_rust_surface(tui_rs)
+    tui_dir = tui_rs.with_suffix("")
+    if tui_dir.is_dir():
+        raw += "\n" + read_rust_surface(tui_dir)
     return set(re.findall(r"fn\s+([a-zA-Z0-9_]+)\s*\(", raw))
 
 
