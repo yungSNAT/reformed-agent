@@ -3,8 +3,7 @@
 //!
 //! Requirement 22.3
 
-use std::path::Path;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::sync::LazyLock;
 
 use hermes_core::ToolError;
@@ -68,6 +67,10 @@ const WRITE_DENY_PREFIX_ABSOLUTE: &[&str] = &[
     "/private/etc/sudoers.d",
     "/private/var",
 ];
+/// macOS per-user temporary and cache directories. `$TMPDIR` is under
+/// `/var/folders`, a symlink into `/private/var`, so the resolved form of every
+/// temporary path would otherwise hit the `/private/var` deny.
+const WRITE_ALLOW_UNDER_DENIED_PREFIX: &[&str] = &["/private/var/folders"];
 const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".netrc",
     ".bashrc",
@@ -260,7 +263,7 @@ pub fn is_protected_file(path: &Path) -> bool {
 pub fn is_write_denied(path: &Path) -> bool {
     is_write_denied_with_roots_and_safe_root(
         path,
-        std::env::var_os("HOME").map(PathBuf::from).as_deref(),
+        std::env::home_dir().as_deref(),
         std::env::var_os("HERMES_HOME")
             .map(PathBuf::from)
             .as_deref(),
@@ -284,6 +287,40 @@ fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
         }
     }
     path.to_path_buf()
+}
+
+/// `path` with `.` and `..` folded and repeated separators dropped, without
+/// touching the filesystem.
+fn fold_dots(path: &Path) -> PathBuf {
+    let mut folded = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                folded.pop();
+            }
+            other => folded.push(other),
+        }
+    }
+    folded
+}
+
+/// The 2 forms of `path` the guard judges: as written (made absolute and
+/// folded) and as the filesystem resolves it (symlinks in its longest existing
+/// ancestor followed, the rest folded). Path text and symlinked parents can
+/// then not step around a rule.
+fn path_forms(path: &Path) -> [PathBuf; 2] {
+    let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let components: Vec<Component> = absolute.components().collect();
+    let resolved = (1..=components.len())
+        .rev()
+        .find_map(|keep| {
+            let existing: PathBuf = components[..keep].iter().collect();
+            let real = existing.canonicalize().ok()?;
+            Some(fold_dots(&components[keep..].iter().fold(real, |acc, c| acc.join(c))))
+        })
+        .unwrap_or_else(|| fold_dots(&absolute));
+    [fold_dots(&absolute), resolved]
 }
 
 fn path_has_component_prefix(path: &Path, root: &Path, prefix: &str) -> bool {
@@ -312,51 +349,61 @@ pub fn is_write_denied_with_roots_and_safe_root(
     hermes_home: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
-    let expanded = expand_home(path, home);
-    let normalized = expanded.to_string_lossy();
+    let forms = path_forms(&expand_home(path, home));
 
-    if WRITE_DENY_EXACT_ABSOLUTE
-        .iter()
-        .any(|candidate| normalized == *candidate)
-    {
-        return true;
-    }
-    if WRITE_DENY_PREFIX_ABSOLUTE
-        .iter()
-        .any(|prefix| normalized == *prefix || normalized.starts_with(&format!("{prefix}/")))
-    {
-        return true;
+    for form in &forms {
+        if WRITE_DENY_EXACT_ABSOLUTE
+            .iter()
+            .any(|candidate| form == Path::new(candidate))
+        {
+            return true;
+        }
+        if WRITE_DENY_PREFIX_ABSOLUTE
+            .iter()
+            .any(|prefix| form.starts_with(prefix))
+            && !WRITE_ALLOW_UNDER_DENIED_PREFIX
+                .iter()
+                .any(|allowed| form.starts_with(allowed))
+        {
+            return true;
+        }
     }
 
     if let Some(home) = home {
-        if let Ok(rel) = expanded.strip_prefix(home) {
-            let rel_str = rel.to_string_lossy();
-            if WRITE_DENY_HOME_EXACT
-                .iter()
-                .any(|candidate| rel_str == *candidate)
-            {
-                return true;
-            }
-            if WRITE_DENY_HOME_PREFIX
-                .iter()
-                .any(|prefix| path_has_component_prefix(&expanded, home, prefix))
-            {
-                return true;
+        for home in path_forms(home) {
+            for form in &forms {
+                let Ok(rel) = form.strip_prefix(&home) else {
+                    continue;
+                };
+                if WRITE_DENY_HOME_EXACT
+                    .iter()
+                    .any(|candidate| rel == Path::new(candidate))
+                    || WRITE_DENY_HOME_PREFIX
+                        .iter()
+                        .any(|prefix| path_has_component_prefix(form, &home, prefix))
+                {
+                    return true;
+                }
             }
         }
     }
 
     if let Some(hermes_home) = hermes_home {
-        if expanded == hermes_home.join(".env") {
+        let env_forms = path_forms(&hermes_home.join(".env"));
+        if forms.iter().any(|form| env_forms.contains(form)) {
             return true;
         }
     }
 
     if let Some(safe_root) = safe_root {
-        let expanded_safe_root = expand_home(safe_root, home);
-        if !expanded_safe_root.as_os_str().is_empty()
-            && expanded != expanded_safe_root
-            && !expanded.starts_with(&expanded_safe_root)
+        let safe_root = expand_home(safe_root, home);
+        // Both forms must stay inside the matching form of the root, so a
+        // symlink out of the root does not carry writes with it.
+        if !safe_root.as_os_str().is_empty()
+            && forms
+                .iter()
+                .zip(path_forms(&safe_root))
+                .any(|(form, root)| !form.starts_with(root))
         {
             return true;
         }
