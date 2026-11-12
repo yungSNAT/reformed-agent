@@ -1258,8 +1258,8 @@
     #[test]
     fn runs_finish_when_every_call_is_dropped() {
         // Delegation is paused, so the model's only call is dropped; a call to
-        // a missing tool ends the run after the retries; a streamed call has
-        // no name, so it never runs.
+        // a missing tool ends the run after the retries; a streamed text-format
+        // call has no name, so it never runs.
         let _lock = env_test_lock();
         let _paused = EnvVarGuard::set("HERMES_DELEGATION_PAUSED", "1");
         const NOTE: &str = "delegation is unavailable";
@@ -1273,13 +1273,15 @@
             async fn chat_completion(
                 &self,
                 messages: &[Message],
-                _tools: &[ToolSchema],
+                tools: &[ToolSchema],
                 _max_tokens: Option<u32>,
                 _temperature: Option<f64>,
                 _model: Option<&str>,
                 _extra_body: Option<&serde_json::Value>,
             ) -> Result<hermes_core::LlmResponse, AgentError> {
-                let noted = messages
+                // With no tools offered (the max-turns summary), answer in text.
+                let noted = tools.is_empty()
+                    || messages
                     .iter()
                     .any(|m| m.content.as_deref().is_some_and(|c| c.contains(NOTE)));
                 let tool = if has(messages, MISSING) {
@@ -1320,9 +1322,9 @@
                 _extra_body: Option<&serde_json::Value>,
             ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
                 futures::stream::iter(vec![
-                    Ok(stream_chunk_content("done")),
-                    Ok(stream_chunk_tool_name(0, "call_unnamed", "")),
-                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_content(
+                        r#"done <tool_call>{"name": "", "arguments": {}}</tool_call>"#,
+                    )),
                     Ok(stream_chunk_finish("stop")),
                 ])
                 .boxed()
