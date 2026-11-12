@@ -273,6 +273,51 @@ mod tests {
         }
     }
 
+    /// Runs `body` with `HOME` set to a fresh folder and neither home variable set.
+    fn with_clean_home(body: impl FnOnce(&Path)) {
+        let _guard = crate::managed_gateway::test_lock::lock();
+        let saved: Vec<(&str, Option<std::ffi::OsString>)> =
+            ["HOME", "HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"]
+                .into_iter()
+                .map(|key| (key, std::env::var_os(key)))
+                .collect();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
+        let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| body(tmp.path())));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        if let Err(panic) = outcome {
+            std::panic::resume_unwind(panic);
+        }
+    }
+
+    #[test]
+    fn hermes_home_never_adopts_upstream_hermes_home() {
+        with_clean_home(|user_home| {
+            std::fs::create_dir_all(user_home.join(".hermes")).unwrap();
+            assert_eq!(hermes_home(), user_home.join(".hermes-agent-ultra"));
+        });
+    }
+
+    #[test]
+    fn hermes_home_variable_still_wins_over_both_defaults() {
+        with_clean_home(|user_home| {
+            std::fs::create_dir_all(user_home.join(".hermes")).unwrap();
+            std::fs::create_dir_all(user_home.join(".hermes-agent-ultra")).unwrap();
+            let chosen = user_home.join("chosen");
+            std::env::set_var("HERMES_HOME", &chosen);
+            assert_eq!(hermes_home(), chosen);
+            std::env::set_var("HERMES_HOME", user_home.join(".hermes"));
+            assert_eq!(hermes_home(), user_home.join(".hermes"));
+        });
+    }
+
     #[test]
     fn hermes_home_expands_tilde_and_variables() {
         const ROOT_VAR: &str = "HERMES_PATHS_TEST_ROOT";

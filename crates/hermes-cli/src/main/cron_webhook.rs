@@ -1039,19 +1039,22 @@ _hermes_agent_ultra_provider_values() {
 }
 
 async fn run_uninstall(yes: bool) -> Result<(), AgentError> {
-    let home = hermes_config::hermes_home();
+    println!("{}", uninstall_home(&hermes_config::hermes_home(), yes)?);
+    Ok(())
+}
+
+/// Remove `home` when `yes` is set; return what to tell the user.
+fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentError> {
     if !yes {
-        println!("Uninstall is destructive. Re-run with `hermes uninstall --yes`.");
-        return Ok(());
+        return Ok("Uninstall is destructive. Re-run with `hermes uninstall --yes`.".to_string());
     }
     if home.exists() {
-        std::fs::remove_dir_all(&home)
+        std::fs::remove_dir_all(home)
             .map_err(|e| AgentError::Io(format!("Failed to remove {}: {}", home.display(), e)))?;
-        println!("Removed {}", home.display());
+        Ok(format!("Removed {}", home.display()))
     } else {
-        println!("Nothing to uninstall.");
+        Ok("Nothing to uninstall.".to_string())
     }
-    Ok(())
 }
 
 /// Handle `hermes lumio [action]`.

@@ -222,4 +222,17 @@ mod tests {
         let _ultra = EnvGuard::set("HERMES_AGENT_ULTRA_HOME", &ultra_override);
         assert_eq!(default_hermes_home(), ultra_override);
     }
+
+    #[test]
+    fn default_home_never_adopts_upstream_hermes_home() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env lock");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::remove("HERMES_HOME");
+        let _ultra = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _userprofile = EnvGuard::remove("USERPROFILE");
+        let _home_dir = EnvGuard::set("HOME", tmp.path());
+        std::fs::create_dir_all(tmp.path().join(".hermes")).expect("upstream home");
+
+        assert_eq!(default_hermes_home(), tmp.path().join(DEFAULT_HOME_DIR));
+    }
 }
