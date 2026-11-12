@@ -7,7 +7,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
 
 jobs:
   audit:
@@ -19,8 +18,10 @@ jobs:
         run: git fetch origin main --depth=1
       - name: Checkout upstream hermes-agent snapshot
         run: git clone --depth 1 https://github.com/NousResearch/hermes-agent.git ../hermes-agent
+      # Upstream's live main moves daily, so this audit reports drift in the job
+      # summary instead of failing on it; PR CI gates on the pinned revision
+      # (scripts/run-repo-ci.sh). Errors and script crashes still fail the run.
       - name: Generate global parity artifacts
-        id: parity-proof
         run: |
           python3 scripts/generate-parity-matrix.py --local-ref origin/main
           python3 scripts/generate-workstream-status.py
@@ -30,28 +31,26 @@ jobs:
           python3 scripts/generate-adapter-matrix.py
           python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
           python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
-          status=0
-          python3 scripts/generate-global-parity-proof.py --check-ci || status=$?
-          echo "status=${status}" >> "$GITHUB_OUTPUT"
+          python3 scripts/generate-global-parity-proof.py
       - name: Generate public release readiness summary
         run: |
-          status=0
-          python3 scripts/generate-release-readiness-summary.py --repo-root . --check || status=$?
+          python3 scripts/generate-release-readiness-summary.py --repo-root .
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
-          exit "$status"
-      - name: Enforce global parity CI gate
-        if: steps.parity-proof.outputs.status != '0'
-        run: exit "${{ steps.parity-proof.outputs.status }}"
-      - name: Upstream surface coverage gate
-        run: python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-ref origin/main
-      - name: Golden parity harness
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Upstream surface coverage report
         run: |
+          report=.sync-reports/upstream-surface-coverage-gate.json
+          python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-ref origin/main --report-path "$report" || test -f "$report"
+          jq -r '"- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
+      - name: Golden parity harness
+        run: |
+          report=.sync-reports/golden-parity-harness.json
           python3 scripts/run-golden-parity-harness.py \
             --repo-root . \
             --upstream-root ../hermes-agent \
-            --auto-issue
+            --report "$report" || test -f "$report"
+          jq -r '"- Upstream slash commands missing locally: `\(.missing_commands | length)` (baseline `\(.allow_missing_commands)`)"' "$report" >> "$GITHUB_STEP_SUMMARY"
+          # Missing upstream commands are drift; the local TUI test and command contract checks still gate.
+          jq -e '.missing_tui_tests == [] and .command_contract_failures == []' "$report" > /dev/null
       - name: Behavioral parity suite
         run: |
           python3 scripts/run-behavioral-parity-suite.py --repo-root .
@@ -82,51 +81,6 @@ jobs:
             docs/parity/upstream-missing-queue.json
             .sync-reports/release-readiness-summary.json
             .sync-reports/release-readiness-summary.md
-            .sync-reports/golden-parity-harness-*.json
+            .sync-reports/upstream-surface-coverage-gate.json
+            .sync-reports/golden-parity-harness.json
             .sync-reports/behavioral-parity-*.json
-      - name: Comment parity epic on failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          BODY=$(python3 - <<'PY'
-          import json
-          from pathlib import Path
-          summary = Path(".sync-reports/release-readiness-summary.md")
-          if summary.exists():
-              print(summary.read_text(encoding="utf-8"))
-              print("")
-          p = Path("docs/parity/global-parity-proof.json")
-          if not p.exists():
-              print("Automated parity audit failed before proof artifact generation.")
-          else:
-              raw = json.loads(p.read_text(encoding="utf-8"))
-              ci_gate = raw.get("ci_gate", {})
-              metrics = raw.get("metrics", {})
-              backlog_path = Path("docs/parity/shared-diff-backlog.json")
-              backlog_summary = {}
-              if backlog_path.exists():
-                  backlog_summary = json.loads(backlog_path.read_text(encoding="utf-8")).get("summary", {})
-              print("Automated parity audit failed CI gate.")
-              print("")
-              for check in ci_gate.get("checks", []):
-                  if check.get("status") != "pass":
-                      print(
-                          f"- {check.get('metric')}: actual `{check.get('actual')}`, "
-                          f"limit `{check.get('limit')}`"
-                      )
-              print(f"- commits_behind: `{metrics.get('max_commits_behind')}`")
-              print(f"- upstream_patch_missing: `{metrics.get('max_upstream_patch_missing')}`")
-              print(f"- files_only_upstream: `{metrics.get('max_files_only_upstream')}`")
-              print(f"- test_coverage_ratio: `{metrics.get('min_test_coverage_tracked_behavior_ratio')}`")
-              print(f"- test_coverage_critical_gaps: `{metrics.get('max_test_coverage_audit_critical_gaps')}`")
-              print(f"- test_coverage_missing_rust_refs: `{metrics.get('max_test_coverage_missing_rust_refs')}`")
-              if backlog_summary:
-                  print(f"- shared_diff_pending_classification: `{backlog_summary.get('pending_classification')}`")
-                  print(f"- shared_diff_pending_review: `{backlog_summary.get('pending_review')}`")
-                  print(f"- shared_diff_cleared_non_runtime: `{backlog_summary.get('cleared_non_runtime')}`")
-                  print(f"- shared_diff_cleared_intentional_divergence: `{backlog_summary.get('cleared_intentional_divergence')}`")
-              print(f"- test_intent_mapping_ratio: `{metrics.get('min_test_intent_mapping_ratio')}`")
-          PY
-          )
-          gh issue comment 19 --body "$BODY" || true
