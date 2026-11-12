@@ -53,17 +53,25 @@ impl ContextCompressor {
     /// The resulting vector has the following layout:
     ///
     /// ```text
-    /// [system prompt(s)] [summary system message] [last N messages]
+    /// [system prompt(s)] [summary system message] [latest user message, if needed] [last N or more messages]
     /// ```
     ///
     /// - All leading `System`-role messages are preserved verbatim.
-    /// - Messages between the system prompt block and the last
-    ///   `recent_messages_count` messages are condensed into a single
-    ///   system message whose content is a truncated plain-text summary.
-    /// - The last `recent_messages_count` messages are kept as-is.
+    /// - Messages between the system prompt block and the kept block are
+    ///   condensed into a single system message whose content is a truncated
+    ///   plain-text summary.
+    /// - The kept block is the last `recent_messages_count` messages, kept
+    ///   as-is. When a kept tool result's calling assistant message comes
+    ///   earlier, the kept block starts at that message instead, as providers
+    ///   reject a tool result without its call.
+    /// - When the kept block does not start with a user message, the latest
+    ///   user message before it is kept too (and also summarised), as
+    ///   providers such as z.ai reject a history with no user message before
+    ///   the assistant's.
     ///
-    /// If there are not enough messages to warrant compression, the input
-    /// is returned unchanged (as a new `Vec`).
+    /// The input is returned unchanged (as a new `Vec`) when nothing besides
+    /// that user message is left to summarise, or when a kept tool result's
+    /// call is missing.
     pub fn compress(&self, messages: &[Message]) -> Vec<Message> {
         if messages.is_empty() {
             return messages.to_vec();
@@ -77,17 +85,47 @@ impl ContextCompressor {
 
         // 2. The "recent" block: the last N messages (also kept as-is).
         //    recent_start must be at least system_end so the middle block is
-        //    never overlapping with the system block.
-        let recent_start = messages
+        //    never overlapping with the system block. It moves further back
+        //    while a kept tool result still waits for its calling assistant
+        //    message; if that message is missing, nothing is compressed.
+        let target_start = messages
             .len()
             .saturating_sub(self.recent_messages_count)
             .max(system_end);
+        let mut recent_start = messages.len();
+        let mut awaiting_call: HashSet<&str> = HashSet::new();
+        while recent_start > system_end
+            && (recent_start > target_start || !awaiting_call.is_empty())
+        {
+            recent_start -= 1;
+            let message = &messages[recent_start];
+            if message.role == MessageRole::Tool {
+                if let Some(id) = message.tool_call_id.as_deref() {
+                    awaiting_call.insert(id);
+                }
+            }
+            for call in message.tool_calls.iter().flatten() {
+                awaiting_call.remove(call.id.as_str());
+            }
+        }
 
         // 3. The "middle" block: everything between system_end and recent_start.
-        //    If the middle block is empty or only has one message, there is
-        //    nothing worth compressing — return unchanged.
+        //    Its latest user message is also kept unless the recent block
+        //    starts with one. If nothing else is in the middle block, there is
+        //    nothing to compress: return unchanged.
         let middle_slice = &messages[system_end..recent_start];
-        if middle_slice.is_empty() {
+        let kept_user_at = if messages
+            .get(recent_start)
+            .is_some_and(|m| m.role == MessageRole::User)
+        {
+            None
+        } else {
+            middle_slice
+                .iter()
+                .rposition(|m| m.role == MessageRole::User)
+        };
+        let summarised = middle_slice.len() - usize::from(kept_user_at.is_some());
+        if summarised == 0 {
             return messages.to_vec();
         }
 
@@ -95,13 +133,17 @@ impl ContextCompressor {
         let summary = Self::build_summary(middle_slice);
 
         // 5. Assemble the compressed message list.
-        let mut compressed = Vec::with_capacity(system_end + 1 + self.recent_messages_count);
+        let mut compressed = Vec::with_capacity(messages.len() - middle_slice.len() + 2);
 
         // Preserve leading system messages.
         compressed.extend_from_slice(&messages[..system_end]);
 
         // Insert the summary as a single system message.
         compressed.push(Message::system(summary));
+
+        if let Some(i) = kept_user_at {
+            compressed.push(middle_slice[i].clone());
+        }
 
         // Preserve the most recent messages.
         if recent_start < messages.len() {

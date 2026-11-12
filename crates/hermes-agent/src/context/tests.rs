@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hermes_core::{FunctionCall, ToolCall};
 
     #[test]
     fn test_add_and_get_messages() {
@@ -90,6 +91,138 @@ mod tests {
         // Last 2 messages preserved.
         assert_eq!(result[result.len() - 2].role, MessageRole::User);
         assert_eq!(result[result.len() - 1].role, MessageRole::Assistant);
+    }
+
+    fn terminal_call(n: usize) -> ToolCall {
+        ToolCall {
+            id: format!("call_{n}"),
+            function: FunctionCall {
+                name: "terminal".into(),
+                arguments: format!("{{\"command\":\"cat part{n}.txt\"}}"),
+            },
+            extra_content: None,
+        }
+    }
+
+    /// Compress `history` with the default budget; returns how many
+    /// compressions ran and the kept messages.
+    fn compress_default(history: Vec<Message>) -> (usize, Vec<Message>) {
+        let mut cm = ContextManager::default_budget();
+        for message in history {
+            cm.add_message(message);
+        }
+        cm.compress();
+        (cm.take_compressed_transcripts().len(), cm.get_messages().to_vec())
+    }
+
+    /// A history whose last assistant turn calls a tool 6 times with results
+    /// past the compression point, so the last 4 messages start inside that
+    /// turn; `note` goes between the call and its results.
+    fn six_call_turn(note: Option<&str>) -> Vec<Message> {
+        let mut history = vec![
+            Message::system("System prompt"),
+            Message::user("List the files."),
+            Message::assistant("part1.txt to part6.txt."),
+            Message::user("Read the 6 files."),
+            Message::assistant_with_tool_calls(None, (1..=6).map(terminal_call).collect()),
+        ];
+        history.extend(note.map(Message::system));
+        history.extend(
+            (1..=6).map(|n| Message::tool_result(format!("call_{n}"), "x".repeat(40_000))),
+        );
+        history
+    }
+
+    /// The first kept message after the system block is the user's `prompt`,
+    /// each kept tool result follows a kept call with its id, and each kept
+    /// call has a later result; returns the number of results.
+    fn assert_valid_kept(kept: &[Message], prompt: &str) -> usize {
+        let first = kept
+            .iter()
+            .find(|m| m.role != MessageRole::System)
+            .expect("a kept turn");
+        assert_eq!(
+            (first.role, first.content.as_deref()),
+            (MessageRole::User, Some(prompt))
+        );
+        let mut called: HashSet<&str> = HashSet::new();
+        let mut answered: HashSet<&str> = HashSet::new();
+        for m in kept {
+            called.extend(m.tool_calls.iter().flatten().map(|tc| tc.id.as_str()));
+            if m.role == MessageRole::Tool {
+                let id = m.tool_call_id.as_deref().unwrap_or_default();
+                assert!(called.contains(id), "result {id} kept without its call");
+                answered.insert(id);
+            }
+        }
+        assert_eq!(called, answered, "every kept call needs its result");
+        answered.len()
+    }
+
+    #[test]
+    fn test_compress_keeps_tool_results_with_their_call() {
+        let (compressions, kept) = compress_default(six_call_turn(None));
+        assert_eq!(compressions, 1);
+        assert_eq!(assert_valid_kept(&kept, "Read the 6 files."), 6);
+    }
+
+    #[test]
+    fn test_compress_keeps_tool_results_with_their_call_past_a_note() {
+        let (compressions, kept) = compress_default(six_call_turn(Some("Policy note")));
+        assert_eq!(compressions, 1);
+        assert_eq!(assert_valid_kept(&kept, "Read the 6 files."), 6);
+    }
+
+    #[test]
+    fn test_compress_leaves_a_lone_user_turn_uncompressed() {
+        // Without the earlier exchange, keeping the 6-call turn and its user
+        // message leaves nothing to summarise.
+        let mut history = six_call_turn(None);
+        history.drain(1..3);
+        let (compressions, kept) = compress_default(history.clone());
+        assert_eq!(compressions, 0);
+        assert_eq!(kept, history);
+    }
+
+    #[test]
+    fn test_compress_leaves_a_kept_result_without_its_call_uncompressed() {
+        // The last 4 messages hold a result whose call is not in the history.
+        let history = vec![
+            Message::system("System prompt"),
+            Message::user("First."),
+            Message::assistant("One."),
+            Message::user("Second."),
+            Message::assistant("Two."),
+            Message::user("Third."),
+            Message::tool_result("call_gone", "x".repeat(200_000)),
+            Message::assistant("Three."),
+        ];
+        let (compressions, kept) = compress_default(history.clone());
+        assert_eq!(compressions, 0);
+        assert_eq!(kept, history);
+    }
+
+    #[test]
+    fn test_compress_keeps_the_user_turn_before_kept_calls() {
+        // One call per turn: the last 4 messages are 2 whole tool turns and
+        // the only user message is older.
+        let mut history = vec![
+            Message::system("System prompt"),
+            Message::user("Read the 4 files."),
+        ];
+        for n in 1..=4 {
+            history.push(Message::assistant_with_tool_calls(
+                None,
+                vec![terminal_call(n)],
+            ));
+            history.push(Message::tool_result(
+                format!("call_{n}"),
+                "x".repeat(45_000),
+            ));
+        }
+        let (compressions, kept) = compress_default(history);
+        assert_eq!(compressions, 1);
+        assert_eq!(assert_valid_kept(&kept, "Read the 4 files."), 2);
     }
 
     #[test]
