@@ -188,9 +188,10 @@ const URL_EDGE_WHITESPACE: &[char] = &[' ', '\t', '\n', '\r', '\x0b', '\x0c'];
 /// the authority): userinfo and an unparseable port (templated `{port}` or
 /// `%d` literals) leave the host as written.
 fn authority_ambiguity(url: &str, floor: bool) -> Option<&'static str> {
-    let url = url.trim_matches(URL_EDGE_WHITESPACE);
     // Split the way `urlsplit` does: it drops leading C0 controls and space,
-    // and tab, CR and LF anywhere, before reading the scheme and authority.
+    // and tab, CR and LF anywhere, before reading the scheme and authority. It
+    // keeps a trailing space, so `http://example.com ` has whitespace in its
+    // host, which WHATWG parsers drop.
     let cleaned: String = url
         .trim_start_matches(|c: char| c <= ' ')
         .chars()
@@ -200,7 +201,8 @@ fn authority_ambiguity(url: &str, floor: bool) -> Option<&'static str> {
     if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
         return None;
     }
-    if url.chars().any(|c| c < ' ' || c == '\x7f') {
+    let trimmed = url.trim_matches(URL_EDGE_WHITESPACE);
+    if trimmed.chars().any(|c| c < ' ' || c == '\x7f') {
         return Some("control character in URL");
     }
     let netloc = rest
@@ -729,6 +731,9 @@ mod tests {
         "http://1.1.1.1\\@169.254.169.254/",
         "http://1.1.1.1\\@127.0.0.1/",
         "http:/1.1.1.1/",
+        // `urlsplit` keeps a trailing space in the host; WHATWG drops it.
+        "http://example.com ",
+        "http://1.1.1.1:80 ",
         // Userinfo.
         "http://127.0.0.1:8080%5C@1.1.1.1",
         "http://user:pass@1.1.1.1/",
@@ -757,6 +762,7 @@ mod tests {
             "http://[2606:4700:4700::1111]:8080/",
             "HTTPS://EXAMPLE.COM/",
             "  https://example.com/  ",
+            "https://example.com/ ",
             "https://example.com/\n",
             "\thttps://example.com/\r\n",
         ] {
