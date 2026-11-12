@@ -496,6 +496,50 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn ipv6_forms_that_carry_an_ipv4_address_are_judged_by_it() {
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "false");
+        let _no_proxy = without_proxy();
+        for address in [
+            // NAT64 well-known prefix (RFC 6052): 127.0.0.1 and 10.0.0.1.
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            // The NAT64 local-use prefix (RFC 8215) can translate to any address.
+            "64:ff9b:1::a00:1",
+            // 6to4 (RFC 3056): 192.168.1.1.
+            "2002:c0a8:101::1",
+            // IPv4-compatible (deprecated): 127.0.0.1.
+            "::7f00:1",
+        ] {
+            let literal = format!("http://[{address}]/");
+            assert!(
+                !is_safe_url_with_resolver(&literal, resolver_err),
+                "{literal} should be refused"
+            );
+            assert!(
+                !is_safe_url_with_resolver("http://rebind.example/", with_ip(address)),
+                "an AAAA answer of {address} should be refused"
+            );
+        }
+        for literal in [
+            "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/",
+            "http://[2002:a9fe:a9fe::1]/latest/meta-data/",
+        ] {
+            assert!(
+                is_always_blocked_url_with_resolver(literal, resolver_err),
+                "{literal} reaches the metadata address"
+            );
+        }
+        // Public IPv4 addresses behind the same prefixes stay reachable.
+        for literal in ["http://[64:ff9b::808:808]/", "http://[2002:808:808::1]/"] {
+            assert!(
+                is_safe_url_with_resolver(literal, resolver_err),
+                "{literal} should be allowed"
+            );
+        }
+    }
+
     fn ips(values: &[&str]) -> Vec<IpAddr> {
         values
             .iter()
