@@ -60,10 +60,10 @@ impl ContextCompressor {
     /// - Messages between the system prompt block and the last
     ///   `recent_messages_count` messages are condensed into a single
     ///   system message whose content is a truncated plain-text summary.
-    /// - The last `recent_messages_count` messages are kept as-is. When that
-    ///   block starts inside a group of tool results, it starts instead at the
-    ///   assistant message that called them, so no kept tool result loses its
-    ///   call (providers reject such a history).
+    /// - The last `recent_messages_count` messages are kept as-is. When a kept
+    ///   tool result's calling assistant message comes earlier, the kept block
+    ///   starts at that message instead, as providers reject a tool result
+    ///   without its call.
     ///
     /// If there are not enough messages to warrant compression, the input
     /// is returned unchanged (as a new `Vec`).
@@ -80,24 +80,31 @@ impl ContextCompressor {
 
         // 2. The "recent" block: the last N messages (also kept as-is).
         //    recent_start must be at least system_end so the middle block is
-        //    never overlapping with the system block. Tool results directly
-        //    follow the assistant message that called them, so stepping back
-        //    over them reaches that message.
-        let mut recent_start = messages
+        //    never overlapping with the system block. It moves further back
+        //    while a kept tool result still waits for its calling assistant
+        //    message; if that message is missing, nothing is compressed.
+        let target_start = messages
             .len()
             .saturating_sub(self.recent_messages_count)
             .max(system_end);
-        while recent_start > system_end
-            && messages
-                .get(recent_start)
-                .is_some_and(|m| m.role == MessageRole::Tool)
-        {
+        let mut recent_start = messages.len();
+        let mut uncalled: HashSet<&str> = HashSet::new();
+        while recent_start > system_end && (recent_start > target_start || !uncalled.is_empty()) {
             recent_start -= 1;
+            let message = &messages[recent_start];
+            if message.role == MessageRole::Tool {
+                if let Some(id) = message.tool_call_id.as_deref() {
+                    uncalled.insert(id);
+                }
+            }
+            for call in message.tool_calls.iter().flatten() {
+                uncalled.remove(call.id.as_str());
+            }
         }
 
         // 3. The "middle" block: everything between system_end and recent_start.
-        //    If the middle block is empty or only has one message, there is
-        //    nothing worth compressing — return unchanged.
+        //    If the middle block is empty, there is nothing to compress —
+        //    return unchanged.
         let middle_slice = &messages[system_end..recent_start];
         if middle_slice.is_empty() {
             return messages.to_vec();

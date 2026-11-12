@@ -93,10 +93,10 @@ mod tests {
         assert_eq!(result[result.len() - 1].role, MessageRole::Assistant);
     }
 
-    #[test]
-    fn test_compress_keeps_tool_results_with_their_call() {
-        // One assistant turn calls a tool 6 times and the results pass the
-        // compression point, so the last 4 messages start inside that group.
+    /// Compress a history whose last assistant turn calls a tool 6 times with
+    /// results past the compression point, so the last 4 messages start
+    /// inside that turn; `note` goes between the call and its results.
+    fn compress_six_tool_turn(note: Option<&str>) -> (usize, Vec<Message>) {
         let mut cm = ContextManager::default_budget();
         cm.add_message(Message::system("System prompt"));
         cm.add_message(Message::user("Read the 6 files."));
@@ -111,30 +111,48 @@ mod tests {
             })
             .collect();
         cm.add_message(Message::assistant_with_tool_calls(None, calls));
+        if let Some(note) = note {
+            cm.add_message(Message::system(note));
+        }
         for n in 1..=6 {
             cm.add_message(Message::tool_result(
                 format!("call_{n}"),
                 "x".repeat(40_000),
             ));
         }
-
         cm.compress();
+        (cm.take_compressed_transcripts().len(), cm.get_messages().to_vec())
+    }
 
-        assert_eq!(cm.take_compressed_transcripts().len(), 1);
-        let kept = cm.get_messages();
-        let call_ids: HashSet<&str> = kept
-            .iter()
-            .filter_map(|m| m.tool_calls.as_ref())
-            .flatten()
-            .map(|tc| tc.id.as_str())
-            .collect();
-        let result_ids: HashSet<&str> = kept
-            .iter()
-            .filter(|m| m.role == MessageRole::Tool)
-            .filter_map(|m| m.tool_call_id.as_deref())
-            .collect();
-        assert_eq!(result_ids.len(), 6);
-        assert_eq!(call_ids, result_ids);
+    /// Each kept tool result follows a kept call with its id, and each kept
+    /// call has a later result; returns the number of results.
+    fn assert_tool_pairs(kept: &[Message]) -> usize {
+        let mut called: HashSet<&str> = HashSet::new();
+        let mut answered: HashSet<&str> = HashSet::new();
+        for m in kept {
+            called.extend(m.tool_calls.iter().flatten().map(|tc| tc.id.as_str()));
+            if m.role == MessageRole::Tool {
+                let id = m.tool_call_id.as_deref().unwrap_or_default();
+                assert!(called.contains(id), "result {id} kept without its call");
+                answered.insert(id);
+            }
+        }
+        assert_eq!(called, answered, "every kept call needs its result");
+        answered.len()
+    }
+
+    #[test]
+    fn test_compress_keeps_tool_results_with_their_call() {
+        let (compressions, kept) = compress_six_tool_turn(None);
+        assert_eq!(compressions, 1);
+        assert_eq!(assert_tool_pairs(&kept), 6);
+    }
+
+    #[test]
+    fn test_compress_keeps_tool_results_with_their_call_past_a_note() {
+        let (compressions, kept) = compress_six_tool_turn(Some("Policy note"));
+        assert_eq!(compressions, 1);
+        assert_eq!(assert_tool_pairs(&kept), 6);
     }
 
     #[test]
