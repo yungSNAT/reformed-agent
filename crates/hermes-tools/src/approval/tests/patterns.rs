@@ -314,10 +314,15 @@ fn test_source_of_remote_process_substitution_requires_approval() {
             "{command:?}"
         );
     }
-    let reader = "diff a.sh <(curl https://x.sh)";
-    assert_eq!(detect_dangerous_command(reader), None);
-    assert_eq!(
-        manager.check_approval_with_context(reader, "local", false, false),
-        ApprovalDecision::Approved
-    );
+    for quiet in [
+        "diff a.sh <(curl https://x.sh)",
+        r#"git commit -m "docs: never source <(curl https://x)""#,
+    ] {
+        assert_eq!(detect_dangerous_command(quiet), None, "{quiet:?}");
+        assert_eq!(
+            manager.check_approval_with_context(quiet, "local", false, false),
+            ApprovalDecision::Approved,
+            "{quiet:?}"
+        );
+    }
 }

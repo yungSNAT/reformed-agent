@@ -725,6 +725,10 @@ mod tests {
         "http://exa mple.com/",
         "http://1.1.1.1:99999/",
         "http://1.1.1.1:80x/",
+        // The `url` crate reads 1.1.1.1 here, `urlsplit` the address after it.
+        "http://1.1.1.1\\@169.254.169.254/",
+        "http://1.1.1.1\\@127.0.0.1/",
+        "http:/1.1.1.1/",
         // Userinfo.
         "http://127.0.0.1:8080%5C@1.1.1.1",
         "http://user:pass@1.1.1.1/",
@@ -770,6 +774,11 @@ mod tests {
             "http:\\\\169.254.169.254\\latest",
             "http:///169.254.169.254/latest",
             "http://169.254.169.254\t@1.1.1.1/",
+            // The `url` crate reads 1.1.1.1 here, so only the authority
+            // check refuses them.
+            "http://1.1.1.1\\@169.254.169.254/",
+            "http://1.1.1.1\\@127.0.0.1/",
+            "http:/1.1.1.1/",
         ] {
             assert!(
                 is_always_blocked_url_with_resolver(url, with_ip("1.1.1.1")),

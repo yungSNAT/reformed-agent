@@ -1245,6 +1245,7 @@ impl ApprovalManager {
         let normalized = collapse_command(command);
         if delete_without_where(&normalized)
             || pipe_shell::pipes_remote_content_to_shell(&normalized)
+            || pipe_shell::sources_remote_process_substitution(&normalized)
         {
             return ApprovalDecision::RequiresConfirmation;
         }
