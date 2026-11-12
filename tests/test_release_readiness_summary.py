@@ -76,6 +76,10 @@ def test_parity_audit_reports_live_drift_without_gating_on_it() -> None:
     assert 'cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"' in text
     assert "--check-ci" not in text
     assert "gh issue" not in text
+    # Local proof metrics still gate; only upstream drift is excluded.
+    assert 'select(.status == "fail" or .status == "missing")] == []' in text
+    assert '"max_queue_pending_commits") | not)' in text
+    assert "persist-credentials: false" in text
 
 
 def test_parity_audit_runs_golden_harness_with_upstream_dependencies() -> None:

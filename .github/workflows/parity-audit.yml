@@ -14,6 +14,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - name: Fetch local parity reference
         run: git fetch origin main --depth=1
       - name: Checkout upstream hermes-agent snapshot
@@ -32,6 +34,8 @@ jobs:
           python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
           python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
           python3 scripts/generate-global-parity-proof.py
+          # Gate the proof's local metrics; only the 4 upstream drift metrics are reported.
+          jq -e '[.ci_gate.checks[] | select(.metric | IN("max_commits_behind", "max_upstream_patch_missing", "max_files_only_upstream", "max_queue_pending_commits") | not) | select(.status == "fail" or .status == "missing")] == []' docs/parity/global-parity-proof.json > /dev/null
       - name: Generate public release readiness summary
         run: |
           python3 scripts/generate-release-readiness-summary.py --repo-root .
