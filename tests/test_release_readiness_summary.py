@@ -76,3 +76,13 @@ def test_parity_audit_reports_live_drift_without_gating_on_it() -> None:
     assert 'cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"' in text
     assert "--check-ci" not in text
     assert "gh issue" not in text
+
+
+def test_parity_audit_runs_golden_harness_with_upstream_dependencies() -> None:
+    # The harness imports upstream's hermes_cli.commands, so it needs upstream's core dependencies.
+    text = PARITY_AUDIT.read_text()
+    install = '"$RUNNER_TEMP/upstream-venv/bin/pip" install --quiet --disable-pip-version-check ../hermes-agent'
+    harness = '"$RUNNER_TEMP/upstream-venv/bin/python" scripts/run-golden-parity-harness.py'
+    assert install in text
+    assert harness in text
+    assert text.index(install) < text.index(harness)
