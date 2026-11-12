@@ -518,6 +518,97 @@ fn atomic_write_replaces_a_symlink_loop() {
     assert_eq!(std::fs::read_to_string(&link).unwrap(), "new");
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_write_keeps_the_file_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    // No single umask gives a new file both modes.
+    for mode in [0o600, 0o640] {
+        std::fs::write(&path, "OLD=fake").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+
+        atomic_write_bytes(&path, b"NEW=fake").unwrap();
+
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "NEW=fake");
+        let kept = std::fs::metadata(&path).unwrap().permissions().mode() & 0o7777;
+        assert_eq!(kept, mode, "mode {mode:o} became {kept:o}");
+    }
+}
+
+#[cfg(windows)]
+#[test]
+fn atomic_write_keeps_an_explicit_acl_entry() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    std::fs::write(&path, "OLD=fake").unwrap();
+    // Grant Builtin Guests read access by SID, then read the DACL back as SDDL,
+    // where Guests is `BG` in any display language.
+    let icacls = |args: &[&std::ffi::OsStr]| {
+        let status = std::process::Command::new("icacls")
+            .args(args)
+            .stdout(std::process::Stdio::null())
+            .status()
+            .unwrap();
+        assert!(status.success(), "icacls {args:?}");
+    };
+    let sddl = || {
+        let saved = dir.path().join("acl.txt");
+        icacls(&[path.as_os_str(), "/save".as_ref(), saved.as_os_str()]);
+        let bytes = std::fs::read(&saved).unwrap();
+        let units: Vec<u16> = bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|&pair| u16::from_le_bytes(pair))
+            .collect();
+        String::from_utf16_lossy(&units)
+    };
+    icacls(&[
+        path.as_os_str(),
+        "/grant".as_ref(),
+        "*S-1-5-32-546:(R)".as_ref(),
+    ]);
+    let granted = sddl();
+    assert!(granted.contains(";;;BG)"), "the grant did not apply");
+
+    atomic_write_bytes(&path, b"NEW=fake").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "NEW=fake");
+    assert_eq!(sddl(), granted, "the rewrite changed the DACL");
+}
+
+#[cfg(windows)]
+#[test]
+fn atomic_write_to_a_file_held_open_fails_and_keeps_the_old_content() {
+    use std::os::windows::fs::OpenOptionsExt;
+    use windows_sys::Win32::Storage::FileSystem::FILE_SHARE_READ;
+
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".env");
+    std::fs::write(&path, "OLD=fake").unwrap();
+    // Held open without delete sharing, the file can be neither replaced nor
+    // renamed over, so both ReplaceFileW and the rename fallback fail.
+    let held = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(FILE_SHARE_READ)
+        .open(&path)
+        .unwrap();
+
+    let result = atomic_write_bytes(&path, b"NEW=fake");
+    drop(held);
+
+    assert!(result.is_err());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "OLD=fake");
+    let names: Vec<String> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(names, [".env"], "the temp file was left behind");
+}
+
 include!("tests/runtime_bridges.rs");
 include!("tests/managed_overlays.rs");
 

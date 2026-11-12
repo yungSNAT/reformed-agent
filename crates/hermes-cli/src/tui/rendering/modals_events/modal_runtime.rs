@@ -170,21 +170,17 @@ fn parse_interactive_question_request(input: &str) -> Result<InteractiveQuestion
     Ok(InteractiveQuestionRequest { prompt, options })
 }
 
+/// The variables runs read for `provider`, then the local backends' own.
 fn provider_env_key_hints(provider: &str) -> &'static [&'static str] {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "openai" => &["HERMES_OPENAI_API_KEY", "OPENAI_API_KEY"],
-        "openai-codex" | "codex" => &["HERMES_OPENAI_CODEX_API_KEY"],
-        "anthropic" => &["ANTHROPIC_API_KEY"],
-        "nous" => &["NOUS_API_KEY"],
-        "openrouter" => &["OPENROUTER_API_KEY"],
-        "gemini" | "google" => &["GOOGLE_API_KEY", "GEMINI_API_KEY"],
-        "google-gemini-cli" => &["HERMES_GEMINI_OAUTH_API_KEY"],
-        "qwen" => &["DASHSCOPE_API_KEY", "QWEN_API_KEY"],
-        "qwen-oauth" => &["HERMES_QWEN_OAUTH_API_KEY", "DASHSCOPE_API_KEY"],
-        "deepseek" => &["DEEPSEEK_API_KEY"],
-        "kimi-coding" => &["KIMI_CODING_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"],
-        "kimi" | "moonshot" => &["KIMI_API_KEY", "KIMI_CODING_API_KEY", "MOONSHOT_API_KEY"],
-        "kimi-coding-cn" => &["KIMI_CN_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"],
+    let provider = provider.trim().to_ascii_lowercase();
+    let run_vars = hermes_core::providers::provider_api_key_env_vars(
+        &provider,
+        &hermes_core::providers::canonical_provider_id(&provider),
+    );
+    if !run_vars.is_empty() {
+        return run_vars;
+    }
+    match provider.as_str() {
         "ollama-local" => &["OLLAMA_LOCAL_API_KEY", "OLLAMA_API_KEY"],
         "llama-cpp" => &["LLAMA_CPP_API_KEY"],
         "vllm" => &["VLLM_API_KEY"],
@@ -198,9 +194,6 @@ fn provider_env_key_hints(provider: &str) -> &'static [&'static str] {
         "koboldcpp" | "kobold-cpp" => &["KOBOLDCPP_API_KEY"],
         "text-generation-webui" | "oobabooga" => &["TEXT_GENERATION_WEBUI_API_KEY"],
         "tabbyapi" | "tabby-api" | "exllama" | "exllamav2" => &["TABBYAPI_API_KEY"],
-        "zai" => &["ZAI_API_KEY"],
-        "minimax" | "minimax-cn" => &["MINIMAX_API_KEY"],
-        "stepfun" => &["HERMES_STEPFUN_API_KEY", "STEPFUN_API_KEY"],
         _ => &[],
     }
 }

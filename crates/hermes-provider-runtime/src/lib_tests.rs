@@ -675,6 +675,33 @@ mod tests {
     }
 
     #[test]
+    fn provider_api_key_from_env_reads_the_same_key_for_aliases() {
+        let _guard = env_test_lock();
+        let cases = [
+            ("codex", "HERMES_OPENAI_CODEX_API_KEY"),
+            ("claude", "ANTHROPIC_API_KEY"),
+            ("claude-code", "ANTHROPIC_API_KEY"),
+            ("gemini-cli", "HERMES_GEMINI_OAUTH_API_KEY"),
+            ("gemini-oauth", "HERMES_GEMINI_OAUTH_API_KEY"),
+            ("google", "GOOGLE_API_KEY"),
+            ("moonshot", "KIMI_API_KEY"),
+            ("glm", "GLM_API_KEY"),
+            ("minimax_cn", "MINIMAX_CN_API_KEY"),
+        ];
+        let vars: Vec<&str> = cases.iter().map(|(_, var)| *var).collect();
+        let _env = EnvSnapshot::capture(&vars);
+        for (alias, var) in cases {
+            vars.iter().for_each(|name| std::env::remove_var(name));
+            std::env::set_var(var, "fake-alias-key");
+            assert_eq!(
+                provider_api_key_from_env(alias).as_deref(),
+                Some("fake-alias-key"),
+                "{alias} should read {var}"
+            );
+        }
+    }
+
+    #[test]
     fn provider_api_key_from_env_supports_openai_codex() {
         let _guard = env_test_lock();
         let var = "HERMES_OPENAI_CODEX_API_KEY";

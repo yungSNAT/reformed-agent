@@ -167,6 +167,70 @@ pub fn provider_capability_for(provider: &str) -> Option<ProviderCapability> {
     })
 }
 
+/// Environment variables holding a provider's API key, in the order a run
+/// reads them; `auth` status checks read the same list. `configured` is the
+/// provider name as configured, in lowercase, and `canonical` its canonical
+/// id: `kimi-coding`, `kimi-coding-cn` and `minimax-cn` have their own order.
+/// Providers whose key comes from elsewhere (local backends, Bedrock) have none.
+pub fn provider_api_key_env_vars(configured: &str, canonical: &str) -> &'static [&'static str] {
+    match configured {
+        "kimi-coding" => return &["KIMI_CODING_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"],
+        "kimi-coding-cn" => return &["KIMI_CN_API_KEY", "KIMI_API_KEY", "MOONSHOT_API_KEY"],
+        "minimax-cn" | "minimax_cn" => return &["MINIMAX_CN_API_KEY", "MINIMAX_API_KEY"],
+        _ => {}
+    }
+    match canonical {
+        "openai" => &["HERMES_OPENAI_API_KEY", "OPENAI_API_KEY"],
+        "openai-codex" => &["HERMES_OPENAI_CODEX_API_KEY"],
+        "anthropic" => &[
+            "ANTHROPIC_API_KEY",
+            "ANTHROPIC_TOKEN",
+            "CLAUDE_CODE_OAUTH_TOKEN",
+        ],
+        // Upstream `hermes_cli/auth.py` PROVIDER_REGISTRY["gemini"] reads these in this order.
+        "gemini" => &["GOOGLE_API_KEY", "GEMINI_API_KEY"],
+        "google-gemini-cli" => &[
+            "HERMES_GEMINI_OAUTH_API_KEY",
+            "GOOGLE_API_KEY",
+            "GEMINI_API_KEY",
+        ],
+        "openrouter" => &["OPENROUTER_API_KEY"],
+        "qwen" => &["DASHSCOPE_API_KEY"],
+        "qwen-oauth" => &["HERMES_QWEN_OAUTH_API_KEY", "DASHSCOPE_API_KEY"],
+        "kimi" => &[
+            "KIMI_API_KEY",
+            "KIMI_CODING_API_KEY",
+            "MOONSHOT_API_KEY",
+            "KIMI_CN_API_KEY",
+        ],
+        "minimax" => &["MINIMAX_API_KEY", "MINIMAX_CN_API_KEY"],
+        "stepfun" => &["HERMES_STEPFUN_API_KEY", "STEPFUN_API_KEY"],
+        "novita" => &["NOVITA_API_KEY"],
+        "nous" | "nous-api" => &["NOUS_API_KEY"],
+        "copilot" => &[
+            "COPILOT_GITHUB_TOKEN",
+            "GH_TOKEN",
+            "GITHUB_TOKEN",
+            "GITHUB_COPILOT_TOKEN",
+        ],
+        "ai-gateway" => &["AI_GATEWAY_API_KEY"],
+        "arcee" => &["ARCEEAI_API_KEY", "ARCEE_API_KEY"],
+        "deepseek" => &["DEEPSEEK_API_KEY"],
+        "huggingface" => &["HF_TOKEN"],
+        "gmi" => &["GMI_API_KEY"],
+        "kilocode" => &["KILOCODE_API_KEY"],
+        "nvidia" => &["NVIDIA_API_KEY"],
+        "ollama-cloud" => &["OLLAMA_API_KEY"],
+        "opencode-go" => &["OPENCODE_GO_API_KEY"],
+        "opencode-zen" => &["OPENCODE_ZEN_API_KEY"],
+        "xai" => &["XAI_API_KEY"],
+        "xiaomi" => &["XIAOMI_API_KEY"],
+        "tencent-tokenhub" => &["TOKENHUB_API_KEY"],
+        "zai" => &["GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"],
+        _ => &[],
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::BTreeSet;

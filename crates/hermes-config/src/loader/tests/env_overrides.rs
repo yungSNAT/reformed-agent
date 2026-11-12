@@ -50,6 +50,51 @@ fn load_dotenv_file_sanitizes_project_env_before_loading() {
 }
 
 #[test]
+fn load_dotenv_file_reads_export_lines() {
+    use tempfile::tempdir;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let dir = tempdir().expect("tempdir");
+    let env = dir.path().join(".env");
+    std::fs::write(
+        &env,
+        "export FAKE_EXPORTED_KEY=fake-value\nexport\t FAKE_TABBED_KEY=\"fake-tab\"\nexported_fake_key=kept\n",
+    )
+    .expect("write env");
+    let names = ["FAKE_EXPORTED_KEY", "FAKE_TABBED_KEY", "exported_fake_key"];
+    // SAFETY: test process serializes env mutation via ENV_LOCK.
+    unsafe { names.iter().for_each(|name| std::env::remove_var(name)) };
+
+    load_dotenv_file(&env, true);
+
+    let values = names.map(|name| std::env::var(name).ok());
+    // SAFETY: test process serializes env mutation via ENV_LOCK.
+    unsafe { names.iter().for_each(|name| std::env::remove_var(name)) };
+    assert_eq!(
+        values,
+        [
+            Some("fake-value".to_string()),
+            Some("fake-tab".to_string()),
+            Some("kept".to_string()),
+        ]
+    );
+}
+
+#[test]
+fn save_env_key_value_replaces_an_export_line() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let env = dir.path().join(".env");
+    std::fs::write(&env, "export GLM_API_KEY=fake-old\nOTHER=kept\n").expect("write env");
+
+    save_env_key_value(&env, "GLM_API_KEY", "fake-new").expect("save env key");
+
+    assert_eq!(
+        std::fs::read_to_string(&env).expect("read env"),
+        "GLM_API_KEY=fake-new\nOTHER=kept\n"
+    );
+}
+
+#[test]
 fn project_env_only_fills_missing_when_user_env_loaded() {
     use tempfile::tempdir;
 

@@ -18,6 +18,9 @@ indexmap = { workspace = true }
 chrono = { workspace = true }
 tokio = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
+
 [features]
 default = []
 # Exposes `managed_gateway::test_lock` so downstream crates' tests can

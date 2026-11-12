@@ -17,6 +17,18 @@ fn read_env_key_treats_empty_values_as_missing() {
 }
 
 #[test]
+fn read_env_key_reads_export_lines() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let env_file = tmp.path().join(".env");
+    std::fs::write(&env_file, "export GLM_API_KEY=fake-glm\n").expect("write env");
+
+    assert_eq!(
+        read_env_key(&env_file, "GLM_API_KEY").as_deref(),
+        Some("fake-glm")
+    );
+}
+
+#[test]
 fn merge_missing_env_keys_skips_empty_values() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let src = tmp.path().join("legacy.env");

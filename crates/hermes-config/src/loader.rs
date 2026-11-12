@@ -83,31 +83,62 @@ pub fn resolve_symlink_target(path: &Path) -> PathBuf {
 ///
 /// A symlinked `path` keeps its link: the temp file is staged beside the
 /// link's target, on the target's filesystem, and renamed over the target.
+///
+/// A rewritten file keeps its access: on Unix the temp file takes the
+/// existing file's permission bits before any bytes are written (the owner
+/// becomes the writer; where the filesystem refuses the change, the file gets
+/// the default mode, as before); on Windows the replacement keeps the
+/// existing file's DACL.
 pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> {
     let path = resolve_symlink_target(path);
     let path = path.as_path();
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
     let tmp_path = atomic_temp_path(path)?;
+    let mut written = false;
 
     let result = (|| -> Result<(), ConfigError> {
         let mut options = std::fs::OpenOptions::new();
         options.write(true).create_new(true);
         let mut file = options.open(&tmp_path).map_err(io_to_config_error)?;
+        #[cfg(unix)]
+        if let Ok(existing) = std::fs::metadata(path) {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = existing.permissions().mode() & 0o777;
+            if let Err(err) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
+                tracing::warn!("could not keep mode {mode:o} for {}: {err}", path.display());
+            }
+        }
         file.write_all(bytes).map_err(io_to_config_error)?;
         file.sync_all().map_err(io_to_config_error)?;
         drop(file);
+        written = true;
         replace_temp_file(&tmp_path, path)?;
         Ok(())
     })();
 
-    if result.is_err() {
-        let _ = std::fs::remove_file(&tmp_path);
+    match result {
+        // A failed Windows replace can remove the target before the rename
+        // fallback fails. With the target gone, the fully written temp file
+        // may hold the only copy, so keep it.
+        Err(err) if written && !path.exists() => Err(ConfigError::ParseError(format!(
+            "{err}; {} was removed and its new content is in {}",
+            path.display(),
+            tmp_path.display()
+        ))),
+        Err(err) => {
+            let _ = std::fs::remove_file(&tmp_path);
+            Err(err)
+        }
+        Ok(()) => Ok(()),
     }
-    result
 }
 
 fn replace_temp_file(tmp_path: &Path, path: &Path) -> Result<(), ConfigError> {
+    #[cfg(windows)]
+    if path.is_file() && replace_file_keeping_acl(tmp_path, path) {
+        return Ok(());
+    }
     match std::fs::rename(tmp_path, path) {
         Ok(()) => Ok(()),
         Err(err) if is_cross_device_rename_error(&err) => {
@@ -116,6 +147,33 @@ fn replace_temp_file(tmp_path: &Path, path: &Path) -> Result<(), ConfigError> {
             Ok(())
         }
         Err(err) => Err(io_to_config_error(err)),
+    }
+}
+
+/// Replace `path` with `tmp_path` through `ReplaceFileW`, which keeps the
+/// replaced file's DACL. A rename would give the file the folder's inherited
+/// ACL with the writer as owner, so a file rewritten from an elevated window
+/// could become unreadable to normal runs. On failure the caller renames: if
+/// `ReplaceFileW` removed the old file without moving the new one, the rename
+/// finishes the job.
+#[cfg(windows)]
+fn replace_file_keeping_acl(tmp_path: &Path, path: &Path) -> bool {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::ReplaceFileW;
+
+    let wide = |p: &Path| -> Vec<u16> { p.as_os_str().encode_wide().chain(Some(0)).collect() };
+    let (replaced, replacement) = (wide(path), wide(tmp_path));
+    // SAFETY: both names are NUL-terminated UTF-16 buffers that outlive the
+    // call; the backup name, exclude and reserved pointers may be null.
+    unsafe {
+        ReplaceFileW(
+            replaced.as_ptr(),
+            replacement.as_ptr(),
+            std::ptr::null(),
+            0,
+            std::ptr::null(),
+            std::ptr::null(),
+        ) != 0
     }
 }
 
@@ -276,23 +334,30 @@ fn load_dotenv_file(path: &Path, override_existing: bool) {
         Err(_) => return,
     };
 
-    for line in contents.lines() {
-        let trimmed = line.trim();
-        if trimmed.is_empty() || trimmed.starts_with('#') {
-            continue;
-        }
-        if let Some((key, value)) = trimmed.split_once('=') {
-            let key = key.trim();
-            if key.is_empty() {
-                continue;
-            }
-            let value = strip_quotes(value.trim());
-            if override_existing || std::env::var(key).is_err() {
-                // SAFETY: called during startup/config loading.
-                unsafe { std::env::set_var(key, value) };
-            }
+    for (key, value) in contents.lines().filter_map(dotenv_assignment) {
+        let value = strip_quotes(value.trim());
+        if override_existing || std::env::var(key).is_err() {
+            // SAFETY: called during startup/config loading.
+            unsafe { std::env::set_var(key, value) };
         }
     }
+}
+
+/// Split a `.env` line into its trimmed key and raw value. Blank lines,
+/// comments and lines without a key give `None`. A leading `export `, as
+/// shell files write it, is dropped, as python-dotenv does.
+pub fn dotenv_assignment(line: &str) -> Option<(&str, &str)> {
+    let trimmed = line.trim();
+    if trimmed.starts_with('#') {
+        return None;
+    }
+    let assignment = trimmed
+        .strip_prefix("export")
+        .filter(|rest| rest.starts_with(char::is_whitespace))
+        .map_or(trimmed, str::trim_start);
+    let (key, value) = assignment.split_once('=')?;
+    let key = key.trim();
+    (!key.is_empty()).then_some((key, value))
 }
 
 fn sanitize_env_file_if_needed(path: &Path) {

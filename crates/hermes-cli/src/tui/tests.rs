@@ -1084,4 +1084,15 @@ mod tests {
         assert!(joined.contains("tail-19"));
         assert!(joined.contains("live stream trimmed"));
     }
+
+    #[test]
+    fn provider_auth_hints_are_the_variables_runs_read() {
+        for provider in ["zai", "anthropic", "minimax-cn", "qwen", "stepfun"] {
+            assert_eq!(
+                provider_env_key_hints(provider),
+                hermes_core::providers::provider_api_key_env_vars(provider, provider),
+                "{provider}"
+            );
+        }
+    }
 }

@@ -5,6 +5,7 @@
 //! runtime credentials, advertise that provider as an agent-managed auth method.
 
 use hermes_config::{load_config, GatewayConfig};
+use hermes_core::providers::{canonical_provider_id, provider_api_key_env_vars};
 
 use crate::protocol::AuthMethod;
 
@@ -174,45 +175,21 @@ fn provider_config<'a>(
     })
 }
 
+/// The variables runs read for `provider`, then the local backends' and
+/// Copilot ACP's own.
 fn provider_env_key_names(provider: &str) -> &'static [&'static str] {
-    match provider.trim().to_ascii_lowercase().as_str() {
-        "openai" => &["HERMES_OPENAI_API_KEY", "OPENAI_API_KEY"],
-        "openai-codex" => &["HERMES_OPENAI_CODEX_API_KEY"],
-        "anthropic" => &[
-            "ANTHROPIC_API_KEY",
-            "ANTHROPIC_TOKEN",
-            "CLAUDE_CODE_OAUTH_TOKEN",
-        ],
-        "google-gemini-cli" => &[
-            "HERMES_GEMINI_OAUTH_API_KEY",
-            "GOOGLE_API_KEY",
-            "GEMINI_API_KEY",
-        ],
-        "openrouter" => &["OPENROUTER_API_KEY"],
-        "qwen" => &["DASHSCOPE_API_KEY"],
-        "qwen-oauth" => &["HERMES_QWEN_OAUTH_API_KEY", "DASHSCOPE_API_KEY"],
-        "kimi" => &["MOONSHOT_API_KEY"],
-        "minimax" => &["MINIMAX_API_KEY"],
-        "nous" => &["NOUS_API_KEY", "HERMES_NOUS_API_KEY"],
-        "copilot" | "copilot-acp" => &[
+    let provider = provider.trim().to_ascii_lowercase();
+    let run_vars = provider_api_key_env_vars(&provider, &canonical_provider_id(&provider));
+    if !run_vars.is_empty() {
+        return run_vars;
+    }
+    match provider.as_str() {
+        "copilot-acp" => &[
             "COPILOT_GITHUB_TOKEN",
             "GH_TOKEN",
             "GITHUB_TOKEN",
             "GITHUB_COPILOT_TOKEN",
         ],
-        "stepfun" => &["STEPFUN_API_KEY"],
-        "ai-gateway" => &["AI_GATEWAY_API_KEY"],
-        "novita" => &["NOVITA_API_KEY"],
-        "xai" => &["XAI_API_KEY"],
-        "nvidia" => &["NVIDIA_API_KEY"],
-        "kilocode" => &["KILOCODE_API_KEY"],
-        "gmi" => &["GMI_API_KEY"],
-        "huggingface" => &["HF_TOKEN", "HUGGINGFACE_API_KEY"],
-        "zai" => &["ZAI_API_KEY"],
-        "arcee" => &["ARCEEAI_API_KEY", "ARCEE_API_KEY"],
-        "xiaomi" => &["XIAOMI_API_KEY"],
-        "tencent-tokenhub" => &["TOKENHUB_API_KEY"],
-        "ollama-cloud" => &["OLLAMA_API_KEY"],
         "ollama-local" => &["OLLAMA_LOCAL_API_KEY", "OLLAMA_API_KEY"],
         "llama-cpp" => &["LLAMA_CPP_API_KEY"],
         "vllm" => &["VLLM_API_KEY"],
@@ -348,6 +325,17 @@ mod tests {
             detect_provider_from_config(&config).as_deref(),
             Some("kimi")
         );
+    }
+
+    #[test]
+    fn credentials_check_the_variables_runs_read() {
+        for provider in ["zai", "kimi", "minimax", "stepfun", "huggingface", "nous"] {
+            assert_eq!(
+                provider_env_key_names(provider),
+                hermes_core::providers::provider_api_key_env_vars(provider, provider),
+                "{provider}"
+            );
+        }
     }
 
     #[test]
