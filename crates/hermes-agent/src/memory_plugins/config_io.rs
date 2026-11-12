@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const DEFAULT_HOME_DIR: &str = ".hermes-agent-ultra";
-const LEGACY_HOME_DIR: &str = ".hermes";
-
+/// Same rule as `hermes_config::hermes_home`: upstream's `~/.hermes` is never
+/// chosen implicitly.
 pub(crate) fn default_hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_HOME") {
         return home;
@@ -18,15 +18,7 @@ pub(crate) fn default_hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_AGENT_ULTRA_HOME") {
         return home;
     }
-
-    let home_dir = user_home_dir();
-    let primary = home_dir.join(DEFAULT_HOME_DIR);
-    let legacy = home_dir.join(LEGACY_HOME_DIR);
-    if primary.exists() || !legacy.exists() {
-        primary
-    } else {
-        legacy
-    }
+    user_home_dir().join(DEFAULT_HOME_DIR)
 }
 
 fn env_var_path(var: &str) -> Option<PathBuf> {

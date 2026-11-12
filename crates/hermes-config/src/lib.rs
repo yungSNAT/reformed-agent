@@ -56,7 +56,7 @@ pub use merge::{deep_merge, merge_configs};
 pub use paths::{
     cli_config_path, config_path, cron_dir, env_path, gateway_json_path, gateway_pid_path,
     gateway_pid_path_in, hermes_home, memory_path, normalize_hermes_home_env, sessions_dir,
-    skills_dir, state_dir, user_path,
+    skills_dir, state_dir, upstream_home_notice, user_path,
 };
 pub use platform::{PlatformConfig, UnauthorizedDmBehavior};
 pub use session::{DailyReset, IdleReset, SessionConfig, SessionResetPolicy, SessionType};

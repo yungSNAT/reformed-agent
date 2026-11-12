@@ -1046,14 +1046,17 @@ async fn run_uninstall(yes: bool) -> Result<(), AgentError> {
 /// Remove `home` when `yes` is set; return what to tell the user.
 fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentError> {
     if !yes {
-        return Ok("Uninstall is destructive. Re-run with `hermes uninstall --yes`.".to_string());
+        return Ok(format!(
+            "Uninstall would remove {} and everything in it. Re-run with `hermes uninstall --yes` to remove it.",
+            home.display()
+        ));
     }
     if home.exists() {
         std::fs::remove_dir_all(home)
             .map_err(|e| AgentError::Io(format!("Failed to remove {}: {}", home.display(), e)))?;
         Ok(format!("Removed {}", home.display()))
     } else {
-        Ok("Nothing to uninstall.".to_string())
+        Ok(format!("Nothing to uninstall: {} does not exist.", home.display()))
     }
 }
 

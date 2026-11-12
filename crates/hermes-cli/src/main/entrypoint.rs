@@ -53,6 +53,9 @@ async fn run_main() {
         std::env::set_var("HERMES_HOME", config_dir);
     }
     hermes_config::normalize_hermes_home_env();
+    if let Some(notice) = hermes_config::upstream_home_notice() {
+        eprintln!("{notice}");
+    }
     // The flag's later readers get the folder the environment now names, so a
     // quoted `~/x` is one folder for the configuration and for the state.
     if let (Some(config_dir), Ok(home)) = (cli.config_dir.as_mut(), std::env::var("HERMES_HOME")) {

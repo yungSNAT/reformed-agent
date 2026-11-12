@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 use async_trait::async_trait;
@@ -17,21 +16,12 @@ static CONFIG_PASSTHROUGH: LazyLock<Mutex<Option<BTreeSet<String>>>> =
 
 pub struct EnvPassthroughHandler;
 
-fn hermes_home() -> Option<PathBuf> {
-    std::env::var_os("HERMES_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".hermes")))
-}
-
 fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
     map.get(serde_yaml::Value::String(key.to_string()))
 }
 
 fn load_config_passthrough_uncached() -> BTreeSet<String> {
-    let Some(home) = hermes_home() else {
-        return BTreeSet::new();
-    };
-    let path = home.join("config.yaml");
+    let path = hermes_config::hermes_home().join("config.yaml");
     let Ok(raw) = std::fs::read_to_string(path) else {
         return BTreeSet::new();
     };

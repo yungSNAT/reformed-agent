@@ -913,27 +913,9 @@ fn register_builtin_tools_with_data_dir(
 
 /// Return the Hermes data directory, creating it if needed.
 fn hermes_data_dir() -> PathBuf {
-    if let Some(dir) = hermes_home_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        return dir;
-    }
-    let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
-    let dir = home.join(".hermes");
+    let dir = hermes_config::hermes_home();
     let _ = std::fs::create_dir_all(&dir);
     dir
-}
-
-fn hermes_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HERMES_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
 }
 
 #[cfg(test)]

@@ -7,15 +7,16 @@ use std::path::{Path, PathBuf};
 // ---------------------------------------------------------------------------
 
 const DEFAULT_HOME_DIR: &str = ".hermes-agent-ultra";
-const LEGACY_HOME_DIR: &str = ".hermes";
+/// Upstream Hermes Agent's home. Never chosen implicitly: its config, sessions
+/// and keys belong to upstream, and `uninstall` removes whatever home is in use.
+const UPSTREAM_HOME_DIR: &str = ".hermes";
 
 /// Return the hermes home directory.
 ///
 /// - If the `HERMES_HOME` environment variable is set, use that.
 /// - Else if `HERMES_AGENT_ULTRA_HOME` is set, use that.
-/// - Otherwise default to `~/.hermes-agent-ultra`.
-/// - Backward-compat: if `~/.hermes-agent-ultra` does not exist but
-///   `~/.hermes` exists, use `~/.hermes`.
+/// - Otherwise `~/.hermes-agent-ultra`, even when upstream's `~/.hermes`
+///   exists; set `HERMES_HOME` to use that one.
 pub fn hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_HOME") {
         return home;
@@ -23,15 +24,27 @@ pub fn hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_AGENT_ULTRA_HOME") {
         return home;
     }
+    user_home_dir().join(DEFAULT_HOME_DIR)
+}
 
-    let home_dir = user_home_dir();
-    let primary = home_dir.join(DEFAULT_HOME_DIR);
-    let legacy = home_dir.join(LEGACY_HOME_DIR);
-    if primary.exists() || !legacy.exists() {
-        primary
-    } else {
-        legacy
+/// A one-line notice for stderr when no home variable is set, this fork's own
+/// home does not exist yet and upstream Hermes's `~/.hermes` does: it names the
+/// home in use and how to point at the old one. `None` otherwise.
+pub fn upstream_home_notice() -> Option<String> {
+    if env_var_path("HERMES_HOME").is_some() || env_var_path("HERMES_AGENT_ULTRA_HOME").is_some() {
+        return None;
     }
+    let home_dir = user_home_dir();
+    let own = home_dir.join(DEFAULT_HOME_DIR);
+    let upstream = home_dir.join(UPSTREAM_HOME_DIR);
+    (!own.exists() && upstream.is_dir()).then(|| {
+        format!(
+            "Using {} as this agent's home and leaving Hermes's {} untouched; set HERMES_HOME={} to use that one instead.",
+            own.display(),
+            upstream.display(),
+            upstream.display()
+        )
+    })
 }
 
 fn env_var_path(var: &str) -> Option<PathBuf> {
@@ -315,6 +328,26 @@ mod tests {
             assert_eq!(hermes_home(), chosen);
             std::env::set_var("HERMES_HOME", user_home.join(".hermes"));
             assert_eq!(hermes_home(), user_home.join(".hermes"));
+        });
+    }
+
+    #[test]
+    fn upstream_home_notice_only_before_the_own_home_exists() {
+        with_clean_home(|user_home| {
+            assert_eq!(upstream_home_notice(), None, "no upstream home");
+
+            std::fs::create_dir_all(user_home.join(".hermes")).unwrap();
+            let notice = upstream_home_notice().expect("notice");
+            assert!(!notice.contains('\n'));
+            assert!(notice.contains(&user_home.join(".hermes-agent-ultra").display().to_string()));
+            assert!(notice.contains(&format!("HERMES_HOME={}", user_home.join(".hermes").display())));
+
+            std::env::set_var("HERMES_HOME", user_home.join("chosen"));
+            assert_eq!(upstream_home_notice(), None, "HERMES_HOME set");
+            std::env::remove_var("HERMES_HOME");
+
+            std::fs::create_dir_all(user_home.join(".hermes-agent-ultra")).unwrap();
+            assert_eq!(upstream_home_notice(), None, "own home exists");
         });
     }
 

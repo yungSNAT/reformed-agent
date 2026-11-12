@@ -620,29 +620,10 @@ impl SessionPersistence {
     }
 
     /// Create using default home resolution:
-    /// `HERMES_HOME` → `HERMES_AGENT_ULTRA_HOME` → `~/.hermes-agent-ultra`
-    /// with legacy fallback to `~/.hermes`.
+    /// `HERMES_HOME` → `HERMES_AGENT_ULTRA_HOME` → `~/.hermes-agent-ultra`,
+    /// never upstream's `~/.hermes`.
     pub fn default_home() -> Self {
-        if let Ok(home) = std::env::var("HERMES_HOME") {
-            let home = home.trim();
-            if !home.is_empty() {
-                return Self::new(home);
-            }
-        }
-        if let Ok(home) = std::env::var("HERMES_AGENT_ULTRA_HOME") {
-            let home = home.trim();
-            if !home.is_empty() {
-                return Self::new(home);
-            }
-        }
-        let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let primary = base.join(".hermes-agent-ultra");
-        let legacy = base.join(".hermes");
-        if primary.exists() || !legacy.exists() {
-            Self::new(primary)
-        } else {
-            Self::new(legacy)
-        }
+        Self::new(crate::memory_plugins::default_hermes_home())
     }
 
     pub fn ensure_db(&self) -> Result<(), AgentError> {
