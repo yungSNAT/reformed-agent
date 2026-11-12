@@ -171,6 +171,76 @@ fn ip_allowed(host: &str, scheme: &str, ip: &IpAddr, allow_private_urls: bool) -
     allow_private_urls || !is_blocked_ip(ip) || qq_multimedia_benchmark_exception(host, scheme, ip)
 }
 
+/// Whitespace every URL parser strips from both ends. WHATWG also strips the
+/// other C0 controls, but `urlsplit`-style parsers keep a trailing one in the
+/// host, so those count as ambiguous instead.
+const URL_EDGE_WHITESPACE: &[char] = &[' ', '\t', '\n', '\r', '\x0b', '\x0c'];
+
+/// Why another client could read a different host or port from an http(s)
+/// `url` than WHATWG parsers (the `url` crate, browsers, Node) do, else `None`.
+///
+/// `urlsplit`-style parsers do not end the authority at `\`, do not
+/// percent-decode the host and do not accept `http:\\host` or `http:///host`,
+/// so `http://127.0.0.1:8080\@1.1.1.1` is 1.1.1.1 to one and 127.0.0.1:8080 to
+/// the other. Such URLs are refused rather than guessed at. `\` and `@` after
+/// the authority are accepted: every parser has fixed the host by then.
+/// `floor` keeps only what can move the host itself (controls, no `//`, `\` in
+/// the authority): userinfo and an unparseable port (templated `{port}` or
+/// `%d` literals) leave the host as written.
+fn authority_ambiguity(url: &str, floor: bool) -> Option<&'static str> {
+    let url = url.trim_matches(URL_EDGE_WHITESPACE);
+    // Split the way `urlsplit` does: it drops leading C0 controls and space,
+    // and tab, CR and LF anywhere, before reading the scheme and authority.
+    let cleaned: String = url
+        .trim_start_matches(|c: char| c <= ' ')
+        .chars()
+        .filter(|c| !matches!(c, '\t' | '\n' | '\r'))
+        .collect();
+    let (scheme, rest) = cleaned.split_once(':')?;
+    if !scheme.eq_ignore_ascii_case("http") && !scheme.eq_ignore_ascii_case("https") {
+        return None;
+    }
+    if url.chars().any(|c| c < ' ' || c == '\x7f') {
+        return Some("control character in URL");
+    }
+    let netloc = rest
+        .strip_prefix("//")
+        .map(|after| &after[..after.find(['/', '?', '#']).unwrap_or(after.len())])
+        .unwrap_or("");
+    if netloc.is_empty() {
+        return Some("authority not introduced by //");
+    }
+    if netloc.contains('\\') {
+        return Some("backslash in authority");
+    }
+    if floor {
+        return None;
+    }
+    if netloc.contains('@') {
+        return Some("userinfo in authority");
+    }
+    if netloc.contains('%') {
+        return Some("percent-encoding in host");
+    }
+    if netloc.chars().any(char::is_whitespace) {
+        return Some("whitespace in host");
+    }
+    let port = match netloc.strip_prefix('[') {
+        Some(bracketed) => bracketed
+            .split_once(']')
+            .map_or("", |(_, after)| after)
+            .split_once(':')
+            .map_or("", |(_, port)| port),
+        None => netloc.split_once(':').map_or("", |(_, port)| port),
+    };
+    if !port.is_empty()
+        && !(port.bytes().all(|b| b.is_ascii_digit()) && port.parse::<u16>().is_ok())
+    {
+        return Some("invalid port");
+    }
+    None
+}
+
 /// `Url::host_str` keeps the brackets of an IPv6 literal (`[::1]`).
 fn ip_literal(host: &str) -> &str {
     host.strip_prefix('[')
@@ -183,6 +253,11 @@ where
     F: FnMut(&str, u16) -> Result<Vec<IpAddr>, E>,
     E: Display,
 {
+    if let Some(reason) = authority_ambiguity(url, false) {
+        // The reason only: the URL may carry userinfo credentials.
+        tracing::warn!("Blocked request: ambiguous URL authority: {reason}");
+        return false;
+    }
     let parsed = match Url::parse(url) {
         Ok(parsed) => parsed,
         Err(_) => return false,
@@ -225,6 +300,10 @@ where
     F: FnMut(&str, u16) -> Result<Vec<IpAddr>, E>,
     E: Display,
 {
+    if let Some(reason) = authority_ambiguity(url, true) {
+        tracing::warn!("Blocked request: ambiguous URL authority (always-blocked floor): {reason}");
+        return true;
+    }
     let parsed = match Url::parse(url) {
         Ok(parsed) => parsed,
         Err(_) => return false,
@@ -625,6 +704,152 @@ mod tests {
             resolver_err
         ));
         assert!(!is_always_blocked_url_with_resolver("", resolver_err));
+    }
+
+    /// URLs whose authority `urlsplit`-style and WHATWG clients read
+    /// differently (upstream hermes-agent#145578). Every name resolves to a
+    /// public address in these tests, so only the parse can block them.
+    const AMBIGUOUS_AUTHORITY: &[&str] = &[
+        "http://127.0.0.1:8080\\@1.1.1.1",
+        "http://127.0.0.1:8080\\\\@1.1.1.1",
+        "http://127.0.0.1\\@1.1.1.1/",
+        "http://1.1.1.1\\.127.0.0.1/",
+        "http://\\127.0.0.1/",
+        "http://%31%32%37.0.0.1/",
+        "http://127.0.0.1:8080\t@1.1.1.1",
+        "http://127.0.0.1:8080\n@1.1.1.1",
+        "http://127.0.0.1:8080\r@1.1.1.1",
+        "http://127.0.0.1:8080\x00@1.1.1.1",
+        "http://exa\tmple.com/",
+        "https://example.com/a\nb",
+        "http://exa mple.com/",
+        "http://1.1.1.1:99999/",
+        "http://1.1.1.1:80x/",
+        // Userinfo.
+        "http://127.0.0.1:8080%5C@1.1.1.1",
+        "http://user:pass@1.1.1.1/",
+        "http://1.1.1.1@1.1.1.1/",
+        "https://@example.com/",
+    ];
+
+    #[test]
+    fn ambiguous_authority_is_refused_and_ordinary_urls_still_pass() {
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::remove("HERMES_ALLOW_PRIVATE_URLS");
+        for url in AMBIGUOUS_AUTHORITY {
+            assert!(
+                !is_safe_url_with_resolver(url, with_ip("1.1.1.1")),
+                "{url:?} should be refused"
+            );
+        }
+        for url in [
+            "https://example.com/image.png",
+            "https://example.com/a\\b?q=c\\d",
+            "https://example.com/%5C@x",
+            "https://example.com/p@q?x=@y#frag@z",
+            "https://example.com/r?next=http://127.0.0.1\\@x",
+            "https://example.com/path%20with%20spaces?q=a%40b",
+            "https://example.com:8443/x",
+            "http://[2606:4700:4700::1111]:8080/",
+            "HTTPS://EXAMPLE.COM/",
+            "  https://example.com/  ",
+            "https://example.com/\n",
+            "\thttps://example.com/\r\n",
+        ] {
+            assert!(
+                is_safe_url_with_resolver(url, with_ip("1.1.1.1")),
+                "{url:?} should be allowed"
+            );
+        }
+    }
+
+    #[test]
+    fn always_blocked_floor_refuses_authority_that_can_hide_metadata_host() {
+        for url in [
+            "http://169.254.169.254\\@1.1.1.1/latest/meta-data/",
+            "http:\\\\169.254.169.254\\latest",
+            "http:///169.254.169.254/latest",
+            "http://169.254.169.254\t@1.1.1.1/",
+        ] {
+            assert!(
+                is_always_blocked_url_with_resolver(url, with_ip("1.1.1.1")),
+                "{url:?} should hit the floor"
+            );
+        }
+        // Trailing C0 controls and DEL, which some clients drop from the host.
+        for control in ['\x00', '\x01', '\x08', '\x1b', '\x1f', '\x7f'] {
+            let url = format!("http://169.254.169.254{control}");
+            assert!(
+                is_always_blocked_url_with_resolver(&url, resolver_err),
+                "{url:?} should hit the floor"
+            );
+        }
+        // Userinfo alone, and templated ports or hosts, leave the host as
+        // written, so the floor leaves them to `is_safe_url`.
+        for url in [
+            "https://user:pass@example.com/",
+            "https://example.com/a\\b",
+            "about:blank",
+            "data:text/plain,line1\nline2",
+            "http://localhost:{port}/",
+            "http://localhost:%d/",
+            "http://localhost:${port}/api",
+            "http://{host}:8080/",
+            "http://%s/",
+            "http://user:pass@localhost:{port}/",
+            "  https://example.com/  ",
+            "\thttps://example.com/\r\n",
+        ] {
+            assert!(
+                !is_always_blocked_url_with_resolver(url, with_ip("1.1.1.1")),
+                "{url:?} should not hit the floor"
+            );
+        }
+    }
+
+    #[test]
+    fn checks_judge_the_host_whatwg_clients_dial() {
+        // The `url` crate is a WHATWG parser, so it already percent-decodes the
+        // host and maps IDNA dots; these upstream #145578 cases held before it.
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::remove("HERMES_ALLOW_PRIVATE_URLS");
+        for url in [
+            "http://%31%36%39.254.169.254/",
+            "HTTP://%31%36%39.254.169.254:80/latest",
+            "http://metadata.google.%69nternal/computeMetadata/v1/",
+            "http://169.254.169.254\u{3002}/",
+            "http://169.254.169.254\u{ff0e}/latest/meta-data/",
+            "http://169.254.169.254\u{ff61}/",
+            "http://169\u{3002}254\u{3002}169\u{3002}254/",
+            "http://\u{ff11}\u{ff16}\u{ff19}.254.169.254\u{3002}/",
+        ] {
+            assert!(
+                is_always_blocked_url_with_resolver(url, resolver_err),
+                "{url:?} should hit the floor"
+            );
+            assert!(
+                !is_safe_url_with_resolver(url, with_ip("1.1.1.1")),
+                "{url:?} should be refused"
+            );
+        }
+        let ideographic_dots = "https://example\u{3002}com\u{3002}/";
+        assert!(!is_always_blocked_url_with_resolver(
+            ideographic_dots,
+            with_ip("1.1.1.1")
+        ));
+        assert!(is_safe_url_with_resolver(
+            ideographic_dots,
+            with_ip("1.1.1.1")
+        ));
+        for url in [
+            "http://%6c%6f%63%61%6c%68%6f%73%74/",
+            "http://exa%20mple.com/",
+        ] {
+            assert!(!is_always_blocked_url_with_resolver(
+                url,
+                with_ip("127.0.0.1")
+            ));
+        }
     }
 
     #[tokio::test]
