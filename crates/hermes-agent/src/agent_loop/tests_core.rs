@@ -1190,6 +1190,93 @@
     }
 
     #[test]
+    fn an_interrupt_before_the_tool_batch_keeps_no_unanswered_call() {
+        // The user interrupts whilst the model answers with a call, so the
+        // run stops before the batch runs.
+        #[derive(Default)]
+        struct InterruptingProvider {
+            interrupt: OnceLock<crate::interrupt::InterruptController>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for InterruptingProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.interrupt.get().expect("interrupt set").interrupt(None);
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: "call_echo".to_string(),
+                            function: hermes_core::FunctionCall {
+                                name: "echo".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    ),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("tool_calls".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "echo",
+            ToolSchema::new("echo", "Echo", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("ok".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(InterruptingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
+        provider
+            .interrupt
+            .set(agent.interrupt.clone())
+            .expect("interrupt unset");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let result = rt
+            .block_on(agent.run(vec![Message::user("echo")], None))
+            .expect("run");
+        assert!(result.interrupted);
+        let stored_calls = result
+            .messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter().flatten())
+            .count();
+        assert_eq!(stored_calls, 0, "{:?}", result.messages);
+        assert!(!result.messages.iter().any(|m| m.role == MessageRole::Tool));
+    }
+
+    #[test]
     fn a_turn_whose_calls_are_all_dropped_keeps_only_its_text() {
         let call = hermes_core::ToolCall {
             id: "call_a".to_string(),

@@ -416,9 +416,10 @@ impl ContextManager {
         );
 
         let head = self.protected_head.min(self.messages.len());
-        let mut compressed = self.messages[..head].to_vec();
-        compressed.extend(self.compressor.compress(&self.messages[head..]));
-        if compressed != self.messages {
+        let tail = self.compressor.compress(&self.messages[head..]);
+        if tail != self.messages[head..] {
+            let mut compressed = self.messages[..head].to_vec();
+            compressed.extend(tail);
             let replaced = std::mem::replace(&mut self.messages, compressed);
             self.compressed_transcripts.push(replaced);
         }
@@ -437,6 +438,7 @@ impl ContextManager {
     /// Reset the conversation history, clearing all messages.
     pub fn reset(&mut self) {
         self.messages.clear();
+        self.protected_head = 0;
     }
 
     /// Calculate the total character count of all message content.

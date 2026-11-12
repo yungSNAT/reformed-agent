@@ -35,6 +35,9 @@ impl AgentLoop {
             // `idx` indexes the history before any compression; find that
             // message again if one has moved it. If one summarised it away,
             // there is no message left to override.
+            // shortcut: found by value, so a later user message with the same
+            // text would take the override instead; tracking the index through
+            // each compression and checkpoint rollback would remove that.
             let idx = match ctx.compressed_transcripts().first() {
                 None => Some(idx),
                 Some(before) => before

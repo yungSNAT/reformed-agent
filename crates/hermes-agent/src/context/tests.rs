@@ -239,6 +239,22 @@ mod tests {
     }
 
     #[test]
+    fn reset_drops_the_protected_head() {
+        let mut cm = ContextManager::with_compressor(300, ContextCompressor::new(2));
+        cm.add_message(Message::user("prefill"));
+        cm.protect_head(1);
+        cm.reset();
+        for i in 0..10 {
+            cm.add_message(Message::user(format!("question {i}, long enough to fill the budget")));
+            cm.add_message(Message::assistant(format!("answer {i}, long enough to fill the budget")));
+        }
+        cm.compress();
+        assert_eq!(cm.take_compressed_transcripts().len(), 1);
+        // The first question is summarised, not kept as a protected head.
+        assert_eq!(cm.get_messages()[0].role, MessageRole::System);
+    }
+
+    #[test]
     fn test_context_manager_compress_over_threshold() {
         // Budget large enough for the summary + recent messages, but small
         // enough that the 80% threshold (240 chars) is exceeded by the
