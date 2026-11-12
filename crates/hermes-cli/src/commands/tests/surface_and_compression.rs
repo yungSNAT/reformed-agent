@@ -875,3 +875,30 @@
         assert_eq!(recent["count"], 1, "the session is listed once");
         assert_eq!(recent["results"][0]["session_id"], app.session_id.as_str());
     }
+
+    #[tokio::test]
+    async fn recent_sessions_reach_past_a_much_compressed_conversation() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let app = build_test_app_with_stream(tmp.path()).await;
+        let persistence = hermes_agent::SessionPersistence::new(&app.state_root);
+        let turn = |text: &str| vec![hermes_core::Message::user(text)];
+        persistence
+            .persist_session("older", &turn("an older chat"), None, None, None, None)
+            .expect("save older");
+        // More compressions than the 45 rows recent mode used to scan.
+        let compressed: Vec<_> = (0..60).map(|n| turn(&format!("turn {n}"))).collect();
+        persistence
+            .persist_session_after_compression("busy", &compressed, &turn("latest"), None, None)
+            .expect("save busy");
+
+        let recent = search_sessions(&app, None).await;
+        let listed: Vec<&str> = recent["results"]
+            .as_array()
+            .expect("results")
+            .iter()
+            .filter_map(|result| result["session_id"].as_str())
+            .collect();
+        assert_eq!(listed, ["busy", "older"]);
+    }

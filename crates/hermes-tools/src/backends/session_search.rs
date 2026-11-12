@@ -1010,7 +1010,12 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                     .iter()
                     .map(|s| rusqlite::types::Value::Text((*s).to_string()))
                     .collect();
-                let scan_limit = (limit.saturating_mul(5).saturating_add(20)).max(limit);
+                // A compressed conversation has a row per compression but is
+                // listed once, so scan as many candidates as Hermes Agent's
+                // browse. shortcut: a window, as there; more recent rows of
+                // one conversation than this still crowd out older ones, until
+                // the query skips compressed rows that have a continuation.
+                let scan_limit = limit.saturating_mul(8).max(128);
                 params_values.push(rusqlite::types::Value::Integer(scan_limit as i64));
                 let params = rusqlite::params_from_iter(params_values.iter());
                 let rows = stmt
