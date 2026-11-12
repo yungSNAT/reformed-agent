@@ -1,6 +1,6 @@
 # Reformed Agent
 
-Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`. Reformed Agent is a fork of [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) and keeps its reliability, security and operator-control layer.
+Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`. Reformed Agent is a fork of [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) and keeps its reliability, security and operator-control layer. It installs as Rust binaries and needs no Python or Node.js runtime to run the agent, whilst upstream's source installer adds Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg; tools that call another program, such as FFmpeg for video or `npx` for some MCP servers, still need it.
 
 Translations of an earlier README, which predate this fork: [中文](./README_ZH.md), [日本語](./README_JA.md), [한국어](./README_KO.md).
 
