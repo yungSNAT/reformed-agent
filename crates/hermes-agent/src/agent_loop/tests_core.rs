@@ -942,6 +942,281 @@
         }
     }
 
+    #[test]
+    fn compressing_runs_keep_the_prefill_and_the_persisted_user_message() {
+        // Compression writes a checkpoint over HTTP; send it to a closed
+        // local port so the test stays offline.
+        let _lock = env_test_lock();
+        let _url = EnvVarGuard::set("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:9");
+        let _key = EnvVarGuard::remove("CONTEXTLATTICE_API_KEY");
+        let _mode = EnvVarGuard::set("HERMES_CONTEXTLATTICE_COMPACTION_GOVERNANCE", "advisory");
+        #[derive(Default)]
+        struct CapturingProvider {
+            seen: Mutex<Vec<Vec<Message>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for CapturingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("by the mill"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("by the mill")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+        fn has(messages: &[Message], text: &str) -> bool {
+            messages.iter().any(|m| m.content.as_deref() == Some(text))
+        }
+
+        // Over 80% of the default 200,000-character budget, so each run
+        // compresses before its first model call.
+        let mut history: Vec<Message> = (0..20)
+            .flat_map(|turn| {
+                [
+                    Message::user(format!("heron question {turn} {}", "x".repeat(5_000))),
+                    Message::assistant(format!("willow answer {turn} {}", "y".repeat(4_000))),
+                ]
+            })
+            .collect();
+        history.push(Message::user("and the kingfisher"));
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            prefill_messages: vec![
+                Message::user("prefill question"),
+                Message::assistant("prefill answer"),
+            ],
+            persist_user_message: Some("kingfisher, as typed".to_string()),
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(CapturingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let results = [
+            rt.block_on(agent.run(history.clone(), None)).expect("run"),
+            rt.block_on(agent.run_stream(history.clone(), None, Some(Box::new(|_| {}))))
+                .expect("streamed run"),
+        ];
+        let seen = provider.seen.lock().expect("seen lock");
+        assert_eq!(seen.len(), 2, "one model call per run");
+        for (sent, result) in seen.iter().zip(&results) {
+            assert_eq!(result.compressed_transcripts.len(), 1, "the run compressed");
+            for prefill in ["prefill question", "prefill answer"] {
+                assert!(has(sent, prefill), "the model still sees {prefill:?}");
+                assert!(!has(&result.messages, prefill), "{prefill:?} is not returned");
+            }
+            assert!(
+                result.messages.iter().any(|m| m
+                    .content
+                    .as_deref()
+                    .is_some_and(|c| c.starts_with("[Conversation summary]"))),
+                "the summary is returned"
+            );
+            assert!(has(&result.messages, "by the mill"));
+            let last_user = result
+                .messages
+                .iter()
+                .rfind(|m| m.role == MessageRole::User)
+                .and_then(|m| m.content.as_deref());
+            assert_eq!(last_user, Some("kingfisher, as typed"));
+        }
+    }
+
+    #[test]
+    fn runs_store_only_the_tool_calls_they_answer() {
+        // The model repeats a call. The run executes it once, so the stored
+        // assistant message, and its replayed Anthropic blocks, keep one call.
+        fn repeated_call(id: &str) -> hermes_core::ToolCall {
+            hermes_core::ToolCall {
+                id: id.to_string(),
+                function: hermes_core::FunctionCall {
+                    name: "echo".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                extra_content: None,
+            }
+        }
+        fn answered(messages: &[Message]) -> bool {
+            messages.iter().any(|m| m.role == MessageRole::Tool)
+        }
+        #[derive(Default)]
+        struct RepeatingProvider {
+            seen: Mutex<Vec<Vec<Message>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for RepeatingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                let message = if answered(messages) {
+                    Message::assistant("done")
+                } else {
+                    let mut message = Message::assistant_with_tool_calls(
+                        None,
+                        vec![repeated_call("call_a"), repeated_call("call_b")],
+                    );
+                    message.anthropic_content_blocks = Some(vec![
+                        serde_json::json!({"type": "thinking", "thinking": "echo", "signature": "sig"}),
+                        serde_json::json!({"type": "tool_use", "id": "call_a", "name": "echo", "input": {}}),
+                        serde_json::json!({"type": "tool_use", "id": "call_b", "name": "echo", "input": {}}),
+                    ]);
+                    message
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                let chunks = if answered(messages) {
+                    vec![stream_chunk_content("done"), stream_chunk_finish("stop")]
+                } else {
+                    vec![
+                        stream_chunk_tool_name(0, "call_a", "echo"),
+                        stream_chunk_tool_args(0, "{}"),
+                        stream_chunk_tool_name(1, "call_b", "echo"),
+                        stream_chunk_tool_args(1, "{}"),
+                        stream_chunk_finish("tool_calls"),
+                    ]
+                };
+                futures::stream::iter(chunks.into_iter().map(Ok)).boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "echo",
+            ToolSchema::new("echo", "Echo", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("ok".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(RepeatingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let results = [
+            rt.block_on(agent.run(vec![Message::user("echo twice")], None))
+                .expect("run"),
+            rt.block_on(agent.run_stream(
+                vec![Message::user("echo twice")],
+                None,
+                Some(Box::new(|_| {})),
+            ))
+            .expect("streamed run"),
+        ];
+        let seen = provider.seen.lock().expect("seen lock");
+        let sent = seen.iter().map(Vec::as_slice);
+        for messages in sent.chain(results.iter().map(|r| r.messages.as_slice())) {
+            let calls: Vec<&str> = messages
+                .iter()
+                .flat_map(|m| m.tool_calls.iter().flatten())
+                .map(|c| c.id.as_str())
+                .collect();
+            let answers: Vec<&str> = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Tool)
+                .filter_map(|m| m.tool_call_id.as_deref())
+                .collect();
+            assert_eq!(calls, answers, "each stored call has its result: {messages:?}");
+        }
+        assert!(results.iter().all(|r| answered(&r.messages)), "the call ran");
+        let replayed: Vec<&str> = results[0]
+            .messages
+            .iter()
+            .flat_map(|m| m.anthropic_content_blocks.iter().flatten())
+            .filter(|block| block["type"] == "tool_use")
+            .filter_map(|block| block["id"].as_str())
+            .collect();
+        assert_eq!(replayed, ["call_a"]);
+    }
+
+    #[test]
+    fn a_turn_whose_calls_are_all_dropped_keeps_only_its_text() {
+        let call = hermes_core::ToolCall {
+            id: "call_a".to_string(),
+            function: hermes_core::FunctionCall {
+                name: "echo".to_string(),
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        };
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::user("echo"));
+        ctx.add_message(Message::assistant_with_tool_calls(None, vec![call.clone()]));
+        ctx.add_message(Message::system("policy note"));
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 1, &[]);
+        let roles: Vec<_> = ctx.get_messages().iter().map(|m| m.role).collect();
+        assert_eq!(roles, [MessageRole::User, MessageRole::System]);
+
+        ctx.add_message(Message::assistant_with_tool_calls(
+            Some("checking".to_string()),
+            vec![call],
+        ));
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 2, &[]);
+        let kept = &ctx.get_messages()[2];
+        assert_eq!(kept.content.as_deref(), Some("checking"));
+        assert_eq!(kept.tool_calls, None);
+    }
+
     include!("tests/llm_retry_stream.rs");
 
     #[test]
