@@ -65,14 +65,28 @@ def test_repo_ci_runs_readiness_summary_after_global_parity_proof() -> None:
     )
 
 
-def test_parity_audit_emits_readiness_summary_before_enforcing_ci_gate() -> None:
+def test_parity_audit_reports_live_drift_without_gating_on_it() -> None:
+    # The scheduled audit measures upstream's live main; PR CI gates on the pin.
     text = PARITY_AUDIT.read_text()
-    assert "id: parity-proof" in text
-    assert "python3 scripts/generate-global-parity-proof.py --check-ci || status=$?" in text
-    assert "Generate public release readiness summary" in text
-    assert "Enforce global parity CI gate" in text
-    assert text.index("Generate public release readiness summary") < text.index(
-        "Enforce global parity CI gate"
+    assert "python3 scripts/generate-global-parity-proof.py\n" in text
+    assert "python3 scripts/generate-release-readiness-summary.py --repo-root .\n" in text
+    assert text.index("python3 scripts/generate-global-parity-proof.py") < text.index(
+        "python3 scripts/generate-release-readiness-summary.py"
     )
-    assert "raise SystemExit(0)" not in text
-    assert "ci_gate = raw.get(\"ci_gate\", {})" in text
+    assert 'cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"' in text
+    assert "--check-ci" not in text
+    assert "gh issue" not in text
+    # Local proof metrics still gate; only upstream drift is excluded.
+    assert 'select(.status == "fail" or .status == "missing")] == []' in text
+    assert '"max_queue_pending_commits") | not)' in text
+    assert "persist-credentials: false" in text
+
+
+def test_parity_audit_runs_golden_harness_with_upstream_dependencies() -> None:
+    # The harness imports upstream's hermes_cli.commands, so it needs upstream's core dependencies.
+    text = PARITY_AUDIT.read_text()
+    install = "uv sync --frozen --no-dev --no-install-project --no-build --project ../hermes-agent"
+    harness = "../hermes-agent/.venv/bin/python scripts/run-golden-parity-harness.py"
+    assert install in text
+    assert harness in text
+    assert text.index(install) < text.index(harness)
