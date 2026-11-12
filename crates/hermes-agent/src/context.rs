@@ -60,7 +60,10 @@ impl ContextCompressor {
     /// - Messages between the system prompt block and the last
     ///   `recent_messages_count` messages are condensed into a single
     ///   system message whose content is a truncated plain-text summary.
-    /// - The last `recent_messages_count` messages are kept as-is.
+    /// - The last `recent_messages_count` messages are kept as-is. When that
+    ///   block starts inside a group of tool results, it starts instead at the
+    ///   assistant message that called them, so no kept tool result loses its
+    ///   call (providers reject such a history).
     ///
     /// If there are not enough messages to warrant compression, the input
     /// is returned unchanged (as a new `Vec`).
@@ -77,11 +80,20 @@ impl ContextCompressor {
 
         // 2. The "recent" block: the last N messages (also kept as-is).
         //    recent_start must be at least system_end so the middle block is
-        //    never overlapping with the system block.
-        let recent_start = messages
+        //    never overlapping with the system block. Tool results directly
+        //    follow the assistant message that called them, so stepping back
+        //    over them reaches that message.
+        let mut recent_start = messages
             .len()
             .saturating_sub(self.recent_messages_count)
             .max(system_end);
+        while recent_start > system_end
+            && messages
+                .get(recent_start)
+                .is_some_and(|m| m.role == MessageRole::Tool)
+        {
+            recent_start -= 1;
+        }
 
         // 3. The "middle" block: everything between system_end and recent_start.
         //    If the middle block is empty or only has one message, there is
@@ -95,7 +107,7 @@ impl ContextCompressor {
         let summary = Self::build_summary(middle_slice);
 
         // 5. Assemble the compressed message list.
-        let mut compressed = Vec::with_capacity(system_end + 1 + self.recent_messages_count);
+        let mut compressed = Vec::with_capacity(system_end + 1 + messages.len() - recent_start);
 
         // Preserve leading system messages.
         compressed.extend_from_slice(&messages[..system_end]);

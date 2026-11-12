@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hermes_core::{FunctionCall, ToolCall};
 
     #[test]
     fn test_add_and_get_messages() {
@@ -90,6 +91,50 @@ mod tests {
         // Last 2 messages preserved.
         assert_eq!(result[result.len() - 2].role, MessageRole::User);
         assert_eq!(result[result.len() - 1].role, MessageRole::Assistant);
+    }
+
+    #[test]
+    fn test_compress_keeps_tool_results_with_their_call() {
+        // One assistant turn calls a tool 6 times and the results pass the
+        // compression point, so the last 4 messages start inside that group.
+        let mut cm = ContextManager::default_budget();
+        cm.add_message(Message::system("System prompt"));
+        cm.add_message(Message::user("Read the 6 files."));
+        let calls = (1..=6)
+            .map(|n| ToolCall {
+                id: format!("call_{n}"),
+                function: FunctionCall {
+                    name: "terminal".into(),
+                    arguments: format!("{{\"command\":\"cat part{n}.txt\"}}"),
+                },
+                extra_content: None,
+            })
+            .collect();
+        cm.add_message(Message::assistant_with_tool_calls(None, calls));
+        for n in 1..=6 {
+            cm.add_message(Message::tool_result(
+                format!("call_{n}"),
+                "x".repeat(40_000),
+            ));
+        }
+
+        cm.compress();
+
+        assert_eq!(cm.take_compressed_transcripts().len(), 1);
+        let kept = cm.get_messages();
+        let call_ids: HashSet<&str> = kept
+            .iter()
+            .filter_map(|m| m.tool_calls.as_ref())
+            .flatten()
+            .map(|tc| tc.id.as_str())
+            .collect();
+        let result_ids: HashSet<&str> = kept
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .filter_map(|m| m.tool_call_id.as_deref())
+            .collect();
+        assert_eq!(result_ids.len(), 6);
+        assert_eq!(call_ids, result_ids);
     }
 
     #[test]
