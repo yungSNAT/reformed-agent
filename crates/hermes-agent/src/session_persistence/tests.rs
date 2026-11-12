@@ -452,6 +452,45 @@ fn test_persist_replaces_messages() {
 }
 
 #[test]
+fn failed_persist_keeps_the_previous_row_transcript_and_search() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let first = vec![Message::user("heron"), Message::assistant("willow")];
+    sp.persist_session("rollback-test", &first, None, None, None, None)
+        .unwrap();
+
+    // Fail the second message insert of the next write.
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    conn.execute_batch(
+        "CREATE TRIGGER fail_insert BEFORE INSERT ON messages WHEN NEW.content = 'boom'
+         BEGIN SELECT RAISE(ABORT, 'forced failure'); END;",
+    )
+    .unwrap();
+    let second = vec![
+        Message::user("kingfisher"),
+        Message::assistant("boom"),
+        Message::user("mill"),
+    ];
+    sp.persist_session("rollback-test", &second, None, None, None, None)
+        .expect_err("forced insert failure");
+    conn.execute_batch("DROP TRIGGER fail_insert").unwrap();
+
+    let loaded = sp.load_session("rollback-test").unwrap();
+    let contents: Vec<_> = loaded.iter().map(|m| m.content.as_deref()).collect();
+    assert_eq!(contents, [Some("heron"), Some("willow")]);
+    let count: i64 = conn
+        .query_row(
+            "SELECT message_count FROM sessions WHERE id = 'rollback-test'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(count, 2);
+    assert_eq!(fts_match_rows(&sp, "willow").len(), 1);
+    assert!(fts_match_rows(&sp, "kingfisher").is_empty());
+}
+
+#[test]
 fn test_persist_session_updates_existing_model() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());

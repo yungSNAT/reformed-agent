@@ -397,6 +397,56 @@
         assert!(results.contains(&"/resume"));
     }
 
+    #[tokio::test]
+    async fn slash_resume_skips_oneshots_when_bare_and_continues_one_as_a_new_session() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let sessions = tmp.path().join("sessions");
+        std::fs::create_dir_all(&sessions).expect("sessions dir");
+        let snapshot = |id: &str, age_minutes: u64| {
+            let path = sessions.join(format!("{id}.json"));
+            std::fs::write(
+                &path,
+                format!(
+                    r#"{{"session_info":{{"session_id":"{id}"}},"messages":[{{"role":"User","content":"hi"}}]}}"#
+                ),
+            )
+            .expect("write snapshot");
+            std::fs::File::options()
+                .write(true)
+                .open(&path)
+                .and_then(|file| {
+                    file.set_modified(
+                        std::time::SystemTime::now()
+                            - std::time::Duration::from_secs(age_minutes * 60),
+                    )
+                })
+                .expect("date snapshot");
+            path
+        };
+        let interactive_id = "c0ffee00-0000-4000-8000-000000000001";
+        let oneshot_id = "oneshot-c0ffee00-0000-4000-8000-000000000002";
+        snapshot(interactive_id, 20);
+        let oneshot = snapshot(oneshot_id, 10);
+
+        handle_slash_command(&mut app, "/resume", &[])
+            .await
+            .expect("bare resume");
+        assert_eq!(app.session_id, interactive_id);
+
+        handle_slash_command(&mut app, "/resume", &[oneshot_id])
+            .await
+            .expect("resume one-shot");
+        assert_eq!(app.messages.len(), 1);
+        assert_ne!(app.session_id, oneshot_id);
+        let saved = std::fs::read(&oneshot).expect("read one-shot");
+        app.persist_session_snapshot(None)
+            .expect("the resumed one-shot saves as a new session");
+        assert_eq!(std::fs::read(&oneshot).expect("read one-shot"), saved);
+    }
+
     #[test]
     fn test_timetravel_command_and_alias_are_registered() {
         assert!(SLASH_COMMANDS

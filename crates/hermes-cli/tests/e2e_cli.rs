@@ -447,3 +447,253 @@ fn e2e_cli_runs_with_one_mib_main_thread_stack() {
         String::from_utf8_lossy(&output.stderr)
     );
 }
+
+/// Run `hermes -z <prompt>` with HERMES_HOME `dir` and `env` against a mock
+/// `/chat/completions` that answers with `status` and `body`. stdout is
+/// captured; stderr goes to `stderr`.
+async fn run_oneshot_against_mock(
+    dir: tempfile::TempDir,
+    env: &'static [(&'static str, &'static str)],
+    status: u16,
+    body: serde_json::Value,
+    stderr: std::process::Stdio,
+) -> (tempfile::TempDir, std::process::Output) {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(status).set_body_json(body))
+        .mount(&server)
+        .await;
+    fs::write(
+        dir.path().join("config.yaml"),
+        format!(
+            r#"
+model: local-test:deterministic
+llm_providers:
+  local-test:
+    base_url: {}
+    api_key: test-key
+    discover_models: false
+    models:
+      deterministic: {{}}
+"#,
+            server.uri()
+        ),
+    )
+    .expect("write config");
+    let home = dir.path().to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        std::process::Command::new(env!("CARGO_BIN_EXE_hermes"))
+            .current_dir(&home)
+            .env("HERMES_HOME", &home)
+            .env_remove("HERMES_ONESHOT_APP_RUNTIME")
+            .env_remove("HERMES_QUORUM_AUTO_ARM")
+            .envs(env.iter().copied())
+            .args(["-z", "where did the heron nest"])
+            .stderr(stderr)
+            .output()
+            .expect("run hermes")
+    })
+    .await
+    .expect("join");
+    (dir, output)
+}
+
+fn oneshot_reply() -> serde_json::Value {
+    serde_json::json!({
+        "id": "chatcmpl-oneshot-test",
+        "object": "chat.completion",
+        "created": 0,
+        "model": "deterministic",
+        "choices": [{
+            "index": 0,
+            "message": {"role": "assistant", "content": "under the willow bridge"},
+            "finish_reason": "stop"
+        }],
+        "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2}
+    })
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_oneshot_saves_session() {
+    let (dir, output) = run_oneshot_against_mock(
+        tempfile::tempdir().expect("tempdir"),
+        &[],
+        200,
+        oneshot_reply(),
+        std::process::Stdio::piped(),
+    )
+    .await;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
+    );
+    assert!(!stderr.contains("not saved"), "stderr: {stderr}");
+
+    let snapshots: Vec<_> = fs::read_dir(dir.path().join("sessions"))
+        .expect("sessions dir")
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
+    assert_eq!(snapshots.len(), 1, "snapshots: {snapshots:?}");
+    let snapshot: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(&snapshots[0]).expect("read snapshot"))
+            .expect("parse snapshot");
+    assert_eq!(snapshot["source"], "oneshot");
+    // The transcript is the agent result, system prompt included, as the App
+    // and gateway persist it; the conversation itself is one exchange.
+    let conversation: Vec<(&str, &str)> = snapshot["messages"]
+        .as_array()
+        .expect("messages")
+        .iter()
+        .filter(|m| m["role"] != "System")
+        .map(|m| (m["role"].as_str().unwrap(), m["content"].as_str().unwrap()))
+        .collect();
+    assert_eq!(
+        conversation,
+        [
+            ("User", "where did the heron nest"),
+            ("Assistant", "under the willow bridge")
+        ]
+    );
+    let session_id = snapshot["session_info"]["session_id"]
+        .as_str()
+        .expect("session id")
+        .to_string();
+
+    let persistence = hermes_agent::SessionPersistence::new(dir.path());
+    let messages = persistence.load_session(&session_id).expect("load session");
+    assert_eq!(
+        Some(messages.len()),
+        snapshot["messages"].as_array().map(Vec::len)
+    );
+    let conn = rusqlite::Connection::open(persistence.db_path()).expect("open db");
+    let (platform, title): (String, Option<String>) = conn
+        .query_row(
+            "SELECT platform, title FROM sessions WHERE id = ?1",
+            [&session_id],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .expect("session row");
+    assert_eq!(platform, "oneshot");
+    assert_eq!(title, None);
+    let hits: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH 'willow' AND session_id = ?1",
+            [&session_id],
+            |row| row.get(0),
+        )
+        .expect("search");
+    assert_eq!(hits, 1, "the reply should be searchable");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_failed_oneshot_saves_no_session() {
+    let (dir, output) = run_oneshot_against_mock(
+        tempfile::tempdir().expect("tempdir"),
+        &[],
+        400,
+        serde_json::json!({"error": {"message": "bad request", "type": "invalid_request_error"}}),
+        std::process::Stdio::piped(),
+    )
+    .await;
+    assert!(!output.status.success());
+    assert!(!dir.path().join("sessions").exists());
+    // Registering the session_search tool may create an empty sessions.db.
+    let db = dir.path().join("sessions.db");
+    if db.exists() {
+        let conn = rusqlite::Connection::open(&db).expect("open db");
+        let rows: i64 = conn
+            .query_row("SELECT COUNT(*) FROM sessions", [], |row| row.get(0))
+            .expect("count sessions");
+        assert_eq!(rows, 0);
+    }
+}
+
+/// A home whose one interactive snapshot fills a one-file snapshot limit.
+fn home_with_one_interactive_snapshot() -> (tempfile::TempDir, std::path::PathBuf) {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let sessions = dir.path().join("sessions");
+    fs::create_dir_all(&sessions).expect("sessions dir");
+    let interactive = sessions.join("interactive-a.json");
+    fs::write(
+        &interactive,
+        r#"{"session_info":{"session_id":"interactive-a"},"messages":[]}"#,
+    )
+    .expect("write interactive snapshot");
+    (dir, interactive)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_oneshot_at_snapshot_limit_warns_and_keeps_interactive_snapshot() {
+    let (dir, interactive) = home_with_one_interactive_snapshot();
+    let sessions = dir.path().join("sessions");
+
+    let (dir, output) = run_oneshot_against_mock(
+        dir,
+        &[("HERMES_SESSION_SNAPSHOT_MAX_FILES", "1")],
+        200,
+        oneshot_reply(),
+        std::process::Stdio::piped(),
+    )
+    .await;
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(output.status.success(), "stderr: {stderr}");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
+    );
+    assert!(
+        stderr.contains("not kept in `sessions list`"),
+        "stderr: {stderr}"
+    );
+    let snapshots: Vec<_> = fs::read_dir(&sessions)
+        .expect("sessions dir")
+        .flatten()
+        .map(|entry| entry.path())
+        .collect();
+    assert_eq!(snapshots, [interactive]);
+    let conn = rusqlite::Connection::open(dir.path().join("sessions.db")).expect("open db");
+    let rows: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE platform = 'oneshot'",
+            [],
+            |row| row.get(0),
+        )
+        .expect("count sessions");
+    assert_eq!(rows, 1, "the run stays searchable");
+}
+
+// The save warning cannot be written when stderr is /dev/full; the run still
+// prints its reply and exits 0.
+#[cfg(target_os = "linux")]
+#[tokio::test(flavor = "multi_thread")]
+async fn e2e_cli_oneshot_save_warning_on_unwritable_stderr_keeps_exit_code() {
+    let (dir, _) = home_with_one_interactive_snapshot();
+    let full = fs::File::options()
+        .write(true)
+        .open("/dev/full")
+        .expect("open /dev/full");
+    let (_dir, output) = run_oneshot_against_mock(
+        dir,
+        &[("HERMES_SESSION_SNAPSHOT_MAX_FILES", "1")],
+        200,
+        oneshot_reply(),
+        full.into(),
+    )
+    .await;
+    assert!(output.status.success(), "status: {:?}", output.status);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "under the willow bridge
+"
+    );
+}

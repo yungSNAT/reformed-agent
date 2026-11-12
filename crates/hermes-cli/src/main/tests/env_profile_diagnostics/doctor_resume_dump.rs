@@ -126,6 +126,49 @@ fn resolve_resume_session_file_prefers_latest_modified_file() {
 }
 
 #[test]
+fn resolve_resume_session_file_latest_skips_oneshot_runs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cli = cli_for_temp_state_root(tmp.path());
+    let sessions_dir = hermes_state_root(&cli).join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("create sessions dir");
+    let snapshot = |id: &str, age_minutes: u64| {
+        let path = sessions_dir.join(format!("{id}.json"));
+        std::fs::write(
+            &path,
+            format!(
+                r#"{{"session_info":{{"session_id":"{id}"}},"messages":[{{"role":"User","content":"hi"}}]}}"#
+            ),
+        )
+        .expect("write snapshot");
+        std::fs::File::options()
+            .write(true)
+            .open(&path)
+            .and_then(|file| {
+                file.set_modified(
+                    std::time::SystemTime::now()
+                        - std::time::Duration::from_secs(age_minutes * 60),
+                )
+            })
+            .expect("date snapshot");
+        path
+    };
+
+    let interactive = snapshot("c0ffee00-0000-4000-8000-000000000002", 20);
+    snapshot("oneshot-c0ffee00-0000-4000-8000-000000000003", 10);
+
+    let latest = resolve_resume_session_file(&sessions_dir, None).expect("resolve latest");
+    assert_eq!(latest.1, interactive);
+    let nonempty =
+        resolve_latest_nonempty_session_file(&sessions_dir).expect("resolve latest non-empty");
+    assert_eq!(nonempty.1, interactive);
+
+    // Other names with the prefix stay ordinary sessions.
+    let named = snapshot("oneshot-notes", 5);
+    let latest = resolve_resume_session_file(&sessions_dir, None).expect("resolve latest");
+    assert_eq!(latest.1, named);
+}
+
+#[test]
 fn resolve_resume_session_file_latest_prefers_canonical_session_stem() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let cli = cli_for_temp_state_root(tmp.path());

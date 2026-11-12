@@ -150,6 +150,222 @@
     }
 
     #[test]
+    fn interactive_turns_upsert_one_searchable_sessions_db_row() {
+        let _guard = env_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
+        app.session_id = "interactive-search".to_string();
+        let turn = |messages: Vec<hermes_core::Message>| hermes_core::AgentResult {
+            messages,
+            finished_naturally: true,
+            total_turns: 1,
+            ..Default::default()
+        };
+        let first = vec![
+            hermes_core::Message::user("where did the heron nest"),
+            hermes_core::Message::assistant("under the willow bridge"),
+        ];
+        let mut second = first.clone();
+        second.push(hermes_core::Message::user("and the kingfisher"));
+        second.push(hermes_core::Message::assistant("beside the old mill"));
+
+        app.apply_agent_result_and_persist(turn(first))
+            .expect("persist first turn");
+        app.apply_agent_result_and_persist(turn(second))
+            .expect("persist second turn");
+
+        let persistence = SessionPersistence::new(tmp.path());
+        let stored = persistence
+            .load_session("interactive-search")
+            .expect("load session");
+        assert_eq!(stored.len(), 4);
+        let conn = rusqlite::Connection::open(persistence.db_path()).expect("open db");
+        let (rows, platform): (i64, String) = conn
+            .query_row(
+                "SELECT COUNT(*), MAX(platform) FROM sessions WHERE id = 'interactive-search'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("session rows");
+        assert_eq!((rows, platform.as_str()), (1, "cli"));
+        let hits = |term: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                [term],
+                |row| row.get(0),
+            )
+            .expect("search")
+        };
+        assert_eq!(hits("willow"), 1, "first turn indexed once");
+        assert_eq!(hits("mill"), 1, "second turn indexed");
+    }
+
+    const SNAPSHOT_LIMIT_KEYS: [&str; 3] = [
+        "HERMES_SESSION_SNAPSHOT_MAX_FILES",
+        "HERMES_SESSION_SNAPSHOT_MAX_TOTAL_BYTES",
+        "HERMES_SESSION_SNAPSHOT_MIN_FREE_BYTES",
+    ];
+
+    /// Set the snapshot count, size and free-space limits; 0 disables one.
+    fn set_snapshot_limits(max_files: u64, max_total_bytes: u64, min_free_bytes: u64) {
+        for (key, value) in SNAPSHOT_LIMIT_KEYS
+            .iter()
+            .zip([max_files, max_total_bytes, min_free_bytes])
+        {
+            std::env::set_var(key, value.to_string());
+        }
+    }
+
+    /// A one-shot session id, as `save_oneshot_session` assigns.
+    fn oneshot_id(n: u32) -> String {
+        format!("oneshot-00000000-0000-4000-8000-{n:012}")
+    }
+
+    /// Write a snapshot for `stem`, a one-shot when it is a one-shot id.
+    fn write_test_snapshot(root: &Path, stem: &str) -> Result<PathBuf, AgentError> {
+        let info = SessionInfo {
+            session_id: stem.to_string(),
+            model: "test".to_string(),
+            personality: None,
+            message_count: 1,
+            created_at: String::new(),
+        };
+        let source = is_oneshot_session_id(stem).then_some("oneshot");
+        let messages = [hermes_core::Message::user("snapshot payload")];
+        write_session_snapshot(root, stem, &info, source, &messages)
+    }
+
+    /// Date a snapshot `age_minutes` ago, so retention order never depends on
+    /// timer resolution.
+    fn date_snapshot(path: &Path, age_minutes: u64) {
+        std::fs::File::options()
+            .write(true)
+            .open(path)
+            .expect("open snapshot")
+            .set_modified(SystemTime::now() - Duration::from_secs(age_minutes * 60))
+            .expect("date snapshot");
+    }
+
+    /// Interactive snapshots `a` (oldest) and `b` (newest) around one-shot `old`.
+    fn snapshots_around_a_oneshot(root: &Path) -> (PathBuf, PathBuf, PathBuf) {
+        set_snapshot_limits(0, 0, 0);
+        let [a, old, b] = ["interactive-a", oneshot_id(1).as_str(), "interactive-b"]
+            .map(|stem| write_test_snapshot(root, stem).expect("write snapshot"));
+        for (path, age) in [(&a, 30), (&old, 20), (&b, 10)] {
+            date_snapshot(path, age);
+        }
+        (a, old, b)
+    }
+
+    #[test]
+    fn interactive_saves_prune_oneshot_snapshots_first() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+
+        set_snapshot_limits(3, 0, 0);
+        let c = write_test_snapshot(tmp.path(), "interactive-c").expect("write snapshot");
+        assert!(!old.exists(), "the one-shot goes before the older interactive snapshot");
+        assert!(a.exists() && b.exists() && c.exists());
+    }
+
+    #[test]
+    fn oneshot_saves_never_evict_interactive_snapshots_under_count_or_size_limits() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let size = |path: &Path| std::fs::metadata(path).expect("snapshot size").len();
+        for limit in ["count", "size"] {
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+            // Room for the new one-shot only by pruning the older one.
+            match limit {
+                "count" => set_snapshot_limits(3, 0, 0),
+                _ => set_snapshot_limits(0, size(&a) + size(&old) + size(&b), 0),
+            }
+            let new = write_test_snapshot(tmp.path(), &oneshot_id(2)).expect("write snapshot");
+            assert!(!old.exists() && new.exists(), "{limit}: older one-shot replaced");
+            date_snapshot(&new, 5);
+
+            // Interactive snapshots fill the limit: the one-shot is not kept.
+            match limit {
+                "count" => set_snapshot_limits(2, 0, 0),
+                _ => set_snapshot_limits(0, size(&a) + size(&b), 0),
+            }
+            let last = write_test_snapshot(tmp.path(), &oneshot_id(3)).expect("write snapshot");
+            assert!(!new.exists() && !last.exists(), "{limit}: one-shots pruned");
+            assert!(a.exists() && b.exists(), "{limit}: interactive snapshots kept");
+        }
+    }
+
+    // The free-space check reads statvfs, so it has no effect off Unix.
+    #[cfg(unix)]
+    #[test]
+    fn oneshot_saves_never_evict_interactive_snapshots_when_disk_is_low() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (a, old, b) = snapshots_around_a_oneshot(tmp.path());
+
+        set_snapshot_limits(0, 0, u64::MAX);
+        let new = write_test_snapshot(tmp.path(), &oneshot_id(2))
+            .expect("a one-shot save does not fail on low disk");
+        assert!(!new.exists() && !old.exists(), "one-shots pruned");
+        assert!(a.exists() && b.exists(), "interactive snapshots kept");
+    }
+
+    #[test]
+    fn oneshot_saves_prune_older_oneshots_before_their_own_snapshot_whatever_the_dates() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        set_snapshot_limits(0, 0, 0);
+        let older = write_test_snapshot(tmp.path(), &oneshot_id(1)).expect("write snapshot");
+        // Dated ahead, as after a clock change or a copy from another machine.
+        std::fs::File::options()
+            .write(true)
+            .open(&older)
+            .expect("open snapshot")
+            .set_modified(SystemTime::now() + Duration::from_secs(24 * 60 * 60))
+            .expect("date snapshot");
+
+        set_snapshot_limits(1, 0, 0);
+        let new = write_test_snapshot(tmp.path(), &oneshot_id(2)).expect("write snapshot");
+        assert!(new.exists(), "the new one-shot is kept");
+        assert!(!older.exists(), "the older one-shot is pruned");
+    }
+
+    #[test]
+    fn named_snapshots_cannot_take_a_oneshot_id_but_other_oneshot_names_stay_ordinary() {
+        let _guard = env_test_lock();
+        let _env = EnvSnapshot::capture(&SNAPSHOT_LIMIT_KEYS);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        set_snapshot_limits(0, 0, 0);
+        let app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
+        let reserved = oneshot_id(1);
+        let err = app
+            .persist_session_snapshot(Some(&reserved))
+            .expect_err("reserved name");
+        assert!(err.to_string().contains("reserved for one-shot runs"), "{err}");
+        assert!(!tmp
+            .path()
+            .join("sessions")
+            .join(format!("{reserved}.json"))
+            .exists());
+
+        // A name main allowed is still an ordinary session: a one-shot save
+        // at the limit leaves it alone.
+        let notes = app
+            .persist_session_snapshot(Some("oneshot-notes"))
+            .expect("ordinary name");
+        date_snapshot(&notes, 30);
+        set_snapshot_limits(1, 0, 0);
+        let new = write_test_snapshot(tmp.path(), &oneshot_id(2)).expect("write snapshot");
+        assert!(notes.exists(), "the named session is kept");
+        assert!(!new.exists(), "the one-shot is not kept");
+    }
+
+    #[test]
     fn finalize_interrupted_tui_session_persists_user_and_partial_stream() {
         let _guard = env_test_lock();
         let tmp = tempfile::tempdir().expect("tempdir");

@@ -766,7 +766,7 @@ fn load_session_from_path(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            app.session_id = restored_id.to_string();
+            app.session_id = crate::app::resumed_session_id(restored_id);
         }
     }
 
@@ -872,7 +872,12 @@ fn handle_resume_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
     }
 
     if args.is_empty() {
-        let pick = entries
+        // Like `hermes resume`, a bare resume skips one-shot runs.
+        let candidates: Vec<_> = entries
+            .iter()
+            .filter(|(_, path, _)| !crate::app::is_oneshot_snapshot_path(path))
+            .collect();
+        let pick = candidates
             .iter()
             .find(|(name, path, _)| {
                 let integrity = inspect_snapshot_integrity(path);
@@ -881,13 +886,13 @@ fn handle_resume_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
                     && is_canonical_snapshot_name(name, &integrity)
             })
             .or_else(|| {
-                entries.iter().find(|(name, path, _)| {
+                candidates.iter().find(|(name, path, _)| {
                     let integrity = inspect_snapshot_integrity(path);
                     integrity.valid && is_canonical_snapshot_name(name, &integrity)
                 })
             })
             .or_else(|| {
-                entries
+                candidates
                     .iter()
                     .find(|(_, path, _)| inspect_snapshot_integrity(path).valid)
             });
