@@ -137,7 +137,8 @@ impl ToolHandler for WebCrawlHandler {
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
         crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
-        self.backend.crawl(url, instructions, depth, limit).await
+        let output = self.backend.crawl(url, instructions, depth, limit).await?;
+        withhold_blocklisted_pages(output)
     }
 
     fn schema(&self) -> ToolSchema {
@@ -211,7 +212,8 @@ impl ToolHandler for WebExtractHandler {
             .unwrap_or(true);
 
         crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
-        self.backend.extract(url, include_links).await
+        let output = self.backend.extract(url, include_links).await?;
+        withhold_blocklisted_pages(output)
     }
 
     fn schema(&self) -> ToolSchema {
@@ -238,6 +240,41 @@ impl ToolHandler for WebExtractHandler {
             JsonSchema::object(props, vec!["url".into()]),
         )
     }
+}
+
+/// Remote providers follow redirects and crawl links themselves, so only the
+/// seed URL is checked before the call. Each returned page in `results` whose
+/// URL the website blocklist refuses is replaced by an error entry, as
+/// upstream does. Output without a `results` array (the built-in extractor,
+/// which checks every hop itself) passes through unchanged.
+fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
+    let Ok(mut value) = serde_json::from_str::<Value>(&output) else {
+        return Ok(output);
+    };
+    let Some(pages) = value.get_mut("results").and_then(Value::as_array_mut) else {
+        return Ok(output);
+    };
+    let policy = crate::website_policy::load_website_blocklist(None).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Blocked: website blocklist could not be read: {e}"))
+    })?;
+    let mut withheld = false;
+    for page in pages.iter_mut() {
+        let Some(url) = page.get("url").and_then(Value::as_str) else {
+            continue;
+        };
+        if let Some(block) = crate::website_policy::check_website_access_with_policy(url, &policy) {
+            *page = json!({
+                "url": block.url,
+                "error": format!("Blocked: '{}' matches website blocklist rule '{}'", block.url, block.rule),
+            });
+            withheld = true;
+        }
+    }
+    if !withheld {
+        return Ok(output);
+    }
+    serde_json::to_string_pretty(&value)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Serialization error: {e}")))
 }
 
 #[cfg(test)]
