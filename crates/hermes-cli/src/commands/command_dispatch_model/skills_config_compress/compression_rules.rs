@@ -507,19 +507,23 @@ fn handle_compress_command(app: &mut App, args: &[&str]) -> Result<CommandResult
     let before_count = msg_count;
     let before_tokens = estimate_message_tokens_for_compress(&app.messages);
     let keep = std::cmp::max(2, msg_count / 3);
-    let removed = msg_count - keep;
-    let summary_text = format!(
-        "[Compressed: {} earlier messages summarized. {} messages retained.]",
-        removed, keep,
-    );
+    // The run loop's compressor, which keeps each tool result with its call.
+    let compressed =
+        hermes_agent::context::ContextCompressor::new(keep).compress(&app.messages);
+    if compressed == app.messages {
+        emit_command_output(
+            app,
+            format!("Nothing to compress ({} messages).", msg_count),
+        );
+        return Ok(CommandResult::Handled);
+    }
 
-    let split_at = app.messages.len() - keep;
-    let replaced = std::mem::take(&mut app.messages);
-    app.messages
-        .push(hermes_core::Message::system(summary_text));
-    app.messages.extend_from_slice(&replaced[split_at..]);
+    let replaced = std::mem::replace(&mut app.messages, compressed);
     let after_count = app.messages.len();
     let after_tokens = estimate_message_tokens_for_compress(&app.messages);
+    // Every message but the new summary is carried over unchanged.
+    let kept = after_count - 1;
+    let removed = before_count - kept;
     // Save now: a later save without `replaced` would drop those turns from
     // session search.
     if let Err(err) = app.persist_compressed_session_snapshot(&[replaced]) {
@@ -530,7 +534,7 @@ fn handle_compress_command(app: &mut App, args: &[&str]) -> Result<CommandResult
         app,
         format!(
             "Compressed: {} → {} messages / ~{} → ~{} tokens.\nCompressed context: removed {} messages, kept {}. Total now: {}.",
-            before_count, after_count, before_tokens, after_tokens, removed, keep, after_count
+            before_count, after_count, before_tokens, after_tokens, removed, kept, after_count
         ),
     );
     Ok(CommandResult::Handled)

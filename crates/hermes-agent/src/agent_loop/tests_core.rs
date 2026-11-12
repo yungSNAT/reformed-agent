@@ -942,6 +942,620 @@
         }
     }
 
+    #[test]
+    fn compressing_runs_keep_the_prefill_and_the_persisted_user_message() {
+        // Compression writes a checkpoint over HTTP; send it to a closed
+        // local port so the test stays offline.
+        let _lock = env_test_lock();
+        let _url = EnvVarGuard::set("CONTEXTLATTICE_ORCHESTRATOR_URL", "http://127.0.0.1:9");
+        let _key = EnvVarGuard::remove("CONTEXTLATTICE_API_KEY");
+        let _mode = EnvVarGuard::set("HERMES_CONTEXTLATTICE_COMPACTION_GOVERNANCE", "advisory");
+        #[derive(Default)]
+        struct CapturingProvider {
+            seen: Mutex<Vec<Vec<Message>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for CapturingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("by the mill"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("by the mill")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+        fn has(messages: &[Message], text: &str) -> bool {
+            messages.iter().any(|m| m.content.as_deref() == Some(text))
+        }
+
+        // Over 80% of the default 200,000-character budget, so each run
+        // compresses before its first model call.
+        let mut history: Vec<Message> = (0..20)
+            .flat_map(|turn| {
+                [
+                    Message::user(format!("heron question {turn} {}", "x".repeat(5_000))),
+                    Message::assistant(format!("willow answer {turn} {}", "y".repeat(4_000))),
+                ]
+            })
+            .collect();
+        history.push(Message::user("and the kingfisher"));
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            prefill_messages: vec![
+                Message::user("prefill question"),
+                Message::assistant("prefill answer"),
+            ],
+            persist_user_message: Some("kingfisher, as typed".to_string()),
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(CapturingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let results = [
+            rt.block_on(agent.run(history.clone(), None)).expect("run"),
+            rt.block_on(agent.run_stream(history.clone(), None, Some(Box::new(|_| {}))))
+                .expect("streamed run"),
+        ];
+        let seen = provider.seen.lock().expect("seen lock");
+        assert_eq!(seen.len(), 2, "one model call per run");
+        for (sent, result) in seen.iter().zip(&results) {
+            assert_eq!(result.compressed_transcripts.len(), 1, "the run compressed");
+            for prefill in ["prefill question", "prefill answer"] {
+                assert!(has(sent, prefill), "the model still sees {prefill:?}");
+                assert!(!has(&result.messages, prefill), "{prefill:?} is not returned");
+            }
+            assert!(
+                result.messages.iter().any(|m| m
+                    .content
+                    .as_deref()
+                    .is_some_and(|c| c.starts_with("[Conversation summary]"))),
+                "the summary is returned"
+            );
+            assert!(has(&result.messages, "by the mill"));
+            let last_user = result
+                .messages
+                .iter()
+                .rfind(|m| m.role == MessageRole::User)
+                .and_then(|m| m.content.as_deref());
+            assert_eq!(last_user, Some("kingfisher, as typed"));
+        }
+    }
+
+    #[test]
+    fn runs_store_only_the_tool_calls_they_answer() {
+        // The model repeats a call. The run executes it once, so the stored
+        // assistant message, and its replayed Anthropic blocks, keep one call.
+        fn repeated_call(id: &str) -> hermes_core::ToolCall {
+            hermes_core::ToolCall {
+                id: id.to_string(),
+                function: hermes_core::FunctionCall {
+                    name: "echo".to_string(),
+                    arguments: "{}".to_string(),
+                },
+                extra_content: None,
+            }
+        }
+        fn answered(messages: &[Message]) -> bool {
+            messages.iter().any(|m| m.role == MessageRole::Tool)
+        }
+        #[derive(Default)]
+        struct RepeatingProvider {
+            seen: Mutex<Vec<Vec<Message>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for RepeatingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                let message = if answered(messages) {
+                    Message::assistant("done")
+                } else {
+                    let mut message = Message::assistant_with_tool_calls(
+                        None,
+                        vec![repeated_call("call_a"), repeated_call("call_b")],
+                    );
+                    message.anthropic_content_blocks = Some(vec![
+                        serde_json::json!({"type": "thinking", "thinking": "echo", "signature": "sig"}),
+                        serde_json::json!({"type": "tool_use", "id": "call_a", "name": "echo", "input": {}}),
+                        serde_json::json!({"type": "tool_use", "id": "call_b", "name": "echo", "input": {}}),
+                    ]);
+                    message
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                let chunks = if answered(messages) {
+                    vec![stream_chunk_content("done"), stream_chunk_finish("stop")]
+                } else {
+                    vec![
+                        stream_chunk_tool_name(0, "call_a", "echo"),
+                        stream_chunk_tool_args(0, "{}"),
+                        stream_chunk_tool_name(1, "call_b", "echo"),
+                        stream_chunk_tool_args(1, "{}"),
+                        stream_chunk_finish("tool_calls"),
+                    ]
+                };
+                futures::stream::iter(chunks.into_iter().map(Ok)).boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "echo",
+            ToolSchema::new("echo", "Echo", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("ok".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(RepeatingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let results = [
+            rt.block_on(agent.run(vec![Message::user("echo twice")], None))
+                .expect("run"),
+            rt.block_on(agent.run_stream(
+                vec![Message::user("echo twice")],
+                None,
+                Some(Box::new(|_| {})),
+            ))
+            .expect("streamed run"),
+        ];
+        let seen = provider.seen.lock().expect("seen lock");
+        let sent = seen.iter().map(Vec::as_slice);
+        for messages in sent.chain(results.iter().map(|r| r.messages.as_slice())) {
+            let calls: Vec<&str> = messages
+                .iter()
+                .flat_map(|m| m.tool_calls.iter().flatten())
+                .map(|c| c.id.as_str())
+                .collect();
+            let answers: Vec<&str> = messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Tool)
+                .filter_map(|m| m.tool_call_id.as_deref())
+                .collect();
+            assert_eq!(calls, answers, "each stored call has its result: {messages:?}");
+        }
+        assert!(results.iter().all(|r| answered(&r.messages)), "the call ran");
+        let replayed: Vec<&str> = results[0]
+            .messages
+            .iter()
+            .flat_map(|m| m.anthropic_content_blocks.iter().flatten())
+            .filter(|block| block["type"] == "tool_use")
+            .filter_map(|block| block["id"].as_str())
+            .collect();
+        assert_eq!(replayed, ["call_a"]);
+    }
+
+    #[test]
+    fn an_interrupt_before_the_tool_batch_keeps_no_unanswered_call() {
+        // The user interrupts whilst the model answers with a call, so the
+        // run stops before the batch runs.
+        #[derive(Default)]
+        struct InterruptingProvider {
+            interrupt: OnceLock<crate::interrupt::InterruptController>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for InterruptingProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.interrupt.get().expect("interrupt set").interrupt(None);
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: "call_echo".to_string(),
+                            function: hermes_core::FunctionCall {
+                                name: "echo".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    ),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("tool_calls".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "echo",
+            ToolSchema::new("echo", "Echo", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("ok".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(InterruptingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
+        provider
+            .interrupt
+            .set(agent.interrupt.clone())
+            .expect("interrupt unset");
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let result = rt
+            .block_on(agent.run(vec![Message::user("echo")], None))
+            .expect("run");
+        assert!(result.interrupted);
+        let stored_calls = result
+            .messages
+            .iter()
+            .flat_map(|m| m.tool_calls.iter().flatten())
+            .count();
+        assert_eq!(stored_calls, 0, "{:?}", result.messages);
+        assert!(!result.messages.iter().any(|m| m.role == MessageRole::Tool));
+    }
+
+    #[test]
+    fn a_tool_that_panics_still_answers_its_call() {
+        struct PanicToolProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for PanicToolProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                let message = if messages.iter().any(|m| m.role == MessageRole::Tool) {
+                    Message::assistant("done")
+                } else {
+                    Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: "call_boom".to_string(),
+                            function: hermes_core::FunctionCall {
+                                name: "boom".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    )
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "boom",
+            ToolSchema::new("boom", "Panics", JsonSchema::new("object")),
+            Arc::new(|_args| -> Result<String, ToolError> { panic!("the boom tool panicked") }),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            max_turns: 4,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(PanicToolProvider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let result = rt
+            .block_on(agent.run(vec![Message::user("boom")], None))
+            .expect("run");
+        let answers: Vec<&str> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .filter_map(|m| m.tool_call_id.as_deref())
+            .collect();
+        assert_eq!(answers, ["call_boom"], "{:?}", result.messages);
+        let last = result.messages.last().and_then(|m| m.content.as_deref());
+        assert_eq!(last, Some("done"));
+    }
+
+    #[test]
+    fn a_turn_whose_calls_are_all_dropped_keeps_only_its_text() {
+        let call = hermes_core::ToolCall {
+            id: "call_a".to_string(),
+            function: hermes_core::FunctionCall {
+                name: "echo".to_string(),
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        };
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::user("echo"));
+        ctx.add_message(Message::assistant_with_tool_calls(None, vec![call.clone()]));
+        ctx.add_message(Message::system("policy note"));
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 1, &[]);
+        let roles: Vec<_> = ctx.get_messages().iter().map(|m| m.role).collect();
+        assert_eq!(roles, [MessageRole::User, MessageRole::System]);
+
+        ctx.add_message(Message::assistant_with_tool_calls(
+            Some("checking".to_string()),
+            vec![call],
+        ));
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 2, &[]);
+        let kept = &ctx.get_messages()[2];
+        assert_eq!(kept.content.as_deref(), Some("checking"));
+        assert_eq!(kept.tool_calls, None);
+    }
+
+    #[test]
+    fn replayed_tool_use_blocks_follow_the_calls_that_run() {
+        let call = |id: &str, name: &str, arguments: &str| hermes_core::ToolCall {
+            id: id.to_string(),
+            function: hermes_core::FunctionCall {
+                name: name.to_string(),
+                arguments: arguments.to_string(),
+            },
+            extra_content: None,
+        };
+        let mut stored = Message::assistant_with_tool_calls(
+            None,
+            vec![call("call_a", "Echo", r#"{"n":1}"#), call("call_b", "echo", "{}")],
+        );
+        let thinking = serde_json::json!({"type": "thinking", "thinking": "t", "signature": "s"});
+        stored.anthropic_content_blocks = Some(vec![
+            thinking.clone(),
+            serde_json::json!({"type": "tool_use", "id": "call_a", "name": "Echo", "input": {"n": 1}}),
+            serde_json::json!({"type": "tool_use", "id": "call_b", "name": "echo", "input": {}}),
+        ]);
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::user("echo"));
+        ctx.add_message(stored);
+
+        // call_a ran with a repaired name and rewritten arguments; call_b was dropped.
+        let ran = call("call_a", "echo", r#"{"n":2}"#);
+        AgentLoop::sync_stored_tool_calls(&mut ctx, 1, std::slice::from_ref(&ran));
+        let stored = &ctx.get_messages()[1];
+        assert_eq!(stored.tool_calls, Some(vec![ran]));
+        assert_eq!(
+            stored.anthropic_content_blocks,
+            Some(vec![
+                thinking,
+                serde_json::json!({"type": "tool_use", "id": "call_a", "name": "echo", "input": {"n": 2}}),
+            ])
+        );
+    }
+
+    #[test]
+    fn runs_finish_when_every_call_is_dropped() {
+        // Delegation is paused, so the model's only call is dropped; a call to
+        // a missing tool ends the run after the retries; a streamed text-format
+        // call has no name, so it never runs.
+        let _lock = env_test_lock();
+        let _paused = EnvVarGuard::set("HERMES_DELEGATION_PAUSED", "1");
+        const NOTE: &str = "delegation is unavailable";
+        const MISSING: &str = "use a missing tool";
+        fn has(messages: &[Message], text: &str) -> bool {
+            messages.iter().any(|m| m.content.as_deref() == Some(text))
+        }
+        struct DroppedCallProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for DroppedCallProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                // With no tools offered (the max-turns summary), answer in text.
+                let noted = tools.is_empty()
+                    || messages
+                    .iter()
+                    .any(|m| m.content.as_deref().is_some_and(|c| c.contains(NOTE)));
+                let tool = if has(messages, MISSING) {
+                    "missing_tool"
+                } else {
+                    "delegate_task"
+                };
+                let message = if noted {
+                    Message::assistant("done")
+                } else {
+                    Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: format!("call_{tool}"),
+                            function: hermes_core::FunctionCall {
+                                name: tool.to_string(),
+                                arguments: r#"{"goal":"count the herons"}"#.to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    )
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content(
+                        r#"done <tool_call>{"name": "", "arguments": {}}</tool_call>"#,
+                    )),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "delegate_task",
+            ToolSchema::new("delegate_task", "Delegate", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("delegated".to_string())),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            max_turns: 4,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(DroppedCallProvider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let delegated = rt
+            .block_on(agent.run(vec![Message::user("hello")], None))
+            .expect("run");
+        let missing = rt
+            .block_on(agent.run(vec![Message::user(MISSING)], None))
+            .expect("run with a missing tool");
+        let streamed = rt
+            .block_on(agent.run_stream(
+                vec![Message::user("hello")],
+                None,
+                Some(Box::new(|_| {})),
+            ))
+            .expect("streamed run");
+        for result in [&delegated, &missing, &streamed] {
+            let calls: Vec<&str> = result
+                .messages
+                .iter()
+                .flat_map(|m| m.tool_calls.iter().flatten())
+                .map(|c| c.id.as_str())
+                .collect();
+            let answers: Vec<&str> = result
+                .messages
+                .iter()
+                .filter(|m| m.role == MessageRole::Tool)
+                .filter_map(|m| m.tool_call_id.as_deref())
+                .collect();
+            assert_eq!(calls, answers, "{:?}", result.messages);
+        }
+        assert!(!missing.finished_naturally, "the retries ran out");
+        for result in [&delegated, &streamed] {
+            assert!(result.finished_naturally, "{:?}", result.messages);
+            let last = result.messages.last().and_then(|m| m.content.as_deref());
+            assert_eq!(last, Some("done"));
+        }
+    }
+
     include!("tests/llm_retry_stream.rs");
 
     #[test]

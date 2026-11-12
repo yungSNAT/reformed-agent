@@ -71,6 +71,11 @@ impl AgentLoop {
         }
         let prefill_end = ctx.get_messages().len();
         let prefill_range = (prefill_end > prefill_start).then_some(prefill_start..prefill_end);
+        if prefill_range.is_some() {
+            // Compression must not summarise or move the prefill, which is
+            // dropped by index before the history is returned.
+            ctx.protect_head(prefill_end);
+        }
 
         // Add initial messages
         for msg in messages {
@@ -584,6 +589,7 @@ impl AgentLoop {
                     "Parsed textual tool-call markup from assistant output; executing parsed calls.",
                 );
             }
+            let assistant_idx = ctx.get_messages().len();
             ctx.add_message(assistant_msg.clone());
             if assistant_msg
                 .tool_calls
@@ -871,8 +877,10 @@ impl AgentLoop {
                 ctx.add_message(Message::user(
                     "Stop setup/remediation. Final-answer the exact Google Workspace auth blocker now.",
                 ));
+                Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                 continue;
             }
+            Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &tool_calls);
             if tool_calls.is_empty() {
                 ctx.add_message(Message::system(
                     "[SYSTEM] Tool profile/budget policy filtered this turn's calls. Propose refined, scoped code-inspection calls next.",
@@ -905,6 +913,8 @@ impl AgentLoop {
                         "Max invalid tool retries reached ({}). Last invalid tool: {}",
                         self.config.invalid_tool_call_max_retries, invalid_tool_calls[0]
                     )));
+                    // None of this turn's calls ran.
+                    Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                     self.memory_on_session_end(ctx.get_messages());
                     return Ok(AgentResult {
                         messages: self.messages_for_persisted_result(
@@ -962,7 +972,8 @@ impl AgentLoop {
                             invalid_json_retries, self.config.invalid_tool_json_max_retries
                         ),
                     );
-                    let _ = ctx.get_messages_mut().pop();
+                    // Drop the response and any notes added for it.
+                    ctx.get_messages_mut().truncate(assistant_idx);
                     continue;
                 }
                 self.emit_status(
@@ -1008,6 +1019,13 @@ impl AgentLoop {
 
             // Cap concurrent delegate_task calls
             self.cap_delegates(&mut tool_calls);
+            Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &tool_calls);
+            if tool_calls.is_empty() {
+                ctx.add_message(Message::system(
+                    "[SYSTEM] This turn's delegate_task calls were dropped because delegation is unavailable. Continue without delegating.",
+                ));
+                continue;
+            }
             let contextlattice_connect_intent =
                 detect_contextlattice_connect_intent(ctx.get_messages());
 
@@ -1029,6 +1047,7 @@ impl AgentLoop {
             // --- Execute tool calls in parallel ---
             let mut steer_markers = Vec::new();
             if self.collect_tool_batch_interrupt(&mut steer_markers) {
+                Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                 return Ok(self.graceful_interrupt_result(
                     &mut ctx,
                     total_turns,

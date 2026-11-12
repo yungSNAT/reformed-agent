@@ -18,6 +18,40 @@ impl AgentLoop {
         deduped
     }
 
+    /// Make the stored assistant message at `idx` carry exactly `calls`, the
+    /// calls this turn answers, so no call in the history lacks a result.
+    /// Replayed Anthropic `tool_use` blocks follow the same list. A message
+    /// left with neither calls nor text is removed.
+    fn sync_stored_tool_calls(ctx: &mut ContextManager, idx: usize, calls: &[ToolCall]) {
+        let messages = ctx.get_messages_mut();
+        let Some(msg) = messages
+            .get_mut(idx)
+            .filter(|m| m.role == MessageRole::Assistant)
+        else {
+            return;
+        };
+        if calls.is_empty() && msg.content.as_deref().is_none_or(|c| c.trim().is_empty()) {
+            messages.remove(idx);
+            return;
+        }
+        msg.tool_calls = (!calls.is_empty()).then(|| calls.to_vec());
+        if let Some(blocks) = msg.anthropic_content_blocks.as_mut() {
+            blocks.retain_mut(|block| {
+                if block.get("type").and_then(Value::as_str) != Some("tool_use") {
+                    return true;
+                }
+                let id = block.get("id").and_then(Value::as_str);
+                let Some(call) = calls.iter().find(|c| Some(c.id.as_str()) == id) else {
+                    return false;
+                };
+                block["name"] = json!(call.function.name);
+                block["input"] =
+                    serde_json::from_str(&call.function.arguments).unwrap_or_else(|_| json!({}));
+                true
+            });
+        }
+    }
+
     /// Try to repair an unknown tool name via case-insensitive or substring matching.
     /// Returns `true` if the tool call was repaired.
     fn repair_tool_call(&self, tc: &mut ToolCall) -> bool {
@@ -916,6 +950,19 @@ impl AgentLoop {
             }
         }
 
+        // A tool task that panicked returns nothing, but its call still needs
+        // a result.
+        for tc in tool_calls {
+            if !results.iter().any(|r| r.tool_call_id == tc.id) {
+                let error = "Error: the tool stopped without returning a result.";
+                tool_errors.push(hermes_core::ToolErrorRecord {
+                    tool_name: tc.function.name.clone(),
+                    error: error.to_string(),
+                    turn,
+                });
+                results.push(ToolResult::err(&tc.id, error));
+            }
+        }
         results
     }
 

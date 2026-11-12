@@ -275,6 +275,8 @@ pub struct ContextManager {
     compressor: ContextCompressor,
     /// The history before each compression that changed it, oldest first.
     compressed_transcripts: Vec<Vec<Message>>,
+    /// Number of leading messages that compression keeps verbatim.
+    protected_head: usize,
 }
 
 impl ContextManager {
@@ -285,6 +287,7 @@ impl ContextManager {
             max_context_chars,
             compressor: ContextCompressor::default(),
             compressed_transcripts: Vec::new(),
+            protected_head: 0,
         }
     }
 
@@ -300,7 +303,14 @@ impl ContextManager {
             max_context_chars,
             compressor,
             compressed_transcripts: Vec::new(),
+            protected_head: 0,
         }
+    }
+
+    /// Keep the first `len` messages verbatim, at their indices, through every
+    /// later compression.
+    pub fn protect_head(&mut self, len: usize) {
+        self.protected_head = len;
     }
 
     /// Add a message to the conversation history.
@@ -385,6 +395,7 @@ impl ContextManager {
     /// `max_context_chars`, the `ContextCompressor` is invoked to produce a
     /// shorter message list where older messages are replaced by a single
     /// summary system message and the most recent messages are kept intact.
+    /// The protected head is kept ahead of them, unchanged.
     pub fn compress(&mut self) {
         let threshold = (self.max_context_chars as f64 * 0.8) as usize;
         let total = self.total_chars();
@@ -404,11 +415,19 @@ impl ContextManager {
             "Compressing conversation history (exceeds 80% budget)"
         );
 
-        let compressed = self.compressor.compress(&self.messages);
-        if compressed != self.messages {
+        let head = self.protected_head.min(self.messages.len());
+        let tail = self.compressor.compress(&self.messages[head..]);
+        if tail != self.messages[head..] {
+            let mut compressed = self.messages[..head].to_vec();
+            compressed.extend(tail);
             let replaced = std::mem::replace(&mut self.messages, compressed);
             self.compressed_transcripts.push(replaced);
         }
+    }
+
+    /// The history as it stood before each compression, oldest first.
+    pub fn compressed_transcripts(&self) -> &[Vec<Message>] {
+        &self.compressed_transcripts
     }
 
     /// Take the history as it stood before each compression, oldest first.
@@ -419,6 +438,7 @@ impl ContextManager {
     /// Reset the conversation history, clearing all messages.
     pub fn reset(&mut self) {
         self.messages.clear();
+        self.protected_head = 0;
     }
 
     /// Calculate the total character count of all message content.

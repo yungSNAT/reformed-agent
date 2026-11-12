@@ -774,6 +774,53 @@
         assert!(output.contains("removed 4 messages, kept 2"));
     }
 
+    #[tokio::test]
+    async fn compress_command_keeps_each_tool_result_with_its_call() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let call = hermes_core::ToolCall {
+            id: "call_heron".to_string(),
+            function: hermes_core::FunctionCall {
+                name: "read_file".to_string(),
+                arguments: r#"{"path":"field-notes.md"}"#.to_string(),
+            },
+            extra_content: None,
+        };
+        // Keeping the last 2 messages alone would cut between the call and
+        // its result.
+        app.messages = vec![
+            hermes_core::Message::user("where did the heron nest"),
+            hermes_core::Message::assistant("under the willow bridge"),
+            hermes_core::Message::user("check the field notes"),
+            hermes_core::Message::assistant_with_tool_calls(None, vec![call]),
+            hermes_core::Message::tool_result("call_heron", "heron: willow bridge"),
+            hermes_core::Message::assistant("the notes agree"),
+        ];
+
+        handle_slash_command(&mut app, "/compress", &[])
+            .await
+            .expect("compress command");
+
+        for (i, msg) in app.messages.iter().enumerate() {
+            if msg.role == hermes_core::MessageRole::Tool {
+                let called = app.messages[..i]
+                    .iter()
+                    .flat_map(|m| m.tool_calls.iter().flatten())
+                    .any(|c| Some(c.id.as_str()) == msg.tool_call_id.as_deref());
+                assert!(called, "tool result without its call: {:?}", app.messages);
+            }
+        }
+        assert!(latest_ui_assistant_text(&app).contains("6 → 5 messages"));
+
+        // Only the kept block is left, so a second /compress changes nothing.
+        handle_slash_command(&mut app, "/compress", &[])
+            .await
+            .expect("second compress command");
+        assert!(latest_ui_assistant_text(&app).contains("Nothing to compress (5 messages)."));
+    }
+
     /// Search `app`'s sessions.db as `session_search` does, offline: without
     /// a summary key each result shows the matched session's own turns.
     async fn search_sessions(app: &App, query: Option<&str>) -> serde_json::Value {
