@@ -23,6 +23,7 @@ fn test_gateway_approval_request_display_copy_redacts_command_only() {
     let raw_command =
         format!("curl -H 'Authorization: token {fake_ghp}' https://api.github.com/user");
     let request = GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: "display-redaction".to_string(),
         command: raw_command.clone(),
         description: "review command".to_string(),

@@ -217,6 +217,7 @@ fn test_gateway_approval_resolve_single_is_fifo() {
     reset_approval_state_unlocked();
     let session = "gateway-fifo";
     let first = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd1".to_string(),
         description: "first".to_string(),
@@ -225,6 +226,7 @@ fn test_gateway_approval_resolve_single_is_fifo() {
         allow_permanent: true,
     }));
     let second = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd2".to_string(),
         description: "second".to_string(),
@@ -255,6 +257,7 @@ fn test_gateway_approval_resolve_all_unblocks_entries() {
     reset_approval_state_unlocked();
     let session = "gateway-all";
     let first = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd1".to_string(),
         description: "first".to_string(),
@@ -263,6 +266,7 @@ fn test_gateway_approval_resolve_all_unblocks_entries() {
         allow_permanent: true,
     }));
     let second = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd2".to_string(),
         description: "second".to_string(),
@@ -293,6 +297,7 @@ fn test_clear_session_denies_and_signals_gateway_entries() {
     reset_approval_state_unlocked();
     let session = "gateway-boundary-cleanup";
     let first = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd1".to_string(),
         description: "first".to_string(),
@@ -301,6 +306,7 @@ fn test_clear_session_denies_and_signals_gateway_entries() {
         allow_permanent: true,
     }));
     let second = Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+        request_id: String::new(),
         session_key: session.to_string(),
         command: "cmd2".to_string(),
         description: "second".to_string(),
@@ -621,3 +627,53 @@ fn test_approval_observers_fire_on_gateway_resolution() {
     reset_approval_state_unlocked();
 }
 
+#[test]
+fn test_gateway_approval_card_resolves_only_its_own_request() {
+    // Upstream hermes-agent#87554: a card whose request already settled must not
+    // approve the next request queued in the same session.
+    let _guard = lock_test_state();
+    reset_approval_state_unlocked();
+    let session = "gateway-card-binding";
+    let entry = |request_id: &str| {
+        Arc::new(GatewayApprovalEntry::new(GatewayApprovalRequest {
+            request_id: request_id.to_string(),
+            session_key: session.to_string(),
+            command: format!("cmd {request_id}"),
+            description: request_id.to_string(),
+            pattern_key: request_id.to_string(),
+            pattern_keys: vec![request_id.to_string()],
+            allow_permanent: true,
+        }))
+    };
+    let older = entry("req-older");
+    let newer = entry("req-new");
+    GATEWAY_QUEUES
+        .lock()
+        .expect("gateway queue lock poisoned")
+        .insert(
+            session.to_string(),
+            VecDeque::from([older.clone(), newer.clone()]),
+        );
+
+    assert_eq!(
+        resolve_gateway_approval_card(session, ApprovalChoice::Once, "req-settled"),
+        0
+    );
+    assert_eq!(pending_gateway_approval_count(session), 2);
+
+    assert_eq!(
+        resolve_gateway_approval_card(session, ApprovalChoice::Session, "req-new"),
+        1
+    );
+    assert_eq!(newer.result(), Some(ApprovalChoice::Session));
+    assert_eq!(older.result(), None);
+    assert_eq!(pending_gateway_approval_count(session), 1);
+
+    assert_eq!(
+        resolve_gateway_approval_card(session, ApprovalChoice::Deny, "req-older"),
+        1
+    );
+    assert_eq!(older.result(), Some(ApprovalChoice::Deny));
+    assert!(!has_blocking_approval(session));
+    reset_approval_state_unlocked();
+}

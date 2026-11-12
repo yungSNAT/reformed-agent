@@ -846,8 +846,9 @@ pub struct TelegramAdapter {
     /// Status message IDs keyed by `(chat_id, status_key)` so repeated status
     /// events edit one Telegram bubble instead of appending noisy updates.
     status_message_ids: Mutex<HashMap<(String, String), String>>,
-    /// Inline approval callback IDs mapped to gateway session keys.
-    approval_state: Mutex<HashMap<u64, String>>,
+    /// Inline approval callback IDs mapped to the gateway session key and the
+    /// approval request the card showed.
+    approval_state: Mutex<HashMap<u64, (String, String)>>,
     approval_counter: AtomicU64,
     /// Latched off after the rich endpoint is proven unavailable.
     rich_send_disabled: Mutex<bool>,
