@@ -950,6 +950,19 @@ impl AgentLoop {
             }
         }
 
+        // A tool task that panicked returns nothing, but its call still needs
+        // a result.
+        for tc in tool_calls {
+            if !results.iter().any(|r| r.tool_call_id == tc.id) {
+                let error = "Error: the tool stopped without returning a result.";
+                tool_errors.push(hermes_core::ToolErrorRecord {
+                    tool_name: tc.function.name.clone(),
+                    error: error.to_string(),
+                    turn,
+                });
+                results.push(ToolResult::err(&tc.id, error));
+            }
+        }
         results
     }
 

@@ -1277,6 +1277,89 @@
     }
 
     #[test]
+    fn a_tool_that_panics_still_answers_its_call() {
+        struct PanicToolProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for PanicToolProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                let message = if messages.iter().any(|m| m.role == MessageRole::Tool) {
+                    Message::assistant("done")
+                } else {
+                    Message::assistant_with_tool_calls(
+                        None,
+                        vec![hermes_core::ToolCall {
+                            id: "call_boom".to_string(),
+                            function: hermes_core::FunctionCall {
+                                name: "boom".to_string(),
+                                arguments: "{}".to_string(),
+                            },
+                            extra_content: None,
+                        }],
+                    )
+                };
+                Ok(hermes_core::LlmResponse {
+                    message,
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let mut registry = ToolRegistry::new();
+        registry.register(
+            "boom",
+            ToolSchema::new("boom", "Panics", JsonSchema::new("object")),
+            Arc::new(|_args| -> Result<String, ToolError> { panic!("the boom tool panicked") }),
+        );
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            max_turns: 4,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(PanicToolProvider));
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let result = rt
+            .block_on(agent.run(vec![Message::user("boom")], None))
+            .expect("run");
+        let answers: Vec<&str> = result
+            .messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .filter_map(|m| m.tool_call_id.as_deref())
+            .collect();
+        assert_eq!(answers, ["call_boom"], "{:?}", result.messages);
+        let last = result.messages.last().and_then(|m| m.content.as_deref());
+        assert_eq!(last, Some("done"));
+    }
+
+    #[test]
     fn a_turn_whose_calls_are_all_dropped_keeps_only_its_text() {
         let call = hermes_core::ToolCall {
             id: "call_a".to_string(),
