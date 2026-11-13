@@ -243,37 +243,94 @@ impl ToolHandler for WebExtractHandler {
 }
 
 /// Remote providers follow redirects and crawl links themselves, so only the
-/// seed URL is checked before the call. Each returned page in `results` whose
-/// URL the website blocklist refuses is replaced by an error entry, as
-/// upstream does. Output without a `results` array (the built-in extractor,
-/// which checks every hop itself) passes through unchanged.
+/// seed URL is checked before the call. With the website blocklist on, each
+/// page in `results` that it refuses, or that has no URL to judge, is replaced
+/// by an error entry, as upstream does. The top-level `content` and
+/// `source_quality_summary` that the extract backends copy from `results` are
+/// then recomputed. Output without `results` is a single page (Firecrawl, the
+/// built-in extractor); it is replaced by an error when a URL it names is
+/// refused, and kept when it names none, since its seed was checked.
 fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
     let Ok(mut value) = serde_json::from_str::<Value>(&output) else {
         return Ok(output);
     };
-    let Some(pages) = value.get_mut("results").and_then(Value::as_array_mut) else {
+    if !value.is_object() {
         return Ok(output);
-    };
+    }
     let policy = crate::website_policy::load_website_blocklist(None).map_err(|e| {
         ToolError::ExecutionFailed(format!("Blocked: website blocklist could not be read: {e}"))
     })?;
+    if !policy.enabled {
+        return Ok(output);
+    }
+    let Some(pages) = value.get_mut("results").and_then(Value::as_array_mut) else {
+        return match blocked_page_error(&value, &policy) {
+            Some(error) => to_json(&error),
+            None => Ok(output),
+        };
+    };
+    let mut kept = Vec::with_capacity(pages.len());
     let mut withheld = false;
     for page in pages.iter_mut() {
-        let Some(url) = page.get("url").and_then(Value::as_str) else {
-            continue;
+        let error = if page_urls(page).next().is_none() {
+            Some(json!({
+                "error": "Withheld: the page has no URL to check against the website blocklist",
+            }))
+        } else {
+            blocked_page_error(page, &policy)
         };
-        if let Some(block) = crate::website_policy::check_website_access_with_policy(url, &policy) {
-            *page = json!({
-                "url": block.url,
-                "error": format!("Blocked: '{}' matches website blocklist rule '{}'", block.url, block.rule),
-            });
-            withheld = true;
+        match error {
+            Some(error) => {
+                *page = error;
+                withheld = true;
+            }
+            None => kept.push(page.clone()),
         }
     }
     if !withheld {
         return Ok(output);
     }
-    serde_json::to_string_pretty(&value)
+    let first_content = pages
+        .first()
+        .and_then(|page| page.get("content"))
+        .cloned()
+        .unwrap_or_else(|| json!(""));
+    let top = value.as_object_mut().expect("checked to be an object");
+    if top.contains_key("content") {
+        top.insert("content".into(), first_content);
+    }
+    if top.contains_key("source_quality_summary") {
+        top.insert(
+            "source_quality_summary".into(),
+            crate::backends::web::source_quality_summary(&kept),
+        );
+    }
+    to_json(&value)
+}
+
+/// The non-empty URLs a provider page names: its own and, for Firecrawl, the
+/// final and source URLs in its metadata.
+fn page_urls(page: &Value) -> impl Iterator<Item = &str> + '_ {
+    ["/url", "/metadata/url", "/metadata/sourceURL"]
+        .into_iter()
+        .filter_map(|pointer| page.pointer(pointer)?.as_str())
+        .filter(|url| !url.is_empty())
+}
+
+fn blocked_page_error(
+    page: &Value,
+    policy: &crate::website_policy::WebsiteBlocklistPolicy,
+) -> Option<Value> {
+    let block = page_urls(page)
+        .find_map(|url| crate::website_policy::check_website_access_with_policy(url, policy))?;
+    Some(json!({
+        "url": block.url,
+        "error": format!("Blocked: '{}' matches website blocklist rule '{}'", block.url, block.rule),
+    }))
+}
+
+fn to_json(value: &Value) -> Result<String, ToolError> {
+    serde_json::to_string_pretty(value)
         .map_err(|e| ToolError::ExecutionFailed(format!("Serialization error: {e}")))
 }
 
