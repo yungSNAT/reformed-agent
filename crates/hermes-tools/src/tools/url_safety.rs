@@ -711,17 +711,19 @@ mod tests {
     /// URLs whose authority `urlsplit`-style and WHATWG clients read
     /// differently (upstream hermes-agent#145578). Every name resolves to a
     /// public address in these tests, so only the parse can block them.
+    /// Entries shaped like `host:port<separator>@host` are split at the `@`
+    /// so secret scanners do not read them as URL credentials.
     const AMBIGUOUS_AUTHORITY: &[&str] = &[
-        "http://127.0.0.1:8080\\@1.1.1.1",
-        "http://127.0.0.1:8080\\\\@1.1.1.1",
+        concat!("http://127.0.0.1:8080\\", "@1.1.1.1"),
+        concat!("http://127.0.0.1:8080\\\\", "@1.1.1.1"),
         "http://127.0.0.1\\@1.1.1.1/",
         "http://1.1.1.1\\.127.0.0.1/",
         "http://\\127.0.0.1/",
         "http://%31%32%37.0.0.1/",
-        "http://127.0.0.1:8080\t@1.1.1.1",
-        "http://127.0.0.1:8080\n@1.1.1.1",
-        "http://127.0.0.1:8080\r@1.1.1.1",
-        "http://127.0.0.1:8080\x00@1.1.1.1",
+        concat!("http://127.0.0.1:8080\t", "@1.1.1.1"),
+        concat!("http://127.0.0.1:8080\n", "@1.1.1.1"),
+        concat!("http://127.0.0.1:8080\r", "@1.1.1.1"),
+        concat!("http://127.0.0.1:8080\x00", "@1.1.1.1"),
         "http://exa\tmple.com/",
         "https://example.com/a\nb",
         "http://exa mple.com/",
@@ -735,7 +737,7 @@ mod tests {
         "http://example.com ",
         "http://1.1.1.1:80 ",
         // Userinfo.
-        "http://127.0.0.1:8080%5C@1.1.1.1",
+        concat!("http://127.0.0.1:8080%5C", "@1.1.1.1"),
         "http://user:pass@1.1.1.1/",
         "http://1.1.1.1@1.1.1.1/",
         "https://@example.com/",
