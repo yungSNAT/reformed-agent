@@ -133,7 +133,9 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
         || segments[..2] == [0x2001, 0]
 }
 
-fn is_blocked_ip(ip: &IpAddr) -> bool {
+/// Private, internal and reserved addresses, including IPv6 forms that carry
+/// one, before `allow_private_urls` applies.
+pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_ipv4(v4),
         IpAddr::V6(v6) => is_blocked_ipv6(v6),
