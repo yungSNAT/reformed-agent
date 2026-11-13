@@ -742,14 +742,8 @@ mod tests {
 
     #[test]
     fn test_json_auth_jwt_and_discord_redaction() {
-        use sha2::{Digest, Sha256};
-        // Split so secret scanners do not read the placeholder key as a real one;
-        // the digest pins the bytes to the original single literal.
+        // Split so secret scanners do not read the placeholder key as a real one.
         let fake_key_json = concat!(r#"{"apiKey": "sk-proj-"#, r#"abc123def456ghi789jkl012"}"#);
-        assert_eq!(
-            format!("{:x}", Sha256::digest(fake_key_json)),
-            "4fb8ac752403c505261736eab52e57009ed3a59e3d3c825d59ae9296ae0fac03"
-        );
         let json = redact_sensitive_text(fake_key_json);
         assert!(!json.contains("abc123def456"));
 

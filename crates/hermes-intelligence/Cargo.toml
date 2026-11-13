@@ -26,6 +26,3 @@ tempfile = "3"
 
 [features]
 swarms = []
-
-[dev-dependencies]
-sha2 = "0.10"

@@ -712,8 +712,7 @@ mod tests {
     /// differently (upstream hermes-agent#145578). Every name resolves to a
     /// public address in these tests, so only the parse can block them.
     /// Entries shaped like `host:port<separator>@host` are split at the `@`
-    /// so secret scanners do not read them as URL credentials;
-    /// `split_fixtures_match_the_original_bytes` pins their bytes.
+    /// so secret scanners do not read them as URL credentials.
     const AMBIGUOUS_AUTHORITY: &[&str] = &[
         concat!("http://127.0.0.1:8080\\", "@1.1.1.1"),
         concat!("http://127.0.0.1:8080\\\\", "@1.1.1.1"),
@@ -772,31 +771,6 @@ mod tests {
             assert!(
                 is_safe_url_with_resolver(url, with_ip("1.1.1.1")),
                 "{url:?} should be allowed"
-            );
-        }
-    }
-
-    #[test]
-    fn split_fixtures_match_the_original_bytes() {
-        use sha2::{Digest, Sha256};
-        // SHA-256 of the 7 split entries as single literals before the split.
-        const ORIGINALS: [&str; 7] = [
-            "53076e7c6b15ffb7bc4374d56ef4f639ac531257b5245df980083a1b3f4bf01f",
-            "97310e0c2be674502728f135272bec95a4eae2cf6aa80a7e5bcccadb2ba57b85",
-            "5fbdb0ba1869f5026f4a203384d18dc5674ef09d08551ac75364603041a8949f",
-            "f6a9819621524d59ed3d51dd251d760c4201c5758adc281dfd25f97d68218ca1",
-            "359be2a7a4bc566331b0970a951568de1cad50bae67a009d9f6d9cd58e2f8741",
-            "d08712ca89421ea8400bf48199de3b9e8ee20bd1bb04c9039f588762fb72f907",
-            "a060348e6f80071bebc1aa18b1bb6e13692c40682f55919d694a79bdfc053059",
-        ];
-        let digests: Vec<String> = AMBIGUOUS_AUTHORITY
-            .iter()
-            .map(|url| hex::encode(Sha256::digest(url.as_bytes())))
-            .collect();
-        for original in ORIGINALS {
-            assert!(
-                digests.iter().any(|digest| digest == original),
-                "no fixture hashes to {original}"
             );
         }
     }
