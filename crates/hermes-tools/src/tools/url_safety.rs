@@ -525,6 +525,8 @@ mod tests {
             "2002:c0a8:101::1",
             // IPv4-compatible (deprecated): 127.0.0.1.
             "::7f00:1",
+            // Teredo (RFC 4380) tunnels to IPv4 hosts and is never a fetch target.
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
         ] {
             let literal = format!("http://[{address}]/");
             assert!(
@@ -539,6 +541,8 @@ mod tests {
         for literal in [
             "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/",
             "http://[2002:a9fe:a9fe::1]/latest/meta-data/",
+            // A local-use NAT64 translator may place 169.254.169.254 in the low 32 bits.
+            "http://[64:ff9b:1::a9fe:a9fe]/latest/meta-data/",
         ] {
             assert!(
                 is_always_blocked_url_with_resolver(literal, resolver_err),
