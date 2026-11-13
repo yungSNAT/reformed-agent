@@ -19,7 +19,7 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Secret scan (tracked files)
         run: |
           python3 scripts/release_secret_scan.py \
@@ -76,7 +76,7 @@ jobs:
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cross
         run: cargo install cross --git https://github.com/cross-rs/cross
       - name: Build release binary
@@ -119,9 +119,9 @@ jobs:
           rustup toolchain install
           rustup target add x86_64-apple-darwin
       - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build release binary
-        run: cargo build --release --target ${{ matrix.target }} -p hermes-cli --bin hermes-agent-ultra
+        run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli --bin hermes-agent-ultra
       - name: Package artifact
         run: |
           mkdir -p dist
@@ -156,7 +156,7 @@ jobs:
       - name: Generate Homebrew formula
         run: bash scripts/generate-homebrew-formula.sh "${GITHUB_REF_NAME}"
       - name: Install Cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - name: Sign release artifacts (keyless)
         run: |
           shopt -s nullglob
@@ -168,7 +168,7 @@ jobs:
               "${artifact}"
           done
       - name: Publish release assets
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
           files: |
             dist/*.tar.gz
