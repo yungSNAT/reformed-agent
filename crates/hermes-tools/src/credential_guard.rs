@@ -260,9 +260,10 @@ pub fn is_protected_file(path: &Path) -> bool {
 
 /// Check whether a file path is write-denied even if it is not a credential
 /// file by name. This covers sensitive system files, shell profiles, package
-/// manager credential files, and the active Hermes home's `.env`. A relative
-/// path is judged where the local backend writes it: under a non-empty
-/// `TERMINAL_CWD`, as `resolve_path` in hermes-environments does.
+/// manager credential files, and the active Hermes home's `.env`. The path is
+/// judged where the local backend writes it (`resolve_path` in
+/// hermes-environments): `~` is the `HOME` or `USERPROFILE` value as set, and
+/// another relative path sits under a non-empty `TERMINAL_CWD`.
 ///
 /// shortcut: the path is judged before the write, not at it, so a symlink
 /// swapped in between is followed. Closing that needs the write itself to
@@ -275,6 +276,10 @@ pub fn is_write_denied(path: &Path) -> bool {
         }
         _ => path.to_path_buf(),
     };
+    let backend_home = std::env::var_os("HOME")
+        .or_else(|| std::env::var_os("USERPROFILE"))
+        .map(PathBuf::from);
+    let path = expand_home(&path, backend_home.as_deref());
     is_write_denied_with_roots_and_safe_root(
         &path,
         // Unlike `std::env::home_dir`, an empty `HOME` falls back to the
@@ -297,7 +302,7 @@ fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
     }
     if let Some(rest) = raw.strip_prefix("~/") {
         if let Some(home) = home {
-            return home.join(rest);
+            return home.join(rest.trim_start_matches('/'));
         }
     }
     path.to_path_buf()
@@ -319,24 +324,35 @@ fn fold_dots(path: &Path) -> PathBuf {
     folded
 }
 
+/// `path` as the write walks it: each component that exists is resolved
+/// through its symlinks before the next is added, and `..` steps up from that
+/// resolved place. A missing component is kept as written, since the write
+/// creates it as a plain directory.
+fn resolve_components(path: &Path) -> PathBuf {
+    let mut resolved = PathBuf::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            other => {
+                resolved.push(other);
+                if let Ok(real) = resolved.canonicalize() {
+                    resolved = real;
+                }
+            }
+        }
+    }
+    resolved
+}
+
 /// The 2 forms of `path` the guard judges: as written (made absolute and
-/// folded) and as the filesystem resolves it (symlinks in its longest existing
-/// ancestor followed, the rest folded). Path text and symlinked parents can
-/// then not step around a rule.
+/// folded) and as the filesystem resolves it. Path text and symlinks can then
+/// not step around a rule.
 fn path_forms(path: &Path) -> [PathBuf; 2] {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    let components: Vec<Component> = absolute.components().collect();
-    let resolved = (1..=components.len())
-        .rev()
-        .find_map(|keep| {
-            let existing: PathBuf = components[..keep].iter().collect();
-            let real = existing.canonicalize().ok()?;
-            Some(fold_dots(
-                &components[keep..].iter().fold(real, |acc, c| acc.join(c)),
-            ))
-        })
-        .unwrap_or_else(|| fold_dots(&absolute));
-    [fold_dots(&absolute), resolved]
+    [fold_dots(&absolute), resolve_components(&absolute)]
 }
 
 fn path_has_component_prefix(path: &Path, root: &Path, prefix: &str) -> bool {
@@ -367,10 +383,19 @@ pub fn is_write_denied_with_roots_and_safe_root(
 ) -> bool {
     let expanded = expand_home(path, home);
     // The local backend expands `~user` to that account's home, which this
-    // guard does not look up, so such a path cannot be judged.
+    // guard does not look up, so such a path cannot be judged. Other names
+    // after `~` are not user names, and the backend keeps them as written.
     if expanded.components().next().is_some_and(|first| {
-        let first = first.as_os_str().to_string_lossy();
-        first.len() > 1 && first.starts_with('~')
+        first
+            .as_os_str()
+            .to_string_lossy()
+            .strip_prefix('~')
+            .is_some_and(|user| {
+                !user.is_empty()
+                    && user
+                        .chars()
+                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+            })
     }) {
         return true;
     }
@@ -867,6 +892,13 @@ mod tests {
             Some(&home),
             None
         ));
+        // The write creates `missing`, so `missing/..` is the workspace and
+        // `keys` is followed.
+        assert!(is_write_denied_with_roots(
+            &workspace.join("missing/../keys/config"),
+            Some(&home),
+            None
+        ));
         // A link out of the safe root does not keep its writes inside it.
         assert!(is_write_denied_with_roots_and_safe_root(
             &workspace.join("escape/file.txt"),
@@ -909,6 +941,41 @@ mod tests {
             Some(&home),
             None
         ));
+        // Not a user name, so the backend writes it as written.
+        assert!(!is_write_denied_with_roots(
+            Path::new("~draft!.txt"),
+            Some(&home),
+            None
+        ));
+    }
+
+    #[test]
+    fn write_deny_expands_tilde_as_the_local_backend_does() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).expect("home");
+        // `~//` is the home itself.
+        let denied = with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || is_write_denied(Path::new("~//.ssh/authorized_keys")),
+        );
+        assert!(denied);
+        // With `HOME` empty the backend writes `~/x` to `x` under the process
+        // directory, not under the account's home.
+        let cwd = std::env::current_dir().expect("cwd");
+        let denied = with_env(
+            &[
+                ("HOME", Some(Path::new(""))),
+                ("TERMINAL_CWD", None),
+                ("HERMES_WRITE_SAFE_ROOT", Some(&cwd)),
+            ],
+            || is_write_denied(Path::new("~/notes.txt")),
+        );
+        assert!(!denied);
     }
 
     #[test]
