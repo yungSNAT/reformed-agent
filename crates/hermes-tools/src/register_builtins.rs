@@ -1320,7 +1320,11 @@ mod tests {
                 own.join("sessions.db").is_file() && !upstream.join("sessions.db").exists(),
             ),
         ];
-        let wrong: Vec<_> = checks.iter().filter(|(_, ok)| !ok).map(|(name, _)| *name).collect();
+        let wrong: Vec<_> = checks
+            .iter()
+            .filter(|(_, ok)| !ok)
+            .map(|(name, _)| *name)
+            .collect();
         assert!(wrong.is_empty(), "written outside the own home: {wrong:?}");
     }
 
