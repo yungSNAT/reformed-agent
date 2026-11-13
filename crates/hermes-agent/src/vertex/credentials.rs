@@ -544,8 +544,10 @@ fn parse_access_token(body: &Value) -> Result<AccessToken, String> {
         Some(Value::String(s)) => Some(s.trim().parse::<i64>().map_err(|_| invalid_expiry())?),
         Some(_) => return Err(invalid_expiry()),
     };
-    let expires_at =
-        expires_in.map(|secs| Instant::now() + Duration::from_secs(secs.max(0).unsigned_abs()));
+    // An expiry too far ahead for `Instant` is as good as none.
+    let expires_at = expires_in.and_then(|secs| {
+        Instant::now().checked_add(Duration::from_secs(secs.max(0).unsigned_abs()))
+    });
     Ok(AccessToken { value, expires_at })
 }
 
