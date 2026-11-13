@@ -926,6 +926,28 @@ mod tests {
         assert!(is_write_denied_with_roots(&link, Some(&home), None));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_refuses_a_symlink_that_resolves_only_once_the_write_creates_a_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let workspace = tmp.path().join("work");
+        std::fs::create_dir_all(home.join(".ssh")).expect("home");
+        std::fs::create_dir_all(&workspace).expect("workspace");
+        // `keys` resolves to the home's `.ssh` once the write has created
+        // `missing` on its way through `missing/..`.
+        std::os::unix::fs::symlink(
+            workspace.join("missing/../../home/.ssh"),
+            workspace.join("keys"),
+        )
+        .expect("symlink");
+        assert!(is_write_denied_with_roots(
+            &workspace.join("missing/../keys/config"),
+            Some(&home),
+            None
+        ));
+    }
+
     #[test]
     fn write_deny_refuses_tilde_user_paths() {
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -976,6 +998,38 @@ mod tests {
             || is_write_denied(Path::new("~/notes.txt")),
         );
         assert!(!denied);
+    }
+
+    #[test]
+    fn write_deny_expands_tilde_only_once() {
+        // With `HOME` empty the backend writes `~/~draft/notes.txt` to
+        // `~draft/notes.txt` under the process directory: not a `~user` path.
+        let denied = with_env(
+            &[
+                ("HOME", Some(Path::new(""))),
+                ("TERMINAL_CWD", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || is_write_denied(Path::new("~/~draft/notes.txt")),
+        );
+        assert!(!denied);
+        // It writes `~/~/notes.txt` to `~/notes.txt` under the process
+        // directory, so a safe root that holds only the account's
+        // `~/notes.txt` must not admit it.
+        let account_home = with_env(&[("HOME", Some(Path::new("")))], dirs::home_dir)
+            .expect("the account's home directory");
+        let denied = with_env(
+            &[
+                ("HOME", Some(Path::new(""))),
+                ("TERMINAL_CWD", None),
+                (
+                    "HERMES_WRITE_SAFE_ROOT",
+                    Some(&account_home.join("notes.txt")),
+                ),
+            ],
+            || is_write_denied(Path::new("~/~/notes.txt")),
+        );
+        assert!(denied);
     }
 
     #[test]
