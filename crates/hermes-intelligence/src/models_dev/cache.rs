@@ -89,6 +89,29 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn default_cache_path_is_in_the_own_home_not_upstreams() {
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = ["HOME", "HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"];
+        let saved: Vec<_> = keys.iter().map(|key| std::env::var_os(key)).collect();
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
+        let path = default_cache_path();
+        for (key, value) in keys.iter().zip(saved) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        assert_eq!(
+            path,
+            tmp.path()
+                .join(".hermes-agent-ultra")
+                .join("models_dev_cache.json")
+        );
+    }
+
+    #[test]
     fn save_then_load_roundtrips() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("cache.json");

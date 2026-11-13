@@ -1270,6 +1270,53 @@ mod tests {
     }
 
     #[test]
+    fn default_writers_use_the_own_home_not_upstreams() {
+        use crate::tools::memory::MemoryBackend;
+        use crate::tools::todo::TodoBackend;
+
+        let home = tempfile::tempdir().expect("temp home");
+        let upstream = home.path().join(".hermes");
+        std::fs::create_dir_all(upstream.join("memories")).expect("upstream home");
+        std::fs::write(upstream.join("memories").join("MEMORY.md"), "upstream\n")
+            .expect("upstream memory");
+        let (memory, todos, sessions) = {
+            let _global_env = hermes_config::managed_gateway::test_lock::lock();
+            let _lock = lock_env();
+            let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+            let _hermes_home = EnvGuard::remove("HERMES_HOME");
+            let _ultra_home = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+            (
+                crate::backends::memory::FileMemoryBackend::new(),
+                crate::backends::todo::FileTodoBackend::default_path(),
+                crate::backends::session_search::SqliteSessionSearchBackend::default_path(),
+            )
+        };
+        sessions.expect("sessions database");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        runtime
+            .block_on(memory.add("memory", "own note"))
+            .expect("memory add");
+        runtime
+            .block_on(todos.create("own task", None, None))
+            .expect("todo create");
+
+        let own = home.path().join(".hermes-agent-ultra");
+        let memory_file = std::fs::read_to_string(own.join("memories").join("MEMORY.md"))
+            .expect("own memory file");
+        assert!(memory_file.contains("own note"), "{memory_file}");
+        assert!(own.join("todos.json").is_file());
+        assert!(own.join("sessions.db").is_file());
+        assert_eq!(
+            std::fs::read_to_string(upstream.join("memories").join("MEMORY.md")).unwrap(),
+            "upstream\n"
+        );
+        assert!(!upstream.join("todos.json").exists());
+        assert!(!upstream.join("sessions.db").exists());
+    }
+
+    #[test]
     fn builtin_registry_registers_core_tool_surfaces_for_parity() {
         let _lock = lock_env();
         let home = tempfile::tempdir().expect("temp home");

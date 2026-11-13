@@ -255,6 +255,78 @@
     }
 
     #[test]
+    fn default_state_paths_use_the_own_home_not_upstreams() {
+        struct DummyProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for DummyProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("dummy"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let _guard = env_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let upstream = tmp.path().join(".hermes");
+        std::fs::create_dir_all(upstream.join("memories")).expect("upstream memories");
+        std::fs::write(upstream.join("memories").join("MEMORY.md"), "upstream fact")
+            .expect("upstream memory");
+        std::fs::create_dir_all(upstream.join("alpha")).expect("upstream alpha");
+        std::fs::write(
+            upstream.join("alpha").join("claim_verifier_policy.json"),
+            r#"{"enabled": false}"#,
+        )
+        .expect("upstream policy");
+        let _home = EnvVarGuard::set("HOME", &tmp.path().to_string_lossy());
+        let _hermes_home = EnvVarGuard::remove("HERMES_HOME");
+        let _ultra_home = EnvVarGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _verifier = EnvVarGuard::remove("HERMES_CLAIM_VERIFIER_ENABLED");
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+
+        let own = tmp.path().join(".hermes-agent-ultra");
+        assert_eq!(agent.hook_context_spill_dir(), own.join("hooks").join("spills"));
+        assert_eq!(agent.auth_tokens_path(), own.join("auth").join("tokens.json"));
+        assert_eq!(
+            agent.objective_runtime_ledger_path(),
+            own.join("alpha").join("objective_runtime_ledger.jsonl")
+        );
+        assert_eq!(
+            agent.objective_eval_trend_path(),
+            own.join("alpha").join("objective_eval_trend.json")
+        );
+        assert_eq!(crate::context::load_builtin_memory_snapshot(None), (None, None));
+        assert!(claim_verifier_enabled_runtime());
+    }
+
+    #[test]
     fn max_delegate_depth_resolves_env_then_config_with_floor() {
         let _guard = env_test_lock();
         struct DummyProvider;

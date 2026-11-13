@@ -92,3 +92,42 @@
             assert!(!home.exists());
         });
     }
+
+    #[test]
+    fn uninstall_yes_refuses_upstream_hermes_home_when_it_is_the_home() {
+        with_clean_home(|user_home| {
+            let upstream = make_upstream_home(user_home);
+            let before = tree_snapshot(&upstream);
+
+            assert!(uninstall_home(&upstream, true).is_err());
+            assert!(uninstall_home(&upstream, false).is_err());
+
+            assert_eq!(tree_snapshot(&upstream), before);
+        });
+    }
+
+    #[test]
+    fn uninstall_yes_refuses_the_user_home_and_folders_that_hold_it() {
+        let outer = tempfile::tempdir().expect("tempdir");
+        let user_home = outer.path().join("users").join("me");
+        std::fs::create_dir_all(user_home.join(".hermes-agent-ultra")).unwrap();
+        std::fs::write(user_home.join("notes.txt"), "keep").unwrap();
+        let _guard = env_lock();
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", &user_home);
+        let refused: Vec<bool> = [
+            user_home.clone(),
+            user_home.join(".hermes-agent-ultra").join(".."),
+            outer.path().join("users"),
+            outer.path().to_path_buf(),
+        ]
+        .iter()
+        .map(|home| uninstall_home(home, true).is_err())
+        .collect();
+        match saved {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+        assert_eq!(refused, [true; 4]);
+        assert!(user_home.join("notes.txt").is_file());
+    }
