@@ -609,11 +609,11 @@ def main(argv: list[str] | None = None) -> int:
         with wf_path.open() as f:
             workflow_raw = json.load(f)
         workflow = unwrap_workflow(workflow_raw)
-    except ValueError as e:
-        emit_json({"error": str(e)})
-        return 1
     except json.JSONDecodeError as e:
         emit_json({"error": f"Invalid JSON in workflow file: {e}"})
+        return 1
+    except ValueError as e:
+        emit_json({"error": str(e)})
         return 1
 
     # ---- Parse user args ----
