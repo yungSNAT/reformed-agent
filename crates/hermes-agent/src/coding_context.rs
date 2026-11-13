@@ -726,7 +726,7 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
             }
             continue;
         }
-        let code = line.get(..2).unwrap_or(line).trim();
+        let code = line.get(..2).unwrap_or(line);
         let key = if line.starts_with("??") {
             "untracked"
         } else if code == "UU" || code == "AA" || code == "DD" {
