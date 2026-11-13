@@ -14,7 +14,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_PORT = parseInt(process.env.API_PORT || '4747');
-const DIST_DIR = process.argv[2] || './dist';
+const DIST_DIR = path.resolve(process.argv[2] || './dist');
 const PORT = parseInt(process.argv[3] || '8888');
 
 const MIME = {
@@ -54,6 +54,13 @@ function proxyToApi(req, res) {
 function serveStatic(req, res) {
   const urlPath = req.url.split('?')[0];
   let filePath = path.join(DIST_DIR, urlPath === '/' ? 'index.html' : urlPath);
+
+  // Refuse request paths whose '..' segments climb out of the dist folder
+  if (!filePath.startsWith(DIST_DIR + path.sep)) {
+    res.writeHead(404, { 'Content-Type': 'text/plain' });
+    res.end('Not found');
+    return;
+  }
 
   // SPA fallback: if file doesn't exist and isn't a static asset, serve index.html
   if (!fs.existsSync(filePath) && !path.extname(filePath)) {
