@@ -279,8 +279,10 @@ pub fn is_write_denied(path: &Path) -> bool {
     let backend_home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    let path = expand_home(&path, backend_home.as_deref());
-    is_write_denied_with_roots_and_safe_root(
+    let Some(path) = expand_home(&path, backend_home.as_deref()) else {
+        return true;
+    };
+    is_expanded_write_denied(
         &path,
         // Unlike `std::env::home_dir`, an empty `HOME` falls back to the
         // account's home here instead of disabling the home rules.
@@ -293,19 +295,29 @@ pub fn is_write_denied(path: &Path) -> bool {
     )
 }
 
-fn expand_home(path: &Path, home: Option<&Path>) -> PathBuf {
+/// `path` with a leading `~` or `~/` expanded once to `home`, as the local
+/// backend does. None for a `~user` path: the backend expands it to that
+/// account's home, which this guard does not look up, so it cannot be judged.
+/// Other names after `~` are not user names, and the backend keeps them as
+/// written.
+fn expand_home(path: &Path, home: Option<&Path>) -> Option<PathBuf> {
     let raw = path.to_string_lossy();
     if raw == "~" {
-        return home
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| path.to_path_buf());
+        return Some(home.unwrap_or(path).to_path_buf());
     }
     if let Some(rest) = raw.strip_prefix("~/") {
         if let Some(home) = home {
-            return home.join(rest.trim_start_matches('/'));
+            return Some(home.join(rest.trim_start_matches('/')));
         }
     }
-    path.to_path_buf()
+    let is_tilde_user = raw.strip_prefix('~').is_some_and(|rest| {
+        let user = rest.split('/').next().unwrap_or_default();
+        !user.is_empty()
+            && user
+                .chars()
+                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
+    });
+    (!is_tilde_user).then(|| path.to_path_buf())
 }
 
 /// `path` with `.` and `..` folded and repeated separators dropped, without
@@ -327,8 +339,10 @@ fn fold_dots(path: &Path) -> PathBuf {
 /// `path` as the write walks it: each component that exists is resolved
 /// through its symlinks before the next is added, and `..` steps up from that
 /// resolved place. A missing component is kept as written, since the write
-/// creates it as a plain directory.
-fn resolve_components(path: &Path) -> PathBuf {
+/// creates it as a plain directory. None when a component is a symlink that
+/// does not resolve, dangling or through a directory the write has yet to
+/// create: its target cannot be judged before it exists.
+fn resolve_components(path: &Path) -> Option<PathBuf> {
     let mut resolved = PathBuf::new();
     for component in path.components() {
         match component {
@@ -338,21 +352,40 @@ fn resolve_components(path: &Path) -> PathBuf {
             }
             other => {
                 resolved.push(other);
-                if let Ok(real) = resolved.canonicalize() {
-                    resolved = real;
+                match resolved.canonicalize() {
+                    Ok(real) => resolved = real,
+                    Err(_)
+                        if resolved
+                            .symlink_metadata()
+                            .is_ok_and(|meta| meta.file_type().is_symlink()) =>
+                    {
+                        return None;
+                    }
+                    Err(_) => {}
                 }
             }
         }
     }
-    resolved
+    Some(resolved)
 }
 
 /// The 2 forms of `path` the guard judges: as written (made absolute and
 /// folded) and as the filesystem resolves it. Path text and symlinks can then
-/// not step around a rule.
-fn path_forms(path: &Path) -> [PathBuf; 2] {
+/// not step around a rule. None when the path cannot be resolved.
+fn path_forms(path: &Path) -> Option<[PathBuf; 2]> {
     let absolute = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
-    [fold_dots(&absolute), resolve_components(&absolute)]
+    Some([fold_dots(&absolute), resolve_components(&absolute)?])
+}
+
+/// `path_forms` for a path a rule names (a home, the Hermes `.env` or the safe
+/// root), which is taken as written when it cannot be resolved: a write that
+/// walks through it is refused anyway.
+fn root_forms(root: &Path) -> [PathBuf; 2] {
+    path_forms(root).unwrap_or_else(|| {
+        let absolute = std::path::absolute(root).unwrap_or_else(|_| root.to_path_buf());
+        let folded = fold_dots(&absolute);
+        [folded.clone(), folded]
+    })
 }
 
 fn path_has_component_prefix(path: &Path, root: &Path, prefix: &str) -> bool {
@@ -381,34 +414,23 @@ pub fn is_write_denied_with_roots_and_safe_root(
     hermes_home: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
-    let expanded = expand_home(path, home);
-    // The local backend expands `~user` to that account's home, which this
-    // guard does not look up, so such a path cannot be judged. Other names
-    // after `~` are not user names, and the backend keeps them as written.
-    if expanded.components().next().is_some_and(|first| {
-        first
-            .as_os_str()
-            .to_string_lossy()
-            .strip_prefix('~')
-            .is_some_and(|user| {
-                !user.is_empty()
-                    && user
-                        .chars()
-                        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '.' | '_' | '-'))
-            })
-    }) {
-        return true;
+    match expand_home(path, home) {
+        Some(expanded) => is_expanded_write_denied(&expanded, home, hermes_home, safe_root),
+        None => true,
     }
-    let forms = path_forms(&expanded);
-    // Writing through a dangling symlink creates its target, which cannot be
-    // judged before it exists.
-    if forms[1]
-        .symlink_metadata()
-        .is_ok_and(|meta| meta.file_type().is_symlink())
-        && forms[1].metadata().is_err()
-    {
+}
+
+/// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
+/// has already expanded, so it is not expanded a second time.
+fn is_expanded_write_denied(
+    path: &Path,
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    safe_root: Option<&Path>,
+) -> bool {
+    let Some(forms) = path_forms(path) else {
         return true;
-    }
+    };
 
     for form in &forms {
         if WRITE_DENY_EXACT_ABSOLUTE
@@ -429,7 +451,7 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 
     if let Some(home) = home {
-        for home in path_forms(home) {
+        for home in root_forms(home) {
             for form in &forms {
                 let Ok(rel) = form.strip_prefix(&home) else {
                     continue;
@@ -448,20 +470,22 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 
     if let Some(hermes_home) = hermes_home {
-        let env_forms = path_forms(&hermes_home.join(".env"));
+        let env_forms = root_forms(&hermes_home.join(".env"));
         if forms.iter().any(|form| env_forms.contains(form)) {
             return true;
         }
     }
 
     if let Some(safe_root) = safe_root {
-        let safe_root = expand_home(safe_root, home);
+        let Some(safe_root) = expand_home(safe_root, home) else {
+            return true;
+        };
         // Both forms must stay inside the matching form of the root, so a
         // symlink out of the root does not carry writes with it.
         if !safe_root.as_os_str().is_empty()
             && forms
                 .iter()
-                .zip(path_forms(&safe_root))
+                .zip(root_forms(&safe_root))
                 .any(|(form, root)| !form.starts_with(root))
         {
             return true;
