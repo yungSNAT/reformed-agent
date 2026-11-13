@@ -233,7 +233,10 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
-                        compressed_transcripts: ctx.take_compressed_transcripts(),
+                        compressed_transcripts: Self::compressed_transcripts_for_result(
+                            &mut ctx,
+                            prefill_range.clone(),
+                        ),
                     });
                 }
             }
@@ -572,7 +575,10 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
-                        compressed_transcripts: ctx.take_compressed_transcripts(),
+                        compressed_transcripts: Self::compressed_transcripts_for_result(
+                            &mut ctx,
+                            prefill_range.clone(),
+                        ),
                     });
                 }
             }
@@ -840,7 +846,10 @@ impl AgentLoop {
                     interrupted: false,
                     session_cost_usd: Some(session_cost_usd),
                     session_started_hooks_fired,
-                    compressed_transcripts: ctx.take_compressed_transcripts(),
+                    compressed_transcripts: Self::compressed_transcripts_for_result(
+                        &mut ctx,
+                        prefill_range.clone(),
+                    ),
                 });
             };
 
@@ -929,7 +938,10 @@ impl AgentLoop {
                         interrupted: false,
                         session_cost_usd: Some(session_cost_usd),
                         session_started_hooks_fired,
-                        compressed_transcripts: ctx.take_compressed_transcripts(),
+                        compressed_transcripts: Self::compressed_transcripts_for_result(
+                            &mut ctx,
+                            prefill_range.clone(),
+                        ),
                     });
                 }
                 for tc in &tool_calls {
@@ -1270,7 +1282,10 @@ impl AgentLoop {
                     interrupted: false,
                     session_cost_usd: Some(session_cost_usd),
                     session_started_hooks_fired,
-                    compressed_transcripts: ctx.take_compressed_transcripts(),
+                    compressed_transcripts: Self::compressed_transcripts_for_result(
+                        &mut ctx,
+                        prefill_range.clone(),
+                    ),
                 });
             }
             if !tool_calls.is_empty()

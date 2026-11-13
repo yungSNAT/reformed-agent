@@ -50,12 +50,31 @@ impl AgentLoop {
                 }
             }
         }
+        Self::drain_prefill(&mut msgs, prefill_range);
+        msgs
+    }
+
+    /// Take the history as it stood before each compression, oldest first,
+    /// without the prefill, which the returned messages also leave out.
+    fn compressed_transcripts_for_result(
+        ctx: &mut ContextManager,
+        prefill_range: Option<Range<usize>>,
+    ) -> Vec<Vec<Message>> {
+        let mut transcripts = ctx.take_compressed_transcripts();
+        for transcript in &mut transcripts {
+            Self::drain_prefill(transcript, prefill_range.clone());
+        }
+        transcripts
+    }
+
+    /// Drop the prefill, which `run` and `run_stream` place at `prefill_range`
+    /// in the protected head, from `messages`.
+    fn drain_prefill(messages: &mut Vec<Message>, prefill_range: Option<Range<usize>>) {
         if let Some(range) = prefill_range {
-            if range.start <= range.end && range.end <= msgs.len() {
-                msgs.drain(range);
+            if range.start <= range.end && range.end <= messages.len() {
+                messages.drain(range);
             }
         }
-        msgs
     }
 
     fn named_tool_result_message(
@@ -96,7 +115,11 @@ impl AgentLoop {
     ) -> AgentResult {
         self.memory_on_session_end(ctx.get_messages());
         AgentResult {
-            messages: self.messages_for_persisted_result(ctx, persist_user_idx, prefill_range),
+            messages: self.messages_for_persisted_result(
+                ctx,
+                persist_user_idx,
+                prefill_range.clone(),
+            ),
             finished_naturally: false,
             total_turns,
             tool_errors: tool_errors.to_vec(),
@@ -104,7 +127,7 @@ impl AgentLoop {
             interrupted: true,
             session_cost_usd: Some(session_cost_usd),
             session_started_hooks_fired,
-            compressed_transcripts: ctx.take_compressed_transcripts(),
+            compressed_transcripts: Self::compressed_transcripts_for_result(ctx, prefill_range),
         }
     }
 
