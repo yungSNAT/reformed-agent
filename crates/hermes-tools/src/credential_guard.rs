@@ -317,7 +317,9 @@ fn path_forms(path: &Path) -> [PathBuf; 2] {
         .find_map(|keep| {
             let existing: PathBuf = components[..keep].iter().collect();
             let real = existing.canonicalize().ok()?;
-            Some(fold_dots(&components[keep..].iter().fold(real, |acc, c| acc.join(c))))
+            Some(fold_dots(
+                &components[keep..].iter().fold(real, |acc, c| acc.join(c)),
+            ))
         })
         .unwrap_or_else(|| fold_dots(&absolute));
     [fold_dots(&absolute), resolved]
