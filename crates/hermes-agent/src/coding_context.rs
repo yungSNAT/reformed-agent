@@ -1460,6 +1460,29 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_status_tells_unstaged_changes_from_staged_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        // ` M`: changed in the worktree only. `A `: added to the index.
+        std::fs::write(tmp.path().join("README.md"), "changed").unwrap();
+        std::fs::write(tmp.path().join("new.txt"), "new").unwrap();
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["add", "new.txt"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let mut lines = Vec::new();
+        append_git_snapshot(tmp.path(), LazyFetchGuard::NoPromisorRemote, &mut lines);
+        assert!(
+            lines.contains(&"Status: modified=1, staged=1".to_string()),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
     fn workspace_snapshot_is_omitted_past_the_filter_key_limit() {
         // Each driver has 4 keys, so 65 pass the 256 keys the snapshot will
         // override. The machine's own config can add drivers (Git LFS adds
