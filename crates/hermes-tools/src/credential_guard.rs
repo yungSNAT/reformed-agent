@@ -365,7 +365,25 @@ pub fn is_write_denied_with_roots_and_safe_root(
     hermes_home: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
-    let forms = path_forms(&expand_home(path, home));
+    let expanded = expand_home(path, home);
+    // The local backend expands `~user` to that account's home, which this
+    // guard does not look up, so such a path cannot be judged.
+    if expanded.components().next().is_some_and(|first| {
+        let first = first.as_os_str().to_string_lossy();
+        first.len() > 1 && first.starts_with('~')
+    }) {
+        return true;
+    }
+    let forms = path_forms(&expanded);
+    // Writing through a dangling symlink creates its target, which cannot be
+    // judged before it exists.
+    if forms[1]
+        .symlink_metadata()
+        .is_ok_and(|meta| meta.file_type().is_symlink())
+        && forms[1].metadata().is_err()
+    {
+        return true;
+    }
 
     for form in &forms {
         if WRITE_DENY_EXACT_ABSOLUTE
@@ -861,6 +879,35 @@ mod tests {
             Some(&home),
             None,
             Some(&workspace)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_refuses_a_dangling_symlink_whose_target_it_cannot_judge() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).expect("home");
+        let link = tmp.path().join("notes.txt");
+        // Writing through the link would create the missing target.
+        std::os::unix::fs::symlink(home.join(".ssh/authorized_keys"), &link).expect("symlink");
+        assert!(is_write_denied_with_roots(&link, Some(&home), None));
+    }
+
+    #[test]
+    fn write_deny_refuses_tilde_user_paths() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        // The local backend expands `~user` to that account's home.
+        assert!(is_write_denied_with_roots(
+            Path::new("~someone/.ssh/authorized_keys"),
+            Some(&home),
+            None
+        ));
+        assert!(!is_write_denied_with_roots(
+            &home.join("~draft.txt"),
+            Some(&home),
+            None
         ));
     }
 
