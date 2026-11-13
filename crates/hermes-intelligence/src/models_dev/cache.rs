@@ -83,7 +83,7 @@ mod tests {
     fn default_cache_path_is_in_the_own_home_not_upstreams() {
         let tmp = tempfile::tempdir().unwrap();
         let keys = ["HOME", "HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"];
-        let saved: Vec<_> = keys.iter().map(|key| std::env::var_os(key)).collect();
+        let saved: Vec<_> = keys.iter().map(std::env::var_os).collect();
         std::env::set_var("HOME", tmp.path());
         std::env::remove_var("HERMES_HOME");
         std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
