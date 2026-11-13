@@ -476,12 +476,21 @@ mod tests {
     }
 
     /// A remote provider that followed a redirect or crawled a link onto a
-    /// blocklisted site.
+    /// blocklisted site, in the shape the Tavily, Exa and Parallel extract
+    /// backends return: the first page's text and a quality count are copied
+    /// to the top level.
     struct ProviderPagesBackend;
-    const PROVIDER_PAGES: &str = r#"{"results": [
-        {"url": "https://1.1.1.1/docs", "content": "allowed page"},
-        {"url": "https://blocked.example/landing", "content": "blocklisted page"}
-    ]}"#;
+    const PROVIDER_PAGES: &str = r#"{
+        "url": "https://1.1.1.1/",
+        "content": "blocklisted page",
+        "results": [
+            {"url": "https://blocked.example/landing", "content": "blocklisted page", "source_quality": "primary"},
+            {"url": "https://1.1.1.1/docs", "content": "allowed page", "source_quality": "secondary"},
+            {"content": "page without a url", "source_quality": "community"}
+        ],
+        "provider": "tavily",
+        "source_quality_summary": {"primary": 1, "community": 1, "secondary": 1}
+    }"#;
     #[async_trait]
     impl WebExtractBackend for ProviderPagesBackend {
         async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
@@ -523,16 +532,71 @@ mod tests {
         for output in outputs {
             let value: Value = serde_json::from_str(&output).expect("JSON results");
             let pages = value["results"].as_array().expect("results");
-            assert_eq!(pages[0]["content"], "allowed page");
-            assert_eq!(pages[1]["url"], "https://blocked.example/landing");
+            assert_eq!(pages[0]["url"], "https://blocked.example/landing");
             assert!(
-                pages[1]["error"]
+                pages[0]["error"]
                     .as_str()
                     .is_some_and(|e| e.contains("blocked.example")),
                 "{output}"
             );
+            assert_eq!(pages[1]["content"], "allowed page");
+            assert!(pages[2]["error"].is_string(), "{output}");
+            assert_eq!(value["content"], "", "{output}");
+            assert_eq!(
+                value["source_quality_summary"],
+                json!({"primary": 0, "community": 0, "secondary": 1})
+            );
             assert!(!output.contains("blocklisted page"), "{output}");
+            assert!(!output.contains("page without a url"), "{output}");
         }
+    }
+
+    /// Firecrawl's extract output: one page, no `results`, with the final URL
+    /// in `metadata`.
+    struct FirecrawlShapeBackend(String);
+    #[async_trait]
+    impl WebExtractBackend for FirecrawlShapeBackend {
+        async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_single_page_redirected_onto_a_blocklisted_site_is_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        let seed = json!({"url": "https://1.1.1.1/"});
+        for metadata in [
+            r#"{"url": "https://blocked.example/after-redirect"}"#,
+            r#"{"sourceURL": "https://blocked.example/after-redirect"}"#,
+        ] {
+            let page = format!(
+                r#"{{"content": "redirected page", "metadata": {metadata}, "links": ["https://blocked.example/more"]}}"#
+            );
+            let output = WebExtractHandler::new(Box::new(FirecrawlShapeBackend(page)))
+                .execute(seed.clone())
+                .await
+                .expect("extract");
+            let value: Value = serde_json::from_str(&output).expect("JSON");
+            assert!(
+                value["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("blocked.example")),
+                "{output}"
+            );
+            assert!(!output.contains("redirected page"), "{output}");
+        }
+        let allowed =
+            r#"{"content": "allowed page", "metadata": {"sourceURL": "https://1.1.1.1/docs"}}"#;
+        let output = WebExtractHandler::new(Box::new(FirecrawlShapeBackend(allowed.into())))
+            .execute(seed)
+            .await
+            .expect("extract");
+        assert_eq!(output, allowed);
     }
 
     #[tokio::test]
