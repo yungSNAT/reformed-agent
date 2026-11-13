@@ -386,21 +386,17 @@ pub fn validate_media_delivery_path(path: &str) -> Option<PathBuf> {
 // MediaCache
 // ---------------------------------------------------------------------------
 
-/// reqwest's default redirect limit.
-const MAX_REDIRECTS: usize = 10;
-
 /// Follows a redirect only to a URL that passes the same check as the first
-/// URL, so a public host cannot bounce a download onto an internal one.
+/// URL, so a public host cannot bounce a download onto an internal one, and
+/// within reqwest's default limit.
 ///
 /// shortcut: the check resolves the host on the runtime thread, as the check
 /// of the first URL does, and the client resolves it again when it connects,
 /// so a DNS answer that changes in between (rebinding) is not caught.
 fn checked_redirects() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
-        if attempt.previous().len() >= MAX_REDIRECTS {
-            attempt.error("too many redirects")
-        } else if is_safe_url(attempt.url().as_str()) {
-            attempt.follow()
+        if is_safe_url(attempt.url().as_str()) {
+            reqwest::redirect::Policy::default().redirect(attempt)
         } else {
             let target = attempt.url().to_string();
             attempt.error(format!(
