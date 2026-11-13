@@ -45,8 +45,15 @@ fn cli_refuses_to_start_with_its_home_linked_into_upstreams() {
         .unwrap();
 
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(!output.status.success(), "exited {}: {stderr}", output.status);
+    assert!(
+        !output.status.success(),
+        "exited {}: {stderr}",
+        output.status
+    );
     assert!(stderr.contains("Refusing to start"), "{stderr}");
-    assert!(stderr.contains(&format!("HERMES_HOME={}", upstream.display())), "{stderr}");
+    assert!(
+        stderr.contains(&format!("HERMES_HOME={}", upstream.display())),
+        "{stderr}"
+    );
     assert_eq!(snapshot(&upstream), before);
 }

@@ -47,6 +47,35 @@ pub fn upstream_home_notice() -> Option<String> {
     })
 }
 
+/// Refuses an implicit home that resolves to, or inside, upstream Hermes's
+/// `~/.hermes`, as a link at `~/.hermes-agent-ultra` would make it: every
+/// default writer would then write upstream's files. An explicit
+/// `HERMES_HOME` or `HERMES_AGENT_ULTRA_HOME` is honoured.
+///
+/// shortcut: [`hermes_home`] has no error path and 211 call sites, so each
+/// binary calls this once at start, before any write; library callers that
+/// bypass those entry points are not covered.
+pub fn check_implicit_home() -> Result<(), String> {
+    if env_var_path("HERMES_HOME").is_some() || env_var_path("HERMES_AGENT_ULTRA_HOME").is_some() {
+        return Ok(());
+    }
+    // The same resolution as `uninstall`'s refusals.
+    let resolve = |path: &Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let home_dir = user_home_dir();
+    let own = home_dir.join(DEFAULT_HOME_DIR);
+    let upstream = home_dir.join(UPSTREAM_HOME_DIR);
+    if resolve(&own).starts_with(resolve(&upstream)) {
+        return Err(format!(
+            "Refusing to start: {} resolves into upstream Hermes's home {}, so this agent would \
+             write upstream's files. Remove the link, or set HERMES_HOME={} to share that home on purpose.",
+            own.display(),
+            upstream.display(),
+            upstream.display()
+        ));
+    }
+    Ok(())
+}
+
 fn env_var_path(var: &str) -> Option<PathBuf> {
     std::env::var(var)
         .ok()
@@ -327,6 +356,32 @@ mod tests {
             assert_eq!(hermes_home(), chosen);
             std::env::set_var("HERMES_HOME", user_home.join(".hermes"));
             assert_eq!(hermes_home(), user_home.join(".hermes"));
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn check_implicit_home_refuses_an_own_home_linked_into_upstreams() {
+        with_clean_home(|user_home| {
+            assert_eq!(check_implicit_home(), Ok(()), "no homes");
+            let upstream = user_home.join(".hermes");
+            std::fs::create_dir_all(upstream.join("profiles")).unwrap();
+            assert_eq!(check_implicit_home(), Ok(()), "upstream only");
+            let own = user_home.join(".hermes-agent-ultra");
+            for target in [upstream.clone(), upstream.join("profiles")] {
+                std::os::unix::fs::symlink(&target, &own).unwrap();
+                let err = check_implicit_home().expect_err("linked into upstream");
+                assert!(err.contains(&own.display().to_string()), "{err}");
+                assert!(
+                    err.contains(&format!("HERMES_HOME={}", upstream.display())),
+                    "{err}"
+                );
+                std::fs::remove_file(&own).unwrap();
+            }
+            std::os::unix::fs::symlink(&upstream, &own).unwrap();
+            std::env::set_var("HERMES_HOME", &upstream);
+            assert_eq!(check_implicit_home(), Ok(()), "explicit HERMES_HOME");
+            std::env::remove_var("HERMES_HOME");
         });
     }
 

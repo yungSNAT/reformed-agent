@@ -1053,7 +1053,7 @@ fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentErro
     let resolved = resolve(home);
     let user_home = hermes_config::user_home_dir();
     let refusal = if !user_home.is_absolute() {
-        Some("the user's home is unknown (HOME and USERPROFILE are unset)")
+        Some("the user's home is unknown")
     } else if resolve(&user_home).starts_with(&resolved) || resolved.parent().is_none() {
         Some("it is the user's home or holds it")
     } else if resolve(&user_home.join(".hermes")).starts_with(&resolved) {

@@ -53,6 +53,11 @@ async fn run_main() {
         std::env::set_var("HERMES_HOME", config_dir);
     }
     hermes_config::normalize_hermes_home_env();
+    // Before anything writes to the home; see check_implicit_home for the limit.
+    if let Err(refusal) = hermes_config::check_implicit_home() {
+        eprintln!("{refusal}");
+        std::process::exit(1);
+    }
     if let Some(notice) = hermes_config::upstream_home_notice() {
         eprintln!("{notice}");
     }
