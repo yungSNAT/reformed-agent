@@ -866,6 +866,69 @@ mod tests {
         assert_eq!(denied, Some(true), "{}", home.display());
     }
 
+    /// Runs `check` with the given variables set (`None` removes one), under
+    /// the shared env lock, and restores them afterwards.
+    fn with_env<T>(vars: &[(&str, Option<&Path>)], check: impl FnOnce() -> T) -> T {
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved: Vec<_> = vars
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
+    #[test]
+    fn write_deny_judges_relative_paths_from_the_terminal_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let project = home.join("project");
+        std::fs::create_dir_all(&project).expect("project");
+        let denied = with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(&project)),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                (
+                    is_write_denied(Path::new("../.ssh/authorized_keys")),
+                    is_write_denied(Path::new("src/main.rs")),
+                )
+            },
+        );
+        assert_eq!(denied, (true, false));
+    }
+
+    #[test]
+    fn write_deny_protects_the_default_home_env_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&home).expect("home");
+        let denied = with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("HERMES_HOME", None),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || is_write_denied(&hermes_config::hermes_home().join(".env")),
+        );
+        assert!(denied);
+    }
+
     #[test]
     fn write_deny_allows_the_temporary_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
