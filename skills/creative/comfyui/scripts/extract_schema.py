@@ -288,11 +288,11 @@ def main(argv: list[str] | None = None) -> int:
         with wf_path.open() as f:
             payload = json.load(f)
         workflow = unwrap_workflow(payload)
-    except ValueError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 1
     except json.JSONDecodeError as e:
         print(f"Error: invalid JSON — {e}", file=sys.stderr)
+        return 1
+    except ValueError as e:
+        print(f"Error: {e}", file=sys.stderr)
         return 1
 
     schema = extract_schema(workflow)
