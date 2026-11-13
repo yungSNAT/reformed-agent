@@ -24,7 +24,7 @@ Translations of an earlier README, which predate this fork: [中文](./README_ZH
 
 Method:
 
-- Machine: one x86_64 Linux machine (AMD Ryzen 7 4800H, 4 CPU threads available to the run, 31 GiB RAM).
+- Machine: one x86_64 Linux machine (AMD Ryzen 7 4800H, 4 CPU threads available to the run, 31 GiB RAM) running CachyOS with Linux 7.3.3 and rustc 1.99.1. It was not idle: the load average was 2.46 before the runs and 2.35 after.
 - Network: none. Both tools ran in a network namespace with no interfaces up, each in its own scratch home (empty before the first run for Reformed, as the installer left it for Hermes), with no account or key.
 - Builds: Reformed was built with `cargo build --locked --release -p hermes-cli --bin hermes-agent-ultra`. Hermes was installed by its own installer (`install.sh --non-interactive --skip-browser --skip-computer-use`).
 - Figures: wall-clock medians of 5 cold runs (page cache dropped before each) and 10 warm runs. Peak RSS is the largest resident set of any process in the run.
@@ -160,7 +160,7 @@ One-shot query:
 hermes-ultra chat --query "summarize this repository"
 ```
 
-Gateway mode, in the foreground. Run `hermes-ultra setup` first: in a home that setup has not created, `gateway run` stops because it cannot write `gateway.pid`. Without chat platforms the gateway serves only cron jobs and HTTP webhooks; `hermes-ultra gateway setup` enables platforms:
+Gateway mode, in the foreground. Without chat platforms the gateway serves only cron jobs and HTTP webhooks; `hermes-ultra gateway setup` enables platforms:
 
 ```bash
 hermes-ultra gateway run
