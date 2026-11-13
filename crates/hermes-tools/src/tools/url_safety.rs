@@ -111,6 +111,12 @@ fn embedded_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
     }
 }
 
+/// NAT64 local-use prefix `64:ff9b:1::/48` (RFC 8215): the operator's
+/// translator picks where the IPv4 address sits, so it cannot be decoded.
+fn is_nat64_local_use(ip: &Ipv6Addr) -> bool {
+    ip.segments()[..3] == [0x64, 0xff9b, 1]
+}
+
 fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
     if let Some(v4) = embedded_ipv4(ip) {
         return is_blocked_ipv4(&v4);
@@ -122,8 +128,9 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] & 0xfe00) == 0xfc00
-        // NAT64 local-use prefix (RFC 8215): the operator's translator picks the IPv4 address.
-        || segments[..3] == [0x64, 0xff9b, 1]
+        || is_nat64_local_use(ip)
+        // Teredo (RFC 4380) tunnels to IPv4 hosts and is never a fetch target.
+        || segments[..2] == [0x2001, 0]
 }
 
 fn is_blocked_ip(ip: &IpAddr) -> bool {
@@ -145,7 +152,7 @@ fn is_always_blocked_ip(ip: &IpAddr) -> bool {
             if let Some(v4) = embedded_ipv4(v6) {
                 return is_always_blocked_ipv4(&v4);
             }
-            *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
+            is_nat64_local_use(v6) || *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
         }
     }
 }
