@@ -1300,6 +1300,95 @@ async fn local_browser_refuses_every_command_once_a_page_could_not_be_cleared() 
     );
 }
 
+/// A page that refuses the first `refusals` of each command other than
+/// `Page.navigate` with `CDP_NOT_ATTACHED`, as Chrome does whilst the page is
+/// between documents. Its history holds a redirect target, or only
+/// `about:blank` after navigating there.
+fn reattaching_browser(refusals: usize) -> CdpResponder {
+    let seen = Arc::new(std::sync::Mutex::new(std::collections::HashMap::<
+        String,
+        usize,
+    >::new()));
+    let blank = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    Arc::new(move |command: &Value| {
+        let method = command["method"].as_str().unwrap_or_default().to_string();
+        if method == "Page.navigate" {
+            blank.store(command["params"]["url"] == "about:blank", Ordering::SeqCst);
+            return Some(vec![cdp_result(command, json!({"frameId": "F1"}))]);
+        }
+        let mut seen = seen.lock().unwrap();
+        let count = seen.entry(method.clone()).or_default();
+        *count += 1;
+        if *count <= refusals {
+            return Some(vec![json!({
+                "id": command["id"],
+                "sessionId": command["sessionId"],
+                "error": {"code": -32_000, "message": CDP_NOT_ATTACHED},
+            })]);
+        }
+        let result = match method.as_str() {
+            "Page.getNavigationHistory" if blank.load(Ordering::SeqCst) => {
+                json!({"currentIndex": 0, "entries": [{"url": "about:blank"}]})
+            }
+            "Page.getNavigationHistory" => json!({"currentIndex": 1, "entries": [
+                {"url": "about:blank"},
+                {"url": "http://192.168.1.1/landed"},
+            ]}),
+            _ => json!({}),
+        };
+        Some(vec![cdp_result(command, result)])
+    })
+}
+
+#[tokio::test]
+async fn page_commands_are_resent_whilst_the_page_reattaches() {
+    let (http, mut commands) = spawn_local_cdp(reattaching_browser(3)).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let opened: Value = serde_json::from_str(
+        &backend
+            .navigate("https://example.com/redirect")
+            .await
+            .expect("navigated"),
+    )
+    .expect("navigate json");
+    backend.blank_page().await.expect("blanked");
+
+    assert_eq!(opened["url"], "http://192.168.1.1/landed");
+    let sent = drain_commands(&mut commands);
+    let count = |method: &str| sent.iter().filter(|c| c["method"] == method).count();
+    // 3 refusals and an answer for the landed URL, then one for the check.
+    assert_eq!(count("Page.getNavigationHistory"), 5);
+    assert_eq!(count("Page.resetNavigationHistory"), 4);
+}
+
+#[tokio::test]
+async fn a_page_still_detached_at_the_deadline_fails_navigation_and_retires_the_browser() {
+    let (http, _commands) = spawn_local_cdp(reattaching_browser(usize::MAX)).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+    let started = std::time::Instant::now();
+
+    let err = backend
+        .navigate("https://example.com/")
+        .await
+        .expect_err("the page never reattached")
+        .to_string();
+
+    // The history read and then the reset each wait out the deadline.
+    assert!(
+        started.elapsed() >= 2 * CDP_REATTACH_DEADLINE,
+        "{:?}",
+        started.elapsed()
+    );
+    assert!(
+        err.contains("could not read the page URL")
+            && err.contains(CDP_NOT_ATTACHED)
+            && err.contains("retired"),
+        "{err}"
+    );
+    assert_retired(&backend).await;
+}
+
 #[tokio::test]
 async fn cloud_browser_releases_its_session_once_a_page_could_not_be_cleared() {
     let (backend, api, _commands) =

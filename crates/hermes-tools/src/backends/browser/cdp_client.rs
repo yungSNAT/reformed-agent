@@ -13,6 +13,17 @@ const CDP_CONSOLE_EVENTS: &[&str] = &["Runtime.consoleAPICalled", "Runtime.excep
 /// know.
 const CDP_SESSION_NOT_FOUND: i64 = -32_001;
 
+/// Chrome's answer to a page command whilst the page's session is between
+/// documents, for some milliseconds after a navigation commits. The command
+/// is refused without running, so it can be sent again.
+const CDP_NOT_ATTACHED: &str = "Not attached to an active page";
+
+/// How long a command refused with [`CDP_NOT_ATTACHED`] keeps being resent,
+/// and how long it waits between attempts. Chromium 157 reattached within
+/// 47 ms in testing.
+const CDP_REATTACH_DEADLINE: Duration = Duration::from_secs(2);
+const CDP_REATTACH_INTERVAL: Duration = Duration::from_millis(25);
+
 type CdpSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -94,10 +105,33 @@ impl CdpConnection {
         Ok(())
     }
 
+    /// [`Self::call_once`], sent again whilst the browser refuses it with
+    /// [`CDP_NOT_ATTACHED`], until [`CDP_REATTACH_DEADLINE`]. The last refusal
+    /// is returned once the deadline passes.
+    async fn call(
+        &mut self,
+        method: &str,
+        params: Value,
+        collect: &[&str],
+    ) -> Result<(Value, Vec<Value>), CdpFailure> {
+        let deadline = tokio::time::Instant::now() + CDP_REATTACH_DEADLINE;
+        loop {
+            match self.call_once(method, params.clone(), collect).await {
+                Err(CdpFailure::Rejected(detail))
+                    if detail.contains(CDP_NOT_ATTACHED)
+                        && tokio::time::Instant::now() < deadline =>
+                {
+                    tokio::time::sleep(CDP_REATTACH_INTERVAL).await;
+                }
+                outcome => return outcome,
+            }
+        }
+    }
+
     /// Send one command and wait for its response, skipping replies to other
     /// ids. Events named in `collect` that belong to this connection's page
     /// are returned in arrival order.
-    async fn call(
+    async fn call_once(
         &mut self,
         method: &str,
         params: Value,
