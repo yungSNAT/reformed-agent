@@ -526,7 +526,9 @@ mod tests {
             assert_eq!(pages[0]["content"], "allowed page");
             assert_eq!(pages[1]["url"], "https://blocked.example/landing");
             assert!(
-                pages[1]["error"].as_str().is_some_and(|e| e.contains("blocked.example")),
+                pages[1]["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("blocked.example")),
                 "{output}"
             );
             assert!(!output.contains("blocklisted page"), "{output}");
