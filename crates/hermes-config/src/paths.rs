@@ -339,7 +339,10 @@ mod tests {
             let notice = upstream_home_notice().expect("notice");
             assert!(!notice.contains('\n'));
             assert!(notice.contains(&user_home.join(".hermes-agent-ultra").display().to_string()));
-            assert!(notice.contains(&format!("HERMES_HOME={}", user_home.join(".hermes").display())));
+            assert!(notice.contains(&format!(
+                "HERMES_HOME={}",
+                user_home.join(".hermes").display()
+            )));
 
             std::env::set_var("HERMES_HOME", user_home.join("chosen"));
             assert_eq!(upstream_home_notice(), None, "HERMES_HOME set");

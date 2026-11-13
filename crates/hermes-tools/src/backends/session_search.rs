@@ -932,11 +932,7 @@ impl SqliteSessionSearchBackend {
     pub fn default_path() -> Result<Self, ToolError> {
         let hermes_dir = hermes_config::hermes_home();
         std::fs::create_dir_all(&hermes_dir).map_err(|e| {
-            ToolError::ExecutionFailed(format!(
-                "Failed to create {}: {}",
-                hermes_dir.display(),
-                e
-            ))
+            ToolError::ExecutionFailed(format!("Failed to create {}: {}", hermes_dir.display(), e))
         })?;
         let db_path = hermes_dir.join("sessions.db");
         Self::new(db_path.to_str().unwrap_or("sessions.db"))

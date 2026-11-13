@@ -297,14 +297,19 @@ mod tests {
         let _global_env = test_lock::lock();
         reset();
         let tmp = tempfile::tempdir().expect("tempdir");
-        for (dir, key) in [(".hermes-agent-ultra", "OWN_HOME_KEY"), (".hermes", "UPSTREAM_HOME_KEY")] {
+        for (dir, key) in [
+            (".hermes-agent-ultra", "OWN_HOME_KEY"),
+            (".hermes", "UPSTREAM_HOME_KEY"),
+        ] {
             std::fs::create_dir_all(tmp.path().join(dir)).expect("home dir");
             std::fs::write(
                 tmp.path().join(dir).join("config.yaml"),
-                format!("terminal:
+                format!(
+                    "terminal:
   env_passthrough:
     - {key}
-"),
+"
+                ),
             )
             .expect("write config");
         }
