@@ -742,7 +742,9 @@ mod tests {
 
     #[test]
     fn test_json_auth_jwt_and_discord_redaction() {
-        let json = redact_sensitive_text(r#"{"apiKey": "sk-proj-abc123def456ghi789jkl012"}"#);
+        // Split so secret scanners do not read the placeholder key as a real one.
+        let fake_key_json = concat!(r#"{"apiKey": "sk-proj-"#, r#"abc123def456ghi789jkl012"}"#);
+        let json = redact_sensitive_text(fake_key_json);
         assert!(!json.contains("abc123def456"));
 
         let auth = redact_sensitive_text("authorization: bearer mytoken123456789012345678");
