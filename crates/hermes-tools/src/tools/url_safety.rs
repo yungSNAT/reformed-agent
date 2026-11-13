@@ -105,9 +105,7 @@ fn mapped_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
 fn embedded_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
     let segments = ip.segments();
     match segments {
-        [0x2002, high, low, ..] => Some(Ipv4Addr::from(
-            (u32::from(high) << 16) | u32::from(low),
-        )),
+        [0x2002, high, low, ..] => Some(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))),
         [0x64, 0xff9b, 0, 0, 0, 0, ..] => Some(Ipv4Addr::from(u128::from(*ip) as u32)),
         _ => ip.to_ipv4(),
     }
