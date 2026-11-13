@@ -102,7 +102,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_PORT = parseInt(process.env.API_PORT || '4747');
-const DIST_DIR = process.argv[2] || './dist';
+const DIST_DIR = path.resolve(process.argv[2] || './dist');
 const PORT = parseInt(process.argv[3] || '8888');
 
 const MIME = {
@@ -126,7 +126,10 @@ function proxyToApi(req, res) {
 }
 
 function serveStatic(req, res) {
-  let filePath = path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
+  // normalize again: on Windows, join keeps '..' after a device name such as NUL:
+  let filePath = path.normalize(path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]));
+  // Refuse request paths whose '..' segments climb out of the dist folder
+  if (!filePath.startsWith(path.join(DIST_DIR, path.sep))) { res.writeHead(404); res.end('Not found'); return; }
   if (!fs.existsSync(filePath)) filePath = path.join(DIST_DIR, 'index.html');
   const ext = path.extname(filePath);
   const mime = MIME[ext] || 'application/octet-stream';
