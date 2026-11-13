@@ -30,13 +30,11 @@ fn env_var_path(var: &str) -> Option<PathBuf> {
 }
 
 fn user_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home)
-    } else if let Ok(home) = std::env::var("USERPROFILE") {
-        PathBuf::from(home)
-    } else {
-        PathBuf::from(".")
-    }
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|home| !home.is_empty())
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
 pub(crate) fn read_json_object(path: &Path) -> Map<String, Value> {

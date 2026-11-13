@@ -41,11 +41,7 @@ impl FileTodoBackend {
     }
 
     pub fn default_path() -> Self {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let path = std::path::Path::new(&home)
-            .join(".hermes")
-            .join("todos.json");
-        Self::new(path)
+        Self::new(hermes_config::hermes_home().join("todos.json"))
     }
 
     fn save(&self, items: &[TodoItem]) -> Result<(), ToolError> {

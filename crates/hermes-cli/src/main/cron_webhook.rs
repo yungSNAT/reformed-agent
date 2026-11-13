@@ -1043,8 +1043,28 @@ async fn run_uninstall(yes: bool) -> Result<(), AgentError> {
     Ok(())
 }
 
-/// Remove `home` when `yes` is set; return what to tell the user.
+/// Remove `home` when `yes` is set; return what to tell the user. Refuses,
+/// with or without `yes`, a home that is upstream Hermes's `~/.hermes`, the
+/// user's home or a folder that holds it, judged after resolving `..` and
+/// symlinks.
 fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentError> {
+    let resolve =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolve(home);
+    let user_home = resolve(&hermes_config::user_home_dir());
+    let refusal = if user_home.starts_with(&resolved) || resolved.parent().is_none() {
+        Some("it is the user's home or holds it")
+    } else if resolved == resolve(&user_home.join(".hermes")) {
+        Some("it is upstream Hermes's home")
+    } else {
+        None
+    };
+    if let Some(reason) = refusal {
+        return Err(AgentError::Config(format!(
+            "Refusing to uninstall {}: {reason}. Set HERMES_HOME to this agent's own home.",
+            home.display()
+        )));
+    }
     if !yes {
         return Ok(format!(
             "Uninstall would remove {} and everything in it. Re-run with `hermes uninstall --yes` to remove it.",

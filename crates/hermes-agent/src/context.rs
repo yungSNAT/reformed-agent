@@ -706,17 +706,12 @@ pub fn load_soul_md_from_home(hermes_home_override: Option<&str>) -> Option<Stri
     load_soul_md_from(&soul_path)
 }
 
-fn resolve_hermes_home(hermes_home_override: Option<&str>) -> PathBuf {
+/// The configured home, else this agent's own home; never upstream's
+/// `~/.hermes`.
+pub(crate) fn resolve_hermes_home(hermes_home_override: Option<&str>) -> PathBuf {
     hermes_home_override
         .map(PathBuf::from)
-        .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-        .or_else(|| {
-            std::env::var("HERMES_AGENT_ULTRA_HOME")
-                .ok()
-                .map(PathBuf::from)
-        })
-        .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-        .unwrap_or_else(|| PathBuf::from(".hermes"))
+        .unwrap_or_else(crate::memory_plugins::default_hermes_home)
 }
 
 fn builtin_personality(name: &str) -> Option<&'static str> {
@@ -880,11 +875,7 @@ fn render_memory_block(target: &str, entries: &[String]) -> Option<String> {
 pub fn load_builtin_memory_snapshot(
     hermes_home_override: Option<&str>,
 ) -> (Option<String>, Option<String>) {
-    let base = hermes_home_override
-        .map(PathBuf::from)
-        .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-        .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-        .unwrap_or_else(|| PathBuf::from(".hermes"));
+    let base = resolve_hermes_home(hermes_home_override);
     let memory_dir = base.join("memories");
     let memory_path = memory_dir.join("MEMORY.md");
     let user_path = memory_dir.join("USER.md");

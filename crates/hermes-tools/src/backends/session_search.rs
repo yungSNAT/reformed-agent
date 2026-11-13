@@ -927,12 +927,16 @@ impl SqliteSessionSearchBackend {
         })
     }
 
-    /// Open or create the default sessions database at ~/.hermes/sessions.db.
+    /// Open or create the default sessions database, `sessions.db` in the
+    /// home directory.
     pub fn default_path() -> Result<Self, ToolError> {
-        let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-        let hermes_dir = std::path::Path::new(&home).join(".hermes");
+        let hermes_dir = hermes_config::hermes_home();
         std::fs::create_dir_all(&hermes_dir).map_err(|e| {
-            ToolError::ExecutionFailed(format!("Failed to create ~/.hermes: {}", e))
+            ToolError::ExecutionFailed(format!(
+                "Failed to create {}: {}",
+                hermes_dir.display(),
+                e
+            ))
         })?;
         let db_path = hermes_dir.join("sessions.db");
         Self::new(db_path.to_str().unwrap_or("sessions.db"))

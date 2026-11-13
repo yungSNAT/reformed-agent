@@ -129,15 +129,14 @@ pub fn normalize_hermes_home_env() {
     }
 }
 
-/// Best-effort home directory resolution.
-fn user_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home)
-    } else if let Ok(home) = std::env::var("USERPROFILE") {
-        PathBuf::from(home)
-    } else {
-        PathBuf::from(".")
-    }
+/// The user's home directory: `HOME`, else `USERPROFILE`, ignoring empty
+/// values; `.` when neither is set.
+pub fn user_home_dir() -> PathBuf {
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|home| !home.is_empty())
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
 /// Hermes state root directory (same rule as CLI `--config-dir` / gateway data).

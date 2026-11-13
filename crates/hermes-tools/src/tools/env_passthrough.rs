@@ -21,7 +21,14 @@ fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_
 }
 
 fn load_config_passthrough_uncached() -> BTreeSet<String> {
-    let path = hermes_config::hermes_home().join("config.yaml");
+    let home = hermes_config::hermes_home();
+    // A relative home (no HOME or USERPROFILE) sits in the working folder,
+    // which a cloned repository controls; its config must not choose which
+    // host variables reach the terminal.
+    if home.is_relative() {
+        return BTreeSet::new();
+    }
+    let path = home.join("config.yaml");
     let Ok(raw) = std::fs::read_to_string(path) else {
         return BTreeSet::new();
     };

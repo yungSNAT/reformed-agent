@@ -82,14 +82,7 @@ impl AgentLoop {
     }
 
     fn hook_context_spill_dir(&self) -> PathBuf {
-        let hermes_home = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-            .unwrap_or_else(|| PathBuf::from(".hermes"));
+        let hermes_home = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref());
         hermes_home.join("hooks").join("spills")
     }
 
@@ -495,23 +488,7 @@ impl AgentLoop {
         if !has_skills_tools {
             return None;
         }
-        let skills_dir = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var("HERMES_HOME")
-                    .ok()
-                    .map(std::path::PathBuf::from)
-            })
-            .map(|home| home.join("skills"))
-            .unwrap_or_else(|| {
-                dirs::home_dir()
-                    .unwrap_or_else(|| std::path::PathBuf::from("."))
-                    .join(".hermes")
-                    .join("skills")
-            });
+        let skills_dir = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref()).join("skills");
         let mut orch = SkillOrchestrator::new(skills_dir.clone());
         orch.set_enabled_disabled(&self.config.enabled_skills, &self.config.disabled_skills);
         let commands = orch.scan_skill_commands();
@@ -669,18 +646,7 @@ impl AgentLoop {
             sections.push(format!("## Workspace Context\n{}", workspace));
         }
 
-        let hermes_home = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                std::env::var("HERMES_HOME")
-                    .ok()
-                    .map(std::path::PathBuf::from)
-            })
-            .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-            .unwrap_or_else(|| std::path::PathBuf::from(".hermes"));
+        let hermes_home = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref());
 
         let personal_ctx = load_hermes_context_files(&hermes_home);
         if !personal_ctx.trim().is_empty() {
