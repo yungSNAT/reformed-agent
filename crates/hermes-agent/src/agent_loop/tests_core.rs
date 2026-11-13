@@ -312,18 +312,33 @@
         );
 
         let own = tmp.path().join(".hermes-agent-ultra");
-        assert_eq!(agent.hook_context_spill_dir(), own.join("hooks").join("spills"));
-        assert_eq!(agent.auth_tokens_path(), own.join("auth").join("tokens.json"));
-        assert_eq!(
-            agent.objective_runtime_ledger_path(),
-            own.join("alpha").join("objective_runtime_ledger.jsonl")
-        );
-        assert_eq!(
-            agent.objective_eval_trend_path(),
-            own.join("alpha").join("objective_eval_trend.json")
-        );
-        assert_eq!(crate::context::load_builtin_memory_snapshot(None), (None, None));
-        assert!(claim_verifier_enabled_runtime());
+        let checks = [
+            (
+                "hook spills",
+                agent.hook_context_spill_dir() == own.join("hooks").join("spills"),
+            ),
+            (
+                "auth tokens",
+                agent.auth_tokens_path() == own.join("auth").join("tokens.json"),
+            ),
+            (
+                "runtime ledger",
+                agent.objective_runtime_ledger_path()
+                    == own.join("alpha").join("objective_runtime_ledger.jsonl"),
+            ),
+            (
+                "eval trend",
+                agent.objective_eval_trend_path()
+                    == own.join("alpha").join("objective_eval_trend.json"),
+            ),
+            (
+                "memory snapshot",
+                crate::context::load_builtin_memory_snapshot(None) == (None, None),
+            ),
+            ("claim verifier policy", claim_verifier_enabled_runtime()),
+        ];
+        let wrong: Vec<_> = checks.iter().filter(|(_, ok)| !ok).map(|(name, _)| *name).collect();
+        assert!(wrong.is_empty(), "read or written outside the own home: {wrong:?}");
     }
 
     #[test]

@@ -1303,17 +1303,25 @@ mod tests {
             .expect("todo create");
 
         let own = home.path().join(".hermes-agent-ultra");
-        let memory_file = std::fs::read_to_string(own.join("memories").join("MEMORY.md"))
-            .expect("own memory file");
-        assert!(memory_file.contains("own note"), "{memory_file}");
-        assert!(own.join("todos.json").is_file());
-        assert!(own.join("sessions.db").is_file());
-        assert_eq!(
-            std::fs::read_to_string(upstream.join("memories").join("MEMORY.md")).unwrap(),
-            "upstream\n"
-        );
-        assert!(!upstream.join("todos.json").exists());
-        assert!(!upstream.join("sessions.db").exists());
+        let read = |path: std::path::PathBuf| std::fs::read_to_string(path).unwrap_or_default();
+        let memory_md = |root: &std::path::Path| root.join("memories").join("MEMORY.md");
+        let checks = [
+            (
+                "memory",
+                read(memory_md(&own)).contains("own note")
+                    && read(memory_md(&upstream)) == "upstream\n",
+            ),
+            (
+                "todos",
+                own.join("todos.json").is_file() && !upstream.join("todos.json").exists(),
+            ),
+            (
+                "session search",
+                own.join("sessions.db").is_file() && !upstream.join("sessions.db").exists(),
+            ),
+        ];
+        let wrong: Vec<_> = checks.iter().filter(|(_, ok)| !ok).map(|(name, _)| *name).collect();
+        assert!(wrong.is_empty(), "written outside the own home: {wrong:?}");
     }
 
     #[test]
