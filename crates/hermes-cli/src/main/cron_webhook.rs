@@ -1067,7 +1067,7 @@ fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentErro
     }
     if !yes {
         return Ok(format!(
-            "Uninstall would remove {} and everything in it. Re-run with `hermes uninstall --yes` to remove it.",
+            "Uninstall would remove {} and everything in it. Re-run uninstall with --yes to remove it.",
             home.display()
         ));
     }
