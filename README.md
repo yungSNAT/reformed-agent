@@ -10,8 +10,27 @@ Translations of an earlier README, which predate this fork: [中文](./README_ZH
 - **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
 - **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
 - **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
-- **Drift:** upstream has moved since the pin. Against upstream `main` at `6933155e` on 10 November 2026, the slash gate reported 21 commands missing and the surface gate 192 of 3,088 checked entries missing. Moving the pin forward is the next parity work.
+- **Drift:** upstream has moved since the pin. The daily [Parity Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/parity-audit.yml) run reports the current gap against upstream `main` in its job summary. Moving the pin forward is the next parity work.
 - **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
+- **Footprint:** measured on 13 November 2026 against Hermes Agent v0.23.1 (see the table below).
+
+| Measure | Reformed Agent at `5cdde8fd` | Hermes Agent v0.23.1 (`3b421578`) |
+| --- | --- | --- |
+| Installed size | 59.7 MB binary (21.0 MB as the release `.tar.gz`) | 901.6 MB install directory, 2.68 GB home after install |
+| `--version`, cold page cache | 35.5 ms, 13.9 MiB peak RSS | 881 ms, 36.5 MiB peak RSS |
+| `--version`, warm | 4.6 ms, 13.9 MiB | 353 ms, 37.0 MiB |
+| `doctor`, cold page cache | 55.0 ms, 14.2 MiB | not comparable (see below) |
+| `doctor`, warm | 9.2 ms, 14.3 MiB | not comparable |
+
+Method:
+
+- Machine: one x86_64 Linux machine (AMD Ryzen 7 4800H, 4 CPU threads available to the run, 31 GiB RAM) running CachyOS with Linux 7.3.3 and rustc 1.99.1. It was not idle: the load average was 2.46 before the runs and 2.35 after.
+- Network: none. Both tools ran in a network namespace with no interfaces up, each in its own scratch home (empty before the first run for Reformed, as the installer left it for Hermes), with no account or key.
+- Builds: Reformed was built with `cargo build --locked --release -p hermes-cli --bin hermes-agent-ultra`. Hermes was installed by its own installer (`install.sh --non-interactive --skip-browser --skip-computer-use`).
+- Figures: wall-clock medians of 5 cold runs (page cache dropped before each) and 10 warm runs. Peak RSS is the largest resident set of any process in the run.
+- Hermes `doctor`: it runs 44 network connectivity checks, so offline it took about 95 s and exited 1. That is not a start-up time.
+
+These are start-up and size figures from 1 machine, not a general speed comparison.
 
 Repo-local CI is the authoritative gate for development and release confidence.
 GitHub Actions are a hosted mirror of the repo contract when they run; they are
@@ -141,10 +160,10 @@ One-shot query:
 hermes-ultra chat --query "summarize this repository"
 ```
 
-Gateway mode:
+Gateway mode, in the foreground. Without chat platforms the gateway serves only cron jobs and HTTP webhooks; `hermes-ultra gateway setup` enables platforms:
 
 ```bash
-hermes-ultra gateway --live
+hermes-ultra gateway run
 ```
 
 ## Skip API-key collection With Nous Portal
@@ -368,23 +387,6 @@ Ultra uses controlled sync workflows, not blind merges.
 - Parity artifacts:
   - `docs/parity/`
   - `.sync-reports/`
-
-The block below is generated from the last sync report Ultra recorded. It is
-older than this fork; [Status](#status) has the current measurements.
-
-<!-- BEGIN:ULTRA_SYNC_STATUS -->
-### Live Upstream Sync Status (auto-generated)
-
-- Generated at: `20260504-053352`
-- Source report: [`upstream-sync-20260504-053352.txt`](./.sync-reports/upstream-sync-20260504-053352.txt)
-- Sync timestamp (`timestamp_utc`): `20260504-053352`
-- `origin/main` at sync: `1861c5dcfb8cad8dcddb5f15c1a5a8c34c7f1ce2`
-- `upstream/main` at sync: `95f395027f72c69f06bddcecb08da53cfd10c440`
-- Pending commits captured in report: `1512`
-- Queue summary (`docs/parity/upstream-missing-queue.json`): pending `121`, ported `266`, superseded `5499`
-- Parity gates (`docs/parity/global-parity-proof.json`): release `fail`, ci `fail`
-- Workstream snapshot (`docs/parity/workstream-status.json`): `upstream/main` @ `55cb4103beba5822303c06b662635e1491ae72f5` (generated `2026-06-13T16:15:14-06:00`)
-<!-- END:ULTRA_SYNC_STATUS -->
 
 Note: this repository intentionally tracks parity via queue/gate workflows because upstream and ultra history can diverge materially.
 
