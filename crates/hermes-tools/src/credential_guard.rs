@@ -1025,7 +1025,7 @@ mod tests {
     }
 
     #[test]
-    fn write_deny_expands_tilde_only_once() {
+    fn write_deny_does_not_take_an_expanded_tilde_path_for_a_user_name() {
         // With `HOME` empty the backend writes `~/~draft/notes.txt` to
         // `~draft/notes.txt` under the process directory: not a `~user` path.
         let denied = with_env(
@@ -1037,9 +1037,13 @@ mod tests {
             || is_write_denied(Path::new("~/~draft/notes.txt")),
         );
         assert!(!denied);
-        // It writes `~/~/notes.txt` to `~/notes.txt` under the process
-        // directory, so a safe root that holds only the account's
-        // `~/notes.txt` must not admit it.
+    }
+
+    #[test]
+    fn write_deny_expands_tilde_only_once() {
+        // With `HOME` empty the backend writes `~/~/notes.txt` to
+        // `~/notes.txt` under the process directory, so a safe root that
+        // holds only the account's `~/notes.txt` must not admit it.
         let account_home = with_env(&[("HOME", Some(Path::new("")))], dirs::home_dir)
             .expect("the account's home directory");
         let denied = with_env(
