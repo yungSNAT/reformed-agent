@@ -1987,6 +1987,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "dirs",
  "futures",
  "hermes-config",
  "hermes-core",

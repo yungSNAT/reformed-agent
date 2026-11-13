@@ -942,6 +942,24 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_allows_the_shared_temporary_directory_on_macos() {
+        // macOS `/var/tmp` resolves to `/private/var/tmp`.
+        assert!(!is_write_denied_with_roots(
+            Path::new("/private/var/tmp/scratch.txt"),
+            None,
+            None
+        ));
+    }
+
+    #[test]
+    fn write_deny_keeps_home_rules_when_home_is_empty() {
+        let denied = with_env(&[("HOME", Some(Path::new("")))], || {
+            dirs::home_dir().map(|home| is_write_denied(&home.join(".ssh/authorized_keys")))
+        });
+        assert_eq!(denied, Some(true));
+    }
+
+    #[test]
     fn write_safe_root_expands_tilde_and_ignores_absent_root() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
