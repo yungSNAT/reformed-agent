@@ -330,6 +330,11 @@ impl<T: CloudBrowserSession> CdpChannel for T {
         }
         outcome.map_err(|failure| cloud_cdp_error(T::PROVIDER, method, failure))
     }
+
+    /// The next command starts a new session, with its own page and history.
+    async fn retire_page(&self) {
+        release_lost_session(self).await;
+    }
 }
 
 /// Release a session whose connection was lost: the vendor may already have
@@ -381,6 +386,10 @@ trait CdpChannel: Send + Sync {
     fn next_navigate_timeout(&self) -> Duration {
         cdp_open_timeout(false)
     }
+
+    /// Make sure no later command reaches the current page, once clearing
+    /// it has failed.
+    async fn retire_page(&self);
 
     async fn cdp_command(&self, method: &str, params: Value) -> Result<Value, ToolError> {
         let (result, _) = self
@@ -517,11 +526,12 @@ async fn cdp_navigate<C: CdpChannel>(channel: &C, url: &str) -> Result<String, T
     match cdp_current_url(channel).await {
         Ok(landed) => Ok(json!({"status": "navigated", "url": landed, "cdp": result}).to_string()),
         Err(detail) => {
-            if let Err(blank) = cdp_blank_page(channel).await {
-                tracing::warn!("Unchecked page left open; blanking failed: {blank}");
-            }
+            let cleared = match cdp_blank_page(channel).await {
+                Ok(_) => String::new(),
+                Err(blank) => format!("; {}", tool_error_message(blank)),
+            };
             Err(ToolError::ExecutionFailed(format!(
-                "Opened {url} but could not read the page URL: {detail}"
+                "Opened {url} but could not read the page URL: {detail}{cleared}"
             )))
         }
     }
@@ -542,8 +552,23 @@ async fn cdp_current_url<C: CdpChannel>(channel: &C) -> Result<String, String> {
 }
 
 /// Open `about:blank` and clear the history, so going back cannot reopen the
-/// page that was shown. Fails unless the blank page is all that is left.
+/// page that was shown. If that fails, the page is retired and the error
+/// says so.
 async fn cdp_blank_page<C: CdpChannel>(channel: &C) -> Result<String, ToolError> {
+    match cdp_clear_page(channel).await {
+        Ok(()) => Ok(json!({"status": "blank"}).to_string()),
+        Err(err) => {
+            channel.retire_page().await;
+            Err(ToolError::ExecutionFailed(format!(
+                "the page could not be cleared ({}), so the browser session was retired",
+                tool_error_message(err)
+            )))
+        }
+    }
+}
+
+/// Fails unless `about:blank` is the only page left in the history.
+async fn cdp_clear_page<C: CdpChannel>(channel: &C) -> Result<(), ToolError> {
     let opened = channel
         .cdp_command("Page.navigate", json!({"url": "about:blank"}))
         .await?;
@@ -559,9 +584,7 @@ async fn cdp_blank_page<C: CdpChannel>(channel: &C) -> Result<String, ToolError>
         .cdp_command("Page.getNavigationHistory", json!({}))
         .await?;
     match history["entries"].as_array().map(Vec::as_slice) {
-        Some([entry]) if entry["url"] == "about:blank" => {
-            Ok(json!({"status": "blank"}).to_string())
-        }
+        Some([entry]) if entry["url"] == "about:blank" => Ok(()),
         _ => Err(ToolError::ExecutionFailed(
             "The browser history still holds the previous page".into(),
         )),

@@ -646,6 +646,9 @@ pub struct CdpBrowserBackend {
     /// Set by `from_env` when no CDP override chose the endpoint. An override,
     /// or an endpoint given to `new`, may be off-host, so it counts as remote.
     local: bool,
+    /// Set when a refused page could not be cleared; every later command
+    /// fails rather than reach it.
+    retired: AtomicBool,
 }
 
 /// CamoFox anti-detection browser backend (compat layer).

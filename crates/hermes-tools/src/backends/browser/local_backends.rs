@@ -25,6 +25,7 @@ impl CdpBrowserBackend {
             client: reqwest::Client::new(),
             first_navigation: AtomicBool::new(true),
             local: false,
+            retired: AtomicBool::new(false),
         }
     }
 
@@ -47,6 +48,11 @@ impl CdpBrowserBackend {
         params: Value,
         collect: &[&str],
     ) -> Result<(Value, Vec<Value>), ToolError> {
+        if self.retired.load(Ordering::SeqCst) {
+            return Err(ToolError::ExecutionFailed(
+                "The browser was retired because a refused page could not be cleared; restart Hermes to use it again".into(),
+            ));
+        }
         let mut connection = CdpConnection::open_attached(&self.client, &self.endpoint)
             .await
             .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
@@ -73,6 +79,10 @@ impl CdpChannel for CdpBrowserBackend {
                 timeout,
             ))),
         }
+    }
+
+    async fn retire_page(&self) {
+        self.retired.store(true, Ordering::SeqCst);
     }
 
     /// The first navigation gets a longer allowance for Chrome's cold start.

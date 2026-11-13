@@ -1211,7 +1211,8 @@ async fn cdp_navigate_blanks_the_page_when_the_landed_page_is_unknown() {
         .expect_err("no history entry");
 
     assert!(
-        err.to_string().contains("could not read the page URL"),
+        err.to_string().contains("could not read the page URL")
+            && err.to_string().contains("retired"),
         "{err}"
     );
     let mut expected = vec![
@@ -1243,17 +1244,82 @@ async fn cdp_blank_page_clears_the_history_so_back_cannot_reopen_the_page() {
     backend.blank_page().await.expect("blanked");
 
     assert_eq!(page_methods(&mut commands), blanking_commands());
+}
 
-    let (http, _commands) = spawn_local_cdp(history_after_reset(json!([
+/// Fail unless `backend` refuses to go back or read the page.
+async fn assert_retired(backend: &CdpBrowserBackend) {
+    for err in [
+        backend
+            .go_back()
+            .await
+            .expect_err("back after a failed clear"),
+        backend
+            .snapshot()
+            .await
+            .expect_err("snapshot after a failed clear"),
+    ] {
+        assert!(err.to_string().contains("retired"), "{err}");
+    }
+}
+
+#[tokio::test]
+async fn local_browser_refuses_every_command_once_a_page_could_not_be_cleared() {
+    // The history still holds the refused page after the reset.
+    let (http, mut commands) = spawn_local_cdp(history_after_reset(json!([
         {"url": "http://192.168.1.1/internal"},
         {"url": "about:blank"},
     ])))
     .await;
-    let err = CdpBrowserBackend::new(http.uri())
+    let backend = CdpBrowserBackend::new(http.uri());
+    let err = backend
         .blank_page()
         .await
         .expect_err("the refused page is still one entry back");
-    assert!(err.to_string().contains("still holds"), "{err}");
+    assert!(
+        err.to_string().contains("still holds") && err.to_string().contains("retired"),
+        "{err}"
+    );
+    assert_retired(&backend).await;
+    assert_eq!(page_methods(&mut commands), blanking_commands());
+
+    // The browser could not open about:blank.
+    let (http, mut commands) = spawn_local_cdp(answer_all(
+        json!({"frameId": "F1", "errorText": "net::ERR_ABORTED"}),
+    ))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+    let err = backend
+        .blank_page()
+        .await
+        .expect_err("blank navigation failed");
+    assert!(err.to_string().contains("ERR_ABORTED"), "{err}");
+    assert_retired(&backend).await;
+    assert_eq!(
+        page_methods(&mut commands),
+        [(json!("Page.navigate"), json!("about:blank"))]
+    );
+}
+
+#[tokio::test]
+async fn cloud_browser_releases_its_session_once_a_page_could_not_be_cleared() {
+    let (backend, api, _commands) =
+        browserbase_on(remote_browser(|command| match command["method"].as_str() {
+            Some("Page.getNavigationHistory") => json!({"currentIndex": 1, "entries": [
+                {"url": "http://192.168.1.1/internal"},
+                {"url": "about:blank"},
+            ]}),
+            _ => json!({}),
+        }))
+        .await;
+
+    let err = backend
+        .blank_page()
+        .await
+        .expect_err("the refused page is still one entry back");
+
+    assert!(err.to_string().contains("retired"), "{err}");
+    assert!(backend.session.lock().await.is_none());
+    api.verify().await;
 }
 
 #[test]

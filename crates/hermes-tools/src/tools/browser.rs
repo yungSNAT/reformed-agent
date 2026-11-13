@@ -70,18 +70,25 @@ impl ToolHandler for BrowserNavigateHandler {
         let local = self.backend.is_local_backend();
         check_navigation(url, local, false).await?;
         let result = self.backend.navigate(url).await?;
+        // Checked even when unchanged: the host may resolve or be listed
+        // differently now than before navigating.
         let landed = serde_json::from_str::<Value>(&result)
             .ok()
-            .and_then(|value| value.get("url")?.as_str().map(str::to_string));
-        if let Some(landed) = landed.filter(|landed| landed != url) {
-            if let Err(err) = check_navigation(&landed, local, true).await {
-                // Leave the refused page neither open nor in the history, so
-                // neither a snapshot nor going back reaches it.
-                if let Err(blank) = self.backend.blank_page().await {
-                    tracing::warn!("Refused page left open; blanking failed: {blank}");
+            .and_then(|value| value.get("url")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| url.to_string());
+        if let Err(err) = check_navigation(&landed, local, true).await {
+            // Leave the refused page neither open nor in the history, so
+            // neither a snapshot nor going back reaches it.
+            let message = |e: ToolError| match e {
+                ToolError::ExecutionFailed(message) => message,
+                other => other.to_string(),
+            };
+            return Err(match self.backend.blank_page().await {
+                Ok(_) => err,
+                Err(blank) => {
+                    ToolError::ExecutionFailed(format!("{}; {}", message(err), message(blank)))
                 }
-                return Err(err);
-            }
+            });
         }
         Ok(result)
     }
@@ -633,7 +640,7 @@ mod tests {
     /// a directory whose `config.yaml`, if any, is `config`, so no real
     /// config applies.
     struct CheckEnv {
-        _home: tempfile::TempDir,
+        home: tempfile::TempDir,
         original: Option<String>,
         _private_urls: std::sync::MutexGuard<'static, ()>,
         _global: std::sync::MutexGuard<'static, ()>,
@@ -652,13 +659,23 @@ mod tests {
             let original = std::env::var("HERMES_HOME").ok();
             std::env::set_var("HERMES_HOME", home.path());
             Self {
-                _home: home,
+                home,
                 original,
                 _private_urls: private_urls,
                 _global: global,
             }
         }
     }
+
+    impl CheckEnv {
+        fn config_path(&self) -> std::path::PathBuf {
+            self.home.path().join("config.yaml")
+        }
+    }
+
+    /// A config that blocklists 93.184.215.14.
+    const BLOCK_93: &str =
+        "security:\n  website_blocklist:\n    enabled: true\n    domains:\n      - \"93.184.215.14\"\n";
 
     impl Drop for CheckEnv {
         fn drop(&mut self) {
@@ -670,11 +687,15 @@ mod tests {
     }
 
     /// Lands on `landed` when set, else where it was sent, and records each
-    /// URL it opens.
+    /// URL it opens. Writes `BLOCK_93` to `block_on_open` when opening a page,
+    /// and fails to blank the page with `blank_error`.
+    #[derive(Default)]
     struct NavBackend {
         local: bool,
         landed: Option<&'static str>,
         opened: std::sync::Mutex<Vec<String>>,
+        block_on_open: Option<std::path::PathBuf>,
+        blank_error: Option<&'static str>,
     }
 
     impl NavBackend {
@@ -682,7 +703,7 @@ mod tests {
             std::sync::Arc::new(Self {
                 local,
                 landed,
-                opened: std::sync::Mutex::new(Vec::new()),
+                ..Self::default()
             })
         }
 
@@ -695,11 +716,17 @@ mod tests {
     impl BrowserBackend for NavBackend {
         async fn navigate(&self, url: &str) -> Result<String, ToolError> {
             self.opened.lock().unwrap().push(url.to_string());
+            if let Some(config) = &self.block_on_open {
+                std::fs::write(config, BLOCK_93).unwrap();
+            }
             Ok(json!({"status": "navigated", "url": self.landed.unwrap_or(url)}).to_string())
         }
         async fn blank_page(&self) -> Result<String, ToolError> {
             self.opened.lock().unwrap().push("blank_page".into());
-            Ok(json!({"status": "blank"}).to_string())
+            match self.blank_error {
+                Some(error) => Err(ToolError::ExecutionFailed(error.into())),
+                None => Ok(json!({"status": "blank"}).to_string()),
+            }
         }
         fn is_local_backend(&self) -> bool {
             self.local
@@ -836,9 +863,7 @@ mod tests {
 
     #[tokio::test]
     async fn website_blocklist_applies_to_every_backend_before_and_after_opening() {
-        let _env = CheckEnv::new(
-            "security:\n  website_blocklist:\n    enabled: true\n    domains:\n      - \"93.184.215.14\"\n",
-        );
+        let _env = CheckEnv::new(BLOCK_93);
         for local in [false, true] {
             let backend = NavBackend::new(local, None);
             assert_refused(
@@ -854,6 +879,41 @@ mod tests {
             "matches website blocklist rule",
         );
         assert_eq!(local.opened(), ["http://10.0.0.5/", "blank_page"]);
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_landed_url_is_checked_again_after_opening() {
+        let env = CheckEnv::new("");
+        let url = "https://93.184.215.14/";
+        let backend = std::sync::Arc::new(NavBackend {
+            local: true,
+            block_on_open: Some(env.config_path()),
+            ..NavBackend::default()
+        });
+
+        assert_refused(open(&backend, url).await, "matches website blocklist rule");
+        assert_eq!(backend.opened(), [url, "blank_page"]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_page_that_could_not_be_cleared_is_reported() {
+        let _env = CheckEnv::new("");
+        let backend = std::sync::Arc::new(NavBackend {
+            landed: Some("http://192.168.1.1/internal"),
+            blank_error: Some("the browser session was retired"),
+            ..NavBackend::default()
+        });
+
+        let err = open(&backend, "https://93.184.215.14/redirect")
+            .await
+            .expect_err("refused redirect")
+            .to_string();
+
+        assert!(
+            err.contains("redirect landed on a private/internal address")
+                && err.contains("the browser session was retired"),
+            "{err}"
+        );
     }
 
     #[tokio::test]
