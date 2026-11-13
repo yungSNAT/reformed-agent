@@ -53,10 +53,11 @@ function proxyToApi(req, res) {
 
 function serveStatic(req, res) {
   const urlPath = req.url.split('?')[0];
-  let filePath = path.join(DIST_DIR, urlPath === '/' ? 'index.html' : urlPath);
+  // normalize again: on Windows, join keeps '..' after a device name such as NUL:
+  let filePath = path.normalize(path.join(DIST_DIR, urlPath === '/' ? 'index.html' : urlPath));
 
   // Refuse request paths whose '..' segments climb out of the dist folder
-  if (!filePath.startsWith(DIST_DIR + path.sep)) {
+  if (!filePath.startsWith(path.join(DIST_DIR, path.sep))) {
     res.writeHead(404, { 'Content-Type': 'text/plain' });
     res.end('Not found');
     return;

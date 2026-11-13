@@ -126,9 +126,10 @@ function proxyToApi(req, res) {
 }
 
 function serveStatic(req, res) {
-  let filePath = path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
+  // normalize again: on Windows, join keeps '..' after a device name such as NUL:
+  let filePath = path.normalize(path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]));
   // Refuse request paths whose '..' segments climb out of the dist folder
-  if (!filePath.startsWith(DIST_DIR + path.sep)) { res.writeHead(404); res.end('Not found'); return; }
+  if (!filePath.startsWith(path.join(DIST_DIR, path.sep))) { res.writeHead(404); res.end('Not found'); return; }
   if (!fs.existsSync(filePath)) filePath = path.join(DIST_DIR, 'index.html');
   const ext = path.extname(filePath);
   const mime = MIME[ext] || 'application/octet-stream';
