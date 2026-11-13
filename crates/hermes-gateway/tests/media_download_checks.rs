@@ -92,6 +92,39 @@ async fn redirects_to_allowed_addresses_are_followed() {
 }
 
 #[tokio::test]
+async fn redirect_limit_matches_reqwests_default_of_10() {
+    let server = MockServer::start().await;
+    for i in 0..11 {
+        redirect_to(&server, &format!("/r{i}"), &format!("/r{}", i + 1)).await;
+    }
+    Mock::given(method("GET"))
+        .and(path("/r11"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .insert_header("content-type", "image/png")
+                .set_body_bytes(PNG),
+        )
+        .mount(&server)
+        .await;
+
+    let dir = tempfile::tempdir().unwrap();
+    let cache = cache(&dir, 0);
+    // /r1 reaches /r11 in 10 redirects; /r0 needs 11.
+    let cached = cache
+        .cache_image(&format!("{}/r1", server.uri()), "ten.png")
+        .await
+        .unwrap();
+    assert_eq!(std::fs::read(cached).unwrap(), PNG);
+
+    let err = cache
+        .cache_image(&format!("{}/r0", server.uri()), "eleven.png")
+        .await
+        .unwrap_err();
+    assert!(err.to_string().contains("too many redirects"), "{err}");
+    assert!(!dir.path().join("images/eleven.png").exists());
+}
+
+#[tokio::test]
 async fn cache_file_rejects_oversized_content_length_before_body() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
