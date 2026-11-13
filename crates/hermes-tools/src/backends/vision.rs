@@ -204,35 +204,8 @@ fn is_blocked_image_host(host: &str) -> bool {
     {
         return true;
     }
-    if let Ok(ip) = host.parse::<IpAddr>() {
-        return match ip {
-            IpAddr::V4(v4) => {
-                let o = v4.octets();
-                v4.is_loopback()
-                    || v4.is_private()
-                    || v4.is_link_local()
-                    || v4.is_unspecified()
-                    || v4.is_multicast()
-                    || (o[0] == 100 && (64..=127).contains(&o[1]))
-                    || (o[0] == 198 && (18..=19).contains(&o[1]))
-            }
-            IpAddr::V6(v6) => {
-                v6.is_loopback()
-                    || v6.is_unspecified()
-                    || v6.is_multicast()
-                    || (v6.segments()[0] & 0xffc0) == 0xfe80
-                    || (v6.segments()[0] & 0xfe00) == 0xfc00
-                    || v6.to_ipv4_mapped().is_some_and(|v4| {
-                        let o = v4.octets();
-                        v4.is_loopback()
-                            || v4.is_private()
-                            || v4.is_link_local()
-                            || (o[0] == 100 && (64..=127).contains(&o[1]))
-                    })
-            }
-        };
-    }
-    false
+    host.parse::<IpAddr>()
+        .is_ok_and(|ip| crate::tools::url_safety::is_blocked_ip(&ip))
 }
 
 pub(crate) fn validate_image_url_for_vision(image_url: &str) -> bool {
@@ -417,6 +390,22 @@ mod tests {
             "http://169.254.169.254/latest"
         ));
         assert!(!validate_image_url_for_vision("http://[::1]/"));
+    }
+
+    #[test]
+    fn image_url_validation_judges_ipv6_forms_by_the_ipv4_address_they_carry() {
+        for url in [
+            "http://[64:ff9b::7f00:1]/",
+            "http://[64:ff9b::a9fe:a9fe]/latest",
+            "http://[2002:c0a8:101::1]/",
+            "http://[::a00:1]/",
+        ] {
+            assert!(
+                !validate_image_url_for_vision(url),
+                "{url} should be refused"
+            );
+        }
+        assert!(validate_image_url_for_vision("http://[64:ff9b::808:808]/"));
     }
 
     #[test]
