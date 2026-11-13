@@ -1180,9 +1180,28 @@ async fn cdp_navigate_reports_the_page_it_landed_on() {
     assert_eq!(opened["url"], "http://192.168.1.1/internal");
 }
 
+/// The page commands `commands` recorded, as method and URL parameter.
+fn page_methods(
+    commands: &mut tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
+) -> Vec<(Value, Value)> {
+    drain_commands(commands)
+        .into_iter()
+        .map(|command| (command["method"].clone(), command["params"]["url"].clone()))
+        .collect()
+}
+
+/// The command sequence that blanks the page and clears its history.
+fn blanking_commands() -> Vec<(Value, Value)> {
+    vec![
+        (json!("Page.navigate"), json!("about:blank")),
+        (json!("Page.resetNavigationHistory"), Value::Null),
+        (json!("Page.getNavigationHistory"), Value::Null),
+    ]
+}
+
 #[tokio::test]
-async fn cdp_navigate_fails_when_the_landed_page_is_unknown() {
-    let (http, _commands) =
+async fn cdp_navigate_blanks_the_page_when_the_landed_page_is_unknown() {
+    let (http, mut commands) =
         spawn_local_cdp(answer_all(json!({"frameId": "F1", "loaderId": "L1"}))).await;
     let backend = CdpBrowserBackend::new(http.uri());
 
@@ -1195,6 +1214,46 @@ async fn cdp_navigate_fails_when_the_landed_page_is_unknown() {
         err.to_string().contains("could not read the page URL"),
         "{err}"
     );
+    let mut expected = vec![
+        (json!("Page.navigate"), json!("https://example.com/")),
+        (json!("Page.getNavigationHistory"), Value::Null),
+    ];
+    expected.extend(blanking_commands());
+    assert_eq!(page_methods(&mut commands), expected);
+}
+
+/// A browser whose history after a reset is `entries`.
+fn history_after_reset(entries: Value) -> CdpResponder {
+    std::sync::Arc::new(move |command: &Value| {
+        let result = if command["method"] == "Page.getNavigationHistory" {
+            json!({"currentIndex": 0, "entries": entries.clone()})
+        } else {
+            json!({})
+        };
+        Some(vec![cdp_result(command, result)])
+    })
+}
+
+#[tokio::test]
+async fn cdp_blank_page_clears_the_history_so_back_cannot_reopen_the_page() {
+    let (http, mut commands) =
+        spawn_local_cdp(history_after_reset(json!([{"url": "about:blank"}]))).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    backend.blank_page().await.expect("blanked");
+
+    assert_eq!(page_methods(&mut commands), blanking_commands());
+
+    let (http, _commands) = spawn_local_cdp(history_after_reset(json!([
+        {"url": "http://192.168.1.1/internal"},
+        {"url": "about:blank"},
+    ])))
+    .await;
+    let err = CdpBrowserBackend::new(http.uri())
+        .blank_page()
+        .await
+        .expect_err("the refused page is still one entry back");
+    assert!(err.to_string().contains("still holds"), "{err}");
 }
 
 #[test]

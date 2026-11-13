@@ -679,6 +679,10 @@ impl BrowserBackend for UnavailableBrowserBackend {
         Err(self.unavailable())
     }
 
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        Err(self.unavailable())
+    }
+
     async fn snapshot(&self) -> Result<String, ToolError> {
         Err(self.unavailable())
     }
@@ -727,6 +731,11 @@ impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBr
         // Reject the URL before a cloud session is created for it.
         validate_url_does_not_exfiltrate_secret(url)?;
         self.run(self.cloud.navigate(url), self.local.navigate(url))
+            .await
+    }
+
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        self.run(self.cloud.blank_page(), self.local.blank_page())
             .await
     }
 

@@ -23,6 +23,9 @@ pub trait BrowserBackend: Send + Sync {
     /// Open `url`. A JSON object result names the page the browser landed
     /// on, after any redirects, in its `url` field.
     async fn navigate(&self, url: &str) -> Result<String, ToolError>;
+    /// Replace the current page with `about:blank` and drop it from the
+    /// history, so going back cannot reopen it.
+    async fn blank_page(&self) -> Result<String, ToolError>;
     /// Whether the browser runs on this machine beside a local terminal, which
     /// already reaches the local network, so `browser_navigate` skips the
     /// private-address check (upstream `_is_local_backend`). A backend that
@@ -72,9 +75,10 @@ impl ToolHandler for BrowserNavigateHandler {
             .and_then(|value| value.get("url")?.as_str().map(str::to_string));
         if let Some(landed) = landed.filter(|landed| landed != url) {
             if let Err(err) = check_navigation(&landed, local, true).await {
-                // Leave no refused page for a later snapshot to read.
-                if let Err(blank) = self.backend.navigate("about:blank").await {
-                    tracing::warn!("Refused page left open; about:blank failed: {blank}");
+                // Leave the refused page neither open nor in the history, so
+                // neither a snapshot nor going back reaches it.
+                if let Err(blank) = self.backend.blank_page().await {
+                    tracing::warn!("Refused page left open; blanking failed: {blank}");
                 }
                 return Err(err);
             }
@@ -578,6 +582,9 @@ mod tests {
         async fn navigate(&self, url: &str) -> Result<String, ToolError> {
             Ok(format!("Navigated to {}", url))
         }
+        async fn blank_page(&self) -> Result<String, ToolError> {
+            Ok("Blanked".into())
+        }
         async fn snapshot(&self) -> Result<String, ToolError> {
             Ok("Page snapshot".into())
         }
@@ -688,12 +695,11 @@ mod tests {
     impl BrowserBackend for NavBackend {
         async fn navigate(&self, url: &str) -> Result<String, ToolError> {
             self.opened.lock().unwrap().push(url.to_string());
-            let landed = if url == "about:blank" {
-                url
-            } else {
-                self.landed.unwrap_or(url)
-            };
-            Ok(json!({"status": "navigated", "url": landed}).to_string())
+            Ok(json!({"status": "navigated", "url": self.landed.unwrap_or(url)}).to_string())
+        }
+        async fn blank_page(&self) -> Result<String, ToolError> {
+            self.opened.lock().unwrap().push("blank_page".into());
+            Ok(json!({"status": "blank"}).to_string())
         }
         fn is_local_backend(&self) -> bool {
             self.local
@@ -800,7 +806,7 @@ mod tests {
             open(&cloud, start).await,
             "redirect landed on a private/internal address",
         );
-        assert_eq!(cloud.opened(), [start, "about:blank"]);
+        assert_eq!(cloud.opened(), [start, "blank_page"]);
 
         for local in [false, true] {
             let backend = NavBackend::new(local, Some("http://169.254.169.254/latest/meta-data/"));
@@ -808,7 +814,7 @@ mod tests {
                 open(&backend, start).await,
                 "redirect landed on a cloud metadata endpoint",
             );
-            assert_eq!(backend.opened(), [start, "about:blank"]);
+            assert_eq!(backend.opened(), [start, "blank_page"]);
         }
     }
 
@@ -847,7 +853,7 @@ mod tests {
             open(&local, "http://10.0.0.5/").await,
             "matches website blocklist rule",
         );
-        assert_eq!(local.opened(), ["http://10.0.0.5/", "about:blank"]);
+        assert_eq!(local.opened(), ["http://10.0.0.5/", "blank_page"]);
     }
 
     #[tokio::test]

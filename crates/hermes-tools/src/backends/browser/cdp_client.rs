@@ -512,20 +512,60 @@ async fn cdp_navigate<C: CdpChannel>(channel: &C, url: &str) -> Result<String, T
     }
     // `Page.navigate` answers once the page commits, after any HTTP
     // redirects, so the current history entry is the page the browser landed
-    // on. Without it a redirect could not be checked, so its absence fails.
-    let unread = |detail: String| {
-        ToolError::ExecutionFailed(format!("Opened {url} but could not read the page URL: {detail}"))
-    };
+    // on. Without it a redirect could not be checked, so the page is blanked
+    // and navigation fails.
+    match cdp_current_url(channel).await {
+        Ok(landed) => Ok(json!({"status": "navigated", "url": landed, "cdp": result}).to_string()),
+        Err(detail) => {
+            if let Err(blank) = cdp_blank_page(channel).await {
+                tracing::warn!("Unchecked page left open; blanking failed: {blank}");
+            }
+            Err(ToolError::ExecutionFailed(format!(
+                "Opened {url} but could not read the page URL: {detail}"
+            )))
+        }
+    }
+}
+
+/// The URL of the page's current history entry.
+async fn cdp_current_url<C: CdpChannel>(channel: &C) -> Result<String, String> {
     let history = channel
         .cdp_command("Page.getNavigationHistory", json!({}))
         .await
-        .map_err(|err| unread(tool_error_message(err)))?;
-    let landed = history["currentIndex"]
+        .map_err(tool_error_message)?;
+    history["currentIndex"]
         .as_u64()
         .and_then(|index| history["entries"].get(usize::try_from(index).ok()?))
         .and_then(|entry| entry["url"].as_str())
-        .ok_or_else(|| unread("no current history entry".to_string()))?;
-    Ok(json!({"status": "navigated", "url": landed, "cdp": result}).to_string())
+        .map(str::to_string)
+        .ok_or_else(|| "no current history entry".to_string())
+}
+
+/// Open `about:blank` and clear the history, so going back cannot reopen the
+/// page that was shown. Fails unless the blank page is all that is left.
+async fn cdp_blank_page<C: CdpChannel>(channel: &C) -> Result<String, ToolError> {
+    let opened = channel
+        .cdp_command("Page.navigate", json!({"url": "about:blank"}))
+        .await?;
+    if let Some(error_text) = opened.get("errorText").and_then(Value::as_str) {
+        return Err(ToolError::ExecutionFailed(format!(
+            "Failed to open about:blank: {error_text}"
+        )));
+    }
+    channel
+        .cdp_command("Page.resetNavigationHistory", json!({}))
+        .await?;
+    let history = channel
+        .cdp_command("Page.getNavigationHistory", json!({}))
+        .await?;
+    match history["entries"].as_array().map(Vec::as_slice) {
+        Some([entry]) if entry["url"] == "about:blank" => {
+            Ok(json!({"status": "blank"}).to_string())
+        }
+        _ => Err(ToolError::ExecutionFailed(
+            "The browser history still holds the previous page".into(),
+        )),
+    }
 }
 
 async fn cdp_snapshot<C: CdpChannel>(channel: &C) -> Result<String, ToolError> {

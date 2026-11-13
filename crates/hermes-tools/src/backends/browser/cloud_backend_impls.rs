@@ -3,6 +3,9 @@ impl BrowserBackend for BrowserbaseBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
     }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        cdp_blank_page(self).await
+    }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await
     }
@@ -37,6 +40,9 @@ impl BrowserBackend for BrowserUseBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
     }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        cdp_blank_page(self).await
+    }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await
     }
@@ -70,6 +76,9 @@ impl BrowserBackend for BrowserUseBrowserBackend {
 impl BrowserBackend for FirecrawlBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
+    }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        cdp_blank_page(self).await
     }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await

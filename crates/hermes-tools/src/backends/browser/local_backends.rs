@@ -86,6 +86,9 @@ impl BrowserBackend for CdpBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
     }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        cdp_blank_page(self).await
+    }
     /// A browser on this host reaches networks that a container or remote
     /// terminal cannot, so only a local terminal makes it local.
     fn is_local_backend(&self) -> bool {
@@ -128,6 +131,9 @@ impl BrowserBackend for CamoFoxBrowserBackend {
     /// Upstream counts Camofox as local whatever the terminal backend.
     fn is_local_backend(&self) -> bool {
         self.inner.local
+    }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        self.inner.blank_page().await
     }
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         let alias = camofox_loopback_alias_from_env();
