@@ -12,7 +12,9 @@ impl CamoFoxBrowserBackend {
             .or_else(|_| std::env::var("BROWSER_CDP_URL"))
             .unwrap_or_else(|_| "http://localhost:9222".to_string());
         let profile = std::env::var("CAMOFOX_PROFILE").unwrap_or_else(|_| "default".to_string());
-        Self::new(endpoint, profile)
+        let mut backend = Self::new(endpoint, profile);
+        backend.inner.local = !cdp_override_from_env();
+        backend
     }
 }
 
@@ -22,6 +24,7 @@ impl CdpBrowserBackend {
             endpoint,
             client: reqwest::Client::new(),
             first_navigation: AtomicBool::new(true),
+            local: false,
         }
     }
 
@@ -30,7 +33,9 @@ impl CdpBrowserBackend {
         let endpoint = std::env::var("CHROME_CDP_URL")
             .or_else(|_| std::env::var("BROWSER_CDP_URL"))
             .unwrap_or_else(|_| "http://localhost:9222".to_string());
-        Self::new(endpoint)
+        let mut backend = Self::new(endpoint);
+        backend.local = !cdp_override_from_env();
+        backend
     }
 
     /// Send one CDP command to the browser's first page. Each call opens its
@@ -81,6 +86,14 @@ impl BrowserBackend for CdpBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
     }
+    /// A browser on this host reaches networks that a container or remote
+    /// terminal cannot, so only a local terminal makes it local.
+    fn is_local_backend(&self) -> bool {
+        self.local
+            && std::env::var("TERMINAL_ENV").map_or(true, |backend| {
+                matches!(backend.trim().to_ascii_lowercase().as_str(), "" | "local")
+            })
+    }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await
     }
@@ -112,6 +125,10 @@ impl BrowserBackend for CdpBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for CamoFoxBrowserBackend {
+    /// Upstream counts Camofox as local whatever the terminal backend.
+    fn is_local_backend(&self) -> bool {
+        self.inner.local
+    }
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         let alias = camofox_loopback_alias_from_env();
         let (browser_url, rewrite) = rewrite_loopback_url_for_camofox(

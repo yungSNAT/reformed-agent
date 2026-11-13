@@ -41,6 +41,7 @@ impl EnvScope {
             "CAMOFOX_LOOPBACK_HOST_ALIAS",
             "HERMES_BROWSER_COMMAND_TIMEOUT_SECONDS",
             "BROWSER_COMMAND_TIMEOUT",
+            "TERMINAL_ENV",
         ];
         let original = keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
         for k in &keys {
@@ -1150,6 +1151,74 @@ async fn cdp_navigate_reports_page_navigation_error_text() {
 
     assert!(rendered.contains("Failed to open https://missing.invalid/"));
     assert!(rendered.contains("net::ERR_NAME_NOT_RESOLVED"));
+}
+
+#[tokio::test]
+async fn cdp_navigate_reports_the_page_it_landed_on() {
+    let (http, _commands) = spawn_local_cdp(std::sync::Arc::new(|command: &Value| {
+        let result = if command["method"] == "Page.getNavigationHistory" {
+            json!({"currentIndex": 1, "entries": [
+                {"url": "about:blank"},
+                {"url": "http://192.168.1.1/internal"},
+            ]})
+        } else {
+            json!({"frameId": "F1", "loaderId": "L1"})
+        };
+        Some(vec![cdp_result(command, result)])
+    }))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let opened: Value = serde_json::from_str(
+        &backend
+            .navigate("https://example.com/redirect")
+            .await
+            .expect("navigated"),
+    )
+    .expect("navigate json");
+
+    assert_eq!(opened["url"], "http://192.168.1.1/internal");
+}
+
+#[tokio::test]
+async fn cdp_navigate_fails_when_the_landed_page_is_unknown() {
+    let (http, _commands) =
+        spawn_local_cdp(answer_all(json!({"frameId": "F1", "loaderId": "L1"}))).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .navigate("https://example.com/")
+        .await
+        .expect_err("no history entry");
+
+    assert!(
+        err.to_string().contains("could not read the page URL"),
+        "{err}"
+    );
+}
+
+#[test]
+fn only_a_default_browser_beside_a_local_terminal_is_local() {
+    let _scope = EnvScope::new();
+    assert!(CdpBrowserBackend::from_env().is_local_backend());
+    assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
+    assert!(!CdpBrowserBackend::new("http://localhost:9222".into()).is_local_backend());
+
+    // Camofox is local whatever the terminal, as upstream has it.
+    std::env::set_var("TERMINAL_ENV", "docker");
+    assert!(!CdpBrowserBackend::from_env().is_local_backend());
+    assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
+
+    std::env::set_var("TERMINAL_ENV", "local");
+    std::env::set_var("CHROME_CDP_URL", "ws://10.0.0.9:9222/devtools/browser/B");
+    assert!(!CdpBrowserBackend::from_env().is_local_backend());
+    assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
+
+    std::env::remove_var("CHROME_CDP_URL");
+    std::env::set_var("HERMES_BROWSER_BACKEND", "browserbase");
+    std::env::set_var("BROWSERBASE_API_KEY", "bb-key");
+    std::env::set_var("BROWSERBASE_PROJECT_ID", "proj");
+    assert!(!browser_backend_from_env().is_local_backend());
 }
 
 #[tokio::test]

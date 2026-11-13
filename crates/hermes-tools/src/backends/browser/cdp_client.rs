@@ -510,7 +510,22 @@ async fn cdp_navigate<C: CdpChannel>(channel: &C, url: &str) -> Result<String, T
     if let Some(error_text) = result.get("errorText").and_then(Value::as_str) {
         return Err(failed(error_text.to_string()));
     }
-    Ok(json!({"status": "navigated", "url": url, "cdp": result}).to_string())
+    // `Page.navigate` answers once the page commits, after any HTTP
+    // redirects, so the current history entry is the page the browser landed
+    // on. Without it a redirect could not be checked, so its absence fails.
+    let unread = |detail: String| {
+        ToolError::ExecutionFailed(format!("Opened {url} but could not read the page URL: {detail}"))
+    };
+    let history = channel
+        .cdp_command("Page.getNavigationHistory", json!({}))
+        .await
+        .map_err(|err| unread(tool_error_message(err)))?;
+    let landed = history["currentIndex"]
+        .as_u64()
+        .and_then(|index| history["entries"].get(usize::try_from(index).ok()?))
+        .and_then(|entry| entry["url"].as_str())
+        .ok_or_else(|| unread("no current history entry".to_string()))?;
+    Ok(json!({"status": "navigated", "url": landed, "cdp": result}).to_string())
 }
 
 async fn cdp_snapshot<C: CdpChannel>(channel: &C) -> Result<String, ToolError> {
