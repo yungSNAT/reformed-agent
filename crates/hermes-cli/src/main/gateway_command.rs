@@ -456,14 +456,11 @@ async fn run_gateway(
                         if let Some(h) = home {
                             if !ctx.session_key.trim().is_empty() {
                                 let sp = SessionPersistence::new(Path::new(h));
-                                let sys = leading_system_prompt_for_persist(&result.messages);
-                                let _ = sp.persist_session(
+                                let _ = sp.persist_agent_result(
                                     &ctx.session_key,
-                                    &result.messages,
+                                    &result,
                                     Some(&effective_model),
                                     Some(ctx.platform.as_str()),
-                                    None,
-                                    sys.as_deref(),
                                 );
                             }
                         }
@@ -784,14 +781,11 @@ async fn run_gateway(
                         if let Some(h) = home {
                             if !ctx.session_key.trim().is_empty() {
                                 let sp = SessionPersistence::new(Path::new(h));
-                                let sys = leading_system_prompt_for_persist(&result.messages);
-                                let _ = sp.persist_session(
+                                let _ = sp.persist_agent_result(
                                     &ctx.session_key,
-                                    &result.messages,
+                                    &result,
                                     Some(&effective_model),
                                     Some(ctx.platform.as_str()),
-                                    None,
-                                    sys.as_deref(),
                                 );
                             }
                         }

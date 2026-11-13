@@ -39,6 +39,35 @@ impl SessionPersistence {
         })
     }
 
+    /// Persist a finished agent run as session `session_id`, as the gateway
+    /// and HTTP API do: the session keeps the run's leading system prompt for
+    /// continuation, and the turns its compressions replaced stay searchable
+    /// as in [`Self::persist_session_after_compression`].
+    pub fn persist_agent_result(
+        &self,
+        session_id: &str,
+        result: &AgentResult,
+        model: Option<&str>,
+        platform: Option<&str>,
+    ) -> Result<(), AgentError> {
+        let system_prompt = leading_system_prompt_for_persist(&result.messages);
+        self.write_session(|tx| {
+            Self::upsert_session(
+                tx,
+                session_id,
+                &result.messages,
+                model,
+                platform,
+                None,
+                system_prompt.as_deref(),
+            )?;
+            for transcript in &result.compressed_transcripts {
+                Self::insert_compressed_parent(tx, session_id, transcript)?;
+            }
+            Ok(())
+        })
+    }
+
     /// Run `write` in one transaction: readers never see a half-written
     /// session, and each message insert skips its own sync.
     fn write_session(

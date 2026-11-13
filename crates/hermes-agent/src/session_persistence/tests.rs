@@ -580,6 +580,38 @@ fn compressed_turns_stay_searchable_and_resume_follows_the_session() {
 }
 
 #[test]
+fn gateway_runs_keep_compressed_turns_searchable_and_the_system_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let result = AgentResult {
+        messages: vec![
+            Message::system("be brief"),
+            Message::user("[Conversation summary] a heron"),
+            Message::user("and the kingfisher"),
+        ],
+        compressed_transcripts: vec![vec![
+            Message::system("be brief"),
+            Message::user("where did the heron nest"),
+            Message::assistant("under the willow bridge"),
+        ]],
+        ..AgentResult::default()
+    };
+
+    sp.persist_agent_result("live", &result, Some("m"), Some("telegram"))
+        .unwrap();
+
+    let hits = fts_hit_sessions(&sp, "willow");
+    assert_eq!(hits.len(), 1, "the replaced turn stays indexed");
+    assert_ne!(hits[0], "live");
+    assert_eq!(sp.resolve_resume_session_id(&hits[0]).unwrap(), "live");
+    assert_eq!(sp.load_session("live").unwrap().len(), 3);
+    assert_eq!(
+        sp.get_system_prompt("live").unwrap().as_deref(),
+        Some("be brief")
+    );
+}
+
+#[test]
 fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());

@@ -13,7 +13,7 @@ use std::{
 };
 
 use chrono::{Duration as ChronoDuration, Utc};
-use hermes_core::{AgentError, Message, MessageRole};
+use hermes_core::{AgentError, AgentResult, Message, MessageRole};
 
 // ---------------------------------------------------------------------------
 // SessionPersistence

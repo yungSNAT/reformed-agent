@@ -34,9 +34,8 @@ use hermes_agent::agent_loop::ToolRegistry as AgentToolRegistry;
 use hermes_agent::session_persistence::SessionPersistence;
 use hermes_agent::smart_model_routing::ApiMode;
 use hermes_agent::{
-    build_auxiliary_client_with_main_runtime, leading_system_prompt_for_persist,
-    run_oneshot_with_client, AgentConfig, AgentLoop, AuxiliaryConfig, AuxiliaryMainRuntime,
-    OneShotError, OneShotRequest,
+    build_auxiliary_client_with_main_runtime, run_oneshot_with_client, AgentConfig, AgentLoop,
+    AuxiliaryConfig, AuxiliaryMainRuntime, OneShotError, OneShotRequest,
 };
 use hermes_config::GatewayConfig;
 use hermes_core::errors::GatewayError;
@@ -187,14 +186,11 @@ impl HttpServerState {
                     if let Some(h) = home {
                         if !ctx.session_key.trim().is_empty() {
                             let sp = SessionPersistence::new(FsPath::new(h));
-                            let sys = leading_system_prompt_for_persist(&result.messages);
-                            let _ = sp.persist_session(
+                            let _ = sp.persist_agent_result(
                                 &ctx.session_key,
-                                &result.messages,
+                                &result,
                                 Some(&effective_model),
                                 Some(ctx.platform.as_str()),
-                                None,
-                                sys.as_deref(),
                             );
                         }
                     }
@@ -267,14 +263,11 @@ impl HttpServerState {
                     if let Some(h) = home {
                         if !ctx.session_key.trim().is_empty() {
                             let sp = SessionPersistence::new(FsPath::new(h));
-                            let sys = leading_system_prompt_for_persist(&result.messages);
-                            let _ = sp.persist_session(
+                            let _ = sp.persist_agent_result(
                                 &ctx.session_key,
-                                &result.messages,
+                                &result,
                                 Some(&effective_model),
                                 Some(ctx.platform.as_str()),
-                                None,
-                                sys.as_deref(),
                             );
                         }
                     }
