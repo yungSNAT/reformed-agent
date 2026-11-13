@@ -57,11 +57,8 @@ async fn redirects_to_metadata_addresses_are_refused_before_connecting() {
         .chain(["/twice".to_string()]);
     for start in starts {
         let url = format!("{}{start}", server.uri());
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            cache.cache_image(&url, "meta.png"),
-        )
-        .await;
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), cache.cache_image(&url, "meta.png")).await;
         let err = match result {
             Ok(Err(err)) => err.to_string(),
             Ok(Ok(path)) => panic!("{url} was cached at {}", path.display()),
