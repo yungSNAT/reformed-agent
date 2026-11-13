@@ -244,12 +244,11 @@ impl ToolHandler for WebExtractHandler {
 
 /// Remote providers follow redirects and crawl links themselves, so only the
 /// seed URL is checked before the call. With the website blocklist on, each
-/// page in `results` that it refuses, or that has no URL to judge, is replaced
-/// by an error entry, as upstream does. The top-level `content` and
+/// page in `results` that it refuses, or whose URLs it cannot judge, is
+/// replaced by an error entry, as upstream does. The top-level `content` and
 /// `source_quality_summary` that the extract backends copy from `results` are
 /// then recomputed. Output without `results` is a single page (Firecrawl, the
-/// built-in extractor); it is replaced by an error when a URL it names is
-/// refused, and kept when it names none, since its seed was checked.
+/// built-in extractor) and is judged the same way as a whole.
 fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
     let Ok(mut value) = serde_json::from_str::<Value>(&output) else {
         return Ok(output);
@@ -264,7 +263,7 @@ fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
         return Ok(output);
     }
     let Some(pages) = value.get_mut("results").and_then(Value::as_array_mut) else {
-        return match blocked_page_error(&value, &policy) {
+        return match withheld_page_error(&value, &policy) {
             Some(error) => to_json(&error),
             None => Ok(output),
         };
@@ -272,14 +271,7 @@ fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
     let mut kept = Vec::with_capacity(pages.len());
     let mut withheld = false;
     for page in pages.iter_mut() {
-        let error = if page_urls(page).next().is_none() {
-            Some(json!({
-                "error": "Withheld: the page has no URL to check against the website blocklist",
-            }))
-        } else {
-            blocked_page_error(page, &policy)
-        };
-        match error {
+        match withheld_page_error(page, &policy) {
             Some(error) => {
                 *page = error;
                 withheld = true;
@@ -317,10 +309,29 @@ fn page_urls(page: &Value) -> impl Iterator<Item = &str> + '_ {
         .filter(|url| !url.is_empty())
 }
 
-fn blocked_page_error(
+/// The error entry that replaces `page`, or `None` to keep it: a page is
+/// withheld when it names no URL, names one without a host to judge, or names
+/// one the blocklist refuses.
+fn withheld_page_error(
     page: &Value,
     policy: &crate::website_policy::WebsiteBlocklistPolicy,
 ) -> Option<Value> {
+    if page_urls(page).next().is_none() {
+        return Some(json!({
+            "error": "Withheld: the page has no URL to check against the website blocklist",
+        }));
+    }
+    if let Some(url) = page_urls(page).find(|url| {
+        url::Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::is_empty))
+            .unwrap_or(true)
+    }) {
+        return Some(json!({
+            "url": url,
+            "error": format!("Withheld: '{url}' has no host to check against the website blocklist"),
+        }));
+    }
     let block = page_urls(page)
         .find_map(|url| crate::website_policy::check_website_access_with_policy(url, policy))?;
     Some(json!({
@@ -654,6 +665,43 @@ mod tests {
             .await
             .expect("extract");
         assert_eq!(output, allowed);
+    }
+
+    #[tokio::test]
+    async fn pages_whose_urls_cannot_be_judged_are_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        async fn extract(output: &str) -> Result<String, ToolError> {
+            WebExtractHandler::new(Box::new(FirecrawlShapeBackend(output.into())))
+                .execute(json!({"url": "https://1.1.1.1/"}))
+                .await
+        }
+        // A single page that names no URL, or one without a host.
+        for page in [
+            r#"{"content": "unjudged page", "metadata": {}}"#,
+            r#"{"content": "unjudged page", "metadata": {"url": "blocked.example/after-redirect"}}"#,
+        ] {
+            let output = extract(page).await.expect("extract");
+            assert!(!output.contains("unjudged page"), "{output}");
+        }
+        // In `results`, the first page's text stays at the top level only
+        // while that page is kept.
+        let pages = r#"{
+            "content": "allowed page",
+            "results": [
+                {"url": "https://1.1.1.1/docs", "content": "allowed page"},
+                {"url": "blocked.example/landing", "content": "unjudged page"}
+            ]
+        }"#;
+        let output = extract(pages).await.expect("extract");
+        let value: Value = serde_json::from_str(&output).expect("JSON");
+        assert_eq!(value["content"], "allowed page", "{output}");
+        assert!(value["results"][1]["error"].is_string(), "{output}");
+        assert!(!output.contains("unjudged page"), "{output}");
     }
 
     #[tokio::test]
