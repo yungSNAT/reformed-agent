@@ -117,6 +117,12 @@ fn is_nat64_local_use(ip: &Ipv6Addr) -> bool {
     ip.segments()[..3] == [0x64, 0xff9b, 1]
 }
 
+/// Teredo (`2001:0::/32`, RFC 4380) tunnels to IPv4 hosts and is never a
+/// fetch target.
+fn is_teredo(ip: &Ipv6Addr) -> bool {
+    ip.segments()[..2] == [0x2001, 0]
+}
+
 fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
     if let Some(v4) = embedded_ipv4(ip) {
         return is_blocked_ipv4(&v4);
@@ -129,8 +135,7 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] & 0xfe00) == 0xfc00
         || is_nat64_local_use(ip)
-        // Teredo (RFC 4380) tunnels to IPv4 hosts and is never a fetch target.
-        || segments[..2] == [0x2001, 0]
+        || is_teredo(ip)
 }
 
 /// Private, internal and reserved addresses, including IPv6 forms that carry
@@ -154,7 +159,9 @@ fn is_always_blocked_ip(ip: &IpAddr) -> bool {
             if let Some(v4) = embedded_ipv4(v6) {
                 return is_always_blocked_ipv4(&v4);
             }
-            is_nat64_local_use(v6) || *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
+            is_nat64_local_use(v6)
+                || is_teredo(v6)
+                || *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
         }
     }
 }
@@ -552,6 +559,8 @@ mod tests {
             "http://[2002:a9fe:a9fe::1]/latest/meta-data/",
             // A local-use NAT64 translator may place 169.254.169.254 in the low 32 bits.
             "http://[64:ff9b:1::a9fe:a9fe]/latest/meta-data/",
+            // Teredo cannot be judged by an IPv4 address, so it stays out too.
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
         ] {
             assert!(
                 is_always_blocked_url_with_resolver(literal, resolver_err),
