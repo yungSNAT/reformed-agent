@@ -726,7 +726,7 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
             }
             continue;
         }
-        let code = line.get(..2).unwrap_or(line).trim();
+        let code = line.get(..2).unwrap_or(line);
         let key = if line.starts_with("??") {
             "untracked"
         } else if code == "UU" || code == "AA" || code == "DD" {
@@ -1455,6 +1455,29 @@ mod tests {
         assert!(lines.contains(&"Status: clean".to_string()), "{lines:?}");
         assert!(
             lines.iter().any(|line| line.ends_with("init commit")),
+            "{lines:?}"
+        );
+    }
+
+    #[test]
+    fn snapshot_status_tells_unstaged_changes_from_staged_ones() {
+        let tmp = tempfile::tempdir().unwrap();
+        git_init(tmp.path());
+        // ` M`: changed in the worktree only. `A `: added to the index.
+        std::fs::write(tmp.path().join("README.md"), "changed").unwrap();
+        std::fs::write(tmp.path().join("new.txt"), "new").unwrap();
+        let status = Command::new("git")
+            .arg("-C")
+            .arg(tmp.path())
+            .args(["add", "new.txt"])
+            .status()
+            .unwrap();
+        assert!(status.success());
+
+        let mut lines = Vec::new();
+        append_git_snapshot(tmp.path(), LazyFetchGuard::NoPromisorRemote, &mut lines);
+        assert!(
+            lines.contains(&"Status: modified=1, staged=1".to_string()),
             "{lines:?}"
         );
     }
