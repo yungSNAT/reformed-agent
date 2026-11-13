@@ -13,14 +13,21 @@ const CDP_CONSOLE_EVENTS: &[&str] = &["Runtime.consoleAPICalled", "Runtime.excep
 /// know.
 const CDP_SESSION_NOT_FOUND: i64 = -32_001;
 
-/// Chrome's answer to a page command whilst the page's session is between
-/// documents, for some milliseconds after a navigation commits. The command
-/// is refused without running, so it can be sent again.
+/// Chrome's answer, with code [`CDP_SERVER_ERROR`], to a page command whilst
+/// the page's session is between documents, for some milliseconds after a
+/// navigation commits.
 const CDP_NOT_ATTACHED: &str = "Not attached to an active page";
 
-/// How long a command refused with [`CDP_NOT_ATTACHED`] keeps being resent,
-/// and how long it waits between attempts. Chromium 157 reattached within
-/// 47 ms in testing.
+/// Protocol error code of a [`CDP_NOT_ATTACHED`] refusal.
+const CDP_SERVER_ERROR: i64 = -32_000;
+
+/// Commands sent again whilst the page reattaches. Running either twice does
+/// no harm, so it does not matter whether a refused attempt ran.
+const CDP_RESENT_METHODS: &[&str] = &["Page.getNavigationHistory", "Page.resetNavigationHistory"];
+
+/// How long a command in [`CDP_RESENT_METHODS`] keeps being resent, and how
+/// long it waits between attempts. Chromium 157 reattached within 47 ms in
+/// testing.
 const CDP_REATTACH_DEADLINE: Duration = Duration::from_secs(2);
 const CDP_REATTACH_INTERVAL: Duration = Duration::from_millis(25);
 
@@ -31,6 +38,9 @@ type CdpSocket =
 enum CdpFailure {
     /// The browser answered with a protocol error; the connection is still usable.
     Rejected(String),
+    /// The browser refused the command with [`CDP_NOT_ATTACHED`]; the
+    /// connection is still usable.
+    Detached(String),
     /// The connection failed, closed or timed out and cannot be reused.
     Lost(String),
 }
@@ -38,7 +48,9 @@ enum CdpFailure {
 impl CdpFailure {
     fn message(self) -> String {
         match self {
-            CdpFailure::Rejected(message) | CdpFailure::Lost(message) => message,
+            CdpFailure::Rejected(message)
+            | CdpFailure::Detached(message)
+            | CdpFailure::Lost(message) => message,
         }
     }
 }
@@ -105,9 +117,10 @@ impl CdpConnection {
         Ok(())
     }
 
-    /// [`Self::call_once`], sent again whilst the browser refuses it with
-    /// [`CDP_NOT_ATTACHED`], until [`CDP_REATTACH_DEADLINE`]. The last refusal
-    /// is returned once the deadline passes.
+    /// [`Self::call_once`]. A command in [`CDP_RESENT_METHODS`] refused as
+    /// [`CdpFailure::Detached`] is sent again every [`CDP_REATTACH_INTERVAL`].
+    /// No attempt starts after [`CDP_REATTACH_DEADLINE`]; the last refusal is
+    /// returned instead.
     async fn call(
         &mut self,
         method: &str,
@@ -116,14 +129,15 @@ impl CdpConnection {
     ) -> Result<(Value, Vec<Value>), CdpFailure> {
         let deadline = tokio::time::Instant::now() + CDP_REATTACH_DEADLINE;
         loop {
-            match self.call_once(method, params.clone(), collect).await {
-                Err(CdpFailure::Rejected(detail))
-                    if detail.contains(CDP_NOT_ATTACHED)
-                        && tokio::time::Instant::now() < deadline =>
-                {
-                    tokio::time::sleep(CDP_REATTACH_INTERVAL).await;
-                }
-                outcome => return outcome,
+            let outcome = self.call_once(method, params.clone(), collect).await;
+            if !matches!(outcome, Err(CdpFailure::Detached(_)))
+                || !CDP_RESENT_METHODS.contains(&method)
+            {
+                return outcome;
+            }
+            tokio::time::sleep(CDP_REATTACH_INTERVAL).await;
+            if tokio::time::Instant::now() >= deadline {
+                return outcome;
             }
         }
     }
@@ -182,6 +196,9 @@ impl CdpConnection {
                 // (`SessionNotFound` in Chromium's DevToolsSession).
                 if error["code"] == CDP_SESSION_NOT_FOUND {
                     return Err(CdpFailure::Lost(detail));
+                }
+                if error["code"] == CDP_SERVER_ERROR && error["message"] == CDP_NOT_ATTACHED {
+                    return Err(CdpFailure::Detached(detail));
                 }
                 return Err(CdpFailure::Rejected(detail));
             }
@@ -365,6 +382,10 @@ impl<T: CloudBrowserSession> CdpChannel for T {
         outcome.map_err(|failure| cloud_cdp_error(T::PROVIDER, method, failure))
     }
 
+    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError> {
+        cloud_connect(self, timeout).await
+    }
+
     /// The next command starts a new session, with its own page and history.
     async fn retire_page(&self) {
         release_lost_session(self).await;
@@ -382,9 +403,12 @@ async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
 /// Make sure the cloud browser can take commands: a session exists and its
 /// CDP connection is open and attached to a page. An error here means the
 /// provider is unavailable, unlike an error from a command the page ran.
-async fn cloud_connect<T: CloudBrowserSession>(cloud: &T) -> Result<(), ToolError> {
+async fn cloud_connect<T: CloudBrowserSession>(
+    cloud: &T,
+    timeout: Duration,
+) -> Result<(), ToolError> {
     let cdp_url = cloud.session_cdp_url().await?;
-    if let Err(failure) = cloud.cdp().connect(&cdp_url, cdp_command_timeout()).await {
+    if let Err(failure) = cloud.cdp().connect(&cdp_url, timeout).await {
         release_lost_session(cloud).await;
         return Err(ToolError::ExecutionFailed(format!(
             "{} browser connection failed: {}",
@@ -415,6 +439,10 @@ trait CdpChannel: Send + Sync {
         collect: &[&str],
         timeout: Duration,
     ) -> Result<(Value, Vec<Value>), ToolError>;
+
+    /// Make sure a command can reach the page within `timeout`. On an error
+    /// nothing was sent, so the page is as it was.
+    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError>;
 
     /// Timeout for the next `Page.navigate`.
     fn next_navigate_timeout(&self) -> Duration {
@@ -539,35 +567,53 @@ async fn cdp_navigate<C: CdpChannel>(channel: &C, url: &str) -> Result<String, T
     validate_url_does_not_exfiltrate_secret(url)?;
     let failed =
         |detail: String| ToolError::ExecutionFailed(format!("Failed to open {url}: {detail}"));
-    let (result, _) = channel
-        .cdp_call(
-            "Page.navigate",
-            json!({"url": url}),
-            &[],
-            channel.next_navigate_timeout(),
-        )
+    let timeout = channel.next_navigate_timeout();
+    channel
+        .cdp_connect(timeout)
         .await
         .map_err(|err| failed(tool_error_message(err)))?;
-    // Chrome answers a failed navigation with `errorText` rather than a
-    // protocol error.
-    if let Some(error_text) = result.get("errorText").and_then(Value::as_str) {
-        return Err(failed(error_text.to_string()));
-    }
+    let navigated = channel
+        .cdp_call("Page.navigate", json!({"url": url}), &[], timeout)
+        .await
+        .map_err(tool_error_message)
+        .and_then(|(result, _)| {
+            // Chrome answers a failed navigation with `errorText` rather than
+            // a protocol error.
+            match result.get("errorText").and_then(Value::as_str) {
+                Some(error_text) => Err(error_text.to_string()),
+                None => Ok(result),
+            }
+        });
+    // A failed or timed-out navigation may have followed a redirect to a page
+    // that was never checked, so the page is blanked.
+    let result = match navigated {
+        Ok(result) => result,
+        Err(detail) => {
+            return Err(failed(format!(
+                "{detail}{}",
+                blank_after_failure(channel).await
+            )))
+        }
+    };
     // `Page.navigate` answers once the page commits, after any HTTP
     // redirects, so the current history entry is the page the browser landed
     // on. Without it a redirect could not be checked, so the page is blanked
     // and navigation fails.
     match cdp_current_url(channel).await {
         Ok(landed) => Ok(json!({"status": "navigated", "url": landed, "cdp": result}).to_string()),
-        Err(detail) => {
-            let cleared = match cdp_blank_page(channel).await {
-                Ok(_) => String::new(),
-                Err(blank) => format!("; {}", tool_error_message(blank)),
-            };
-            Err(ToolError::ExecutionFailed(format!(
-                "Opened {url} but could not read the page URL: {detail}{cleared}"
-            )))
-        }
+        Err(detail) => Err(ToolError::ExecutionFailed(format!(
+            "Opened {url} but could not read the page URL: {detail}{}",
+            blank_after_failure(channel).await
+        ))),
+    }
+}
+
+/// Blank the page after a failed navigation. Returns nothing, or `; ` and
+/// why the page could not be cleared, to add to the navigation's error.
+async fn blank_after_failure<C: CdpChannel>(channel: &C) -> String {
+    match cdp_blank_page(channel).await {
+        Ok(_) => String::new(),
+        Err(blank) => format!("; {}", tool_error_message(blank)),
     }
 }
 

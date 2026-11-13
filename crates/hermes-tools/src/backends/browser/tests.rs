@@ -753,6 +753,9 @@ async fn browser_navigate_failure_is_labeled_failed_to_open() {
     assert!(rendered.contains("Failed to open https://example.com"));
     assert!(rendered.contains("--remote-debugging-port=9222"));
     assert!(!backend.first_navigation.load(Ordering::SeqCst));
+    // Nothing reached the page, so there was nothing to clear.
+    assert!(!rendered.contains("retired"), "{rendered}");
+    assert!(!backend.retired.load(Ordering::SeqCst));
 }
 
 #[tokio::test]
@@ -785,7 +788,8 @@ async fn configured_browserbase_without_credentials_fails_at_runtime() {
 }
 
 /// Frames a fixture WebSocket sends back for one command, after an unrelated
-/// event and a reply to another id. `None` leaves the command unanswered.
+/// event and a reply to another id. A `{"delay_ms": n}` frame waits instead of
+/// being sent. `None` leaves the command unanswered.
 type CdpResponder = std::sync::Arc<dyn Fn(&Value) -> Option<Vec<Value>> + Send + Sync>;
 
 /// The response to `command` carrying `result`, routed back to the same
@@ -858,6 +862,10 @@ async fn spawn_cdp_websocket_recording(
                         json!({"id": 9_999, "result": {"stale": true}}),
                     ];
                     for message in preamble.into_iter().chain(frames) {
+                        if let Some(ms) = message["delay_ms"].as_u64() {
+                            tokio::time::sleep(std::time::Duration::from_millis(ms)).await;
+                            continue;
+                        }
                         if socket
                             .send(Message::text(message.to_string()))
                             .await
@@ -1151,6 +1159,50 @@ async fn cdp_navigate_reports_page_navigation_error_text() {
 
     assert!(rendered.contains("Failed to open https://missing.invalid/"));
     assert!(rendered.contains("net::ERR_NAME_NOT_RESOLVED"));
+    // about:blank fails the same way, so the page is retired and the error
+    // says so.
+    assert!(
+        rendered.contains("could not be cleared") && rendered.contains("retired"),
+        "{rendered}"
+    );
+}
+
+#[tokio::test]
+async fn a_failed_navigation_blanks_the_page() {
+    // A redirect may have reached an unchecked page before the navigation
+    // failed.
+    let (http, mut commands) = spawn_local_cdp(Arc::new(|command: &Value| {
+        let result = match command["method"].as_str() {
+            Some("Page.navigate") if command["params"]["url"] != "about:blank" => {
+                json!({"frameId": "F1", "errorText": "net::ERR_CONNECTION_REFUSED"})
+            }
+            Some("Page.getNavigationHistory") => {
+                json!({"currentIndex": 0, "entries": [{"url": "about:blank"}]})
+            }
+            _ => json!({}),
+        };
+        Some(vec![cdp_result(command, result)])
+    }))
+    .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .navigate("https://example.com/redirect")
+        .await
+        .expect_err("failed navigation")
+        .to_string();
+
+    assert!(
+        err.contains("Failed to open https://example.com/redirect: net::ERR_CONNECTION_REFUSED")
+            && !err.contains("retired"),
+        "{err}"
+    );
+    let mut expected = vec![(
+        json!("Page.navigate"),
+        json!("https://example.com/redirect"),
+    )];
+    expected.extend(blanking_commands());
+    assert_eq!(page_methods(&mut commands), expected);
 }
 
 #[tokio::test]
@@ -1387,6 +1439,102 @@ async fn a_page_still_detached_at_the_deadline_fails_navigation_and_retires_the_
         "{err}"
     );
     assert_retired(&backend).await;
+}
+
+/// A page that refuses every command with `code` and `message`.
+fn refusing_page(code: i64, message: &'static str) -> CdpResponder {
+    Arc::new(move |command: &Value| {
+        Some(vec![json!({
+            "id": command["id"],
+            "sessionId": command["sessionId"],
+            "error": {"code": code, "message": message},
+        })])
+    })
+}
+
+#[tokio::test]
+async fn only_history_reads_and_resets_are_resent_whilst_the_page_reattaches() {
+    // A refused navigation, script or snapshot might have run, so none is
+    // sent again.
+    let (http, mut commands) = spawn_local_cdp(refusing_page(-32_000, CDP_NOT_ATTACHED)).await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    for err in [
+        backend.snapshot().await.expect_err("snapshot refused"),
+        backend
+            .cdp_command("Runtime.evaluate", json!({"expression": "1"}))
+            .await
+            .expect_err("script refused"),
+    ] {
+        assert!(err.to_string().contains(CDP_NOT_ATTACHED), "{err}");
+    }
+    let err = backend
+        .navigate("https://example.com/")
+        .await
+        .expect_err("navigation refused")
+        .to_string();
+
+    assert!(
+        err.contains(CDP_NOT_ATTACHED) && err.contains("retired"),
+        "{err}"
+    );
+    assert_eq!(
+        page_methods(&mut commands),
+        [
+            (json!("Accessibility.getFullAXTree"), Value::Null),
+            (json!("Runtime.evaluate"), Value::Null),
+            (json!("Page.navigate"), json!("https://example.com/")),
+            (json!("Page.navigate"), json!("about:blank")),
+        ]
+    );
+}
+
+#[tokio::test]
+async fn only_the_exact_detached_refusal_is_resent() {
+    for (code, message) in [
+        (-32_000, "Not attached to an active page: frame detached"),
+        (-32_601, CDP_NOT_ATTACHED),
+    ] {
+        let (http, mut commands) = spawn_local_cdp(refusing_page(code, message)).await;
+        let backend = CdpBrowserBackend::new(http.uri());
+
+        let err = backend
+            .cdp_command("Page.getNavigationHistory", json!({}))
+            .await
+            .expect_err("history read refused");
+
+        assert!(err.to_string().contains(message), "{err}");
+        assert_eq!(page_methods(&mut commands).len(), 1, "{code} {message}");
+    }
+}
+
+#[tokio::test]
+async fn no_resend_starts_after_the_deadline() {
+    // The refusal arrives 10 ms before the deadline, so a resend after the
+    // interval would start after it.
+    let early_ms = u64::try_from(CDP_REATTACH_DEADLINE.as_millis()).expect("deadline ms") - 10;
+    let (addr, mut commands) = spawn_cdp_websocket(Arc::new(move |command: &Value| {
+        let mut frames = vec![json!({"delay_ms": early_ms})];
+        frames.extend(refusing_page(-32_000, CDP_NOT_ATTACHED)(command)?);
+        Some(frames)
+    }))
+    .await;
+    let mut connection = CdpConnection::open(&format!("ws://{addr}"))
+        .await
+        .unwrap_or_else(|failure| panic!("connect: {}", failure.message()));
+    // The clock moves only when every task waits, so the timing is exact.
+    tokio::time::pause();
+
+    let outcome = connection
+        .call("Page.getNavigationHistory", json!({}), &[])
+        .await;
+
+    assert!(
+        matches!(&outcome, Err(CdpFailure::Detached(detail)) if detail.contains(CDP_NOT_ATTACHED)),
+        "{:?}",
+        outcome.map_err(CdpFailure::message)
+    );
+    assert_eq!(drain_commands(&mut commands).len(), 1);
 }
 
 #[tokio::test]
@@ -1947,7 +2095,7 @@ async fn queued_cloud_action_waits_for_lost_page_cleanup() {
         local,
         fallback_reason: Mutex::new(None),
     };
-    cloud_connect(&backend.cloud)
+    cloud_connect(&backend.cloud, cdp_command_timeout())
         .await
         .expect("initial session");
 

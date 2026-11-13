@@ -48,17 +48,41 @@ impl CdpBrowserBackend {
         params: Value,
         collect: &[&str],
     ) -> Result<(Value, Vec<Value>), ToolError> {
+        let mut connection = self.open_page().await?;
+        let outcome = connection.call(method, params, collect).await;
+        connection.close().await;
+        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+    }
+
+    /// A connection attached to the browser's first page, unless the browser
+    /// was retired.
+    async fn open_page(&self) -> Result<CdpConnection, ToolError> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(ToolError::ExecutionFailed(
                 "The browser was retired because a refused page could not be cleared; restart Hermes to use it again".into(),
             ));
         }
-        let mut connection = CdpConnection::open_attached(&self.client, &self.endpoint)
+        CdpConnection::open_attached(&self.client, &self.endpoint)
             .await
-            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
-        let outcome = connection.call(method, params, collect).await;
-        connection.close().await;
-        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+    }
+
+    /// `attempt` within `timeout`, its failure reported as `method`'s.
+    async fn within_timeout<T>(
+        &self,
+        method: &str,
+        timeout: Duration,
+        attempt: impl std::future::Future<Output = Result<T, ToolError>>,
+    ) -> Result<T, ToolError> {
+        match tokio::time::timeout(timeout, attempt).await {
+            Ok(Ok(outcome)) => Ok(outcome),
+            Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
+            Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
+                method,
+                &self.endpoint,
+                timeout,
+            ))),
+        }
     }
 }
 
@@ -70,15 +94,18 @@ impl CdpChannel for CdpBrowserBackend {
         collect: &[&str],
         timeout: Duration,
     ) -> Result<(Value, Vec<Value>), ToolError> {
-        match tokio::time::timeout(timeout, self.page_call(method, params, collect)).await {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
-            Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
-                method,
-                &self.endpoint,
-                timeout,
-            ))),
-        }
+        self.within_timeout(method, timeout, self.page_call(method, params, collect))
+            .await
+    }
+
+    /// Reported as `Page.navigate`'s failure, since only navigation connects
+    /// first.
+    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError> {
+        let open = async {
+            self.open_page().await?.close().await;
+            Ok(())
+        };
+        self.within_timeout("Page.navigate", timeout, open).await
     }
 
     async fn retire_page(&self) {

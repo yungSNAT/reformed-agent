@@ -133,7 +133,7 @@ impl<C: CloudBrowserSession> CloudFallbackBrowserBackend<C> {
         let mut fallback_reason = self.fallback_reason.lock().await;
         let reason = match fallback_reason.as_ref() {
             Some(reason) => reason.clone(),
-            None => match cloud_connect(&self.cloud).await {
+            None => match cloud_connect(&self.cloud, cdp_command_timeout()).await {
                 Ok(()) => return cloud.await,
                 Err(error) => {
                     tracing::warn!(provider = self.provider, %error, "cloud browser unavailable; using local CDP from now on");
