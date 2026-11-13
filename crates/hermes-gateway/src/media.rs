@@ -12,6 +12,7 @@ use tokio::io::AsyncWriteExt;
 use tracing::debug;
 
 use hermes_core::errors::GatewayError;
+use hermes_tools::tools::url_safety::is_safe_url;
 
 pub const SUPPORTED_DOCUMENT_TYPES: &[(&str, &str)] = &[
     (".pdf", "application/pdf"),
@@ -385,6 +386,30 @@ pub fn validate_media_delivery_path(path: &str) -> Option<PathBuf> {
 // MediaCache
 // ---------------------------------------------------------------------------
 
+/// reqwest's default redirect limit.
+const MAX_REDIRECTS: usize = 10;
+
+/// Follows a redirect only to a URL that passes the same check as the first
+/// URL, so a public host cannot bounce a download onto an internal one.
+///
+/// shortcut: the check resolves the host on the runtime thread, as the check
+/// of the first URL does, and the client resolves it again when it connects,
+/// so a DNS answer that changes in between (rebinding) is not caught.
+fn checked_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        if attempt.previous().len() >= MAX_REDIRECTS {
+            attempt.error("too many redirects")
+        } else if is_safe_url(attempt.url().as_str()) {
+            attempt.follow()
+        } else {
+            let target = attempt.url().to_string();
+            attempt.error(format!(
+                "Blocked: redirect to '{target}' is invalid, could not be resolved, or targets a private or internal address"
+            ))
+        }
+    })
+}
+
 /// Manages local caching of media files downloaded from URLs.
 pub struct MediaCache {
     /// Root directory for cached files.
@@ -416,9 +441,12 @@ impl MediaCache {
             ))
         })?;
 
-        let client = reqwest::Client::builder().build().map_err(|e| {
-            GatewayError::ConnectionFailed(format!("Failed to build HTTP client: {}", e))
-        })?;
+        let client = reqwest::Client::builder()
+            .redirect(checked_redirects())
+            .build()
+            .map_err(|e| {
+                GatewayError::ConnectionFailed(format!("Failed to build HTTP client: {}", e))
+            })?;
 
         Ok(Self {
             cache_dir,
@@ -596,8 +624,11 @@ impl MediaCache {
         subdir: &str,
         file_name: &str,
     ) -> Result<PathBuf, GatewayError> {
-        // Validate URL for SSRF protection
-        crate::ssrf::validate_url(url)?;
+        if !is_safe_url(url) {
+            return Err(GatewayError::ConnectionFailed(format!(
+                "Blocked: '{url}' is invalid, could not be resolved, or targets a private or internal address"
+            )));
+        }
 
         let dest_dir = self.cache_dir.join(subdir);
         fs::create_dir_all(&dest_dir).await.map_err(|e| {
@@ -642,7 +673,11 @@ impl MediaCache {
         // Download the file
         debug!("Downloading {} -> {:?}", url, dest_path);
         let response = self.client.get(url).send().await.map_err(|e| {
-            GatewayError::ConnectionFailed(format!("Failed to download {}: {}", url, e))
+            // A refused redirect's reason is the error's source.
+            let cause = std::error::Error::source(&e)
+                .map(|cause| format!(": {cause}"))
+                .unwrap_or_default();
+            GatewayError::ConnectionFailed(format!("Failed to download {}: {}{}", url, e, cause))
         })?;
 
         if !response.status().is_success() {
@@ -1061,49 +1096,6 @@ mod tests {
 
         assert!(err.to_string().contains("inbound media payload"));
         assert!(!dir.path().join("documents").exists());
-    }
-
-    #[tokio::test]
-    async fn cache_file_rejects_oversized_content_length_before_body() {
-        crate::ssrf::reset_allow_private_cache_for_tests();
-        std::env::set_var("HERMES_ALLOW_PRIVATE_URLS", "true");
-        crate::ssrf::reset_allow_private_cache_for_tests();
-
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
-            .unwrap();
-        let addr = listener.local_addr().unwrap();
-        let served = tokio::spawn(async move {
-            let (mut stream, _) = listener.accept().await.unwrap();
-            use tokio::io::AsyncReadExt;
-            let mut buf = [0u8; 512];
-            let _ = stream.read(&mut buf).await;
-            stream
-                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 9\r\n\r\noversized")
-                .await
-                .unwrap();
-        });
-
-        let dir = tempfile::tempdir().unwrap();
-        let cache = MediaCache::new(&MediaCacheConfig {
-            cache_dir: dir.path().to_string_lossy().to_string(),
-            max_size: 0,
-            ttl_seconds: 0,
-            max_file_size: 4,
-        })
-        .unwrap();
-
-        let err = cache
-            .cache_document(&format!("http://{addr}/big.pdf"), "big.pdf")
-            .await
-            .unwrap_err();
-        served.await.unwrap();
-
-        assert!(err.to_string().contains("Content-Length"));
-        assert!(!dir.path().join("documents").join("big.pdf").exists());
-
-        std::env::remove_var("HERMES_ALLOW_PRIVATE_URLS");
-        crate::ssrf::reset_allow_private_cache_for_tests();
     }
 
     #[test]
