@@ -67,10 +67,11 @@ const WRITE_DENY_PREFIX_ABSOLUTE: &[&str] = &[
     "/private/etc/sudoers.d",
     "/private/var",
 ];
-/// macOS per-user temporary and cache directories. `$TMPDIR` is under
-/// `/var/folders`, a symlink into `/private/var`, so the resolved form of every
-/// temporary path would otherwise hit the `/private/var` deny.
-const WRITE_ALLOW_UNDER_DENIED_PREFIX: &[&str] = &["/private/var/folders"];
+/// macOS temporary directories. `$TMPDIR` is under `/var/folders` and the
+/// shared one is `/var/tmp`; `/var` is a symlink into `/private/var`, so the
+/// resolved form of every temporary path would otherwise hit the
+/// `/private/var` deny.
+const WRITE_ALLOW_UNDER_DENIED_PREFIX: &[&str] = &["/private/var/folders", "/private/var/tmp"];
 const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".netrc",
     ".bashrc",
@@ -259,14 +260,27 @@ pub fn is_protected_file(path: &Path) -> bool {
 
 /// Check whether a file path is write-denied even if it is not a credential
 /// file by name. This covers sensitive system files, shell profiles, package
-/// manager credential files, and profile-aware `$HERMES_HOME/.env`.
+/// manager credential files, and the active Hermes home's `.env`. A relative
+/// path is judged where the local backend writes it: under a non-empty
+/// `TERMINAL_CWD`, as `resolve_path` in hermes-environments does.
+///
+/// shortcut: the path is judged before the write, not at it, so a symlink
+/// swapped in between is followed. Closing that needs the write itself to
+/// open each component without following links (`openat` with `O_NOFOLLOW`).
 pub fn is_write_denied(path: &Path) -> bool {
+    let terminal_cwd = std::env::var_os("TERMINAL_CWD").filter(|cwd| !cwd.is_empty());
+    let path = match terminal_cwd {
+        Some(cwd) if path.is_relative() && !path.to_string_lossy().starts_with('~') => {
+            PathBuf::from(cwd).join(path)
+        }
+        _ => path.to_path_buf(),
+    };
     is_write_denied_with_roots_and_safe_root(
-        path,
-        std::env::home_dir().as_deref(),
-        std::env::var_os("HERMES_HOME")
-            .map(PathBuf::from)
-            .as_deref(),
+        &path,
+        // Unlike `std::env::home_dir`, an empty `HOME` falls back to the
+        // account's home here instead of disabling the home rules.
+        dirs::home_dir().as_deref(),
+        Some(hermes_config::hermes_home().as_path()),
         std::env::var_os("HERMES_WRITE_SAFE_ROOT")
             .filter(|value| !value.is_empty())
             .map(PathBuf::from)
