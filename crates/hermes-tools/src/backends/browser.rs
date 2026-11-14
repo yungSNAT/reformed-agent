@@ -70,40 +70,69 @@ struct CamofoxLoopbackRewrite {
 /// - `HERMES_BROWSER_BACKEND=camofox`
 /// - local CDP (`CHROME_CDP_URL` or localhost default)
 pub fn browser_backend_from_env() -> Arc<dyn BrowserBackend> {
+    backend_from_env(false)
+}
+
+/// [`browser_backend_from_env`] for one gateway chat session. Every local CDP
+/// backend in it is isolated: it works in a browser context and tab of its
+/// own, so sessions sharing one Chrome reach neither each other's pages nor
+/// their cookies. A cloud backend already has a vendor session of its own.
+pub fn isolated_browser_backend_from_env() -> Arc<dyn BrowserBackend> {
+    backend_from_env(true)
+}
+
+fn backend_from_env(isolated: bool) -> Arc<dyn BrowserBackend> {
+    let local = || {
+        let mut local = CdpBrowserBackend::from_env();
+        local.isolated = isolated;
+        local
+    };
     match browser_backend_choice_from_env() {
         "browser-use" => match BrowserUseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserUseProvider",
                 backend,
+                local(),
             )),
             Err(err) if explicit_browser_use_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
             }
-            Err(_) => Arc::new(CdpBrowserBackend::from_env()),
+            Err(_) => Arc::new(local()),
         },
         "browserbase" => match BrowserbaseBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "BrowserbaseProvider",
                 backend,
+                local(),
             )),
             Err(err) if explicit_browserbase_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
             }
-            Err(_) => Arc::new(CdpBrowserBackend::from_env()),
+            Err(_) => Arc::new(local()),
         },
         "firecrawl" => match FirecrawlBrowserBackend::from_env() {
             Ok(backend) => Arc::new(CloudFallbackBrowserBackend::new(
                 "FirecrawlBrowserProvider",
                 backend,
+                local(),
             )),
             Err(err) if explicit_firecrawl_requested_from_env_or_config() => {
                 Arc::new(UnavailableBrowserBackend::new(err.to_string()))
             }
-            Err(_) => Arc::new(CdpBrowserBackend::from_env()),
+            Err(_) => Arc::new(local()),
         },
-        "camofox" => Arc::new(CamoFoxBrowserBackend::from_env()),
-        _ => Arc::new(CdpBrowserBackend::from_env()),
+        "camofox" => {
+            let mut camofox = CamoFoxBrowserBackend::from_env();
+            camofox.inner.isolated = isolated;
+            Arc::new(camofox)
+        }
+        _ => Arc::new(local()),
     }
+}
+
+/// A backend that refuses every call with `message`.
+pub fn unavailable_browser_backend(message: impl Into<String>) -> Arc<dyn BrowserBackend> {
+    Arc::new(UnavailableBrowserBackend::new(message.into()))
 }
 
 fn explicit_browser_use_requested_from_env_or_config() -> bool {
@@ -649,6 +678,17 @@ pub struct CdpBrowserBackend {
     /// Set when a refused page could not be cleared; every later command
     /// fails rather than reach it.
     retired: AtomicBool,
+    /// Work in a browser context and tab of this backend's own, never the
+    /// browser's first page; see [`isolated_browser_backend_from_env`].
+    isolated: bool,
+    /// The isolated backend's context and tab, once created.
+    tab: Mutex<Option<IsolatedTab>>,
+}
+
+/// A browser context with the one tab an isolated [`CdpBrowserBackend`] uses.
+struct IsolatedTab {
+    context_id: String,
+    target_id: String,
 }
 
 /// CamoFox anti-detection browser backend (compat layer).
@@ -792,6 +832,12 @@ impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBr
         self.run(self.cloud.console(action), self.local.console(action))
             .await
     }
+
+    /// A cloud browser that cannot clear a page starts a new session
+    /// instead, so only the local fallback retires.
+    fn is_retired(&self) -> bool {
+        self.local.is_retired()
+    }
 }
 
 include!("browser/cdp_client.rs");
@@ -800,4 +846,4 @@ include!("browser/cloud_backend_impls.rs");
 
 include!("browser/local_backends.rs");
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;

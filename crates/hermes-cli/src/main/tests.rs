@@ -135,6 +135,45 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn session_finalize_closes_only_that_sessions_browser() {
+        let browsers = hermes_tools::SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
+        });
+        let ended = browsers.tool_overrides("telegram:1");
+        let other = browsers.tool_overrides("telegram:2");
+        let mut hooks = HookRegistry::new();
+        hooks.register_in_process(
+            "on_session_finalize",
+            Arc::new(CloseSessionBrowser(browsers.clone())),
+        );
+
+        hooks
+            .emit(&hermes_gateway::hooks::HookEvent::new(
+                "on_session_finalize",
+                serde_json::json!({"session_key": "telegram:1", "reason": "reset"}),
+            ))
+            .await;
+
+        let snapshot = |overrides: &hermes_tools::ToolOverrides| {
+            let handler = overrides["browser_snapshot"].clone();
+            async move {
+                handler
+                    .execute(serde_json::json!({}))
+                    .await
+                    .unwrap_err()
+                    .to_string()
+            }
+        };
+        let err = snapshot(&ended).await;
+        assert!(err.contains("browser was closed"), "{err}");
+        let err = snapshot(&other).await;
+        assert!(err.contains("no browser here"), "{err}");
+        let next = browsers.tool_overrides("telegram:1");
+        let err = snapshot(&next).await;
+        assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
+    }
+
+    #[tokio::test]
     async fn run_model_persists_default_model_to_config_yaml() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cli = cli_for_temp_state_root(tmp.path());

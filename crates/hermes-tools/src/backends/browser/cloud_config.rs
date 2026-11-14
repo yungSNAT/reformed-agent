@@ -91,11 +91,11 @@ impl UnavailableBrowserBackend {
 }
 
 impl<C> CloudFallbackBrowserBackend<C> {
-    fn new(provider: &'static str, cloud: C) -> Self {
+    fn new(provider: &'static str, cloud: C, local: CdpBrowserBackend) -> Self {
         Self {
             provider,
             cloud,
-            local: CdpBrowserBackend::from_env(),
+            local,
             fallback_reason: Mutex::new(None),
         }
     }

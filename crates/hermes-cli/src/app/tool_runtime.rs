@@ -12,9 +12,19 @@ fn sorted_tool_schema_names(schemas: &[ToolSchema]) -> Vec<String> {
 }
 
 pub fn bridge_tool_registry(tools: &ToolRegistry) -> AgentToolRegistry {
+    bridge_tool_registry_with(tools, hermes_tools::ToolOverrides::new())
+}
+
+/// [`bridge_tool_registry`], dispatching each tool named in `overrides` to
+/// that handler; see [`ToolRegistry::dispatch_with`].
+pub fn bridge_tool_registry_with(
+    tools: &ToolRegistry,
+    overrides: hermes_tools::ToolOverrides,
+) -> AgentToolRegistry {
     let tools_clone = tools.clone();
+    let overrides = Arc::new(overrides);
     bridge_tool_schemas(tools, &[], move |name, params| {
-        Ok(tools_clone.dispatch(name, params))
+        Ok(tools_clone.dispatch_with(name, params, &overrides))
     })
 }
 

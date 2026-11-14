@@ -44,47 +44,147 @@ pub trait BrowserBackend: Send + Sync {
     /// `screenshot_path`, never the image bytes.
     async fn screenshot(&self) -> Result<String, ToolError>;
     async fn console(&self, action: &str) -> Result<String, ToolError>;
+    /// Whether the backend was retired because a refused page could not be
+    /// cleared. A [`SharedBrowser`] that releases a retired backend refuses
+    /// from then on, so the refusal lasts.
+    fn is_retired(&self) -> bool {
+        false
+    }
 }
+
+/// Builds the backend a [`SharedBrowser`] uses.
+pub type BrowserFactory = dyn Fn() -> std::sync::Arc<dyn BrowserBackend> + Send + Sync;
 
 /// The browser the browser tools share. The agent runs several tool calls at
 /// once, so a tool reaches the backend only through [`SharedBrowser::lock`]
 /// and holds it for its whole action: otherwise a snapshot could read a page
 /// that `browser_navigate` has opened and is about to refuse and blank.
 /// Handlers made from clones of one `SharedBrowser` share its lock.
+///
+/// The backend is built on first use, and a cloud backend's session ends
+/// when it is dropped, so [`SharedBrowser::close`] and
+/// [`SharedBrowser::release_if_idle`] end it without ending the process.
 #[derive(Clone)]
 pub struct SharedBrowser {
-    backend: std::sync::Arc<dyn BrowserBackend>,
-    lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+    inner: std::sync::Arc<SharedBrowserInner>,
+}
+
+struct SharedBrowserInner {
+    factory: Box<BrowserFactory>,
+    /// Set by [`SharedBrowser::close`] before it waits for the lock.
+    closed: std::sync::atomic::AtomicBool,
+    state: tokio::sync::Mutex<BrowserState>,
+}
+
+#[derive(Default)]
+struct BrowserState {
+    backend: Option<std::sync::Arc<dyn BrowserBackend>>,
+    /// When the last call finished.
+    last_used: Option<std::time::Instant>,
+    /// Whether idle release dropped a retired backend.
+    retired: bool,
 }
 
 impl SharedBrowser {
+    /// A browser that always uses `backend`. It keeps a reference to it, so
+    /// closing or idle release cannot end the backend's session: use
+    /// [`SharedBrowser::lazy`] for a backend that holds one.
     pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+        Self::lazy(move || backend.clone())
+    }
+
+    /// A browser whose backend `factory` builds on first use, and again on
+    /// the first use after [`SharedBrowser::release_if_idle`] released it.
+    pub fn lazy(
+        factory: impl Fn() -> std::sync::Arc<dyn BrowserBackend> + Send + Sync + 'static,
+    ) -> Self {
         Self {
-            backend,
-            lock: std::sync::Arc::default(),
+            inner: std::sync::Arc::new(SharedBrowserInner {
+                factory: Box::new(factory),
+                closed: std::sync::atomic::AtomicBool::new(false),
+                state: tokio::sync::Mutex::default(),
+            }),
         }
     }
 
     /// Wait for the other browser tools to finish, then hold the browser.
-    pub async fn lock(&self) -> BrowserGuard<'_> {
-        BrowserGuard {
-            _held: self.lock.lock().await,
-            backend: self.backend.as_ref(),
+    /// Fails once the browser is closed.
+    pub async fn lock(&self) -> Result<BrowserGuard<'_>, ToolError> {
+        let mut state = self.inner.state.lock().await;
+        if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(ToolError::ExecutionFailed(
+                "This browser was closed because its chat session or job ended".into(),
+            ));
+        }
+        if state.retired {
+            return Err(ToolError::ExecutionFailed(
+                "This browser was retired because a refused page could not be cleared, and stays off until its chat session or job ends".into(),
+            ));
+        }
+        let backend = state
+            .backend
+            .get_or_insert_with(|| (self.inner.factory)())
+            .clone();
+        Ok(BrowserGuard { backend, state })
+    }
+
+    /// End the browser for good: later calls, through any clone, fail and
+    /// build no backend. Waits for a running call, then drops the backend.
+    pub async fn close(&self) {
+        self.inner
+            .closed
+            .store(true, std::sync::atomic::Ordering::SeqCst);
+        let mut state = self.inner.state.lock().await;
+        drop_backend(state.backend.take()).await;
+    }
+
+    /// Drop the backend if no call has finished within `max_idle`, unless it
+    /// is in use. The next call builds a new one, except after a retired
+    /// backend: the browser then refuses every call, so the refusal lasts.
+    pub async fn release_if_idle(&self, max_idle: std::time::Duration) {
+        let Ok(mut state) = self.inner.state.try_lock() else {
+            return;
+        };
+        let idle = state
+            .last_used
+            .is_some_and(|last_used| last_used.elapsed() >= max_idle);
+        if idle {
+            state.retired |= state.backend.as_ref().is_some_and(|b| b.is_retired());
+            drop_backend(state.backend.take()).await;
+        }
+    }
+}
+
+/// Drop `backend` on the blocking pool: a cloud backend blocks its thread
+/// whilst it releases its session. The caller keeps the lock throughout, so
+/// no call builds a new backend until the old one is gone.
+async fn drop_backend(backend: Option<std::sync::Arc<dyn BrowserBackend>>) {
+    if let Some(backend) = backend {
+        if let Err(e) = tokio::task::spawn_blocking(move || drop(backend)).await {
+            tracing::warn!("dropping a browser backend failed: {e}");
         }
     }
 }
 
 /// The browser, held until this is dropped.
 pub struct BrowserGuard<'a> {
-    _held: tokio::sync::MutexGuard<'a, ()>,
-    backend: &'a (dyn BrowserBackend + 'static),
+    // Declared first so it drops while the lock is held: only the backend's
+    // owner, under the lock, may drop its last reference.
+    backend: std::sync::Arc<dyn BrowserBackend>,
+    state: tokio::sync::MutexGuard<'a, BrowserState>,
+}
+
+impl Drop for BrowserGuard<'_> {
+    fn drop(&mut self) {
+        self.state.last_used = Some(std::time::Instant::now());
+    }
 }
 
 impl std::ops::Deref for BrowserGuard<'_> {
     type Target = dyn BrowserBackend;
 
     fn deref(&self) -> &Self::Target {
-        self.backend
+        self.backend.as_ref()
     }
 }
 
@@ -109,7 +209,7 @@ impl ToolHandler for BrowserNavigateHandler {
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'url' parameter".into()))?;
-        let browser = self.backend.lock().await;
+        let browser = self.backend.lock().await?;
         let local = browser.is_local_backend();
         check_navigation(url, local, false).await?;
         let result = browser.navigate(url).await?;
@@ -203,7 +303,7 @@ impl BrowserSnapshotHandler {
 #[async_trait]
 impl ToolHandler for BrowserSnapshotHandler {
     async fn execute(&self, _params: Value) -> Result<String, ToolError> {
-        self.backend.lock().await.snapshot().await
+        self.backend.lock().await?.snapshot().await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -236,7 +336,7 @@ impl ToolHandler for BrowserClickHandler {
             .get("selector")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'selector' parameter".into()))?;
-        self.backend.lock().await.click(selector).await
+        self.backend.lock().await?.click(selector).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -281,7 +381,7 @@ impl ToolHandler for BrowserTypeHandler {
             .get("text")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'text' parameter".into()))?;
-        self.backend.lock().await.r#type(selector, text).await
+        self.backend.lock().await?.r#type(selector, text).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -333,7 +433,7 @@ impl ToolHandler for BrowserScrollHandler {
             .get("amount")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32);
-        self.backend.lock().await.scroll(direction, amount).await
+        self.backend.lock().await?.scroll(direction, amount).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -379,7 +479,7 @@ impl BrowserBackHandler {
 #[async_trait]
 impl ToolHandler for BrowserBackHandler {
     async fn execute(&self, _params: Value) -> Result<String, ToolError> {
-        self.backend.lock().await.go_back().await
+        self.backend.lock().await?.go_back().await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -412,7 +512,7 @@ impl ToolHandler for BrowserPressHandler {
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'key' parameter".into()))?;
-        self.backend.lock().await.press(key).await
+        self.backend.lock().await?.press(key).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -450,7 +550,7 @@ impl BrowserGetImagesHandler {
 impl ToolHandler for BrowserGetImagesHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
         let selector = params.get("selector").and_then(|v| v.as_str());
-        self.backend.lock().await.get_images(selector).await
+        self.backend.lock().await?.get_images(selector).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -496,7 +596,7 @@ impl ToolHandler for BrowserVisionHandler {
             .get("instruction")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'instruction' parameter".into()))?;
-        let raw = self.backend.lock().await.screenshot().await?;
+        let raw = self.backend.lock().await?.screenshot().await?;
         let mut result: Value = serde_json::from_str(&raw).map_err(|e| {
             ToolError::ExecutionFailed(format!("Invalid browser screenshot result: {e}"))
         })?;
@@ -595,7 +695,7 @@ impl ToolHandler for BrowserConsoleHandler {
                 .and_then(|v| v.as_str())
                 .unwrap_or("read")
         };
-        self.backend.lock().await.console(action).await
+        self.backend.lock().await?.console(action).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -626,9 +726,15 @@ impl ToolHandler for BrowserConsoleHandler {
 mod tests {
     use super::*;
 
-    struct MockBrowserBackend;
+    #[derive(Default)]
+    struct MockBrowserBackend {
+        retired: bool,
+    }
     #[async_trait]
     impl BrowserBackend for MockBrowserBackend {
+        fn is_retired(&self) -> bool {
+            self.retired
+        }
         async fn navigate(&self, url: &str) -> Result<String, ToolError> {
             Ok(format!("Navigated to {}", url))
         }
@@ -665,7 +771,84 @@ mod tests {
     }
 
     fn backend() -> SharedBrowser {
-        SharedBrowser::new(std::sync::Arc::new(MockBrowserBackend))
+        SharedBrowser::new(std::sync::Arc::new(MockBrowserBackend::default()))
+    }
+
+    /// A browser whose backends report `retired`, and the number it built.
+    fn counted(
+        retired: bool,
+    ) -> (
+        SharedBrowser,
+        std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    ) {
+        let built = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = built.clone();
+        let browser = SharedBrowser::lazy(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            std::sync::Arc::new(MockBrowserBackend { retired })
+        });
+        (browser, built)
+    }
+
+    fn built(counter: &std::sync::atomic::AtomicUsize) -> usize {
+        counter.load(std::sync::atomic::Ordering::SeqCst)
+    }
+
+    #[tokio::test]
+    async fn a_closed_browser_refuses_its_handlers_and_builds_no_backend() {
+        let (browser, count) = counted(false);
+        let snapshot = BrowserSnapshotHandler::new(browser.clone());
+        snapshot.execute(json!({})).await.expect("open browser");
+
+        browser.close().await;
+
+        let err = snapshot.execute(json!({})).await.unwrap_err().to_string();
+        assert!(err.contains("browser was closed"), "{err}");
+        assert_eq!(built(&count), 1, "a closed browser built another backend");
+    }
+
+    #[tokio::test]
+    async fn idle_release_drops_the_backend_after_the_idle_period_only() {
+        let (browser, count) = counted(false);
+        let snapshot = BrowserSnapshotHandler::new(browser.clone());
+        assert_eq!(built(&count), 0, "the backend is built on first use");
+        snapshot.execute(json!({})).await.unwrap();
+
+        browser
+            .release_if_idle(std::time::Duration::from_secs(3600))
+            .await;
+        snapshot.execute(json!({})).await.unwrap();
+        assert_eq!(built(&count), 1, "released before the idle period");
+
+        browser.release_if_idle(std::time::Duration::ZERO).await;
+        snapshot.execute(json!({})).await.unwrap();
+        assert_eq!(built(&count), 2, "idle backend was not released");
+    }
+
+    #[tokio::test]
+    async fn idle_release_drops_a_retired_backend_and_the_browser_stays_refused() {
+        let held = std::sync::Arc::new(std::sync::Mutex::new(std::sync::Weak::new()));
+        let seen = held.clone();
+        let browser = SharedBrowser::lazy(move || {
+            let backend = std::sync::Arc::new(MockBrowserBackend { retired: true });
+            *seen.lock().unwrap() = std::sync::Arc::downgrade(&backend);
+            backend
+        });
+        let snapshot = BrowserSnapshotHandler::new(browser.clone());
+        snapshot.execute(json!({})).await.unwrap();
+
+        browser.release_if_idle(std::time::Duration::ZERO).await;
+
+        assert!(
+            held.lock().unwrap().upgrade().is_none(),
+            "the retired backend was kept, with whatever session it holds"
+        );
+        let err = snapshot.execute(json!({})).await.unwrap_err().to_string();
+        assert!(err.contains("retired"), "{err}");
+        assert!(
+            held.lock().unwrap().upgrade().is_none(),
+            "a retired backend was replaced"
+        );
     }
 
     #[tokio::test]

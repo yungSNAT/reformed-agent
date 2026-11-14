@@ -53,6 +53,10 @@ pub struct ToolEntry {
 // ToolRegistry
 // ---------------------------------------------------------------------------
 
+/// Handlers that [`ToolRegistry::dispatch_with`] runs in place of the
+/// registered tools of the same name.
+pub type ToolOverrides = HashMap<String, Arc<dyn ToolHandler>>;
+
 /// Thread-safe registry of all available tools.
 pub struct ToolRegistryInner {
     /// Registered tools keyed by name.
@@ -287,6 +291,14 @@ impl ToolRegistry {
     /// On success, returns the tool result string.
     /// On failure, returns a JSON error string: `{"error": "..."}`.
     pub fn dispatch(&self, name: &str, params: Value) -> String {
+        self.dispatch_with(name, params, &HashMap::new())
+    }
+
+    /// [`Self::dispatch`], running the handler in `overrides` named `name`, if
+    /// any, in place of the registered one. The tool must still be
+    /// registered, and policy, audit, rewriting and truncation apply as to
+    /// the registered handler.
+    pub fn dispatch_with(&self, name: &str, params: Value, overrides: &ToolOverrides) -> String {
         let (
             handler,
             max_chars,
@@ -309,7 +321,7 @@ impl ToolRegistry {
                 None => return Self::tool_error(&format!("Tool not found: {}", name)),
             };
             (
-                Arc::clone(&entry.handler),
+                Arc::clone(overrides.get(name).unwrap_or(&entry.handler)),
                 entry
                     .max_result_size_chars
                     .unwrap_or(inner.global_max_result_size_chars),
@@ -1020,6 +1032,56 @@ mod tests {
         assert_eq!(counters.simulate, 1);
         assert_eq!(counters.audit_only, 1);
         assert_eq!(counters.would_block, 2);
+    }
+
+    /// Stands in for `echo`, counting its calls.
+    #[derive(Default)]
+    struct EchoOverride(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl ToolHandler for EchoOverride {
+        async fn execute(&self, _params: Value) -> Result<String, ToolError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("from the override".into())
+        }
+        fn schema(&self) -> ToolSchema {
+            EchoHandler.schema()
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_with_runs_an_override_only_where_the_policy_allows_the_tool() {
+        let registry = ToolRegistry::new();
+        let handler = Arc::new(EchoHandler);
+        let schema = handler.schema();
+        registry.register(
+            "echo",
+            "test",
+            schema,
+            handler,
+            Arc::new(|| true),
+            vec![],
+            false,
+            "Echo",
+            "🔊",
+            None,
+        );
+        let echo = Arc::new(EchoOverride::default());
+        let overrides =
+            ToolOverrides::from([("echo".to_string(), echo.clone() as Arc<dyn ToolHandler>)]);
+
+        let allowed = registry.dispatch_with("echo", json!({"k": "v"}), &overrides);
+        assert!(allowed.contains("from the override"), "{allowed}");
+
+        registry
+            .set_policy(ToolPolicyEngine::new(ToolPolicyMode::Enforce).with_denylist(&["echo"]));
+        let denied = registry.dispatch_with("echo", json!({"k": "v"}), &overrides);
+        assert!(denied.contains("Blocked by tool policy"), "{denied}");
+        assert_eq!(
+            echo.0.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the override ran although the policy denies the tool"
+        );
     }
 
     #[test]
