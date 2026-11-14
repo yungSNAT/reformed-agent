@@ -23,7 +23,7 @@ use hermes_core::{
     subprocess::CommandNoWindowExt, AgentResult, LlmProvider, Message, Skill, ToolSchema,
 };
 use hermes_skills::SkillGuard;
-use hermes_tools::{ToolRegistry as ToolsetRegistry, ToolsetManager};
+use hermes_tools::{SharedBrowser, ToolRegistry as ToolsetRegistry, ToolsetManager};
 use regex::Regex;
 use tokio::process::Command;
 use tokio::time::timeout;
@@ -488,12 +488,18 @@ fn build_cron_skill_prompt(identifiers: &[String]) -> Result<Option<String>, Cro
 // CronRunner
 // ---------------------------------------------------------------------------
 
+/// Builds the tools for one job run, and the browser they drive, which is
+/// closed when the run ends.
+type RunTools = dyn Fn() -> (Arc<ToolRegistry>, SharedBrowser) + Send + Sync;
+
 /// Executes cron jobs by spinning up a fresh agent loop for each invocation.
 pub struct CronRunner {
     /// LLM provider for agent completions.
     llm_provider: Arc<dyn LlmProvider>,
     /// Tool registry providing available tools.
     tool_registry: Arc<ToolRegistry>,
+    /// When set, each run uses these tools in place of `tool_registry`'s.
+    run_tools: Option<Box<RunTools>>,
 }
 
 impl CronRunner {
@@ -502,7 +508,19 @@ impl CronRunner {
         Self {
             llm_provider,
             tool_registry,
+            run_tools: None,
         }
+    }
+
+    /// Give each job run its own tools and browser from `run_tools`, so no
+    /// run shares a browser with another run or a chat. `tool_registry`
+    /// still decides which tools a run is offered.
+    pub fn with_run_tools(
+        mut self,
+        run_tools: impl Fn() -> (Arc<ToolRegistry>, SharedBrowser) + Send + Sync + 'static,
+    ) -> Self {
+        self.run_tools = Some(Box::new(run_tools));
+        self
     }
 
     /// Run a cron job.
@@ -587,21 +605,26 @@ impl CronRunner {
         // recursive/messaging tools denied even if a broad toolset includes them.
         let tools = self.filtered_tool_schemas();
 
-        // Create a fresh agent loop
-        let agent_loop = AgentLoop::new(
-            config,
-            self.tool_registry.clone(),
-            self.llm_provider.clone(),
-        );
-
         // Build initial messages
         let messages = self.build_messages(&runnable_job)?;
 
+        let (tool_registry, browser) = match &self.run_tools {
+            Some(run_tools) => {
+                let (tools, browser) = run_tools();
+                (tools, Some(browser))
+            }
+            None => (self.tool_registry.clone(), None),
+        };
+
+        // Create a fresh agent loop
+        let agent_loop = AgentLoop::new(config, tool_registry, self.llm_provider.clone());
+
         // Run the agent loop
-        let result = agent_loop
-            .run(messages, Some(tools))
-            .await
-            .map_err(CronError::Agent)?;
+        let result = agent_loop.run(messages, Some(tools)).await;
+        if let Some(browser) = browser {
+            browser.close().await;
+        }
+        let result = result.map_err(CronError::Agent)?;
 
         // Deliver results if configured
         if let Some(ref deliver) = job.deliver {
@@ -981,10 +1004,7 @@ mod tests {
         register_test_tool(&mut registry, "cronjob");
         register_test_tool(&mut registry, "terminal");
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(registry),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
 
         let schemas = runner.filtered_tool_schemas();
         let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
@@ -1012,10 +1032,7 @@ mod tests {
             register_test_tool(&mut registry, name);
         }
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(registry),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
 
         let names = schema_name_set(runner.filtered_tool_schemas());
         assert!(names.contains("terminal"));
@@ -1069,10 +1086,7 @@ tools_config:
             register_test_tool(&mut registry, name);
         }
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(registry),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
 
         let names = schema_name_set(runner.filtered_tool_schemas());
         assert!(names.contains("terminal"));
@@ -1121,10 +1135,7 @@ tools_config:
         let mut job = CronJob::new("0 9 * * *", "Say hello");
         job.skills = Some(vec!["web_search".to_string(), "terminal".to_string()]);
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
 
         let messages = runner.build_messages(&job).expect("messages");
         // Should have skill context + prompt message
@@ -1138,10 +1149,7 @@ tools_config:
         let mut job = CronJob::new("0 9 * * *", "Say hello");
         job.script = Some("echo hello world".to_string());
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
 
         let messages = runner.build_messages(&job).expect("messages");
         assert_eq!(messages[0].content.as_deref(), Some("Say hello"));
@@ -1207,10 +1215,10 @@ tools_config:
         let _prefill_env = EnvGuard::remove("HERMES_PREFILL_MESSAGES_FILE");
 
         let seen = Arc::new(Mutex::new(Vec::new()));
-        let runner = CronRunner {
-            llm_provider: Arc::new(CapturingLlmProvider { seen: seen.clone() }),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(
+            Arc::new(CapturingLlmProvider { seen: seen.clone() }),
+            Arc::new(ToolRegistry::new()),
+        );
         let job = CronJob::new("0 9 * * *", "cron prompt");
 
         let result = block_on(runner.run_job(&job)).expect("cron run");
@@ -1237,6 +1245,35 @@ tools_config:
             .messages
             .iter()
             .any(|m| m.content.as_deref() == Some("cron prompt")));
+    }
+
+    #[test]
+    fn each_run_has_its_own_browser_closed_when_the_run_ends() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
+        let browsers = Arc::new(Mutex::new(Vec::new()));
+        let made = browsers.clone();
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()))
+            .with_run_tools(move || {
+                let browser = hermes_tools::unbound_browser();
+                made.lock().unwrap().push(browser.clone());
+                (Arc::new(ToolRegistry::new()), browser)
+            });
+        let job = CronJob::new("0 9 * * *", "cron prompt");
+
+        block_on(runner.run_job(&job)).expect("first run");
+        block_on(runner.run_job(&job)).expect("second run");
+
+        let browsers = browsers.lock().unwrap();
+        assert_eq!(browsers.len(), 2, "the runs shared a browser");
+        for browser in browsers.iter() {
+            let err = block_on(browser.lock())
+                .err()
+                .expect("a run's browser stayed open after the run")
+                .to_string();
+            assert!(err.contains("browser was closed"), "{err}");
+        }
     }
 
     #[test]
@@ -1289,10 +1326,7 @@ tools_config:
                 Ok("ok".to_string())
             }),
         );
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(registry),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
 
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
@@ -1316,10 +1350,7 @@ tools_config:
         std::fs::write(scripts.join("watchdog.sh"), "echo scripts-ok\n").unwrap();
         let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
         job.script = Some("watchdog.sh".to_string());
@@ -1341,10 +1372,7 @@ tools_config:
         std::fs::create_dir_all(home.path().join("scripts")).unwrap();
         let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
 
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
         job.script = Some("../../etc/passwd".to_string());
@@ -1402,10 +1430,7 @@ tools_config:
 
     #[tokio::test]
     async fn test_agent_script_mode_injects_output_into_prompt() {
-        let runner = CronRunner {
-            llm_provider: Arc::new(MockLlmProvider),
-            tool_registry: Arc::new(ToolRegistry::new()),
-        };
+        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
         let mut job = CronJob::new("* * * * *", "Report status.");
         job.script = Some("echo script-data".to_string());
 
