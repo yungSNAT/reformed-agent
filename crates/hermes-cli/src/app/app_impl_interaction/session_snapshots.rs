@@ -283,6 +283,7 @@ impl App {
                     &self.messages,
                     Some(&self.current_model),
                     None,
+                    None,
                 )
             {
                 tracing::warn!(
@@ -388,6 +389,7 @@ pub fn save_oneshot_session(
         messages,
         Some(model),
         Some("oneshot"),
+        None,
     )?;
     let session_info = SessionInfo {
         session_id: session_id.clone(),

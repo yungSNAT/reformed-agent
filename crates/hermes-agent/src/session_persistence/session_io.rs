@@ -22,6 +22,8 @@ impl SessionPersistence {
     /// session's parent and the session, the shape of Hermes Agent's
     /// compression continuations. The session keeps its id, and
     /// `session_search` resolves hits in those rows to it.
+    ///
+    /// A `system_prompt` is stored for the session's continuation.
     pub fn persist_session_after_compression(
         &self,
         session_id: &str,
@@ -29,9 +31,18 @@ impl SessionPersistence {
         messages: &[Message],
         model: Option<&str>,
         platform: Option<&str>,
+        system_prompt: Option<&str>,
     ) -> Result<(), AgentError> {
         self.write_session(|tx| {
-            Self::upsert_session(tx, session_id, messages, model, platform, None, None)?;
+            Self::upsert_session(
+                tx,
+                session_id,
+                messages,
+                model,
+                platform,
+                None,
+                system_prompt,
+            )?;
             for transcript in compressed {
                 Self::insert_compressed_parent(tx, session_id, transcript)?;
             }
@@ -50,22 +61,14 @@ impl SessionPersistence {
         model: Option<&str>,
         platform: Option<&str>,
     ) -> Result<(), AgentError> {
-        let system_prompt = leading_system_prompt_for_persist(&result.messages);
-        self.write_session(|tx| {
-            Self::upsert_session(
-                tx,
-                session_id,
-                &result.messages,
-                model,
-                platform,
-                None,
-                system_prompt.as_deref(),
-            )?;
-            for transcript in &result.compressed_transcripts {
-                Self::insert_compressed_parent(tx, session_id, transcript)?;
-            }
-            Ok(())
-        })
+        self.persist_session_after_compression(
+            session_id,
+            &result.compressed_transcripts,
+            &result.messages,
+            model,
+            platform,
+            leading_system_prompt_for_persist(&result.messages).as_deref(),
+        )
     }
 
     /// Run `write` in one transaction: readers never see a half-written

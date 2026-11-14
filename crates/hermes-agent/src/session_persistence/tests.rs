@@ -544,6 +544,7 @@ fn compressed_turns_stay_searchable_and_resume_follows_the_session() {
         &after,
         Some("m"),
         None,
+        None,
     )
     .unwrap();
 
@@ -618,7 +619,7 @@ fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
     let first = vec![Message::user("heron"), Message::assistant("willow")];
     let second = vec![Message::system("summary one"), Message::user("kingfisher")];
     let after = vec![Message::system("summary two"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None, None)
         .unwrap();
     let older = fts_hit_sessions(&sp, "willow").remove(0);
     let newer = fts_hit_sessions(&sp, "kingfisher").remove(0);
@@ -651,7 +652,7 @@ fn compressions_in_one_save_chain_oldest_first() {
         Message::assistant("mill"),
     ];
     let after = vec![Message::system("summary two"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None, None)
         .unwrap();
 
     let older = fts_hit_sessions(&sp, "willow").remove(0);
@@ -679,7 +680,7 @@ fn failed_compressed_save_keeps_the_previous_session() {
     .unwrap();
     let replaced = vec![Message::user("heron"), Message::assistant("boom")];
     let after = vec![Message::system("summary"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[replaced], &after, None, None)
+    sp.persist_session_after_compression("live", &[replaced], &after, None, None, None)
         .expect_err("forced insert failure");
     conn.execute_batch("DROP TRIGGER fail_insert").unwrap();
 
