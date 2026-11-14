@@ -83,7 +83,9 @@ struct BrowserState {
 }
 
 impl SharedBrowser {
-    /// A browser that always uses `backend`.
+    /// A browser that always uses `backend`. It keeps a reference to it, so
+    /// closing or idle release cannot end the backend's session: use
+    /// [`SharedBrowser::lazy`] for a backend that holds one.
     pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
         Self::lazy(move || backend.clone())
     }
