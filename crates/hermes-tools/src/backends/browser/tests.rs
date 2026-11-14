@@ -1,13 +1,13 @@
 use super::*;
 use hermes_config::managed_gateway::test_lock;
 
-struct EnvScope {
+pub(crate) struct EnvScope {
     original: Vec<(&'static str, Option<String>)>,
     _g: std::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvScope {
-    fn new() -> Self {
+    pub(crate) fn new() -> Self {
         let g = test_lock::lock();
         let keys = [
             "HERMES_BROWSER_BACKEND",
@@ -796,7 +796,7 @@ async fn configured_browserbase_without_credentials_fails_at_runtime() {
 /// Frames a fixture WebSocket sends back for one command, after an unrelated
 /// event and a reply to another id. A `{"delay_ms": n}` frame waits instead of
 /// being sent. `None` leaves the command unanswered.
-type CdpResponder = std::sync::Arc<dyn Fn(&Value) -> Option<Vec<Value>> + Send + Sync>;
+pub(crate) type CdpResponder = std::sync::Arc<dyn Fn(&Value) -> Option<Vec<Value>> + Send + Sync>;
 
 /// The response to `command` carrying `result`, routed back to the same
 /// flattened session.
@@ -814,7 +814,7 @@ fn answer_all(result: Value) -> CdpResponder {
 
 /// Loopback WebSocket that accepts any number of connections and records
 /// each command it receives with the index of its connection.
-async fn spawn_cdp_websocket(
+pub(crate) async fn spawn_cdp_websocket(
     responder: CdpResponder,
 ) -> (
     std::net::SocketAddr,
@@ -934,7 +934,7 @@ fn attachable_browser(page: CdpResponder) -> CdpResponder {
 }
 
 /// Every command recorded so far, without its connection index.
-fn drain_commands(
+pub(crate) fn drain_commands(
     commands: &mut tokio::sync::mpsc::UnboundedReceiver<(usize, Value)>,
 ) -> Vec<Value> {
     std::iter::from_fn(|| commands.try_recv().ok().map(|(_, command)| command)).collect()
@@ -1861,7 +1861,7 @@ async fn cdp_console_read_returns_replayed_messages() {
 
 /// A remote browser endpoint with one page target that answers through its
 /// flattened session; `page` gives each page command's result.
-fn remote_browser(page: fn(&Value) -> Value) -> CdpResponder {
+pub(crate) fn remote_browser(page: fn(&Value) -> Value) -> CdpResponder {
     attachable_browser(std::sync::Arc::new(move |command: &Value| {
         if command["sessionId"] == "S1" {
             return Some(vec![cdp_result(command, page(command))]);
@@ -2040,7 +2040,7 @@ async fn browserbase_on(
 }
 
 /// How many sessions the vendor stub was asked to create at `route`.
-async fn session_creations(api: &wiremock::MockServer, route: &str) -> usize {
+pub(crate) async fn session_creations(api: &wiremock::MockServer, route: &str) -> usize {
     api.received_requests()
         .await
         .expect("recorded requests")
@@ -2642,4 +2642,219 @@ async fn dropping_a_cloud_backend_releases_its_session() {
     server.verify().await;
     let requests = server.received_requests().await.expect("recorded requests");
     assert_eq!(requests.len(), 3, "only the 3 held sessions are released");
+}
+
+/// A local CDP backend at the fixture WebSocket `addr`, in its own context.
+fn isolated_backend(addr: std::net::SocketAddr) -> CdpBrowserBackend {
+    let mut backend = CdpBrowserBackend::new(format!("ws://{addr}/devtools/browser/B"));
+    backend.isolated = true;
+    backend
+}
+
+/// The methods of `commands`, in order.
+fn methods(commands: &[Value]) -> Vec<&str> {
+    commands
+        .iter()
+        .map(|command| command["method"].as_str().unwrap_or_default())
+        .collect()
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_cdp_backend_uses_only_its_own_tab_and_disposes_its_context() {
+    let (addr, mut commands) =
+        spawn_cdp_websocket(attachable_browser(Arc::new(|command: &Value| {
+            let result = match command["method"].as_str() {
+                Some("Target.createBrowserContext") => json!({"browserContextId": "C1"}),
+                Some("Target.createTarget") => json!({"targetId": "T1"}),
+                _ => json!({"nodes": []}),
+            };
+            Some(vec![cdp_result(command, result)])
+        })))
+        .await;
+    let backend = isolated_backend(addr);
+
+    backend.snapshot().await.expect("first snapshot");
+    backend.snapshot().await.expect("second snapshot");
+    let used = drain_commands(&mut commands);
+    tokio::task::spawn_blocking(move || drop(backend))
+        .await
+        .expect("drop");
+    let disposed = drain_commands(&mut commands);
+
+    assert_eq!(
+        methods(&used),
+        [
+            "Target.createBrowserContext",
+            "Target.createTarget",
+            "Target.attachToTarget",
+            "Accessibility.getFullAXTree",
+            "Target.attachToTarget",
+            "Accessibility.getFullAXTree",
+        ],
+        "the backend reached a page other than its own"
+    );
+    assert_eq!(
+        used[1]["params"],
+        json!({"url": "about:blank", "browserContextId": "C1"})
+    );
+    assert_eq!(used[2]["params"]["targetId"], "T1");
+    assert_eq!(used[4]["params"]["targetId"], "T1");
+    assert_eq!(methods(&disposed), ["Target.disposeBrowserContext"]);
+    assert_eq!(disposed[0]["params"], json!({"browserContextId": "C1"}));
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_cdp_backend_fails_closed_when_the_browser_refuses_a_context() {
+    let (addr, mut commands) = spawn_cdp_websocket(attachable_browser(Arc::new(
+        |command: &Value| match command["method"].as_str() {
+            Some("Target.createBrowserContext") => Some(vec![json!({
+                "id": command["id"],
+                "error": {"code": -32_000, "message": "Failed to create browser context."},
+            })]),
+            _ => Some(vec![cdp_result(command, json!({"nodes": []}))]),
+        },
+    )))
+    .await;
+    let backend = isolated_backend(addr);
+
+    for _ in 0..2 {
+        let err = backend.snapshot().await.unwrap_err().to_string();
+        assert!(err.contains("refused a private browser context"), "{err}");
+    }
+
+    assert_eq!(
+        methods(&drain_commands(&mut commands)),
+        ["Target.createBrowserContext", "Target.createBrowserContext"],
+        "a refused backend reached the browser's first page"
+    );
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_cdp_backend_replaces_a_tab_that_has_gone() {
+    let contexts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let browser: CdpResponder = Arc::new(move |command: &Value| {
+        let params = &command["params"];
+        let result = match command["method"].as_str() {
+            Some("Target.createBrowserContext") => {
+                let n = contexts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) + 1;
+                json!({"browserContextId": format!("C{n}")})
+            }
+            Some("Target.createTarget") => {
+                let context = params["browserContextId"].as_str().unwrap_or_default();
+                json!({"targetId": context.replace('C', "T")})
+            }
+            // Tab T1 has closed, as when Chrome restarts.
+            Some("Target.attachToTarget") if params["targetId"] == "T1" => {
+                return Some(vec![json!({
+                    "id": command["id"],
+                    "error": {"code": -32_602, "message": "No target with given id found"},
+                })]);
+            }
+            Some("Target.attachToTarget") => json!({"sessionId": "S2"}),
+            _ => json!({"nodes": []}),
+        };
+        Some(vec![cdp_result(command, result)])
+    });
+    let (addr, mut commands) = spawn_cdp_websocket(browser).await;
+    let backend = isolated_backend(addr);
+
+    backend.snapshot().await.expect_err("the tab is gone");
+    backend.snapshot().await.expect("a new tab");
+
+    let used = drain_commands(&mut commands);
+    assert_eq!(
+        methods(&used),
+        [
+            "Target.createBrowserContext",
+            "Target.createTarget",
+            "Target.attachToTarget",
+            "Target.disposeBrowserContext",
+            "Target.createBrowserContext",
+            "Target.createTarget",
+            "Target.attachToTarget",
+            "Accessibility.getFullAXTree",
+        ]
+    );
+    assert_eq!(used[3]["params"], json!({"browserContextId": "C1"}));
+    assert_eq!(used[6]["params"]["targetId"], "T2");
+}
+
+/// How many cookies `backend`'s tab holds for `https://example.com/`.
+async fn example_cookies(backend: &CdpBrowserBackend) -> usize {
+    backend
+        .cdp_command(
+            "Network.getCookies",
+            json!({"urls": ["https://example.com/"]}),
+        )
+        .await
+        .expect("cookies")["cookies"]
+        .as_array()
+        .map_or(0, Vec::len)
+}
+
+/// The context and tab of an isolated backend that has been used.
+async fn tab_ids(backend: &CdpBrowserBackend) -> (String, String) {
+    let tab = backend.tab.lock().await;
+    let tab = tab.as_ref().expect("the backend has a tab");
+    (tab.context_id.clone(), tab.target_id.clone())
+}
+
+/// Against a real Chrome or Chromium, for example
+/// `chromium --headless=new --remote-debugging-port=9222` and
+/// `CHROME_CDP_URL=http://127.0.0.1:9222 cargo test -p hermes-tools --lib isolated_cdp_backends_on_a_real_chrome -- --ignored`.
+#[tokio::test(flavor = "multi_thread")]
+#[ignore = "needs a Chrome at CHROME_CDP_URL"]
+async fn isolated_cdp_backends_on_a_real_chrome_keep_apart_and_clean_up() {
+    let endpoint = std::env::var("CHROME_CDP_URL").expect("CHROME_CDP_URL");
+    let isolated = || {
+        let mut backend = CdpBrowserBackend::new(endpoint.clone());
+        backend.isolated = true;
+        backend
+    };
+    let (a, b) = (isolated(), isolated());
+
+    a.cdp_command(
+        "Network.setCookie",
+        json!({"name": "hermes_isolation", "value": "a", "url": "https://example.com/"}),
+    )
+    .await
+    .expect("set a cookie in a");
+    assert_eq!(
+        example_cookies(&a).await,
+        1,
+        "a lost its cookie between calls"
+    );
+    assert_eq!(example_cookies(&b).await, 0, "b sees a's cookie");
+    let (a_context, a_target) = tab_ids(&a).await;
+    let (b_context, b_target) = tab_ids(&b).await;
+    assert_ne!(a_context, b_context);
+    assert_ne!(a_target, b_target);
+
+    tokio::task::spawn_blocking(move || drop((a, b)))
+        .await
+        .expect("drop");
+
+    let client = reqwest::Client::new();
+    let ws_url = resolve_cdp_ws_url(&client, &endpoint)
+        .await
+        .map_err(CdpFailure::message)
+        .expect("browser WebSocket");
+    let mut connection = CdpConnection::open(&ws_url)
+        .await
+        .map_err(CdpFailure::message)
+        .expect("connection");
+    let (contexts, _) = connection
+        .call("Target.getBrowserContexts", json!({}), &[])
+        .await
+        .map_err(CdpFailure::message)
+        .expect("contexts");
+    connection.close().await;
+    let remaining = contexts["browserContextIds"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !remaining.contains(&json!(a_context)) && !remaining.contains(&json!(b_context)),
+        "contexts left after drop: {remaining:?}"
+    );
 }

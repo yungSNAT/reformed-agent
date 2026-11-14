@@ -103,6 +103,11 @@ impl CdpConnection {
             .and_then(|target| target["targetId"].as_str())
             .ok_or_else(|| CdpFailure::Lost("The browser has no page target".into()))?
             .to_string();
+        self.attach_to_target(&target_id).await
+    }
+
+    /// Attach to the target `target_id` so that later commands reach it.
+    async fn attach_to_target(&mut self, target_id: &str) -> Result<(), CdpFailure> {
         let (attached, _) = self
             .call(
                 "Target.attachToTarget",
@@ -115,6 +120,64 @@ impl CdpConnection {
         })?;
         self.session_id = Some(session_id.to_string());
         Ok(())
+    }
+
+    /// Create a browser context, like an incognito profile, holding one blank
+    /// tab. It outlives this connection. A browser that refuses leaves the
+    /// browser tools off rather than on a shared page.
+    async fn create_isolated_tab(&mut self) -> Result<IsolatedTab, CdpFailure> {
+        let (created, _) = self
+            .call(
+                "Target.createBrowserContext",
+                json!({"disposeOnDetach": false}),
+                &[],
+            )
+            .await
+            .map_err(|failure| {
+                CdpFailure::Lost(format!(
+                    "The browser refused a private browser context for this session, so the browser tools stay off rather than share its pages: {}",
+                    failure.message()
+                ))
+            })?;
+        let context_id = created["browserContextId"]
+            .as_str()
+            .ok_or_else(|| {
+                CdpFailure::Lost("Target.createBrowserContext returned no browserContextId".into())
+            })?
+            .to_string();
+        let target = self
+            .call(
+                "Target.createTarget",
+                json!({"url": "about:blank", "browserContextId": context_id}),
+                &[],
+            )
+            .await
+            .and_then(|(target, _)| {
+                target["targetId"].as_str().map(str::to_string).ok_or_else(|| {
+                    CdpFailure::Lost("Target.createTarget returned no targetId".into())
+                })
+            });
+        match target {
+            Ok(target_id) => Ok(IsolatedTab {
+                context_id,
+                target_id,
+            }),
+            Err(failure) => {
+                let _ = self.dispose_context(&context_id).await;
+                Err(failure)
+            }
+        }
+    }
+
+    /// Dispose of a browser context, closing its pages.
+    async fn dispose_context(&mut self, context_id: &str) -> Result<(), CdpFailure> {
+        self.call(
+            "Target.disposeBrowserContext",
+            json!({"browserContextId": context_id}),
+            &[],
+        )
+        .await
+        .map(|_| ())
     }
 
     /// [`Self::call_once`]. A command in [`CDP_RESENT_METHODS`] refused as

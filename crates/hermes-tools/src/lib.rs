@@ -16,6 +16,7 @@ pub mod register_builtins;
 pub mod registry;
 pub mod repo;
 pub mod rtk_filter;
+pub mod session_browsers;
 pub mod teams_pipeline;
 pub mod terminal_requirements;
 pub mod tool_policy;
@@ -28,7 +29,7 @@ pub mod verification_evidence;
 pub mod website_policy;
 
 // Re-export registry types
-pub use registry::{ToolEntry, ToolEntryInfo, ToolRegistry, WeakToolRegistry};
+pub use registry::{ToolEntry, ToolEntryInfo, ToolOverrides, ToolRegistry, WeakToolRegistry};
 pub use rtk_filter::RawModeState;
 pub use tool_policy::{
     default_tool_policy_counters_path, load_tool_policy_counters, persist_tool_policy_counters,
@@ -127,8 +128,9 @@ pub use tools::web::{
 
 // Re-export real backend implementations
 pub use backends::browser::{
-    browser_backend_from_env, BrowserUseBrowserBackend, BrowserUseConfig,
-    BrowserbaseBrowserBackend, BrowserbaseConfig, CamoFoxBrowserBackend, CdpBrowserBackend,
+    browser_backend_from_env, isolated_browser_backend_from_env, BrowserUseBrowserBackend,
+    BrowserUseConfig, BrowserbaseBrowserBackend, BrowserbaseConfig, CamoFoxBrowserBackend,
+    CdpBrowserBackend,
 };
 pub use backends::clarify::SignalClarifyBackend;
 pub use backends::code_execution::LocalCodeExecutionBackend;
@@ -175,7 +177,8 @@ pub use teams_pipeline::{
 };
 
 // Re-export builtin registration helper
-pub use register_builtins::register_builtin_tools;
+pub use register_builtins::{register_builtin_tools, register_builtin_tools_with_browser};
+pub use session_browsers::{browser_overrides, unbound_browser, SessionBrowsers};
 
 // Re-export core types needed by consumers
 pub use hermes_core::{BudgetConfig, ToolCall, ToolError, ToolHandler, ToolResult, ToolSchema};

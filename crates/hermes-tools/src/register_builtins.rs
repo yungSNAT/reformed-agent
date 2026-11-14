@@ -9,6 +9,7 @@ use std::sync::Arc;
 
 use hermes_core::{SkillProvider, TerminalBackend, ToolHandler};
 
+use crate::tools::browser::SharedBrowser;
 use crate::ToolRegistry;
 
 /// Register all built-in tool handlers into the given registry.
@@ -24,12 +25,55 @@ pub fn register_builtin_tools(
     terminal_backend: Arc<dyn TerminalBackend>,
     skill_provider: Arc<dyn SkillProvider>,
 ) {
+    register_builtin_tools_with_browser(
+        registry,
+        terminal_backend,
+        skill_provider,
+        SharedBrowser::lazy(crate::backends::browser::browser_backend_from_env),
+    );
+}
+
+/// [`register_builtin_tools`], with the browser tools driving `browser`.
+pub fn register_builtin_tools_with_browser(
+    registry: &ToolRegistry,
+    terminal_backend: Arc<dyn TerminalBackend>,
+    skill_provider: Arc<dyn SkillProvider>,
+    browser: SharedBrowser,
+) {
     register_builtin_tools_with_data_dir(
         registry,
         terminal_backend,
         skill_provider,
         hermes_data_dir(),
+        browser,
     );
+}
+
+/// The 10 browser tools, all driving `browser`, each with its emoji.
+pub fn browser_tool_handlers(browser: SharedBrowser) -> [(Arc<dyn ToolHandler>, &'static str); 10] {
+    use crate::tools::browser::*;
+
+    let vision = crate::backends::vision::OpenAiVisionBackend::from_env()
+        .map(|backend| Arc::new(backend) as Arc<dyn crate::tools::vision::VisionBackend>)
+        .map_err(|err| err.to_string());
+    [
+        (Arc::new(BrowserNavigateHandler::new(browser.clone())), "🌐"),
+        (Arc::new(BrowserSnapshotHandler::new(browser.clone())), "📸"),
+        (Arc::new(BrowserClickHandler::new(browser.clone())), "🖱️"),
+        (Arc::new(BrowserTypeHandler::new(browser.clone())), "⌨️"),
+        (Arc::new(BrowserScrollHandler::new(browser.clone())), "📜"),
+        (Arc::new(BrowserBackHandler::new(browser.clone())), "⬅️"),
+        (Arc::new(BrowserPressHandler::new(browser.clone())), "🔘"),
+        (
+            Arc::new(BrowserGetImagesHandler::new(browser.clone())),
+            "🖼️",
+        ),
+        (
+            Arc::new(BrowserVisionHandler::new(browser.clone(), vision)),
+            "👁️",
+        ),
+        (Arc::new(BrowserConsoleHandler::new(browser)), "🔧"),
+    ]
 }
 
 fn register_builtin_tools_with_data_dir(
@@ -37,6 +81,7 @@ fn register_builtin_tools_with_data_dir(
     terminal_backend: Arc<dyn TerminalBackend>,
     skill_provider: Arc<dyn SkillProvider>,
     data_dir: PathBuf,
+    browser: SharedBrowser,
 ) {
     fn reg(
         registry: &ToolRegistry,
@@ -515,106 +560,8 @@ fn register_builtin_tools_with_data_dir(
     );
 
     // -- Browser (10 tools) --------------------------------------------------
-    {
-        // One lock for the 10 tools, so their calls take turns on the page.
-        let browser_backend = crate::tools::browser::SharedBrowser::new(
-            crate::backends::browser::browser_backend_from_env(),
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserNavigateHandler::new(
-                browser_backend.clone(),
-            )),
-            "🌐",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserSnapshotHandler::new(
-                browser_backend.clone(),
-            )),
-            "📸",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserClickHandler::new(
-                browser_backend.clone(),
-            )),
-            "🖱️",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserTypeHandler::new(
-                browser_backend.clone(),
-            )),
-            "⌨️",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserScrollHandler::new(
-                browser_backend.clone(),
-            )),
-            "📜",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserBackHandler::new(
-                browser_backend.clone(),
-            )),
-            "⬅️",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserPressHandler::new(
-                browser_backend.clone(),
-            )),
-            "🔘",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserGetImagesHandler::new(
-                browser_backend.clone(),
-            )),
-            "🖼️",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserVisionHandler::new(
-                browser_backend.clone(),
-                crate::backends::vision::OpenAiVisionBackend::from_env()
-                    .map(|backend| {
-                        Arc::new(backend) as Arc<dyn crate::tools::vision::VisionBackend>
-                    })
-                    .map_err(|err| err.to_string()),
-            )),
-            "👁️",
-            vec![],
-        );
-        reg(
-            registry,
-            "browser",
-            Arc::new(crate::tools::browser::BrowserConsoleHandler::new(
-                browser_backend,
-            )),
-            "🔧",
-            vec![],
-        );
+    for (handler, emoji) in browser_tool_handlers(browser) {
+        reg(registry, "browser", handler, emoji, vec![]);
     }
 
     // -- Mixture of Agents ---------------------------------------------------
@@ -921,7 +868,7 @@ fn hermes_data_dir() -> PathBuf {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     use crate::approval::TEST_ENV_LOCK;
@@ -966,7 +913,7 @@ mod tests {
         }
     }
 
-    struct MockTerminalBackend;
+    pub(crate) struct MockTerminalBackend;
 
     #[async_trait]
     impl TerminalBackend for MockTerminalBackend {
@@ -1007,7 +954,7 @@ mod tests {
         }
     }
 
-    struct MockSkillProvider;
+    pub(crate) struct MockSkillProvider;
 
     #[async_trait]
     impl SkillProvider for MockSkillProvider {
@@ -1086,6 +1033,7 @@ mod tests {
             Arc::new(MockTerminalBackend),
             Arc::new(MockSkillProvider),
             data_dir,
+            SharedBrowser::lazy(crate::backends::browser::browser_backend_from_env),
         );
         let mut names: Vec<String> = registry
             .list_tools()

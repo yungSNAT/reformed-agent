@@ -26,6 +26,8 @@ impl CdpBrowserBackend {
             first_navigation: AtomicBool::new(true),
             local: false,
             retired: AtomicBool::new(false),
+            isolated: false,
+            tab: Mutex::new(None),
         }
     }
 
@@ -73,18 +75,72 @@ impl CdpBrowserBackend {
         }
     }
 
-    /// A connection attached to the browser's first page, unless the browser
-    /// was retired.
+    /// A connection attached to the browser's first page, or to this
+    /// backend's own tab when it is isolated, unless the browser was retired.
     async fn open_page(&self) -> Result<CdpConnection, ToolError> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(ToolError::ExecutionFailed(
                 "The browser was retired because a refused page could not be cleared; restart Hermes to use it again".into(),
             ));
         }
-        CdpConnection::open_attached(&self.client, &self.endpoint)
+        let failed = |failure: CdpFailure| ToolError::ExecutionFailed(failure.message());
+        if !self.isolated {
+            return CdpConnection::open_attached(&self.client, &self.endpoint)
+                .await
+                .map_err(failed);
+        }
+        let mut tab = self.tab.lock().await;
+        let ws_url = resolve_cdp_ws_url(&self.client, &self.endpoint)
             .await
-            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+            .map_err(failed)?;
+        let mut connection = CdpConnection::open(&ws_url).await.map_err(failed)?;
+        let target_id = match tab.as_ref() {
+            Some(tab) => tab.target_id.clone(),
+            None => {
+                let created = connection.create_isolated_tab().await.map_err(failed)?;
+                tab.insert(created).target_id.clone()
+            }
+        };
+        if let Err(failure) = connection.attach_to_target(&target_id).await {
+            // The tab is gone, as after a Chrome restart: the next call
+            // starts a new context rather than reach any other page.
+            if let Some(gone) = tab.take() {
+                let _ = connection.dispose_context(&gone.context_id).await;
+            }
+            return Err(failed(failure));
+        }
+        Ok(connection)
     }
+}
+
+/// An isolated backend disposes of its context, and so its tab and cookies,
+/// when dropped; see [`release_on_drop`].
+impl Drop for CdpBrowserBackend {
+    fn drop(&mut self) {
+        if let Some(tab) = self.tab.get_mut().take() {
+            let endpoint = &self.endpoint;
+            release_on_drop("local browser context", |client| async move {
+                dispose_browser_context(&client, endpoint, &tab.context_id).await
+            });
+        }
+    }
+}
+
+/// Dispose of the browser context `context_id` at `endpoint` over a new
+/// connection.
+async fn dispose_browser_context(
+    client: &reqwest::Client,
+    endpoint: &str,
+    context_id: &str,
+) -> Result<bool, ToolError> {
+    let failed = |failure: CdpFailure| ToolError::ExecutionFailed(failure.message());
+    let ws_url = resolve_cdp_ws_url(client, endpoint)
+        .await
+        .map_err(failed)?;
+    let mut connection = CdpConnection::open(&ws_url).await.map_err(failed)?;
+    let disposed = connection.dispose_context(context_id).await;
+    connection.close().await;
+    disposed.map(|()| true).map_err(failed)
 }
 
 impl CdpChannel for CdpBrowserBackend {
@@ -163,6 +219,9 @@ impl BrowserBackend for CdpBrowserBackend {
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         cdp_console(self, action).await
     }
+    fn is_retired(&self) -> bool {
+        self.retired.load(Ordering::SeqCst)
+    }
 }
 
 #[async_trait]
@@ -234,5 +293,8 @@ impl BrowserBackend for CamoFoxBrowserBackend {
     }
     async fn console(&self, action: &str) -> Result<String, ToolError> {
         self.inner.console(action).await
+    }
+    fn is_retired(&self) -> bool {
+        self.inner.is_retired()
     }
 }
