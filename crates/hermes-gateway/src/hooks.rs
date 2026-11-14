@@ -556,7 +556,7 @@ impl HookHandler for BootMdHook {
         if !self.boot_path.exists() {
             return Ok(());
         }
-        let content = match std::fs::read_to_string(&self.boot_path) {
+        let content = match tokio::fs::read_to_string(&self.boot_path).await {
             Ok(s) => s,
             Err(e) => return Err(format!("Failed to read BOOT.md: {e}")),
         };

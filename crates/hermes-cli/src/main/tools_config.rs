@@ -656,7 +656,7 @@ fn stale_platform_toolset_diagnostics(
 }
 
 /// Handle `hermes config [action] [key] [value]`.
-async fn run_config(
+fn run_config(
     cli: Cli,
     action: Option<String>,
     key: Option<String>,

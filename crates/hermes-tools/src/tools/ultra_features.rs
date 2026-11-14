@@ -453,7 +453,9 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
             "hash_edit denied: replacement appears to be internal status text".into(),
         ));
     }
-    let content = fs::read_to_string(&path).map_err(io_err("read hash_edit file"))?;
+    let content = tokio::fs::read_to_string(&path)
+        .await
+        .map_err(io_err("read hash_edit file"))?;
     let old_hash = sha256_hex(&content);
     if let Some(expected) = params.get("expected_hash").and_then(Value::as_str) {
         if !expected.trim().is_empty() && !old_hash.starts_with(expected.trim()) {
@@ -474,7 +476,9 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
     let dry_run = bool_param(&params, "dry_run", false);
     if !dry_run {
         CredentialGuard::new().check_write_access(&path, &edit.content)?;
-        fs::write(&path, &edit.content).map_err(io_err("write hash_edit file"))?;
+        tokio::fs::write(&path, &edit.content)
+            .await
+            .map_err(io_err("write hash_edit file"))?;
     }
     Ok(json!({
         "applied": !dry_run,
@@ -640,7 +644,7 @@ async fn search_resource(params: Value, state: &UltraFeatureState) -> Result<Str
         if path.is_dir() {
             let mut matches = Vec::new();
             for file in collect_text_files(&path, MAX_SCAN_FILES) {
-                let Ok(content) = fs::read_to_string(&file) else {
+                let Ok(content) = tokio::fs::read_to_string(&file).await else {
                     continue;
                 };
                 for (idx, line) in content.lines().enumerate() {
@@ -678,7 +682,8 @@ async fn resolve_resource(uri: &str, state: &UltraFeatureState) -> Result<String
             .map_err(|e| ToolError::ExecutionFailed(format!("read body failed: {e}")));
     }
     if let Some(path) = uri.strip_prefix("file://") {
-        return fs::read_to_string(clean_path(PathBuf::from(path)))
+        return tokio::fs::read_to_string(clean_path(PathBuf::from(path)))
+            .await
             .map_err(io_err("read file resource"));
     }
     if let Some(spec) = uri.strip_prefix("pr://") {
@@ -702,7 +707,9 @@ async fn resolve_resource(uri: &str, state: &UltraFeatureState) -> Result<String
     if let Some(spec) = uri.strip_prefix("conflict://") {
         return read_conflict_resource(spec);
     }
-    fs::read_to_string(clean_path(PathBuf::from(uri))).map_err(io_err("read path resource"))
+    tokio::fs::read_to_string(clean_path(PathBuf::from(uri)))
+        .await
+        .map_err(io_err("read path resource"))
 }
 
 fn uri_to_local_path(uri: &str, state: &UltraFeatureState) -> Option<PathBuf> {
@@ -1060,13 +1067,15 @@ async fn lsp_inspect(params: Value) -> Result<String, ToolError> {
     match action {
         "diagnostics" => Ok(json!({"diagnostics": diagnostics_for_path(&path)}).to_string()),
         "symbols" => {
-            let content = fs::read_to_string(&path).map_err(io_err("read symbols file"))?;
+            let content = tokio::fs::read_to_string(&path)
+                .await
+                .map_err(io_err("read symbols file"))?;
             Ok(json!({"symbols": extract_symbols(&path, &content).into_iter().take(limit).collect::<Vec<_>>()}).to_string())
         }
         "workspace_symbols" => {
             let mut symbols = Vec::new();
             for file in collect_source_files(&path, MAX_SCAN_FILES) {
-                let Ok(content) = fs::read_to_string(&file) else {
+                let Ok(content) = tokio::fs::read_to_string(&file).await else {
                     continue;
                 };
                 for symbol in extract_symbols(&file, &content) {
@@ -1420,19 +1429,24 @@ async fn transaction_preview(
             Ok(json!(txn).to_string())
         }
         "list" => {
-            let mut txns = Vec::new();
-            for entry in fs::read_dir(state.transactions_dir())
-                .map_err(io_err("list transactions"))?
-                .flatten()
-            {
-                if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
-                    if let Ok(txn) = read_transaction_path(&entry.path()) {
-                        txns.push(txn);
+            let dir = state.transactions_dir();
+            tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+                let mut txns = Vec::new();
+                for entry in fs::read_dir(dir)
+                    .map_err(io_err("list transactions"))?
+                    .flatten()
+                {
+                    if entry.path().extension().and_then(|s| s.to_str()) == Some("json") {
+                        if let Ok(txn) = read_transaction_path(&entry.path()) {
+                            txns.push(txn);
+                        }
                     }
                 }
-            }
-            txns.sort_by(|a, b| a.id.cmp(&b.id));
-            Ok(json!({"transactions":txns}).to_string())
+                txns.sort_by(|a, b| a.id.cmp(&b.id));
+                Ok(json!({"transactions":txns}).to_string())
+            })
+            .await
+            .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
         }
         "read" => Ok(json!(read_transaction(state, required_str(&params, "id")?)?).to_string()),
         "accept" | "reject" => {
@@ -1554,7 +1568,7 @@ async fn ast_search(params: Value) -> Result<String, ToolError> {
     let mut matches = Vec::new();
     let mut names = BTreeSet::new();
     for file in &files {
-        let Ok(content) = fs::read_to_string(file) else {
+        let Ok(content) = tokio::fs::read_to_string(file).await else {
             continue;
         };
         for sym in extract_symbols(file, &content) {
@@ -1590,7 +1604,7 @@ async fn ast_search(params: Value) -> Result<String, ToolError> {
     let dry_run = bool_param(&params, "dry_run", true);
     let mut touched = Vec::new();
     for file in files {
-        let Ok(content) = fs::read_to_string(&file) else {
+        let Ok(content) = tokio::fs::read_to_string(&file).await else {
             continue;
         };
         let mut next = content.clone();
@@ -1607,7 +1621,9 @@ async fn ast_search(params: Value) -> Result<String, ToolError> {
         if count > 0 {
             if !dry_run {
                 CredentialGuard::new().check_write_access(&file, &next)?;
-                fs::write(&file, &next).map_err(io_err("ast replace"))?;
+                tokio::fs::write(&file, &next)
+                    .await
+                    .map_err(io_err("ast replace"))?;
             }
             touched.push(json!({"path":file,"replacements":count,"old_hash":sha256_hex(&content),"new_hash":sha256_hex(&next)}));
         }
@@ -1835,11 +1851,12 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             let path = state.agents_dir().join(&id);
             if git_worktree {
                 let branch_name = branch.clone().unwrap_or_else(|| format!("subagent/{id}"));
-                let status = std::process::Command::new("git")
+                let status = tokio::process::Command::new("git")
                     .args(["worktree", "add", "-b", &branch_name])
                     .arg(&path)
                     .arg("HEAD")
                     .status()
+                    .await
                     .map_err(|e| {
                         ToolError::ExecutionFailed(format!("git worktree add failed: {e}"))
                     })?;
@@ -1849,7 +1866,9 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                     )));
                 }
             } else {
-                fs::create_dir_all(&path).map_err(io_err("create subagent workspace"))?;
+                tokio::fs::create_dir_all(&path)
+                    .await
+                    .map_err(io_err("create subagent workspace"))?;
             }
             let manifest = SubagentManifest {
                 id: id.clone(),
@@ -1867,19 +1886,24 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             )
         }
         "list" => {
-            let mut agents = Vec::new();
-            for entry in fs::read_dir(state.agents_dir())
-                .map_err(io_err("list subagents"))?
-                .flatten()
-            {
-                let manifest = entry.path().join("manifest.json");
-                if manifest.is_file() {
-                    if let Ok(agent) = read_subagent_manifest_path(&manifest) {
-                        agents.push(agent);
+            let dir = state.agents_dir();
+            tokio::task::spawn_blocking(move || -> Result<String, ToolError> {
+                let mut agents = Vec::new();
+                for entry in fs::read_dir(dir)
+                    .map_err(io_err("list subagents"))?
+                    .flatten()
+                {
+                    let manifest = entry.path().join("manifest.json");
+                    if manifest.is_file() {
+                        if let Ok(agent) = read_subagent_manifest_path(&manifest) {
+                            agents.push(agent);
+                        }
                     }
                 }
-            }
-            Ok(json!({"agents":agents}).to_string())
+                Ok(json!({"agents":agents}).to_string())
+            })
+            .await
+            .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
         }
         "read" => {
             let id = safe_id(required_str(&params, "id")?);
@@ -1887,7 +1911,8 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or("manifest.json");
-            fs::read_to_string(clean_join(&state.agents_dir().join(id), rel))
+            tokio::fs::read_to_string(clean_join(&state.agents_dir().join(id), rel))
+                .await
                 .map_err(io_err("read subagent artifact"))
         }
         "write" => {
@@ -1902,9 +1927,13 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                 ));
             }
             if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent).map_err(io_err("create subagent artifact dir"))?;
+                tokio::fs::create_dir_all(parent)
+                    .await
+                    .map_err(io_err("create subagent artifact dir"))?;
             }
-            fs::write(&path, content).map_err(io_err("write subagent artifact"))?;
+            tokio::fs::write(&path, content)
+                .await
+                .map_err(io_err("write subagent artifact"))?;
             Ok(json!({"written":true,"uri":format!("agent://{id}/{rel}")}).to_string())
         }
         "remove" => {
@@ -1912,10 +1941,11 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             let manifest =
                 read_subagent_manifest_path(&state.agents_dir().join(&id).join("manifest.json"))?;
             if manifest.git_worktree {
-                let status = std::process::Command::new("git")
+                let status = tokio::process::Command::new("git")
                     .args(["worktree", "remove", "--force"])
                     .arg(&manifest.path)
                     .status()
+                    .await
                     .map_err(|e| {
                         ToolError::ExecutionFailed(format!("git worktree remove failed: {e}"))
                     })?;
@@ -1925,7 +1955,9 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                     )));
                 }
             } else if manifest.path.exists() {
-                fs::remove_dir_all(&manifest.path).map_err(io_err("remove subagent workspace"))?;
+                tokio::fs::remove_dir_all(&manifest.path)
+                    .await
+                    .map_err(io_err("remove subagent workspace"))?;
             }
             Ok(json!({"removed":true,"id":id}).to_string())
         }
@@ -1971,7 +2003,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
         .join(format!("{}.json", safe_id(session)));
     match action {
         "reset" => {
-            let _ = fs::remove_file(path);
+            let _ = tokio::fs::remove_file(path).await;
             Ok(json!({"reset":true,"session":session}).to_string())
         }
         "read" => Ok(json!(read_kernel(&path).unwrap_or_else(|| KernelSession {
@@ -2070,7 +2102,9 @@ async fn run_js_kernel(
     script.push_str("\n// current snippet\n");
     script.push_str(code);
     script.push('\n');
-    fs::write(&script_path, script).map_err(io_err("write js kernel script"))?;
+    tokio::fs::write(&script_path, script)
+        .await
+        .map_err(io_err("write js kernel script"))?;
     run_command_with_timeout("node", &[script_path.to_string_lossy().as_ref()], timeout).await
 }
 
@@ -2286,7 +2320,9 @@ async fn first_run_inherit(params: Value, state: &UltraFeatureState) -> Result<S
             finding.excerpt
         ));
     }
-    fs::write(state.import_path(), doc).map_err(io_err("write imported context"))?;
+    tokio::fs::write(state.import_path(), doc)
+        .await
+        .map_err(io_err("write imported context"))?;
     Ok(json!({"findings":findings,"imported_path":state.import_path()}).to_string())
 }
 
@@ -2337,18 +2373,26 @@ fn scan_agent_configs(root: &Path, max_chars: usize) -> Vec<InheritFinding> {
 
 async fn ultra_feature_benchmark(state: &UltraFeatureState) -> Result<String, ToolError> {
     let bench_dir = state.root.join("benchmark-smoke");
-    let _ = fs::remove_dir_all(&bench_dir);
-    fs::create_dir_all(&bench_dir).map_err(io_err("create benchmark dir"))?;
+    let _ = tokio::fs::remove_dir_all(&bench_dir).await;
+    tokio::fs::create_dir_all(&bench_dir)
+        .await
+        .map_err(io_err("create benchmark dir"))?;
     let hash_file = bench_dir.join("hash.rs");
-    fs::write(&hash_file, "fn alpha() {\n    println!(\"a\");\n}\n")
+    tokio::fs::write(&hash_file, "fn alpha() {\n    println!(\"a\");\n}\n")
+        .await
         .map_err(io_err("write hash fixture"))?;
-    let hash = sha256_hex(&fs::read_to_string(&hash_file).map_err(io_err("read hash fixture"))?);
+    let hash = sha256_hex(
+        &tokio::fs::read_to_string(&hash_file)
+            .await
+            .map_err(io_err("read hash fixture"))?,
+    );
     let hash_result = hash_edit(json!({"path":hash_file,"expected_hash":&hash[..12],"old_string":"println!(\"a\");","new_string":"println!(\"b\");"})).await?;
     let conflict_file = bench_dir.join("conflict.txt");
-    fs::write(
+    tokio::fs::write(
         &conflict_file,
         "one\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\ntwo\n",
     )
+    .await
     .map_err(io_err("write conflict fixture"))?;
     let conflict_result = resolve_conflict(json!({"action":"list","path":conflict_file})).await?;
     let lsp_result =

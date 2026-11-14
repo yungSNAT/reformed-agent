@@ -940,7 +940,14 @@ fn add_resource_payload_zips_directory_and_skips_symlinks() {
     let mut archive = zip::ZipArchive::new(zip_file).expect("zip archive");
     let mut names = Vec::new();
     for idx in 0..archive.len() {
-        names.push(archive.by_index(idx).expect("zip entry").name().to_string());
+        names.push(
+            archive
+                .by_index(idx)
+                .expect("zip entry")
+                .name()
+                .expect("zip entry name")
+                .into_owned(),
+        );
     }
     assert!(names.contains(&"guide.md".to_string()));
     assert!(names.contains(&"nested/api.md".to_string()));

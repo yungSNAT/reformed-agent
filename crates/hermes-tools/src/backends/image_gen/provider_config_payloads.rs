@@ -484,7 +484,7 @@ async fn load_image_source_bytes(
         });
     }
     let path = Path::new(source);
-    let bytes = std::fs::read(path).map_err(|e| {
+    let bytes = tokio::fs::read(path).await.map_err(|e| {
         ToolError::ExecutionFailed(format!("Could not read source image {}: {e}", path.display()))
     })?;
     let filename = path

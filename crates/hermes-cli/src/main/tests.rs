@@ -866,6 +866,32 @@ mod tests {
         assert_eq!(auth_verify_source(false, false, false), "none");
     }
 
+    #[test]
+    fn support_bundle_entries_are_owner_only() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("bundle.tar.gz");
+        let file = std::fs::File::create(&path).expect("create bundle");
+        let mut tar = tar::Builder::new(flate2::write::GzEncoder::new(
+            file,
+            flate2::Compression::default(),
+        ));
+        append_bundle_bytes(&mut tar, "doctor/logs/hermes.log", b"log line", true)
+            .expect("append entry");
+        tar.into_inner()
+            .expect("finish tar")
+            .finish()
+            .expect("finish gzip");
+
+        let file = std::fs::File::open(&path).expect("open bundle");
+        let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(file));
+        let modes: Vec<u32> = archive
+            .entries()
+            .expect("entries")
+            .map(|entry| entry.expect("entry").header().mode().expect("mode"))
+            .collect();
+        assert_eq!(modes, vec![0o600]);
+    }
+
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");

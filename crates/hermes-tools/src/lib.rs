@@ -54,7 +54,7 @@ pub use tools::auth_snapshot::AuthSnapshotHandler;
 pub use tools::browser::{
     BrowserBackHandler, BrowserBackend, BrowserClickHandler, BrowserConsoleHandler,
     BrowserGetImagesHandler, BrowserNavigateHandler, BrowserPressHandler, BrowserScrollHandler,
-    BrowserSnapshotHandler, BrowserTypeHandler, BrowserVisionHandler,
+    BrowserSnapshotHandler, BrowserTypeHandler, BrowserVisionHandler, SharedBrowser,
 };
 pub use tools::clarify::{ClarifyBackend, ClarifyHandler};
 pub use tools::code_execution::{CodeExecutionBackend, ExecuteCodeHandler};

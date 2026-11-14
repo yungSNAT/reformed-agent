@@ -1086,7 +1086,8 @@ fn append_bundle_bytes(
     deterministic: bool,
 ) -> Result<(), AgentError> {
     let mut header = tar::Header::new_gnu();
-    header.set_mode(0o644);
+    // Entries include logs and replay records, so they extract owner-only.
+    header.set_mode(0o600);
     header.set_size(bytes.len() as u64);
     if deterministic {
         header.set_mtime(0);
