@@ -2792,6 +2792,73 @@ async fn example_cookies(backend: &CdpBrowserBackend) -> usize {
         .map_or(0, Vec::len)
 }
 
+/// However the environment selects a local backend, the isolated factory
+/// gives it a context of its own: plain CDP, CamoFox and the local browser a
+/// cloud backend falls back to.
+#[tokio::test(flavor = "multi_thread")]
+async fn the_isolated_factory_isolates_every_local_backend() {
+    let _scope = EnvScope::new();
+    let (addr, mut commands) =
+        spawn_cdp_websocket(attachable_browser(Arc::new(|command: &Value| {
+            let result = match command["method"].as_str() {
+                Some("Target.createBrowserContext") => json!({"browserContextId": "C1"}),
+                Some("Target.createTarget") => json!({"targetId": "T1"}),
+                _ => json!({"nodes": []}),
+            };
+            Some(vec![cdp_result(command, result)])
+        })))
+        .await;
+    let endpoint = format!("ws://{addr}/devtools/browser/B");
+    let unreachable = format!("http://{}", closed_addr().await);
+    let cases = [
+        ("plain CDP", vec![("CHROME_CDP_URL", endpoint.as_str())]),
+        (
+            "CamoFox",
+            vec![
+                ("HERMES_BROWSER_BACKEND", "camofox"),
+                ("CAMOFOX_CDP_URL", endpoint.as_str()),
+            ],
+        ),
+        (
+            "cloud fallback",
+            vec![
+                ("HERMES_BROWSER_BACKEND", "browserbase"),
+                ("BROWSERBASE_API_KEY", "bb-key"),
+                ("BROWSERBASE_PROJECT_ID", "proj"),
+                ("BROWSERBASE_BASE_URL", unreachable.as_str()),
+                ("CHROME_CDP_URL", endpoint.as_str()),
+            ],
+        ),
+    ];
+    for (case, env) in cases {
+        for (key, value) in &env {
+            std::env::set_var(key, value);
+        }
+        let backend = isolated_browser_backend_from_env();
+        backend
+            .snapshot()
+            .await
+            .unwrap_or_else(|err| panic!("{case}: {err}"));
+        tokio::task::spawn_blocking(move || drop(backend))
+            .await
+            .expect("drop");
+        let used = drain_commands(&mut commands);
+        let used = methods(&used);
+        assert_eq!(
+            used.iter().take(2).copied().collect::<Vec<_>>(),
+            ["Target.createBrowserContext", "Target.createTarget"],
+            "{case} did not open a context of its own"
+        );
+        assert!(
+            !used.contains(&"Target.getTargets"),
+            "{case} reached the browser's first page"
+        );
+        for (key, _) in &env {
+            std::env::remove_var(key);
+        }
+    }
+}
+
 /// The context and tab of an isolated backend that has been used.
 async fn tab_ids(backend: &CdpBrowserBackend) -> (String, String) {
     let tab = backend.tab.lock().await;
