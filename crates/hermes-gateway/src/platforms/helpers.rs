@@ -161,8 +161,7 @@ pub async fn download_media_url(
     adapter: &BasePlatformAdapter,
     url: &str,
 ) -> Result<(Vec<u8>, Option<String>), String> {
-    download_media_url_with_limit(adapter, url, crate::media::DEFAULT_INBOUND_MEDIA_MAX_BYTES)
-        .await
+    download_media_url_with_limit(adapter, url, crate::media::DEFAULT_INBOUND_MEDIA_MAX_BYTES).await
 }
 
 pub async fn download_media_url_with_limit(

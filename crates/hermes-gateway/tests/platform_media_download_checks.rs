@@ -90,8 +90,7 @@ async fn metadata_addresses_are_refused_as_the_first_url() {
         "http://169.254.169.254/latest/meta-data/",
         "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/",
     ] {
-        let result =
-            tokio::time::timeout(Duration::from_secs(5), download(&adapter, url, 0)).await;
+        let result = tokio::time::timeout(Duration::from_secs(5), download(&adapter, url, 0)).await;
         let err = match result {
             Ok(Err(err)) => err,
             Ok(Ok(_)) => panic!("{url} was downloaded"),
