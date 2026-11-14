@@ -6,8 +6,10 @@
 //! collapse tools to the coding toolset; `auto` and `on` stay prompt-only.
 
 use std::collections::BTreeMap;
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 use hermes_core::subprocess::CommandNoWindowExt;
 use serde::{Deserialize, Serialize};
@@ -622,15 +624,15 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     // byte for byte: git's own `--get-regexp` passes over a key holding a byte
     // its locale cannot decode, so a repository could hide a filter or a
     // remote from it.
-    let listed = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "--includes", "--null", "--name-only", "--list"])
-        .env_remove("GIT_CONFIG")
-        .stdin(std::process::Stdio::null())
-        .suppress_windows_console()
-        .output()
-        .ok()?;
+    let listed = output_within_timeout(
+        Command::new("git")
+            .arg("-C")
+            .arg(root)
+            .args(["config", "--includes", "--null", "--name-only", "--list"])
+            .env_remove("GIT_CONFIG")
+            .stdin(std::process::Stdio::null())
+            .suppress_windows_console(),
+    )?;
     // Refuse the snapshot if the listing fails, rather than running status
     // with an incomplete set of overrides.
     if !listed.status.success() {
@@ -702,16 +704,59 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     Some(cmd)
 }
 
+/// How long one git call of the snapshot may take. A config key can name a
+/// FIFO (`include.path`, `mailmap.file`), and git then waits for a writer
+/// that never comes.
+const GIT_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// The command's exit status and standard output, or `None` when it cannot
+/// start or outlasts `GIT_SNAPSHOT_TIMEOUT`, when it is killed.
+///
+/// shortcut: only git itself is killed, so a process git started and left
+/// blocked keeps running; killing git's process group would end it too.
+fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
+    let mut child = cmd
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .ok()?;
+    let mut stdout = child.stdout.take()?;
+    // Read whilst waiting, so a full pipe cannot stall git.
+    let reader = std::thread::spawn(move || {
+        let mut buf = Vec::new();
+        stdout.read_to_end(&mut buf).map(|_| buf)
+    });
+    let deadline = Instant::now() + GIT_SNAPSHOT_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break status,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(10));
+            }
+            _ => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return None;
+            }
+        }
+    };
+    let stdout = reader.join().ok()?.ok()?;
+    Some(Output {
+        status,
+        stdout,
+        stderr: Vec::new(),
+    })
+}
+
 fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<String>) {
     let Some(mut git) = workspace_git(root, guard) else {
         return;
     };
     // A submodule has its own config and filter drivers. Read its committed
     // gitlink state, but never run status inside its dirty worktree.
-    let status = git
-        .args(["status", "--short", "--branch", "--ignore-submodules=dirty"])
-        .output();
-    let Ok(output) = status else {
+    let status =
+        output_within_timeout(git.args(["status", "--short", "--branch", "--ignore-submodules=dirty"]));
+    let Some(output) = status else {
         return;
     };
     if !output.status.success() {
@@ -754,10 +799,7 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
 }
 
 fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
-    let output = workspace_git(root, guard)?
-        .args(["log", "-1", "--oneline"])
-        .output()
-        .ok()?;
+    let output = output_within_timeout(workspace_git(root, guard)?.args(["log", "-1", "--oneline"]))?;
     if !output.status.success() {
         return None;
     }
@@ -1480,6 +1522,37 @@ mod tests {
             lines.contains(&"Status: modified=1, staged=1".to_string()),
             "{lines:?}"
         );
+    }
+
+    /// A config key naming a FIFO makes git wait, unseen, for a writer that
+    /// never comes; the snapshot must give up on it.
+    #[cfg(unix)]
+    #[test]
+    fn workspace_snapshot_gives_up_on_a_git_call_that_hangs() {
+        for key in ["include.path", "mailmap.file"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            git_init(&repo);
+            let fifo = tmp.path().join("fifo");
+            assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+            let configured = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["config", key])
+                .arg(&fifo)
+                .status()
+                .unwrap();
+            assert!(configured.success());
+
+            let (done, finished) = std::sync::mpsc::channel();
+            std::thread::spawn(move || done.send(build_coding_workspace_block(&repo)));
+            let block = finished.recv_timeout(std::time::Duration::from_secs(20));
+            if block.is_err() {
+                // Release the git process blocked on the FIFO before failing.
+                drop(std::fs::OpenOptions::new().write(true).open(&fifo));
+            }
+            assert!(block.is_ok(), "{key}: the snapshot hung");
+        }
     }
 
     #[test]
