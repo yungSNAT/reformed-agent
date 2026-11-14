@@ -337,10 +337,16 @@ fn extract_clawhub_archive(bytes: &[u8]) -> Result<Vec<(String, Bytes)>, AgentEr
                 if file.is_dir() {
                     continue;
                 }
-                let raw_name = file.name().replace('\\', "/");
+                let name = file
+                    .name()
+                    .map_err(|e| {
+                        AgentError::Config(format!("Invalid ClawHub zip entry name: {}", e))
+                    })?
+                    .into_owned();
+                let raw_name = name.replace('\\', "/");
                 let segments: Vec<&str> = raw_name.split('/').filter(|s| !s.is_empty()).collect();
                 let normalized = if segments.is_empty() {
-                    file.name().to_string()
+                    name
                 } else if segments.len() == 1 {
                     segments[0].to_string()
                 } else {

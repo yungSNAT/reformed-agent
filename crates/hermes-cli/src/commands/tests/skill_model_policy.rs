@@ -237,6 +237,32 @@ use hermes_config::LlmProviderConfig;
     }
 
     #[test]
+    fn extract_clawhub_zip_drops_top_folder_and_rejects_traversal() {
+        use std::io::Write;
+        let build = |entries: &[(&str, &str)]| {
+            let mut zip = zip::ZipWriter::new(std::io::Cursor::new(Vec::new()));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.add_directory("pkg/", options).expect("add dir");
+            for (name, body) in entries {
+                zip.start_file(*name, options).expect("start file");
+                zip.write_all(body.as_bytes()).expect("write");
+            }
+            zip.finish().expect("finish").into_inner()
+        };
+
+        let files = extract_clawhub_archive(&build(&[
+            ("pkg/SKILL.md", "# demo"),
+            ("pkg/scripts/run.py", "print(1)"),
+        ]))
+        .expect("extract");
+        let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+        assert_eq!(names, ["SKILL.md", "scripts/run.py"]);
+        assert_eq!(&files[0].1[..], b"# demo");
+
+        assert!(extract_clawhub_archive(&build(&[("pkg/../../evil.sh", "x")])).is_err());
+    }
+
+    #[test]
     fn parse_skill_bootstrap_plan_extracts_supported_frontmatter_fields() {
         let skill = r#"---
 name: demo
