@@ -45,7 +45,8 @@ pub trait BrowserBackend: Send + Sync {
     async fn screenshot(&self) -> Result<String, ToolError>;
     async fn console(&self, action: &str) -> Result<String, ToolError>;
     /// Whether the backend was retired because a refused page could not be
-    /// cleared. A retired backend is kept, so the refusal lasts.
+    /// cleared. A [`SharedBrowser`] that releases a retired backend refuses
+    /// from then on, so the refusal lasts.
     fn is_retired(&self) -> bool {
         false
     }
@@ -80,6 +81,8 @@ struct BrowserState {
     backend: Option<std::sync::Arc<dyn BrowserBackend>>,
     /// When the last call finished.
     last_used: Option<std::time::Instant>,
+    /// Whether idle release dropped a retired backend.
+    retired: bool,
 }
 
 impl SharedBrowser {
@@ -113,6 +116,11 @@ impl SharedBrowser {
                 "This browser was closed because its chat session or job ended".into(),
             ));
         }
+        if state.retired {
+            return Err(ToolError::ExecutionFailed(
+                "This browser was retired because a refused page could not be cleared, and stays off until its chat session or job ends".into(),
+            ));
+        }
         let backend = state
             .backend
             .get_or_insert_with(|| (self.inner.factory)())
@@ -131,7 +139,8 @@ impl SharedBrowser {
     }
 
     /// Drop the backend if no call has finished within `max_idle`, unless it
-    /// is retired or in use. The next call builds a new one.
+    /// is in use. The next call builds a new one, except after a retired
+    /// backend: the browser then refuses every call, so the refusal lasts.
     pub async fn release_if_idle(&self, max_idle: std::time::Duration) {
         let Ok(mut state) = self.inner.state.try_lock() else {
             return;
@@ -139,7 +148,8 @@ impl SharedBrowser {
         let idle = state
             .last_used
             .is_some_and(|last_used| last_used.elapsed() >= max_idle);
-        if idle && !state.backend.as_ref().is_some_and(|b| b.is_retired()) {
+        if idle {
+            state.retired |= state.backend.as_ref().is_some_and(|b| b.is_retired());
             drop_backend(state.backend.take()).await;
         }
     }
@@ -816,15 +826,29 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn idle_release_keeps_a_retired_backend() {
-        let (browser, count) = counted(true);
+    async fn idle_release_drops_a_retired_backend_and_the_browser_stays_refused() {
+        let held = std::sync::Arc::new(std::sync::Mutex::new(std::sync::Weak::new()));
+        let seen = held.clone();
+        let browser = SharedBrowser::lazy(move || {
+            let backend = std::sync::Arc::new(MockBrowserBackend { retired: true });
+            *seen.lock().unwrap() = std::sync::Arc::downgrade(&backend);
+            backend
+        });
         let snapshot = BrowserSnapshotHandler::new(browser.clone());
         snapshot.execute(json!({})).await.unwrap();
 
         browser.release_if_idle(std::time::Duration::ZERO).await;
-        snapshot.execute(json!({})).await.unwrap();
 
-        assert_eq!(built(&count), 1, "a retired backend was replaced");
+        assert!(
+            held.lock().unwrap().upgrade().is_none(),
+            "the retired backend was kept, with whatever session it holds"
+        );
+        let err = snapshot.execute(json!({})).await.unwrap_err().to_string();
+        assert!(err.contains("retired"), "{err}");
+        assert!(
+            held.lock().unwrap().upgrade().is_none(),
+            "a retired backend was replaced"
+        );
     }
 
     #[tokio::test]
