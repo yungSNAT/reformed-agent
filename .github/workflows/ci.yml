@@ -12,6 +12,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+      - name: README install contract
+        run: pipx run --spec pytest==9.2.0 pytest -q -p no:cacheprovider tests/test_readme_install_contract.py
       # The gates compare against the pinned upstream revision, so a result depends
       # on the change under test. The scheduled parity audit reports live drift.
       - name: Fetch upstream parity reference
@@ -67,6 +69,32 @@ jobs:
           python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
           python3 -m py_compile scripts/release_secret_scan.py
+
+  ui-tui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ui-tui
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui-tui/package-lock.json
+      - name: Install dependencies
+        run: npm ci --ignore-scripts
+      # The TUI imports @hermes/ink from its built dist folder.
+      - name: Build @hermes/ink
+        run: npm run build --prefix packages/hermes-ink
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run type-check
+      - name: Tests
+        run: npm test
 
   cross-build:
     runs-on: ubuntu-latest
