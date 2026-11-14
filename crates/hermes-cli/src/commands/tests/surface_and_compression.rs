@@ -937,7 +937,7 @@
         // More compressions than the 45 rows recent mode used to scan.
         let compressed: Vec<_> = (0..60).map(|n| turn(&format!("turn {n}"))).collect();
         persistence
-            .persist_session_after_compression("busy", &compressed, &turn("latest"), None, None)
+            .persist_session_after_compression("busy", &compressed, &turn("latest"), None, None, None)
             .expect("save busy");
 
         let recent = search_sessions(&app, None).await;

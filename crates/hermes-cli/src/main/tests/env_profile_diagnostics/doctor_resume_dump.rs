@@ -420,6 +420,7 @@ fn load_resume_payload_continues_the_session_from_a_compressed_row() {
             &[hermes_core::Message::assistant("post-compression reply")],
             Some("nous:openai/gpt-5.5"),
             None,
+            None,
         )
         .unwrap();
     // The row holding the compressed turns has no snapshot of its own.

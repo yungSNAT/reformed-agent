@@ -1036,7 +1036,15 @@
             for prefill in ["prefill question", "prefill answer"] {
                 assert!(has(sent, prefill), "the model still sees {prefill:?}");
                 assert!(!has(&result.messages, prefill), "{prefill:?} is not returned");
+                assert!(
+                    !result.compressed_transcripts.iter().any(|t| has(t, prefill)),
+                    "{prefill:?} is not returned as a compressed turn"
+                );
             }
+            assert!(
+                result.compressed_transcripts[0].contains(&history[0]),
+                "the replaced turns are returned"
+            );
             assert!(
                 result.messages.iter().any(|m| m
                     .content
@@ -1051,6 +1059,25 @@
                 .rfind(|m| m.role == MessageRole::User)
                 .and_then(|m| m.content.as_deref());
             assert_eq!(last_user, Some("kingfisher, as typed"));
+        }
+
+        // Once the run is saved, session search does not find the prefill.
+        let store = tempfile::tempdir().expect("tempdir");
+        let sp = crate::session_persistence::SessionPersistence::new(store.path());
+        sp.persist_agent_result("live", &results[0], None, None)
+            .expect("persist");
+        let conn = rusqlite::Connection::open(sp.db_path()).expect("open db");
+        let hits = |phrase: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                [format!("\"{phrase}\"")],
+                |row| row.get(0),
+            )
+            .expect("search")
+        };
+        assert!(hits("heron question") > 0, "the replaced turns are found");
+        for prefill in ["prefill question", "prefill answer"] {
+            assert_eq!(hits(prefill), 0, "session search finds {prefill:?}");
         }
     }
 

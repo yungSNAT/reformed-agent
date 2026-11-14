@@ -8,6 +8,7 @@
 //! `_build_system_prompt`).
 
 use std::collections::HashSet;
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 
 use hermes_core::{BudgetConfig, Message, MessageRole};
@@ -277,6 +278,8 @@ pub struct ContextManager {
     compressed_transcripts: Vec<Vec<Message>>,
     /// Number of leading messages that compression keeps verbatim.
     protected_head: usize,
+    /// Where the prefill sits in the protected head.
+    prefill: Option<Range<usize>>,
 }
 
 impl ContextManager {
@@ -288,6 +291,7 @@ impl ContextManager {
             compressor: ContextCompressor::default(),
             compressed_transcripts: Vec::new(),
             protected_head: 0,
+            prefill: None,
         }
     }
 
@@ -304,13 +308,16 @@ impl ContextManager {
             compressor,
             compressed_transcripts: Vec::new(),
             protected_head: 0,
+            prefill: None,
         }
     }
 
-    /// Keep the first `len` messages verbatim, at their indices, through every
-    /// later compression.
-    pub fn protect_head(&mut self, len: usize) {
-        self.protected_head = len;
+    /// Keep the messages up to the end of `prefill` verbatim, at their
+    /// indices, through every later compression, and leave the `prefill`
+    /// messages out of the taken compressed transcripts.
+    pub fn protect_prefill(&mut self, prefill: Range<usize>) {
+        self.protected_head = prefill.end;
+        self.prefill = Some(prefill);
     }
 
     /// Add a message to the conversation history.
@@ -430,15 +437,25 @@ impl ContextManager {
         &self.compressed_transcripts
     }
 
-    /// Take the history as it stood before each compression, oldest first.
+    /// Take the history as it stood before each compression, oldest first,
+    /// without the prefill.
     pub fn take_compressed_transcripts(&mut self) -> Vec<Vec<Message>> {
-        std::mem::take(&mut self.compressed_transcripts)
+        let mut transcripts = std::mem::take(&mut self.compressed_transcripts);
+        if let Some(prefill) = &self.prefill {
+            for transcript in &mut transcripts {
+                if prefill.start <= prefill.end && prefill.end <= transcript.len() {
+                    transcript.drain(prefill.clone());
+                }
+            }
+        }
+        transcripts
     }
 
     /// Reset the conversation history, clearing all messages.
     pub fn reset(&mut self) {
         self.messages.clear();
         self.protected_head = 0;
+        self.prefill = None;
     }
 
     /// Calculate the total character count of all message content.

@@ -242,7 +242,7 @@ mod tests {
     fn reset_drops_the_protected_head() {
         let mut cm = ContextManager::with_compressor(300, ContextCompressor::new(2));
         cm.add_message(Message::user("prefill"));
-        cm.protect_head(1);
+        cm.protect_prefill(0..1);
         cm.reset();
         for i in 0..10 {
             cm.add_message(Message::user(format!("question {i}, long enough to fill the budget")));
@@ -252,6 +252,33 @@ mod tests {
         assert_eq!(cm.take_compressed_transcripts().len(), 1);
         // The first question is summarised, not kept as a protected head.
         assert_eq!(cm.get_messages()[0].role, MessageRole::System);
+    }
+
+    #[test]
+    fn taken_transcripts_leave_out_the_prefill() {
+        let mut cm = ContextManager::with_compressor(300, ContextCompressor::new(2));
+        let prefill = [
+            Message::user("prefill question"),
+            Message::assistant("prefill answer"),
+        ];
+        let turns: Vec<Message> = (0..10)
+            .flat_map(|i| {
+                [
+                    Message::user(format!("question {i}, long enough to fill the budget")),
+                    Message::assistant(format!("answer {i}, long enough to fill the budget")),
+                ]
+            })
+            .collect();
+        cm.add_message(Message::system("System prompt"));
+        prefill.iter().cloned().for_each(|m| cm.add_message(m));
+        cm.protect_prefill(1..3);
+        turns.iter().cloned().for_each(|m| cm.add_message(m));
+        cm.compress();
+
+        let mut replaced = vec![Message::system("System prompt")];
+        replaced.extend(turns);
+        assert_eq!(cm.take_compressed_transcripts(), vec![replaced]);
+        assert_eq!(cm.get_messages()[1..3], prefill, "the model still sees the prefill");
     }
 
     #[test]
