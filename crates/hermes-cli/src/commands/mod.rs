@@ -88,6 +88,17 @@ use hermes_config::{find_node_executable, set_user_config_value, GatewayConfig};
 mod hermes_history;
 pub use hermes_history::{import_hermes_sessions, HermesHistorySummary};
 
+/// `std::fs::read_dir(dir)` with its unreadable entries skipped, listed on the
+/// blocking pool so async command handlers do not block the runtime.
+async fn read_dir_entries(dir: &Path) -> std::io::Result<Vec<std::fs::DirEntry>> {
+    let dir = dir.to_path_buf();
+    tokio::task::spawn_blocking(move || {
+        Ok(std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect())
+    })
+    .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
+}
+
 // The command surface is intentionally split by subsystem. These files are
 // included in the original item order so this refactor changes layout only;
 // follow-up passes can promote stable shards into stricter Rust submodules.

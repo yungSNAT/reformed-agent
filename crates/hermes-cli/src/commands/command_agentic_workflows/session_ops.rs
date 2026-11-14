@@ -302,7 +302,7 @@ async fn handle_integrations_command(
     if action == "snapshot" {
         let path = integrations_snapshot_path(&app.session_id);
         if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|e| {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
                 AgentError::Io(format!("Failed to create {}: {}", parent.display(), e))
             })?;
         }
@@ -332,7 +332,8 @@ async fn handle_integrations_command(
         });
         let json = serde_json::to_string_pretty(&payload)
             .map_err(|e| AgentError::Io(format!("Failed to encode snapshot payload: {}", e)))?;
-        std::fs::write(&path, json)
+        tokio::fs::write(&path, json)
+            .await
             .map_err(|e| AgentError::Io(format!("Failed to write {}: {}", path.display(), e)))?;
         emit_command_output(
             app,
