@@ -423,7 +423,7 @@ const SUBSCRIPT: Record<string, string> = {
 // exported `BOX_RE` below.
 export const BOX_OPEN = '\u0001'
 export const BOX_CLOSE = '\u0002'
-export const BOX_RE = /\u0001([^\u0001\u0002]*)\u0002/g
+export const BOX_RE = new RegExp(`${BOX_OPEN}([^${BOX_OPEN}${BOX_CLOSE}]*)${BOX_CLOSE}`, 'g')
 
 const escapeRe = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 
