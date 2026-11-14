@@ -754,8 +754,12 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
     };
     // A submodule has its own config and filter drivers. Read its committed
     // gitlink state, but never run status inside its dirty worktree.
-    let status =
-        output_within_timeout(git.args(["status", "--short", "--branch", "--ignore-submodules=dirty"]));
+    let status = output_within_timeout(git.args([
+        "status",
+        "--short",
+        "--branch",
+        "--ignore-submodules=dirty",
+    ]));
     let Some(output) = status else {
         return;
     };
@@ -799,7 +803,8 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
 }
 
 fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
-    let output = output_within_timeout(workspace_git(root, guard)?.args(["log", "-1", "--oneline"]))?;
+    let output =
+        output_within_timeout(workspace_git(root, guard)?.args(["log", "-1", "--oneline"]))?;
     if !output.status.success() {
         return None;
     }
@@ -1534,7 +1539,11 @@ mod tests {
             let repo = tmp.path().join("repo");
             git_init(&repo);
             let fifo = tmp.path().join("fifo");
-            assert!(Command::new("mkfifo").arg(&fifo).status().unwrap().success());
+            assert!(Command::new("mkfifo")
+                .arg(&fifo)
+                .status()
+                .unwrap()
+                .success());
             let configured = Command::new("git")
                 .arg("-C")
                 .arg(&repo)
