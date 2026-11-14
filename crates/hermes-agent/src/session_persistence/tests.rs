@@ -667,7 +667,10 @@ fn gateway_results_that_fail_to_save_are_logged() {
         logged.contains("WARN") && logged.contains("failed to save a telegram session"),
         "the failed save is logged: {logged:?}"
     );
-    assert!(!logged.contains("chat-42"), "the session key stays out of the log");
+    assert!(
+        !logged.contains("chat-42"),
+        "the session key stays out of the log"
+    );
 }
 
 #[test]
