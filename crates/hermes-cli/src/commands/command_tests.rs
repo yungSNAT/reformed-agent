@@ -1127,6 +1127,25 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn login_credential_reference_stores_only_the_masked_key() {
+        assert_eq!(mask_login_key("sk-1234567890abcd"), "sk-1...abcd");
+        assert_eq!(mask_login_key("short"), "****");
+
+        let tmp = tempdir().expect("tempdir");
+        let cred_file = tmp.path().join("openai.json");
+        write_credential_reference(&cred_file, "openai", "sk-1...abcd")
+            .await
+            .expect("write credential reference");
+        let stored: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&cred_file).expect("read"))
+                .expect("json");
+        assert_eq!(stored["provider"], "openai");
+        assert_eq!(stored["api_key_masked"], "sk-1...abcd");
+        assert_eq!(stored["source"], "env");
+        assert!(stored["stored_at"].is_string());
+    }
+
     include!("tests/promoted_commands.rs");
     include!("tests/surface_and_compression.rs");
 

@@ -1416,6 +1416,37 @@ pub async fn handle_cli_insights(
     Ok(())
 }
 
+/// Mask an API key for `hermes login` output: first and last 4 characters.
+fn mask_login_key(key: &str) -> String {
+    if key.len() > 8 {
+        let head = &key[..key.floor_char_boundary(4)];
+        let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
+        format!("{head}...{tail}")
+    } else {
+        "****".to_string()
+    }
+}
+
+/// Write the masked credential reference `hermes login` stores for a provider.
+async fn write_credential_reference(
+    cred_file: &std::path::Path,
+    provider: &str,
+    masked: &str,
+) -> Result<(), hermes_core::AgentError> {
+    let cred = serde_json::json!({
+        "provider": provider,
+        "api_key_masked": masked,
+        "stored_at": chrono::Utc::now().to_rfc3339(),
+        "source": "env",
+    });
+    tokio::fs::write(
+        cred_file,
+        serde_json::to_string_pretty(&cred).unwrap_or_default(),
+    )
+    .await
+    .map_err(|e| hermes_core::AgentError::Io(e.to_string()))
+}
+
 /// Handle `hermes login [provider]`.
 pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_core::AgentError> {
     let provider = provider.unwrap_or_else(|| "openai".to_string());
@@ -1433,30 +1464,13 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                 .ok()
                 .or_else(|| std::env::var("OPENAI_API_KEY").ok());
             if let Some(key) = env_key {
-                let masked = if key.len() > 8 {
-                    let head = &key[..key.floor_char_boundary(4)];
-                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
-                    format!("{head}...{tail}")
-                } else {
-                    "****".to_string()
-                };
+                let masked = mask_login_key(&key);
                 println!(
                     "Found HERMES_OPENAI_API_KEY/OPENAI_API_KEY in environment: {}",
                     masked
                 );
                 let cred_file = creds_dir.join("openai.json");
-                let cred = serde_json::json!({
-                    "provider": "openai",
-                    "api_key_masked": masked,
-                    "stored_at": chrono::Utc::now().to_rfc3339(),
-                    "source": "env",
-                });
-                tokio::fs::write(
-                    &cred_file,
-                    serde_json::to_string_pretty(&cred).unwrap_or_default(),
-                )
-                .await
-                .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
+                write_credential_reference(&cred_file, "openai", &masked).await?;
                 println!("Credential reference stored at {}", cred_file.display());
             } else {
                 println!("No HERMES_OPENAI_API_KEY/OPENAI_API_KEY found in environment.");
@@ -1467,27 +1481,10 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
         "anthropic" => {
             let env_key = std::env::var("ANTHROPIC_API_KEY").ok();
             if let Some(key) = env_key {
-                let masked = if key.len() > 8 {
-                    let head = &key[..key.floor_char_boundary(4)];
-                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
-                    format!("{head}...{tail}")
-                } else {
-                    "****".to_string()
-                };
+                let masked = mask_login_key(&key);
                 println!("Found ANTHROPIC_API_KEY in environment: {}", masked);
                 let cred_file = creds_dir.join("anthropic.json");
-                let cred = serde_json::json!({
-                    "provider": "anthropic",
-                    "api_key_masked": masked,
-                    "stored_at": chrono::Utc::now().to_rfc3339(),
-                    "source": "env",
-                });
-                tokio::fs::write(
-                    &cred_file,
-                    serde_json::to_string_pretty(&cred).unwrap_or_default(),
-                )
-                .await
-                .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
+                write_credential_reference(&cred_file, "anthropic", &masked).await?;
                 println!("Credential reference stored at {}", cred_file.display());
             } else {
                 println!("No ANTHROPIC_API_KEY found in environment.");
@@ -1498,27 +1495,10 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
             let env_var = format!("{}_API_KEY", other.to_uppercase().replace('-', "_"));
             let env_key = std::env::var(&env_var).ok();
             if let Some(key) = env_key {
-                let masked = if key.len() > 8 {
-                    let head = &key[..key.floor_char_boundary(4)];
-                    let tail = &key[key.ceil_char_boundary(key.len() - 4)..];
-                    format!("{head}...{tail}")
-                } else {
-                    "****".to_string()
-                };
+                let masked = mask_login_key(&key);
                 println!("Found {} in environment: {}", env_var, masked);
                 let cred_file = creds_dir.join(format!("{}.json", other));
-                let cred = serde_json::json!({
-                    "provider": other,
-                    "api_key_masked": masked,
-                    "stored_at": chrono::Utc::now().to_rfc3339(),
-                    "source": "env",
-                });
-                tokio::fs::write(
-                    &cred_file,
-                    serde_json::to_string_pretty(&cred).unwrap_or_default(),
-                )
-                .await
-                .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
+                write_credential_reference(&cred_file, other, &masked).await?;
                 println!("Credential reference stored.");
             } else {
                 println!("No {} found in environment.", env_var);
