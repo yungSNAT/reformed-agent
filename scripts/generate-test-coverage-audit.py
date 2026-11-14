@@ -17,7 +17,7 @@ from typing import Any
 RUST_TEST_ATTR_RE = re.compile(r"#\[\s*(?:tokio::)?test(?:\([^]]*\))?\s*\]")
 RUST_FN_RE = re.compile(r"\bfn\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(")
 RUST_INCLUDE_RE = re.compile(r'include!\("([^"]+)"\)')
-RUST_MOD_RE = re.compile(r"(?m)^\s*mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
+RUST_MOD_RE = re.compile(r"(?m)^\s*(?:pub\(crate\)\s+)?mod\s+([A-Za-z_][A-Za-z0-9_]*)\s*;")
 HARNESS_HARDENING_MOVES = [
     {
         "title": "Coverage trend ledger",
