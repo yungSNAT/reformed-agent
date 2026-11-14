@@ -82,17 +82,19 @@ impl SessionBrowsers {
             .values()
             .map(|(browser, _)| browser.clone())
             .collect();
-        for browser in browsers {
-            browser.release_if_idle(max_idle).await;
-        }
+        // Together: each release can wait on its vendor for seconds.
+        futures::future::join_all(
+            browsers
+                .iter()
+                .map(|browser| browser.release_if_idle(max_idle)),
+        )
+        .await;
     }
 
     /// Close every session's browser, at shutdown.
     pub async fn close_all(&self) {
         let removed: Vec<_> = self.sessions().drain().collect();
-        for (_, (browser, _)) in removed {
-            browser.close().await;
-        }
+        futures::future::join_all(removed.iter().map(|(_, (browser, _))| browser.close())).await;
     }
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<String, (SharedBrowser, ToolOverrides)>> {
@@ -279,6 +281,45 @@ mod tests {
             1,
             "alice's session was released twice"
         );
+    }
+
+    /// Releases run together, so a vendor that answers slowly holds no other
+    /// session's release back.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn sessions_are_released_together_not_one_after_another() {
+        let gateway = gateway().await;
+        Mock::given(method("POST"))
+            .and(path_regex(r"^/v1/sessions/vendor_session_\d+$"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .with_priority(1)
+            .mount(&gateway.api)
+            .await;
+        let chats = ["telegram:alice", "telegram:bob", "telegram:carol"];
+
+        for chat in chats {
+            gateway.snapshot(chat);
+        }
+        let started = std::time::Instant::now();
+        gateway.browsers.release_idle(Duration::ZERO).await;
+        let idle = started.elapsed();
+        assert!(
+            idle < Duration::from_secs(2),
+            "idle releases ran one after another: {idle:?}"
+        );
+
+        for chat in chats {
+            gateway.snapshot(chat);
+        }
+        let started = std::time::Instant::now();
+        gateway.browsers.close_all().await;
+        let closing = started.elapsed();
+        assert!(
+            closing < Duration::from_secs(2),
+            "closing ran one after another: {closing:?}"
+        );
+        for session in 1..=6 {
+            assert_eq!(gateway.released(session).await, 1, "session {session}");
+        }
     }
 
     #[tokio::test(flavor = "multi_thread")]
