@@ -1771,8 +1771,11 @@
             }
         }
 
+        // An empty home, so a real SOUL.md or personalities/coder.md cannot change the prompt.
+        let home = tempfile::tempdir().expect("tempdir");
         let config = AgentConfig {
             personality: Some("coder".to_string()),
+            hermes_home: Some(home.path().to_string_lossy().into_owned()),
             ..AgentConfig::default()
         };
         let agent = AgentLoop::new(
@@ -1822,8 +1825,11 @@
             }
         }
 
+        // An empty home, so a real SOUL.md cannot replace the default identity.
+        let home = tempfile::tempdir().expect("tempdir");
         let config = AgentConfig {
             personality: Some("unknown_persona".to_string()),
+            hermes_home: Some(home.path().to_string_lossy().into_owned()),
             ..AgentConfig::default()
         };
         let agent = AgentLoop::new(
@@ -1873,8 +1879,11 @@
             }
         }
 
+        // An empty home, so a real SOUL.md cannot replace the default identity.
+        let home = tempfile::tempdir().expect("tempdir");
         let config = AgentConfig {
             personality: Some("default".to_string()),
+            hermes_home: Some(home.path().to_string_lossy().into_owned()),
             ..AgentConfig::default()
         };
         let agent = AgentLoop::new(
