@@ -146,7 +146,7 @@ impl ToolHandler for SkillViewHandler {
                 .to_string());
             }
 
-            let bytes = match std::fs::read(&target_file) {
+            let bytes = match tokio::fs::read(&target_file).await {
                 Ok(b) => b,
                 Err(e) => {
                     return Ok(json!({

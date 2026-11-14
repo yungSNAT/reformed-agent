@@ -739,7 +739,7 @@ impl WeChatAdapter {
 
     async fn restore_context(inner: &WeixinInner) {
         let p = Self::context_path(&inner.config.account_id);
-        let Ok(s) = std::fs::read_to_string(p) else {
+        let Ok(s) = tokio::fs::read_to_string(p).await else {
             return;
         };
         let Ok(map) = serde_json::from_str::<HashMap<String, String>>(&s) else {
@@ -762,9 +762,9 @@ impl WeChatAdapter {
                 out.insert(uid.to_string(), v.clone());
             }
         }
-        let _ = std::fs::create_dir_all(Self::accounts_dir());
+        let _ = tokio::fs::create_dir_all(Self::accounts_dir()).await;
         let p = Self::context_path(&inner.config.account_id);
-        std::fs::write(p, serde_json::to_string(&out)?)
+        tokio::fs::write(p, serde_json::to_string(&out)?).await
     }
 
     fn ilink_headers(token: Option<&str>, body: &str) -> reqwest::header::HeaderMap {

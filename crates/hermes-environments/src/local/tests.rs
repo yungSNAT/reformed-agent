@@ -518,9 +518,10 @@ async fn test_plain_shell_background_child_does_not_hang_foreground_collection()
         .await
         .unwrap();
     let elapsed = started.elapsed();
-    let _ = std::process::Command::new("pkill")
+    let _ = tokio::process::Command::new("pkill")
         .args(["-f", probe])
-        .status();
+        .status()
+        .await;
 
     assert!(
         elapsed < std::time::Duration::from_secs(3),
