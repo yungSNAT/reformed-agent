@@ -970,10 +970,19 @@ export function TextInput({
           return
         }
 
-        // Right-click → route through the same path as Alt+V so the composer
-        // clipboard RPC (text or image) handles it.
+        // Right-click → copy the active selection if any; otherwise route
+        // through the same path as Alt+V so the composer clipboard RPC (text
+        // or image) handles the paste.
         if (e.button === 2) {
           e.stopImmediatePropagation?.()
+          const decision = decideRightClickAction(vRef.current, selRange())
+
+          if (decision.action === 'copy') {
+            void writeClipboardText(decision.text)
+
+            return
+          }
+
           emitPaste({ cursor: curRef.current, hotkey: true, text: '', value: vRef.current })
 
           return
@@ -1043,6 +1052,28 @@ interface TextInputProps {
   placeholder?: string
   value: string
   voiceRecordKey?: ParsedVoiceRecordKey
+}
+
+export type RightClickDecision = { action: 'copy'; text: string } | { action: 'paste' }
+
+/**
+ * Decide what right-click does on the composer, as terminals do (xterm,
+ * iTerm, gnome-terminal): copy a non-empty selection, otherwise paste.
+ * `range` is the normalised range from `selRange()` (start <= end, or null).
+ */
+export function decideRightClickAction(
+  value: string,
+  range: { end: number; start: number } | null
+): RightClickDecision {
+  if (range && range.end > range.start) {
+    const text = value.slice(range.start, range.end)
+
+    if (text) {
+      return { action: 'copy', text }
+    }
+  }
+
+  return { action: 'paste' }
 }
 
 export const shouldPassThroughToGlobalHandler = (

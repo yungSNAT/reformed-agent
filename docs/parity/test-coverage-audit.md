@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-10T12:06:12.348023+00:00`
+Generated: `2026-11-14T21:43:34.106058+00:00`
 
 ## Gate
 
@@ -12,13 +12,13 @@ Generated: `2026-11-10T12:06:12.348023+00:00`
 
 | Metric | Value |
 | --- | ---: |
-| `tracked_behavior_rows` | 477 |
-| `covered_behavior_rows` | 477 |
+| `tracked_behavior_rows` | 476 |
+| `covered_behavior_rows` | 476 |
 | `tracked_behavior_coverage_ratio` | 1.0 |
-| `rust_test_files` | 430 |
-| `rust_test_functions` | 7649 |
-| `coverage_manifest_entries` | 467 |
-| `coverage_manifest_entries_with_valid_rust_tests` | 467 |
+| `rust_test_files` | 439 |
+| `rust_test_functions` | 8044 |
+| `coverage_manifest_entries` | 466 |
+| `coverage_manifest_entries_with_valid_rust_tests` | 466 |
 | `missing_rust_test_refs` | 0 |
 | `queue_pending` | 0 |
 | `queue_total` | 1 |
@@ -31,21 +31,21 @@ Generated: `2026-11-10T12:06:12.348023+00:00`
 | --- | ---: | ---: | ---: | ---: |
 | `docs/parity/python-test-suite-coverage.json` | 219 | 219 | 123 | 0 |
 | `docs/parity/hermes-cli-test-coverage.json` | 126 | 126 | 90 | 0 |
-| `docs/parity/ui-tui-source-coverage.json` | 122 | 122 | 68 | 0 |
+| `docs/parity/ui-tui-source-coverage.json` | 121 | 121 | 68 | 0 |
 
 ## Test Intent Domains
 
 | Intent | Classification | Evidence files | Direct test evidence |
 | --- | --- | ---: | ---: |
 | `gateway-platform-behavior` | `direct_rust_test` | 25 | 22 |
-| `tool-runtime-behavior` | `direct_rust_test` | 125 | 102 |
-| `cli-command-surface` | `direct_rust_test` | 179 | 48 |
+| `tool-runtime-behavior` | `direct_rust_test` | 127 | 104 |
+| `cli-command-surface` | `direct_rust_test` | 180 | 49 |
 | `agent-loop-and-runtime` | `direct_rust_test` | 109 | 73 |
 | `acp-protocol-and-transport` | `direct_rust_test` | 21 | 15 |
 | `skills-management-contract` | `direct_rust_test` | 70 | 16 |
 | `cron-and-scheduler-runtime` | `direct_rust_test` | 72 | 16 |
 | `memory-plugin-integration` | `direct_rust_test` | 12 | 12 |
-| `environment-lifecycle-contract` | `direct_rust_test` | 15 | 10 |
+| `environment-lifecycle-contract` | `direct_rust_test` | 16 | 11 |
 | `tool-call-parser-contract` | `direct_rust_test` | 3 | 3 |
 
 ## Critical Gaps
