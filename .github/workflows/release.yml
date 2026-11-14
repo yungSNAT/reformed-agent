@@ -2,7 +2,8 @@ name: Release
 
 # A v* tag runs every job. A pull request that changes the release files runs a
 # dry run: it builds, stages and smokes every archive, but signs, attests and
-# publishes nothing.
+# publishes nothing. Builds restore no cargo cache, so nothing another workflow
+# cached can reach a release archive.
 on:
   push:
     tags:
@@ -29,6 +30,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          persist-credentials: false
           fetch-depth: 0
       - name: Read the workspace version
         id: version
@@ -66,10 +68,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Secret scan (tracked files)
         run: |
           python3 scripts/release_secret_scan.py \
@@ -123,10 +125,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cross
         run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
       - name: Build release binary
@@ -164,12 +166,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: |
           rustup toolchain install
           rustup target add x86_64-apple-darwin
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli --bin hermes-agent-ultra
       - name: Package artifact
@@ -192,6 +194,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Download release build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -204,7 +208,9 @@ jobs:
           name: sbom-and-secret-scan
           path: security
       - name: Generate Homebrew formula
-        run: bash scripts/generate-homebrew-formula.sh "${{ needs.qualify.outputs.version }}"
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: bash scripts/generate-homebrew-formula.sh "${VERSION}"
       - name: Collect assets and checksums
         run: |
           count="$(find dist -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)"
@@ -232,15 +238,19 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Download staged assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
           name: staged-release
           path: staged
       - name: Smoke the staged release
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
         run: |
           bash scripts/smoke-release-artifact.sh \
-            --version "${{ needs.qualify.outputs.version }}" \
+            --version "${VERSION}" \
             --asset-dir staged
 
   # The archives install.sh does not choose: musl Linux and Windows.
@@ -305,6 +315,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Download staged assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -338,9 +350,10 @@ jobs:
       - name: Install the signed release, requiring its signature
         env:
           HERMES_REQUIRE_SIGNATURE: "true"
+          VERSION: ${{ needs.qualify.outputs.version }}
         run: |
           bash scripts/smoke-release-artifact.sh \
-            --version "${{ needs.qualify.outputs.version }}" \
+            --version "${VERSION}" \
             --asset-dir dist
       - name: Upload signed assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
@@ -385,6 +398,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Smoke published release artifact
         run: |
           mkdir -p .sync-reports
