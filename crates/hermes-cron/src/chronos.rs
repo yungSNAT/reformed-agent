@@ -598,7 +598,7 @@ cron:
                 "exp": 4_102_444_800_u64,
                 "purpose": FIRE_PURPOSE
             }),
-            &EncodingKey::from_secret(b"secret"),
+            &EncodingKey::from_secret(b"secret").expect("HMAC key"),
         )
         .expect("encode test token");
         let key = base64_url("secret");
