@@ -710,10 +710,12 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
 const GIT_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The command's exit status and standard output, or `None` when it cannot
-/// start or outlasts `GIT_SNAPSHOT_TIMEOUT`, when it is killed.
+/// start, outlasts `GIT_SNAPSHOT_TIMEOUT` (it is then killed) or leaves its
+/// output open past it.
 ///
 /// shortcut: only git itself is killed, so a process git started and left
-/// blocked keeps running; killing git's process group would end it too.
+/// blocked keeps running, and so does the thread reading the output it
+/// holds open; killing git's process group would end both.
 fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
     let mut child = cmd
         .stdout(Stdio::piped())
@@ -722,9 +724,10 @@ fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
         .ok()?;
     let mut stdout = child.stdout.take()?;
     // Read whilst waiting, so a full pipe cannot stall git.
-    let reader = std::thread::spawn(move || {
+    let (read, output) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
         let mut buf = Vec::new();
-        stdout.read_to_end(&mut buf).map(|_| buf)
+        let _ = read.send(stdout.read_to_end(&mut buf).map(|_| buf));
     });
     let deadline = Instant::now() + GIT_SNAPSHOT_TIMEOUT;
     let status = loop {
@@ -740,7 +743,11 @@ fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
             }
         }
     };
-    let stdout = reader.join().ok()?.ok()?;
+    // A process git started can hold the output open after git exits.
+    let stdout = output
+        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        .ok()?
+        .ok()?;
     Some(Output {
         status,
         stdout,
@@ -1534,7 +1541,9 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn workspace_snapshot_gives_up_on_a_git_call_that_hangs() {
-        for key in ["include.path", "mailmap.file"] {
+        // A FIFO include stops the config listing, so there is no snapshot; a
+        // FIFO mailmap stops only `git log`, so the status stays.
+        for (key, keeps_status) in [("include.path", false), ("mailmap.file", true)] {
             let tmp = tempfile::tempdir().unwrap();
             let repo = tmp.path().join("repo");
             git_init(&repo);
@@ -1555,13 +1564,27 @@ mod tests {
 
             let (done, finished) = std::sync::mpsc::channel();
             std::thread::spawn(move || done.send(build_coding_workspace_block(&repo)));
-            let block = finished.recv_timeout(std::time::Duration::from_secs(20));
-            if block.is_err() {
-                // Release the git process blocked on the FIFO before failing.
-                drop(std::fs::OpenOptions::new().write(true).open(&fifo));
-            }
-            assert!(block.is_ok(), "{key}: the snapshot hung");
+            let block = finished
+                .recv_timeout(Duration::from_secs(20))
+                .unwrap_or_else(|_| panic!("{key}: the snapshot hung"))
+                .unwrap_or_default();
+            assert_eq!(
+                block.contains("Status:"),
+                keeps_status && git_snapshot_supported(),
+                "{key}: {block}"
+            );
+            assert!(!block.contains("Last commit:"), "{key}: {block}");
         }
+    }
+
+    /// A process git leaves running can hold the output open after git exits.
+    #[cfg(unix)]
+    #[test]
+    fn output_held_open_after_exit_is_given_up_on() {
+        let started = Instant::now();
+        let output = output_within_timeout(Command::new("sh").args(["-c", "sleep 30 & exit 0"]));
+        assert!(output.is_none());
+        assert!(started.elapsed() < GIT_SNAPSHOT_TIMEOUT + Duration::from_secs(5));
     }
 
     #[test]
