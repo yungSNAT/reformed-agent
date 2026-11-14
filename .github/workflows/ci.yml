@@ -109,3 +109,10 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build hermes
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli
+      # macOS temp folders sit behind the /var -> /private/var link, which the
+      # own-home refusal must resolve; the Ubuntu job has no such link.
+      - name: Linked-home refusal tests
+        if: matrix.target == 'aarch64-apple-darwin'
+        run: |
+          cargo test --locked -p hermes-config --lib check_implicit_home
+          cargo test --locked -p hermes-cli -p hermes-http -p hermes-eval --test linked_home
