@@ -154,8 +154,16 @@ async fn run_gateway(
             gateway
                 .set_platform_access_policies(build_gateway_platform_access_policies(&config))
                 .await;
+            // Each chat session gets a browser of its own, closed as the
+            // session ends.
+            let session_browsers =
+                hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
             let mut hook_registry = HookRegistry::new();
             hook_registry.register_builtins();
+            hook_registry.register_in_process(
+                "on_session_finalize",
+                Arc::new(CloseSessionBrowser(session_browsers.clone())),
+            );
             hook_registry.discover_and_load(&hermes_home().join("hooks"));
             gateway.set_hook_registry(Arc::new(hook_registry)).await;
             gateway
@@ -172,10 +180,19 @@ async fn run_gateway(
             let skill_store = Arc::new(FileSkillStore::new(hermes_config::skills_dir()));
             let skill_provider: Arc<dyn hermes_core::SkillProvider> =
                 Arc::new(SkillManager::new(skill_store));
-            hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
+            // The registry's own browser tools refuse: a turn runs its
+            // session's instead, and nothing else may share a browser.
+            hermes_tools::register_builtin_tools_with_browser(
+                &tool_registry,
+                terminal_backend,
+                skill_provider,
+                hermes_tools::unbound_browser(),
+            );
             let clarify_dispatcher = ClarifyDispatcher::new();
             let tool_registry_for_msg = tool_registry.clone();
             let tool_registry_for_stream = tool_registry.clone();
+            let browsers_for_msg = session_browsers.clone();
+            let browsers_for_stream = session_browsers.clone();
             let agent_tools_for_cron = Arc::new(bridge_tool_registry(&tool_registry));
             let clarify_for_msg = clarify_dispatcher.clone();
             let clarify_for_stream = clarify_dispatcher.clone();
@@ -187,6 +204,7 @@ async fn run_gateway(
                 .set_message_handler_with_context(Arc::new(move |messages, ctx| {
                     let config = config_arc.clone();
                     let runtime_tools = tool_registry_for_msg.clone();
+                    let browsers = browsers_for_msg.clone();
                     let gateway_for_review = gateway_for_review.clone();
                     let clarify = clarify_for_msg.clone();
                     Box::pin(async move {
@@ -205,7 +223,10 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry(&runtime_tools));
+                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                            &runtime_tools,
+                            browsers.tool_overrides(&ctx.session_key),
+                        ));
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
@@ -462,6 +483,7 @@ async fn run_gateway(
                 .set_streaming_handler_with_context(Arc::new(move |messages, ctx, on_chunk| {
                     let config = config_arc_stream.clone();
                     let runtime_tools = tool_registry_for_stream.clone();
+                    let browsers = browsers_for_stream.clone();
                     let gateway_for_review = gateway_for_review_stream.clone();
                     let clarify = clarify_for_stream.clone();
                     Box::pin(async move {
@@ -480,7 +502,10 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry(&runtime_tools));
+                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                            &runtime_tools,
+                            browsers.tool_overrides(&ctx.session_key),
+                        ));
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
@@ -785,7 +810,18 @@ async fn run_gateway(
                 .unwrap_or_else(|| "gpt-5.5".to_string());
             let cron_persistence = Arc::new(FileJobPersistence::with_dir(cron_dir.clone()));
             let cron_llm = build_provider(&config, &default_model);
-            let cron_runner = Arc::new(CronRunner::new(cron_llm, agent_tools_for_cron));
+            let cron_tools = tool_registry.clone();
+            let cron_runner = Arc::new(
+                CronRunner::new(cron_llm, agent_tools_for_cron).with_run_tools(move || {
+                    // Each job run has a browser of its own.
+                    let browser = hermes_tools::SharedBrowser::lazy(
+                        hermes_tools::isolated_browser_backend_from_env,
+                    );
+                    let overrides = hermes_tools::browser_overrides(&browser);
+                    let tools = bridge_tool_registry_with(&cron_tools, overrides);
+                    (Arc::new(tools), browser)
+                }),
+            );
             let mut cron_scheduler = CronScheduler::new(cron_persistence, cron_runner);
             let (cron_tx, cron_rx) = broadcast::channel::<CronCompletionEvent>(64);
             let cron_platform_rx = cron_tx.subscribe();
@@ -846,6 +882,16 @@ async fn run_gateway(
                 sidecar_tasks.push(tokio::spawn(async move {
                     gw_expiry.session_expiry_watcher(300).await;
                 }));
+                let idle_browsers = session_browsers.clone();
+                sidecar_tasks.push(tokio::spawn(async move {
+                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                    loop {
+                        ticker.tick().await;
+                        idle_browsers
+                            .release_idle(hermes_tools::session_browsers::SESSION_BROWSER_MAX_IDLE)
+                            .await;
+                    }
+                }));
             }
             let own_pid = std::process::id();
             tokio::fs::write(&pid_path, format!("{}\n", own_pid))
@@ -864,6 +910,7 @@ async fn run_gateway(
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
             gateway.stop_all().await?;
+            session_browsers.close_all().await;
             let _ = tokio::fs::remove_file(&pid_path).await;
             for task in sidecar_tasks {
                 task.abort();

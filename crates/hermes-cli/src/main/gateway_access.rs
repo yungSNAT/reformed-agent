@@ -99,6 +99,25 @@ fn gateway_tool_progress_parse_mode(platform: &str, text: &str) -> Option<ParseM
     }
 }
 
+/// Closes a chat session's browser as the session ends: on `/new` or
+/// `/reset`, idle expiry and shutdown.
+struct CloseSessionBrowser(hermes_tools::SessionBrowsers);
+
+#[async_trait::async_trait]
+impl hermes_gateway::hooks::HookHandler for CloseSessionBrowser {
+    async fn handle(&self, event: &hermes_gateway::hooks::HookEvent) -> Result<(), String> {
+        let session_key = event.context["session_key"]
+            .as_str()
+            .ok_or("on_session_finalize carried no session_key")?;
+        self.0.close(session_key).await;
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "close-session-browser"
+    }
+}
+
 fn build_agent_for_gateway_context(
     config: &hermes_config::GatewayConfig,
     ctx: &GatewayRuntimeContext,
