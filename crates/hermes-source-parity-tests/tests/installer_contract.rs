@@ -314,7 +314,10 @@ fn assert_refused(fixture: &InstallerFixture, output: &Output, reason: &str) {
     assert!(text.contains("Refusing to install:"), "{text}");
     assert!(text.contains(reason), "{text}");
     assert!(!fixture.tar_mark.exists(), "tar ran: {text}");
-    assert!(!fixture.install_dir.join("hermes-agent-ultra").exists(), "{text}");
+    assert!(
+        !fixture.install_dir.join("hermes-agent-ultra").exists(),
+        "{text}"
+    );
     assert!(!text.contains("building from source"), "{text}");
 }
 
@@ -365,7 +368,10 @@ fn cosign_on_path_verifies_sha256sums_against_the_release_workflow() {
     let text = output_text(&output);
 
     assert!(output.status.success(), "{text}");
-    assert!(text.contains("Verified the signature on SHA256SUMS."), "{text}");
+    assert!(
+        text.contains("Verified the signature on SHA256SUMS."),
+        "{text}"
+    );
     let args = fs::read_to_string(&log).expect("cosign was called");
     let args: Vec<&str> = args.lines().collect();
     assert_eq!(args.first(), Some(&"verify-blob"), "{args:?}");
@@ -375,7 +381,9 @@ fn cosign_on_path_verifies_sha256sums_against_the_release_workflow() {
         .map(|i| args[i + 1]);
     assert_eq!(
         identity,
-        Some(r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v"),
+        Some(
+            r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v"
+        ),
         "{args:?}"
     );
     let issuer = args
@@ -402,7 +410,10 @@ fn required_signature_without_cosign_is_refused() {
     // Only the fake tools and the system folders, so no cosign is on PATH.
     let output = fixture
         .command()
-        .env("PATH", format!("{}:/usr/bin:/bin", fixture.tools_dir.display()))
+        .env(
+            "PATH",
+            format!("{}:/usr/bin:/bin", fixture.tools_dir.display()),
+        )
         .env("HERMES_REQUIRE_SIGNATURE", "true")
         .output()
         .expect("run installer");
@@ -424,7 +435,10 @@ fn default_home_is_this_agents_own_not_upstreams() {
 
     assert!(output.status.success(), "{text}");
     assert!(
-        fixture.home_dir.join(".hermes-agent-ultra/SOUL.md").is_file(),
+        fixture
+            .home_dir
+            .join(".hermes-agent-ultra/SOUL.md")
+            .is_file(),
         "{text}"
     );
     assert!(!fixture.home_dir.join(".hermes").exists(), "{text}");
