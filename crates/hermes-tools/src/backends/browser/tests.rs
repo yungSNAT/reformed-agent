@@ -1168,6 +1168,49 @@ async fn cdp_navigate_reports_page_navigation_error_text() {
 }
 
 #[tokio::test]
+async fn a_navigation_that_was_never_sent_leaves_the_browser_usable() {
+    // The first connection cannot attach, so Page.navigate is never sent.
+    let attaches = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let browser = attachable_browser(history_after_reset(json!([{"url": "about:blank"}])));
+    let (ws_addr, mut commands) = spawn_cdp_websocket_recording(
+        Arc::new(move |command: &Value| {
+            if command["method"] == "Target.getTargets"
+                && attaches.fetch_add(1, Ordering::SeqCst) == 0
+            {
+                return Some(vec![cdp_result(command, json!({"targetInfos": []}))]);
+            }
+            browser(command)
+        }),
+        |command| command.get("sessionId").is_some(),
+    )
+    .await;
+    let http = wiremock::MockServer::start().await;
+    wiremock::Mock::given(wiremock::matchers::path("/json/version"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
+            json!({"webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/browser/B")}),
+        ))
+        .mount(&http)
+        .await;
+    let backend = CdpBrowserBackend::new(http.uri());
+
+    let err = backend
+        .navigate("https://example.com/")
+        .await
+        .expect_err("no page to attach to")
+        .to_string();
+
+    assert!(
+        err.contains("no page target") && !err.contains("retired"),
+        "{err}"
+    );
+    assert!(page_methods(&mut commands).is_empty());
+    backend
+        .navigate("https://example.com/")
+        .await
+        .expect("the next navigation works");
+}
+
+#[tokio::test]
 async fn a_failed_navigation_blanks_the_page() {
     // A redirect may have reached an unchecked page before the navigation
     // failed.
@@ -1562,6 +1605,10 @@ async fn cloud_browser_releases_its_session_once_a_page_could_not_be_cleared() {
 #[test]
 fn only_a_default_browser_beside_a_local_terminal_is_local() {
     let _scope = EnvScope::new();
+    // The terminal tests read TERMINAL_ENV under this lock.
+    let _terminal = crate::approval::TEST_ENV_LOCK
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     assert!(CdpBrowserBackend::from_env().is_local_backend());
     assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
     assert!(!CdpBrowserBackend::new("http://localhost:9222".into()).is_local_backend());
@@ -2095,7 +2142,7 @@ async fn queued_cloud_action_waits_for_lost_page_cleanup() {
         local,
         fallback_reason: Mutex::new(None),
     };
-    cloud_connect(&backend.cloud, cdp_command_timeout())
+    cloud_connect(&backend.cloud)
         .await
         .expect("initial session");
 

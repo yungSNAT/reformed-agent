@@ -382,10 +382,6 @@ impl<T: CloudBrowserSession> CdpChannel for T {
         outcome.map_err(|failure| cloud_cdp_error(T::PROVIDER, method, failure))
     }
 
-    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError> {
-        cloud_connect(self, timeout).await
-    }
-
     /// The next command starts a new session, with its own page and history.
     async fn retire_page(&self) {
         release_lost_session(self).await;
@@ -403,12 +399,9 @@ async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
 /// Make sure the cloud browser can take commands: a session exists and its
 /// CDP connection is open and attached to a page. An error here means the
 /// provider is unavailable, unlike an error from a command the page ran.
-async fn cloud_connect<T: CloudBrowserSession>(
-    cloud: &T,
-    timeout: Duration,
-) -> Result<(), ToolError> {
+async fn cloud_connect<T: CloudBrowserSession>(cloud: &T) -> Result<(), ToolError> {
     let cdp_url = cloud.session_cdp_url().await?;
-    if let Err(failure) = cloud.cdp().connect(&cdp_url, timeout).await {
+    if let Err(failure) = cloud.cdp().connect(&cdp_url, cdp_command_timeout()).await {
         release_lost_session(cloud).await;
         return Err(ToolError::ExecutionFailed(format!(
             "{} browser connection failed: {}",
@@ -440,9 +433,18 @@ trait CdpChannel: Send + Sync {
         timeout: Duration,
     ) -> Result<(Value, Vec<Value>), ToolError>;
 
-    /// Make sure a command can reach the page within `timeout`. On an error
-    /// nothing was sent, so the page is as it was.
-    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError>;
+    /// Send `Page.navigate` to `url` within `timeout`. The flag on an error
+    /// is false only when nothing was sent, so the page is as it was.
+    async fn cdp_navigate_call(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Value, (ToolError, bool)> {
+        self.cdp_call("Page.navigate", json!({"url": url}), &[], timeout)
+            .await
+            .map(|(result, _)| result)
+            .map_err(|err| (err, true))
+    }
 
     /// Timeout for the next `Page.navigate`.
     fn next_navigate_timeout(&self) -> Duration {
@@ -567,23 +569,19 @@ async fn cdp_navigate<C: CdpChannel>(channel: &C, url: &str) -> Result<String, T
     validate_url_does_not_exfiltrate_secret(url)?;
     let failed =
         |detail: String| ToolError::ExecutionFailed(format!("Failed to open {url}: {detail}"));
-    let timeout = channel.next_navigate_timeout();
-    channel
-        .cdp_connect(timeout)
+    let navigated = match channel
+        .cdp_navigate_call(url, channel.next_navigate_timeout())
         .await
-        .map_err(|err| failed(tool_error_message(err)))?;
-    let navigated = channel
-        .cdp_call("Page.navigate", json!({"url": url}), &[], timeout)
-        .await
-        .map_err(tool_error_message)
-        .and_then(|(result, _)| {
-            // Chrome answers a failed navigation with `errorText` rather than
-            // a protocol error.
-            match result.get("errorText").and_then(Value::as_str) {
-                Some(error_text) => Err(error_text.to_string()),
-                None => Ok(result),
-            }
-        });
+    {
+        // Chrome answers a failed navigation with `errorText` rather than a
+        // protocol error.
+        Ok(result) => match result.get("errorText").and_then(Value::as_str) {
+            Some(error_text) => Err(error_text.to_string()),
+            None => Ok(result),
+        },
+        Err((err, false)) => return Err(failed(tool_error_message(err))),
+        Err((err, true)) => Err(tool_error_message(err)),
+    };
     // A failed or timed-out navigation may have followed a redirect to a page
     // that was never checked, so the page is blanked.
     let result = match navigated {

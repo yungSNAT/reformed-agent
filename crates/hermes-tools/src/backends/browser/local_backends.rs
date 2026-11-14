@@ -39,19 +39,38 @@ impl CdpBrowserBackend {
         backend
     }
 
-    /// Send one CDP command to the browser's first page. Each call opens its
-    /// own WebSocket and attaches to the page; a local Chrome keeps the page
-    /// whether or not a client is connected, so no state has to outlive a call.
+    /// Send one CDP command to the browser's first page within `timeout`.
+    /// Each call opens its own WebSocket and attaches to the page; a local
+    /// Chrome keeps the page whether or not a client is connected, so no state
+    /// has to outlive a call. The flag on an error is false only when the
+    /// command was not sent; a timeout counts as sent.
     async fn page_call(
         &self,
         method: &str,
         params: Value,
         collect: &[&str],
-    ) -> Result<(Value, Vec<Value>), ToolError> {
-        let mut connection = self.open_page().await?;
-        let outcome = connection.call(method, params, collect).await;
-        connection.close().await;
-        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), (ToolError, bool)> {
+        let attempt = async {
+            let mut connection = self.open_page().await.map_err(|err| (err, false))?;
+            let outcome = connection.call(method, params, collect).await;
+            connection.close().await;
+            outcome.map_err(|failure| (ToolError::ExecutionFailed(failure.message()), true))
+        };
+        match tokio::time::timeout(timeout, attempt).await {
+            Ok(Ok(outcome)) => Ok(outcome),
+            Ok(Err((err, sent))) => {
+                Err((format_cdp_command_error(method, &self.endpoint, err), sent))
+            }
+            Err(_) => Err((
+                ToolError::ExecutionFailed(format_cdp_timeout_error(
+                    method,
+                    &self.endpoint,
+                    timeout,
+                )),
+                true,
+            )),
+        }
     }
 
     /// A connection attached to the browser's first page, unless the browser
@@ -66,24 +85,6 @@ impl CdpBrowserBackend {
             .await
             .map_err(|failure| ToolError::ExecutionFailed(failure.message()))
     }
-
-    /// `attempt` within `timeout`, its failure reported as `method`'s.
-    async fn within_timeout<T>(
-        &self,
-        method: &str,
-        timeout: Duration,
-        attempt: impl std::future::Future<Output = Result<T, ToolError>>,
-    ) -> Result<T, ToolError> {
-        match tokio::time::timeout(timeout, attempt).await {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
-            Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
-                method,
-                &self.endpoint,
-                timeout,
-            ))),
-        }
-    }
 }
 
 impl CdpChannel for CdpBrowserBackend {
@@ -94,18 +95,19 @@ impl CdpChannel for CdpBrowserBackend {
         collect: &[&str],
         timeout: Duration,
     ) -> Result<(Value, Vec<Value>), ToolError> {
-        self.within_timeout(method, timeout, self.page_call(method, params, collect))
+        self.page_call(method, params, collect, timeout)
             .await
+            .map_err(|(err, _)| err)
     }
 
-    /// Reported as `Page.navigate`'s failure, since only navigation connects
-    /// first.
-    async fn cdp_connect(&self, timeout: Duration) -> Result<(), ToolError> {
-        let open = async {
-            self.open_page().await?.close().await;
-            Ok(())
-        };
-        self.within_timeout("Page.navigate", timeout, open).await
+    async fn cdp_navigate_call(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Value, (ToolError, bool)> {
+        self.page_call("Page.navigate", json!({"url": url}), &[], timeout)
+            .await
+            .map(|(result, _)| result)
     }
 
     async fn retire_page(&self) {
