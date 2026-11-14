@@ -126,7 +126,7 @@ published release, so it does not work for this fork yet.
 
 Before it unpacks a release asset, the installer checks it against the
 release's `SHA256SUMS` and, when `cosign` is on `PATH`, checks that file's
-signature from this repository's release workflow. Set
+signature from this repository's release workflow for that tag. Set
 `HERMES_REQUIRE_SIGNATURE=true` to refuse any install it cannot verify that way.
 
 ## Quick Start

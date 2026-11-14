@@ -64,8 +64,10 @@ impl InstallerFixture {
         fs::create_dir_all(&tools_dir).expect("create fake tools dir");
 
         // Serves a fixed archive, a SHA256SUMS that lists it under every asset
-        // name (or a wrong or missing one, per HERMES_FAKE_SUMS) and an empty
-        // signature bundle.
+        // name (or a wrong hash, near-miss names or no file, per
+        // HERMES_FAKE_SUMS), an empty signature bundle, and a redirect from
+        // releases/latest to the tag in HERMES_FAKE_LATEST_TAG (none when
+        // that is empty). Logs every URL to HERMES_FAKE_CURL_LOG.
         write_executable(
             &tools_dir.join("curl"),
             r#"#!/usr/bin/env sh
@@ -83,6 +85,15 @@ done
 if [ -z "$out" ]; then
   exit 2
 fi
+printf '%s\n' "$url" >> "${HERMES_FAKE_CURL_LOG:-/dev/null}"
+case "$url" in
+  */releases/latest)
+    tag="${HERMES_FAKE_LATEST_TAG-v9.9.9}"
+    [ -n "$tag" ] || exit 22
+    printf 'https://github.com/yungSNAT/reformed-agent/releases/tag/%s' "$tag"
+    exit 0
+    ;;
+esac
 mkdir -p "$(dirname "$out")"
 case "$url" in
   */SHA256SUMS)
@@ -91,7 +102,11 @@ case "$url" in
     [ "${HERMES_FAKE_SUMS:-}" = "wrong" ] && sum="0000000000000000000000000000000000000000000000000000000000000000"
     : > "$out"
     for os in linux-x86_64 linux-aarch64 linux-arm64 macos-x86_64 macos-aarch64 macos-arm64; do
-      printf '%s  hermes-%s.tar.gz\n' "$sum" "$os" >> "$out"
+      if [ "${HERMES_FAKE_SUMS:-}" = "other-names" ]; then
+        printf '%s  hermes-%s.tar.gz.old\n%s  x-hermes-%s.tar.gz\n' "$sum" "$os" "$sum" "$os" >> "$out"
+      else
+        printf '%s  hermes-%s.tar.gz\n' "$sum" "$os" >> "$out"
+      fi
     done
     ;;
   */SHA256SUMS.sigstore.json) printf '{}\n' > "$out" ;;
@@ -151,6 +166,8 @@ chmod +x "$outdir/hermes-agent-ultra"
             .env("HERMES_HOME", self.root.join("hermes-home"))
             .env("HERMES_FAKE_BIN_LOG", &self.invocation_log)
             .env("HERMES_FAKE_TAR_MARK", &self.tar_mark)
+            .env("HERMES_FAKE_CURL_LOG", self.root.join("curl-urls.log"))
+            .env_remove("HERMES_FAKE_LATEST_TAG")
             .env_remove("HERMES_REQUIRE_SIGNATURE")
             .env_remove("HERMES_RELEASE_BASE_URL")
             .env("HERMES_INSTALL_PROBE_TIMEOUT_SECONDS", "3")
@@ -360,6 +377,29 @@ fn release_without_sha256sums_is_refused() {
 }
 
 #[test]
+fn checksum_listed_only_under_other_names_is_refused() {
+    let fixture = InstallerFixture::new("sums-other-names");
+
+    let output = fixture
+        .command()
+        .env("HERMES_FAKE_SUMS", "other-names")
+        .output()
+        .expect("run installer");
+
+    assert_refused(&fixture, &output, "is not listed in SHA256SUMS");
+}
+
+/// The value cosign was given for `flag`, from the fake cosign's log.
+fn cosign_arg(log: &Path, flag: &str) -> Option<String> {
+    let args = fs::read_to_string(log).expect("cosign was called");
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args.first(), Some(&"verify-blob"), "{args:?}");
+    args.iter()
+        .position(|arg| *arg == flag)
+        .map(|i| args[i + 1].to_string())
+}
+
+#[test]
 fn cosign_on_path_verifies_sha256sums_against_the_release_workflow() {
     let fixture = InstallerFixture::new("cosign-ok");
     let log = fixture.fake_cosign(0);
@@ -372,25 +412,67 @@ fn cosign_on_path_verifies_sha256sums_against_the_release_workflow() {
         text.contains("Verified the signature on SHA256SUMS."),
         "{text}"
     );
-    let args = fs::read_to_string(&log).expect("cosign was called");
-    let args: Vec<&str> = args.lines().collect();
-    assert_eq!(args.first(), Some(&"verify-blob"), "{args:?}");
-    let identity = args
-        .iter()
-        .position(|arg| *arg == "--certificate-identity-regexp")
-        .map(|i| args[i + 1]);
+    // Only the requested tag's run of release.yml, so an older signed release
+    // cannot stand in for it.
     assert_eq!(
-        identity,
+        cosign_arg(&log, "--certificate-identity-regexp").as_deref(),
         Some(
-            r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v"
-        ),
-        "{args:?}"
+            r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v-test$"
+        )
     );
-    let issuer = args
-        .iter()
-        .position(|arg| *arg == "--certificate-oidc-issuer")
-        .map(|i| args[i + 1]);
-    assert_eq!(issuer, Some("https://token.actions.githubusercontent.com"));
+    assert_eq!(
+        cosign_arg(&log, "--certificate-oidc-issuer").as_deref(),
+        Some("https://token.actions.githubusercontent.com")
+    );
+}
+
+#[test]
+fn latest_is_pinned_to_its_tag_for_downloads_and_the_signature() {
+    let fixture = InstallerFixture::new("latest-tag");
+    let log = fixture.fake_cosign(0);
+
+    let output = fixture.run(&["--version", "latest"]);
+    let text = output_text(&output);
+
+    assert!(output.status.success(), "{text}");
+    assert_eq!(
+        cosign_arg(&log, "--certificate-identity-regexp").as_deref(),
+        Some(
+            r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v9\.9\.9$"
+        )
+    );
+    let urls = fs::read_to_string(fixture.root.join("curl-urls.log")).expect("curl log");
+    let downloads: Vec<&str> = urls
+        .lines()
+        .filter(|url| !url.ends_with("/releases/latest"))
+        .collect();
+    assert!(!downloads.is_empty(), "{urls}");
+    assert!(
+        downloads
+            .iter()
+            .all(|url| url.contains("/releases/download/v9.9.9/")),
+        "{urls}"
+    );
+}
+
+#[test]
+fn unresolved_latest_is_refused_when_cosign_must_check_it() {
+    let fixture = InstallerFixture::new("latest-unresolved");
+    fixture.fake_cosign(0);
+
+    let output = fixture
+        .command()
+        .arg("--version")
+        .arg("latest")
+        .env("HERMES_FAKE_LATEST_TAG", "")
+        .output()
+        .expect("run installer");
+
+    assert_refused(
+        &fixture,
+        &output,
+        "could not resolve the latest release tag",
+    );
 }
 
 #[test]

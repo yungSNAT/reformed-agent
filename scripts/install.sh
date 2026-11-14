@@ -215,6 +215,22 @@ refuse_install() {
   exit 1
 }
 
+# Pins "latest" to the tag it redirects to now, so every download comes from
+# one release and the signature check can require that exact tag. Left as
+# "latest" when GitHub has no release, so a checkout can still build from
+# source.
+resolve_latest_tag() {
+  [[ "${VERSION}" == "latest" && -z "${HERMES_RELEASE_BASE_URL}" ]] || return 0
+  local url
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null)" || return 0
+  [[ "${url}" == */releases/tag/?* ]] && VERSION="${url##*/releases/tag/}"
+  return 0
+}
+
+regex_escape() {
+  printf '%s' "$1" | sed 's/[][\.*^$(){}+?|]/\\&/g'
+}
+
 # Checks the downloaded archive against the release's SHA256SUMS, and that file
 # against its cosign signature, before anything is extracted.
 verify_release_asset() {
@@ -222,17 +238,17 @@ verify_release_asset() {
   curl -fsSL "$(release_url SHA256SUMS)" -o "${sums}" \
     || refuse_install "could not download SHA256SUMS for ${asset}."
   if command -v cosign >/dev/null 2>&1; then
+    [[ "${VERSION}" != "latest" ]] \
+      || refuse_install "could not resolve the latest release tag, so its signature cannot be checked; pass a version."
     curl -fsSL "$(release_url SHA256SUMS.sigstore.json)" -o "${sums}.sigstore.json" \
       || refuse_install "could not download the signature for SHA256SUMS."
-    local repo_re
-    repo_re="$(printf '%s' "${REPO}" | sed 's/[][\.*^$(){}+?|]/\\&/g')"
     if ! cosign verify-blob \
       --bundle "${sums}.sigstore.json" \
-      --certificate-identity-regexp "^https://github\.com/${repo_re}/\.github/workflows/release\.yml@refs/tags/v" \
+      --certificate-identity-regexp "^https://github\.com/$(regex_escape "${REPO}")/\.github/workflows/release\.yml@refs/tags/$(regex_escape "${VERSION}")\$" \
       --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
       "${sums}" >"${TMP_DIR}/cosign.log" 2>&1; then
       cat "${TMP_DIR}/cosign.log" >&2
-      refuse_install "SHA256SUMS is not signed by ${REPO}'s release workflow."
+      refuse_install "SHA256SUMS is not signed by ${REPO}'s release workflow for ${VERSION}."
     fi
     echo "Verified the signature on SHA256SUMS."
   elif truthy_env "${HERMES_REQUIRE_SIGNATURE}"; then
@@ -432,6 +448,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 SOURCE_BIN=""
 DOWNLOADED_ASSET=""
+resolve_latest_tag
 for asset in "${ASSET_CANDIDATES[@]}"; do
   URL="$(release_url "${asset}")"
   echo "Installing ${CANONICAL_BIN_NAME} from ${URL}"

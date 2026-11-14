@@ -52,7 +52,7 @@ jobs:
             echo "::error::${GITHUB_SHA} is not on main."
             exit 1
           fi
-          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&event=push&status=success" --jq '.total_count')"
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success" --jq '.total_count')"
           if [ "${passed}" -lt 1 ]; then
             echo "::error::CI has not passed on ${GITHUB_SHA}. Tag a commit after its CI run on main succeeds."
             exit 1
@@ -183,15 +183,12 @@ jobs:
           name: release-${{ matrix.target }}
           path: ${{ matrix.artifact }}
 
-  # Gathers every asset with its checksums; on a tag, signs and attests them.
-  # Nothing is published here.
+  # Gathers every asset with its checksums. Nothing is signed or published here.
   stage:
-    needs: [qualify, cross-build, macos-build]
+    needs: [qualify, security-release-gate, cross-build, macos-build]
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write
-      attestations: write
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -218,35 +215,6 @@ jobs:
           cp scripts/install.sh Formula/hermes-agent-ultra.rb security/release-sbom.cdx.json dist/
           (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
           cat dist/SHA256SUMS
-      - name: Install Cosign
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
-      - name: Sign release assets (keyless)
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
-          for artifact in dist/*.tar.gz dist/*.zip; do
-            cosign sign-blob \
-              --yes \
-              --output-signature "${artifact}.sig" \
-              --output-certificate "${artifact}.pem" \
-              "${artifact}"
-          done
-      - name: Attest build provenance
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
-        with:
-          subject-path: |
-            dist/*.tar.gz
-            dist/*.zip
-      - name: Attest the SBOM to each archive
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
-        with:
-          subject-path: |
-            dist/*.tar.gz
-            dist/*.zip
-          sbom-path: dist/release-sbom.cdx.json
       - name: Upload staged assets
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
@@ -269,12 +237,7 @@ jobs:
         with:
           name: staged-release
           path: staged
-      - name: Install Cosign
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
       - name: Smoke the staged release
-        env:
-          HERMES_REQUIRE_SIGNATURE: ${{ startsWith(github.ref, 'refs/tags/') }}
         run: |
           bash scripts/smoke-release-artifact.sh \
             --version "${{ needs.qualify.outputs.version }}" \
@@ -294,6 +257,9 @@ jobs:
             artifact: hermes-windows-x86_64.zip
             binary: hermes.exe
     runs-on: ${{ matrix.runner }}
+    env:
+      ARTIFACT: ${{ matrix.artifact }}
+      BINARY: ${{ matrix.binary }}
     defaults:
       run:
         shell: bash
@@ -305,30 +271,86 @@ jobs:
           path: staged
       - name: Check the archive against SHA256SUMS
         working-directory: staged
-        run: grep -F "  ${{ matrix.artifact }}" SHA256SUMS | sha256sum -c -
+        run: grep -F "  ${ARTIFACT}" SHA256SUMS | sha256sum -c -
       - name: Unpack
         working-directory: staged
         run: |
           mkdir unpacked
-          if [[ "${{ matrix.artifact }}" == *.zip ]]; then
-            7z x -ounpacked "${{ matrix.artifact }}"
+          if [[ "${ARTIFACT}" == *.zip ]]; then
+            7z x -ounpacked "${ARTIFACT}"
           else
-            tar -xzf "${{ matrix.artifact }}" -C unpacked
+            tar -xzf "${ARTIFACT}" -C unpacked
           fi
       - name: Run the binary
         env:
           HERMES_HOME: ${{ runner.temp }}/hermes-home
           VERSION: ${{ needs.qualify.outputs.version }}
         run: |
-          bin="staged/unpacked/${{ matrix.binary }}"
+          bin="staged/unpacked/${BINARY}"
           "${bin}" --version | tee version.txt
           grep -F "${VERSION#v}" version.txt
           "${bin}" tools list > tools.txt
           grep -F skills_list tools.txt
 
+  # Signs and attests only assets every smoke job passed, then installs the
+  # signed set with the installer requiring the signature for this tag.
+  sign:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [qualify, stage, smoke, smoke-direct]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Download staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staged-release
+          path: dist
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
+      - name: Sign release assets (keyless)
+        run: |
+          cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
+          for artifact in dist/*.tar.gz dist/*.zip; do
+            cosign sign-blob \
+              --yes \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.pem" \
+              "${artifact}"
+          done
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Attest the SBOM to each archive
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+          sbom-path: dist/release-sbom.cdx.json
+      - name: Install the signed release, requiring its signature
+        env:
+          HERMES_REQUIRE_SIGNATURE: "true"
+        run: |
+          bash scripts/smoke-release-artifact.sh \
+            --version "${{ needs.qualify.outputs.version }}" \
+            --asset-dir dist
+      - name: Upload signed assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-release
+          path: dist/
+
   publish:
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [stage, smoke, smoke-direct]
+    needs: sign
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -344,10 +366,10 @@ jobs:
             echo "::error::Tag ${TAG} now names ${tagged}, not ${GITHUB_SHA}."
             exit 1
           fi
-      - name: Download staged assets
+      - name: Download signed assets
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: staged-release
+          name: signed-release
           path: dist
       - name: Publish release assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
