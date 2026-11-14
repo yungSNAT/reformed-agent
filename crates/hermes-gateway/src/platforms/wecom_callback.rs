@@ -240,7 +240,9 @@ impl WeComCallbackAdapter {
             encrypt.to_string(),
         ];
         parts.sort();
-        let mut hasher = Sha1::new();
+        // WeCom's callback protocol defines msg_signature as SHA-1 over these sorted parts:
+        // https://developer.work.weixin.qq.com/document/path/90968
+        let mut hasher = Sha1::new(); // NOSONAR: protocol-mandated hash, not a choice
         hasher.update(parts.join("").as_bytes());
         format!("{:x}", hasher.finalize())
     }
