@@ -885,15 +885,26 @@ mod tests {
     #[test]
     fn jwt_verifier_rejects_a_mistyped_not_before_claim() {
         use aws_lc_rs::rand::SystemRandom;
-        use aws_lc_rs::signature::{EcdsaKeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+        use aws_lc_rs::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
 
         let cfg = test_config();
-        let pkcs8 = EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
-            .expect("generate P-256 key");
+        let pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
+                .expect("generate P-256 key");
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
+            .expect("parse P-256 key");
+        // An uncompressed point: 0x04, then x and y.
+        let point = pair.public_key().as_ref();
+        let jwks: JwkSet = serde_json::from_value(json!({
+            "keys": [{
+                "kty": "EC",
+                "crv": "P-256",
+                "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+                "y": URL_SAFE_NO_PAD.encode(&point[33..65])
+            }]
+        }))
+        .expect("jwks");
         let key = EncodingKey::from_ec_der(pkcs8.as_ref());
-        let jwks = JwkSet {
-            keys: vec![Jwk::from_encoding_key(&key, Algorithm::ES256).expect("public JWK")],
-        };
         let token_with_nbf = |nbf: Value| {
             encode(
                 &Header::new(Algorithm::ES256),
