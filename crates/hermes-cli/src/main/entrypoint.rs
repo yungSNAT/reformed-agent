@@ -132,6 +132,9 @@ async fn run_main() {
             };
             if let Err(err) = app.handle_input(&prompt).await {
                 eprintln!("Error: {}", err);
+                // `exit` skips destructors; dropping the app releases any
+                // cloud browser session its tools hold.
+                drop(app);
                 std::process::exit(1);
             }
             print_app_oneshot_result(&app);
