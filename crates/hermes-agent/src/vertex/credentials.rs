@@ -49,8 +49,9 @@ const METADATA_FLAVOR_VALUE: &str = "Google";
 const METADATA_GET_ATTEMPTS: u32 = 5;
 const GCE_PRODUCT_NAME_FILE: &str = "/sys/class/dmi/id/product_name";
 
-/// A short-lived OAuth2 access token. `expires_at` is `None` when the token
-/// endpoint gave no `expires_in`, which google-auth treats as never expiring.
+/// A short-lived OAuth2 access token. `expires_at` is `None`, a token that
+/// never expires, when the token endpoint gave no `expires_in` (as
+/// google-auth treats it) or one too far ahead for `Instant` to represent.
 pub(super) struct AccessToken {
     pub(super) value: String,
     pub(super) expires_at: Option<Instant>,

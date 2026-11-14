@@ -605,6 +605,8 @@ async fn cached_token_is_reused_until_within_the_refresh_margin() {
 async fn token_with_an_expiry_beyond_instant_range_is_cached_as_never_expiring() {
     let dir = tempfile::tempdir().expect("tempdir");
     let server = MockServer::start().await;
+    // Parsed as i64::MAX seconds, which overflows `Instant` on Linux and
+    // macOS. On Windows it fits, so only a Unix run proves the overflow fixed.
     mount_token(&server, "ya29.far-future", u64::MAX).await;
     let key = write_json(
         &dir.path().join("sa.json"),
