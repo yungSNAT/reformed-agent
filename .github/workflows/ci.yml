@@ -85,7 +85,7 @@ jobs:
           cache: npm
           cache-dependency-path: ui-tui/package-lock.json
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --ignore-scripts
       # The TUI imports @hermes/ink from its built dist folder.
       - name: Build @hermes/ink
         run: npm run build --prefix packages/hermes-ink
