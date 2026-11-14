@@ -136,7 +136,14 @@ jobs:
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build hermes
+        if: matrix.target == 'aarch64-apple-darwin'
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli
+      # The x86_64 leg cross-compiles on an arm64 runner and runs nothing, so a
+      # type check catches its target-specific errors; release.yml builds the
+      # shipped x86_64 binary.
+      - name: Check hermes
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo check --locked --target ${{ matrix.target }} -p hermes-cli
       # macOS temp folders sit behind the /var -> /private/var link, which the
       # own-home refusal must resolve; the Ubuntu job has no such link.
       - name: Linked-home refusal tests
