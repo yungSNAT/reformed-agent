@@ -46,6 +46,7 @@ struct InstallerFixture {
     home_dir: PathBuf,
     tools_dir: PathBuf,
     invocation_log: PathBuf,
+    tar_mark: PathBuf,
 }
 
 impl InstallerFixture {
@@ -56,20 +57,26 @@ impl InstallerFixture {
         let home_dir = root.join("home");
         let tools_dir = root.join("tools");
         let invocation_log = root.join("hermes-invocations.log");
+        let tar_mark = root.join("tar-ran");
 
         fs::create_dir_all(&install_dir).expect("create install dir");
         fs::create_dir_all(&home_dir).expect("create home dir");
         fs::create_dir_all(&tools_dir).expect("create fake tools dir");
 
+        // Serves a fixed archive, a SHA256SUMS that lists it under every asset
+        // name (or a wrong or missing one, per HERMES_FAKE_SUMS) and an empty
+        // signature bundle.
         write_executable(
             &tools_dir.join("curl"),
             r#"#!/usr/bin/env sh
 out=""
+url=""
 while [ "$#" -gt 0 ]; do
   if [ "$1" = "-o" ]; then
     out="$2"
     shift 2
   else
+    url="$1"
     shift
   fi
 done
@@ -77,7 +84,19 @@ if [ -z "$out" ]; then
   exit 2
 fi
 mkdir -p "$(dirname "$out")"
-: > "$out"
+case "$url" in
+  */SHA256SUMS)
+    [ "${HERMES_FAKE_SUMS:-}" = "missing" ] && exit 22
+    sum="$(printf 'fake-archive\n' | { sha256sum 2>/dev/null || shasum -a 256; } | awk '{print $1}')"
+    [ "${HERMES_FAKE_SUMS:-}" = "wrong" ] && sum="0000000000000000000000000000000000000000000000000000000000000000"
+    : > "$out"
+    for os in linux-x86_64 linux-aarch64 linux-arm64 macos-x86_64 macos-aarch64 macos-arm64; do
+      printf '%s  hermes-%s.tar.gz\n' "$sum" "$os" >> "$out"
+    done
+    ;;
+  */SHA256SUMS.sigstore.json) printf '{}\n' > "$out" ;;
+  *) printf 'fake-archive\n' > "$out" ;;
+esac
 "#,
         )
         .expect("write fake curl");
@@ -97,6 +116,7 @@ done
 if [ -z "$outdir" ]; then
   exit 2
 fi
+: > "${HERMES_FAKE_TAR_MARK:?}"
 mkdir -p "$outdir"
 cat > "$outdir/hermes-agent-ultra" <<'BIN'
 #!/usr/bin/env sh
@@ -115,6 +135,7 @@ chmod +x "$outdir/hermes-agent-ultra"
             home_dir,
             tools_dir,
             invocation_log,
+            tar_mark,
         }
     }
 
@@ -129,6 +150,9 @@ chmod +x "$outdir/hermes-agent-ultra"
             .env("HOME", &self.home_dir)
             .env("HERMES_HOME", self.root.join("hermes-home"))
             .env("HERMES_FAKE_BIN_LOG", &self.invocation_log)
+            .env("HERMES_FAKE_TAR_MARK", &self.tar_mark)
+            .env_remove("HERMES_REQUIRE_SIGNATURE")
+            .env_remove("HERMES_RELEASE_BASE_URL")
             .env("HERMES_INSTALL_PROBE_TIMEOUT_SECONDS", "3")
             .env("PATH", fixture_path(&self.tools_dir))
             .stdin(Stdio::null())
@@ -265,4 +289,143 @@ fn default_install_preserves_existing_upstream_hermes_command() {
         fs::read_to_string(&upstream_hermes).expect("read upstream hermes"),
         "#!/usr/bin/env sh\necho upstream hermes\n"
     );
+}
+
+impl InstallerFixture {
+    /// Puts a fake `cosign` on PATH that logs its arguments and exits `status`.
+    fn fake_cosign(&self, status: i32) -> PathBuf {
+        let log = self.root.join("cosign-args.log");
+        write_executable(
+            &self.tools_dir.join("cosign"),
+            &format!(
+                "#!/usr/bin/env sh\nprintf '%s\\n' \"$@\" >> '{}'\nexit {status}\n",
+                log.display()
+            ),
+        )
+        .expect("write fake cosign");
+        log
+    }
+}
+
+/// Asserts the installer refused before extracting or installing anything.
+fn assert_refused(fixture: &InstallerFixture, output: &Output, reason: &str) {
+    let text = output_text(output);
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("Refusing to install:"), "{text}");
+    assert!(text.contains(reason), "{text}");
+    assert!(!fixture.tar_mark.exists(), "tar ran: {text}");
+    assert!(!fixture.install_dir.join("hermes-agent-ultra").exists(), "{text}");
+    assert!(!text.contains("building from source"), "{text}");
+}
+
+#[test]
+fn archive_is_checked_against_sha256sums_before_extraction() {
+    let fixture = InstallerFixture::new("sums-match");
+
+    let output = fixture.run(&[]);
+    let text = output_text(&output);
+
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("against SHA256SUMS."), "{text}");
+    assert!(fixture.tar_mark.exists(), "{text}");
+}
+
+#[test]
+fn archive_that_does_not_match_sha256sums_is_refused() {
+    let fixture = InstallerFixture::new("sums-wrong");
+
+    let output = fixture
+        .command()
+        .env("HERMES_FAKE_SUMS", "wrong")
+        .output()
+        .expect("run installer");
+
+    assert_refused(&fixture, &output, "does not match SHA256SUMS");
+}
+
+#[test]
+fn release_without_sha256sums_is_refused() {
+    let fixture = InstallerFixture::new("sums-missing");
+
+    let output = fixture
+        .command()
+        .env("HERMES_FAKE_SUMS", "missing")
+        .output()
+        .expect("run installer");
+
+    assert_refused(&fixture, &output, "could not download SHA256SUMS");
+}
+
+#[test]
+fn cosign_on_path_verifies_sha256sums_against_the_release_workflow() {
+    let fixture = InstallerFixture::new("cosign-ok");
+    let log = fixture.fake_cosign(0);
+
+    let output = fixture.run(&[]);
+    let text = output_text(&output);
+
+    assert!(output.status.success(), "{text}");
+    assert!(text.contains("Verified the signature on SHA256SUMS."), "{text}");
+    let args = fs::read_to_string(&log).expect("cosign was called");
+    let args: Vec<&str> = args.lines().collect();
+    assert_eq!(args.first(), Some(&"verify-blob"), "{args:?}");
+    let identity = args
+        .iter()
+        .position(|arg| *arg == "--certificate-identity-regexp")
+        .map(|i| args[i + 1]);
+    assert_eq!(
+        identity,
+        Some(r"^https://github\.com/yungSNAT/reformed-agent/\.github/workflows/release\.yml@refs/tags/v"),
+        "{args:?}"
+    );
+    let issuer = args
+        .iter()
+        .position(|arg| *arg == "--certificate-oidc-issuer")
+        .map(|i| args[i + 1]);
+    assert_eq!(issuer, Some("https://token.actions.githubusercontent.com"));
+}
+
+#[test]
+fn signature_that_cosign_rejects_is_refused() {
+    let fixture = InstallerFixture::new("cosign-bad");
+    fixture.fake_cosign(1);
+
+    let output = fixture.run(&[]);
+
+    assert_refused(&fixture, &output, "is not signed by");
+}
+
+#[test]
+fn required_signature_without_cosign_is_refused() {
+    let fixture = InstallerFixture::new("cosign-required");
+
+    // Only the fake tools and the system folders, so no cosign is on PATH.
+    let output = fixture
+        .command()
+        .env("PATH", format!("{}:/usr/bin:/bin", fixture.tools_dir.display()))
+        .env("HERMES_REQUIRE_SIGNATURE", "true")
+        .output()
+        .expect("run installer");
+
+    assert_refused(&fixture, &output, "cosign is not on PATH");
+}
+
+#[test]
+fn default_home_is_this_agents_own_not_upstreams() {
+    let fixture = InstallerFixture::new("default-home");
+
+    let output = fixture
+        .command()
+        .env_remove("HERMES_HOME")
+        .env_remove("HERMES_AGENT_ULTRA_HOME")
+        .output()
+        .expect("run installer");
+    let text = output_text(&output);
+
+    assert!(output.status.success(), "{text}");
+    assert!(
+        fixture.home_dir.join(".hermes-agent-ultra/SOUL.md").is_file(),
+        "{text}"
+    );
+    assert!(!fixture.home_dir.join(".hermes").exists(), "{text}");
 }
