@@ -93,6 +93,8 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> EvalResult<()> {
     let args = Args::parse();
+    // Before anything writes to the home; see check_implicit_home for the limit.
+    hermes_config::check_implicit_home().map_err(EvalError::Other)?;
     let benchmark_path = args.benchmark.clone();
 
     let cfg = load_gateway_config(args.config_dir.as_deref())?;

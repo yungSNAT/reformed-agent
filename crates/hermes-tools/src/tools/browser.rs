@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
+use crate::tools::url_safety::{check_website_blocklist, is_always_blocked_url, is_safe_url};
 use crate::tools::vision::VisionBackend;
 
 // ---------------------------------------------------------------------------
@@ -19,7 +20,19 @@ use crate::tools::vision::VisionBackend;
 /// Injected backend for browser automation operations.
 #[async_trait]
 pub trait BrowserBackend: Send + Sync {
+    /// Open `url`. A JSON object result names the page the browser landed
+    /// on, after any redirects, in its `url` field.
     async fn navigate(&self, url: &str) -> Result<String, ToolError>;
+    /// Replace the current page with `about:blank` and drop it from the
+    /// history, so going back cannot reopen it.
+    async fn blank_page(&self) -> Result<String, ToolError>;
+    /// Whether the browser runs on this machine beside a local terminal, which
+    /// already reaches the local network, so `browser_navigate` skips the
+    /// private-address check (upstream `_is_local_backend`). A backend that
+    /// does not say keeps the check.
+    fn is_local_backend(&self) -> bool {
+        false
+    }
     async fn snapshot(&self) -> Result<String, ToolError>;
     async fn click(&self, selector: &str) -> Result<String, ToolError>;
     async fn r#type(&self, selector: &str, text: &str) -> Result<String, ToolError>;
@@ -54,7 +67,30 @@ impl ToolHandler for BrowserNavigateHandler {
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'url' parameter".into()))?;
-        self.backend.navigate(url).await
+        let local = self.backend.is_local_backend();
+        check_navigation(url, local, false).await?;
+        let result = self.backend.navigate(url).await?;
+        // Checked even when unchanged: the host may resolve or be listed
+        // differently now than before navigating.
+        let landed = serde_json::from_str::<Value>(&result)
+            .ok()
+            .and_then(|value| value.get("url")?.as_str().map(str::to_string))
+            .unwrap_or_else(|| url.to_string());
+        if let Err(err) = check_navigation(&landed, local, true).await {
+            // Leave the refused page neither open nor in the history, so
+            // neither a snapshot nor going back reaches it.
+            let message = |e: ToolError| match e {
+                ToolError::ExecutionFailed(message) => message,
+                other => other.to_string(),
+            };
+            return Err(match self.backend.blank_page().await {
+                Ok(_) => err,
+                Err(blank) => {
+                    ToolError::ExecutionFailed(format!("{}; {}", message(err), message(blank)))
+                }
+            });
+        }
+        Ok(result)
     }
 
     fn schema(&self) -> ToolSchema {
@@ -72,6 +108,39 @@ impl ToolHandler for BrowserNavigateHandler {
             JsonSchema::object(props, vec!["url".into()]),
         )
     }
+}
+
+/// Refuses a page `browser_navigate` must not open, or stay on after a
+/// redirect (`landed`), as upstream does: a cloud metadata endpoint on every
+/// backend, a private or internal address unless the browser is local, and a
+/// host on `security.website_blocklist`. Runs on the blocking pool, since the
+/// checks resolve the host.
+async fn check_navigation(url: &str, local: bool, landed: bool) -> Result<(), ToolError> {
+    let url = url.to_string();
+    tokio::task::spawn_blocking(move || {
+        let (target, private) = if landed {
+            ("redirect landed on", "private/internal address")
+        } else {
+            ("URL targets", "private or internal address")
+        };
+        if is_always_blocked_url(&url) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "Blocked: {target} a cloud metadata endpoint"
+            )));
+        }
+        if !local && !is_safe_url(&url) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "Blocked: {target} a {private}"
+            )));
+        }
+        check_website_blocklist(&url)
+    })
+    .await
+    .unwrap_or_else(|e| {
+        Err(ToolError::ExecutionFailed(format!(
+            "Blocked: URL check did not complete: {e}"
+        )))
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -520,6 +589,9 @@ mod tests {
         async fn navigate(&self, url: &str) -> Result<String, ToolError> {
             Ok(format!("Navigated to {}", url))
         }
+        async fn blank_page(&self) -> Result<String, ToolError> {
+            Ok("Blanked".into())
+        }
         async fn snapshot(&self) -> Result<String, ToolError> {
             Ok("Page snapshot".into())
         }
@@ -555,12 +627,293 @@ mod tests {
 
     #[tokio::test]
     async fn test_browser_navigate() {
+        let _env = CheckEnv::new("");
         let handler = BrowserNavigateHandler::new(backend());
         let result = handler
-            .execute(json!({"url": "https://example.com"}))
+            .execute(json!({"url": "https://93.184.215.14/"}))
             .await
             .unwrap();
-        assert!(result.contains("example.com"));
+        assert!(result.contains("93.184.215.14"));
+    }
+
+    /// Holds the locks the URL checks read under, and points `HERMES_HOME` at
+    /// a directory whose `config.yaml`, if any, is `config`, so no real
+    /// config applies.
+    struct CheckEnv {
+        home: tempfile::TempDir,
+        original: Option<String>,
+        _private_urls: std::sync::MutexGuard<'static, ()>,
+        _global: std::sync::MutexGuard<'static, ()>,
+    }
+
+    impl CheckEnv {
+        fn new(config: &str) -> Self {
+            let global = hermes_config::managed_gateway::test_lock::lock();
+            let private_urls = crate::tools::url_safety::ENV_TEST_LOCK
+                .lock()
+                .unwrap_or_else(|e| e.into_inner());
+            let home = tempfile::tempdir().unwrap();
+            if !config.is_empty() {
+                std::fs::write(home.path().join("config.yaml"), config).unwrap();
+            }
+            let original = std::env::var("HERMES_HOME").ok();
+            std::env::set_var("HERMES_HOME", home.path());
+            Self {
+                home,
+                original,
+                _private_urls: private_urls,
+                _global: global,
+            }
+        }
+    }
+
+    impl CheckEnv {
+        fn config_path(&self) -> std::path::PathBuf {
+            self.home.path().join("config.yaml")
+        }
+    }
+
+    /// A config that blocklists 93.184.215.14.
+    const BLOCK_93: &str =
+        "security:\n  website_blocklist:\n    enabled: true\n    domains:\n      - \"93.184.215.14\"\n";
+
+    impl Drop for CheckEnv {
+        fn drop(&mut self) {
+            match &self.original {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+        }
+    }
+
+    /// Lands on `landed` when set, else where it was sent, and records each
+    /// URL it opens. Writes `BLOCK_93` to `block_on_open` when opening a page,
+    /// and fails to blank the page with `blank_error`.
+    #[derive(Default)]
+    struct NavBackend {
+        local: bool,
+        landed: Option<&'static str>,
+        opened: std::sync::Mutex<Vec<String>>,
+        block_on_open: Option<std::path::PathBuf>,
+        blank_error: Option<&'static str>,
+    }
+
+    impl NavBackend {
+        fn new(local: bool, landed: Option<&'static str>) -> std::sync::Arc<Self> {
+            std::sync::Arc::new(Self {
+                local,
+                landed,
+                ..Self::default()
+            })
+        }
+
+        fn opened(&self) -> Vec<String> {
+            self.opened.lock().unwrap().clone()
+        }
+    }
+
+    #[async_trait]
+    impl BrowserBackend for NavBackend {
+        async fn navigate(&self, url: &str) -> Result<String, ToolError> {
+            self.opened.lock().unwrap().push(url.to_string());
+            if let Some(config) = &self.block_on_open {
+                std::fs::write(config, BLOCK_93).unwrap();
+            }
+            Ok(json!({"status": "navigated", "url": self.landed.unwrap_or(url)}).to_string())
+        }
+        async fn blank_page(&self) -> Result<String, ToolError> {
+            self.opened.lock().unwrap().push("blank_page".into());
+            match self.blank_error {
+                Some(error) => Err(ToolError::ExecutionFailed(error.into())),
+                None => Ok(json!({"status": "blank"}).to_string()),
+            }
+        }
+        fn is_local_backend(&self) -> bool {
+            self.local
+        }
+        async fn snapshot(&self) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn click(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn r#type(&self, _: &str, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn scroll(&self, _: &str, _: Option<u32>) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn go_back(&self) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn press(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn get_images(&self, _: Option<&str>) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn screenshot(&self) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn console(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+    }
+
+    async fn open(backend: &std::sync::Arc<NavBackend>, url: &str) -> Result<String, ToolError> {
+        BrowserNavigateHandler::new(backend.clone())
+            .execute(json!({"url": url}))
+            .await
+    }
+
+    /// Cloud metadata endpoints, from upstream's `test_browser_ssrf_local.py`.
+    const IMDS_URLS: [&str; 5] = [
+        "http://169.254.169.254/latest/meta-data/",
+        "http://169.254.169.253/metadata/instance",
+        "http://169.254.170.2/v2/credentials",
+        "http://100.100.100.200/latest/meta-data/",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    ];
+
+    fn assert_refused(outcome: Result<String, ToolError>, reason: &str) {
+        let err = outcome.expect_err(reason).to_string();
+        assert!(err.contains(reason), "{err}");
+    }
+
+    #[tokio::test]
+    async fn cloud_browser_refuses_private_and_metadata_urls_before_opening_them() {
+        let _env = CheckEnv::new("");
+        let cloud = NavBackend::new(false, None);
+
+        assert_refused(
+            open(&cloud, "http://127.0.0.1:8080/dashboard").await,
+            "URL targets a private or internal address",
+        );
+        for url in IMDS_URLS {
+            assert_refused(
+                open(&cloud, url).await,
+                "URL targets a cloud metadata endpoint",
+            );
+        }
+        assert!(cloud.opened().is_empty());
+
+        open(&cloud, "https://93.184.215.14/")
+            .await
+            .expect("public URL");
+    }
+
+    #[tokio::test]
+    async fn local_browser_opens_private_urls_but_never_metadata_endpoints() {
+        let _env = CheckEnv::new("");
+        let local = NavBackend::new(true, None);
+
+        for url in [
+            "http://127.0.0.1:8080/dashboard",
+            "http://192.168.1.1/admin",
+            "http://10.0.0.5/",
+        ] {
+            open(&local, url).await.expect(url);
+        }
+        for url in IMDS_URLS {
+            assert_refused(
+                open(&local, url).await,
+                "URL targets a cloud metadata endpoint",
+            );
+        }
+        assert_eq!(local.opened().len(), 3);
+    }
+
+    #[tokio::test]
+    async fn redirect_to_a_refused_address_is_blanked_and_reported() {
+        let _env = CheckEnv::new("");
+        let start = "https://93.184.215.14/redirect";
+
+        let cloud = NavBackend::new(false, Some("http://192.168.1.1/internal"));
+        assert_refused(
+            open(&cloud, start).await,
+            "redirect landed on a private/internal address",
+        );
+        assert_eq!(cloud.opened(), [start, "blank_page"]);
+
+        for local in [false, true] {
+            let backend = NavBackend::new(local, Some("http://169.254.169.254/latest/meta-data/"));
+            assert_refused(
+                open(&backend, start).await,
+                "redirect landed on a cloud metadata endpoint",
+            );
+            assert_eq!(backend.opened(), [start, "blank_page"]);
+        }
+    }
+
+    #[tokio::test]
+    async fn redirect_to_an_allowed_address_reports_where_it_landed() {
+        let _env = CheckEnv::new("");
+        let start = "https://93.184.215.14/redirect";
+        for (local, landed) in [
+            (true, "http://192.168.1.1/internal"),
+            (false, "https://93.184.215.14/final"),
+        ] {
+            let backend = NavBackend::new(local, Some(landed));
+            let result: Value =
+                serde_json::from_str(&open(&backend, start).await.expect(landed)).unwrap();
+            assert_eq!(result["url"], landed);
+            assert_eq!(backend.opened(), [start]);
+        }
+    }
+
+    #[tokio::test]
+    async fn website_blocklist_applies_to_every_backend_before_and_after_opening() {
+        let _env = CheckEnv::new(BLOCK_93);
+        for local in [false, true] {
+            let backend = NavBackend::new(local, None);
+            assert_refused(
+                open(&backend, "https://93.184.215.14/").await,
+                "matches website blocklist rule",
+            );
+            assert!(backend.opened().is_empty());
+        }
+
+        let local = NavBackend::new(true, Some("https://93.184.215.14/"));
+        assert_refused(
+            open(&local, "http://10.0.0.5/").await,
+            "matches website blocklist rule",
+        );
+        assert_eq!(local.opened(), ["http://10.0.0.5/", "blank_page"]);
+    }
+
+    #[tokio::test]
+    async fn an_unchanged_landed_url_is_checked_again_after_opening() {
+        let env = CheckEnv::new("");
+        let url = "https://93.184.215.14/";
+        let backend = std::sync::Arc::new(NavBackend {
+            local: true,
+            block_on_open: Some(env.config_path()),
+            ..NavBackend::default()
+        });
+
+        assert_refused(open(&backend, url).await, "matches website blocklist rule");
+        assert_eq!(backend.opened(), [url, "blank_page"]);
+    }
+
+    #[tokio::test]
+    async fn a_refused_page_that_could_not_be_cleared_is_reported() {
+        let _env = CheckEnv::new("");
+        let backend = std::sync::Arc::new(NavBackend {
+            landed: Some("http://192.168.1.1/internal"),
+            blank_error: Some("the browser session was retired"),
+            ..NavBackend::default()
+        });
+
+        let err = open(&backend, "https://93.184.215.14/redirect")
+            .await
+            .expect_err("refused redirect")
+            .to_string();
+
+        assert!(
+            err.contains("redirect landed on a private/internal address")
+                && err.contains("the browser session was retired"),
+            "{err}"
+        );
     }
 
     #[tokio::test]

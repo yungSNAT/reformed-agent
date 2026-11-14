@@ -37,9 +37,8 @@ pub async fn check_write(path: &Path) -> Result<(), String> {
     ask_write(profile_guard().await?, path).await
 }
 
-/// The profile folder, fixed at first use. Without `HERMES_HOME` the home
-/// falls back to `~/.hermes` until `~/.hermes-agent-ultra` exists, so a
-/// folder created later must not move the guard's config.
+/// The profile folder, fixed at first use, so a later change to the home
+/// variables in this process cannot move the guard's config.
 fn profile_home() -> &'static Path {
     static HOME: OnceLock<PathBuf> = OnceLock::new();
     HOME.get_or_init(crate::paths::hermes_home)

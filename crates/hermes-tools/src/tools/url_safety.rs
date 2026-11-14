@@ -76,6 +76,11 @@ fn reset_allow_private_cache_for_tests() {
     *guard = None;
 }
 
+/// Serialises tests that change `HERMES_ALLOW_PRIVATE_URLS` with those that
+/// rely on its default, here and in the browser tools.
+#[cfg(test)]
+pub(crate) static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
+
 fn is_benchmark_ipv4(ip: &Ipv4Addr) -> bool {
     let octets = ip.octets();
     octets[0] == 198 && (18..=19).contains(&octets[1])
@@ -385,6 +390,12 @@ fn check_url_fetch_allowed(url: &str) -> Result<(), ToolError> {
             "Blocked: '{url}' is invalid, could not be resolved, or targets a private or internal address"
         )));
     }
+    check_website_blocklist(url)
+}
+
+/// Refuses a host on `security.website_blocklist`. Fails closed when the
+/// blocklist cannot be read.
+pub(crate) fn check_website_blocklist(url: &str) -> Result<(), ToolError> {
     match crate::website_policy::check_website_access(url, None) {
         Ok(None) => Ok(()),
         Ok(Some(block)) => Err(ToolError::ExecutionFailed(format!(
@@ -430,9 +441,6 @@ impl ToolHandler for UrlSafetyHandler {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
-
-    static ENV_TEST_LOCK: Mutex<()> = Mutex::new(());
 
     struct EnvVarGuard {
         key: &'static str,

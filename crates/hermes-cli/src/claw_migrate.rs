@@ -81,9 +81,9 @@ pub fn find_openclaw_dir(explicit_source: Option<&Path>) -> Option<PathBuf> {
     None
 }
 
-/// Get the hermes home directory (`~/.hermes`).
+/// Get the hermes home directory, as `hermes_config::hermes_home` resolves it.
 pub fn get_hermes_home() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".hermes"))
+    Some(hermes_config::hermes_home())
 }
 
 /// Run the OpenClaw → Hermes migration.
@@ -393,6 +393,26 @@ fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn migration_target_is_the_own_home_not_upstreams() {
+        let _lock = crate::test_env_lock::lock();
+        let tmp = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(tmp.path().join(".hermes")).unwrap();
+        let keys = ["HOME", "HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"];
+        let saved: Vec<_> = keys.iter().map(std::env::var_os).collect();
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
+        let target = get_hermes_home();
+        for (key, value) in keys.iter().zip(saved) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        assert_eq!(target, Some(tmp.path().join(".hermes-agent-ultra")));
+    }
 
     #[test]
     fn test_find_openclaw_dir_none() {

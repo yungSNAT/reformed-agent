@@ -12,7 +12,9 @@ impl CamoFoxBrowserBackend {
             .or_else(|_| std::env::var("BROWSER_CDP_URL"))
             .unwrap_or_else(|_| "http://localhost:9222".to_string());
         let profile = std::env::var("CAMOFOX_PROFILE").unwrap_or_else(|_| "default".to_string());
-        Self::new(endpoint, profile)
+        let mut backend = Self::new(endpoint, profile);
+        backend.inner.local = !cdp_override_from_env();
+        backend
     }
 }
 
@@ -22,6 +24,8 @@ impl CdpBrowserBackend {
             endpoint,
             client: reqwest::Client::new(),
             first_navigation: AtomicBool::new(true),
+            local: false,
+            retired: AtomicBool::new(false),
         }
     }
 
@@ -30,24 +34,56 @@ impl CdpBrowserBackend {
         let endpoint = std::env::var("CHROME_CDP_URL")
             .or_else(|_| std::env::var("BROWSER_CDP_URL"))
             .unwrap_or_else(|_| "http://localhost:9222".to_string());
-        Self::new(endpoint)
+        let mut backend = Self::new(endpoint);
+        backend.local = !cdp_override_from_env();
+        backend
     }
 
-    /// Send one CDP command to the browser's first page. Each call opens its
-    /// own WebSocket and attaches to the page; a local Chrome keeps the page
-    /// whether or not a client is connected, so no state has to outlive a call.
+    /// Send one CDP command to the browser's first page within `timeout`.
+    /// Each call opens its own WebSocket and attaches to the page; a local
+    /// Chrome keeps the page whether or not a client is connected, so no state
+    /// has to outlive a call. The flag on an error is false only when the
+    /// command was not sent; a timeout counts as sent.
     async fn page_call(
         &self,
         method: &str,
         params: Value,
         collect: &[&str],
-    ) -> Result<(Value, Vec<Value>), ToolError> {
-        let mut connection = CdpConnection::open_attached(&self.client, &self.endpoint)
+        timeout: Duration,
+    ) -> Result<(Value, Vec<Value>), (ToolError, bool)> {
+        let attempt = async {
+            let mut connection = self.open_page().await.map_err(|err| (err, false))?;
+            let outcome = connection.call(method, params, collect).await;
+            connection.close().await;
+            outcome.map_err(|failure| (ToolError::ExecutionFailed(failure.message()), true))
+        };
+        match tokio::time::timeout(timeout, attempt).await {
+            Ok(Ok(outcome)) => Ok(outcome),
+            Ok(Err((err, sent))) => {
+                Err((format_cdp_command_error(method, &self.endpoint, err), sent))
+            }
+            Err(_) => Err((
+                ToolError::ExecutionFailed(format_cdp_timeout_error(
+                    method,
+                    &self.endpoint,
+                    timeout,
+                )),
+                true,
+            )),
+        }
+    }
+
+    /// A connection attached to the browser's first page, unless the browser
+    /// was retired.
+    async fn open_page(&self) -> Result<CdpConnection, ToolError> {
+        if self.retired.load(Ordering::SeqCst) {
+            return Err(ToolError::ExecutionFailed(
+                "The browser was retired because a refused page could not be cleared; restart Hermes to use it again".into(),
+            ));
+        }
+        CdpConnection::open_attached(&self.client, &self.endpoint)
             .await
-            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))?;
-        let outcome = connection.call(method, params, collect).await;
-        connection.close().await;
-        outcome.map_err(|failure| ToolError::ExecutionFailed(failure.message()))
+            .map_err(|failure| ToolError::ExecutionFailed(failure.message()))
     }
 }
 
@@ -59,15 +95,23 @@ impl CdpChannel for CdpBrowserBackend {
         collect: &[&str],
         timeout: Duration,
     ) -> Result<(Value, Vec<Value>), ToolError> {
-        match tokio::time::timeout(timeout, self.page_call(method, params, collect)).await {
-            Ok(Ok(outcome)) => Ok(outcome),
-            Ok(Err(err)) => Err(format_cdp_command_error(method, &self.endpoint, err)),
-            Err(_) => Err(ToolError::ExecutionFailed(format_cdp_timeout_error(
-                method,
-                &self.endpoint,
-                timeout,
-            ))),
-        }
+        self.page_call(method, params, collect, timeout)
+            .await
+            .map_err(|(err, _)| err)
+    }
+
+    async fn cdp_navigate_call(
+        &self,
+        url: &str,
+        timeout: Duration,
+    ) -> Result<Value, (ToolError, bool)> {
+        self.page_call("Page.navigate", json!({"url": url}), &[], timeout)
+            .await
+            .map(|(result, _)| result)
+    }
+
+    async fn retire_page(&self) {
+        self.retired.store(true, Ordering::SeqCst);
     }
 
     /// The first navigation gets a longer allowance for Chrome's cold start.
@@ -80,6 +124,17 @@ impl CdpChannel for CdpBrowserBackend {
 impl BrowserBackend for CdpBrowserBackend {
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         cdp_navigate(self, url).await
+    }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        cdp_blank_page(self).await
+    }
+    /// A browser on this host reaches networks that a container or remote
+    /// terminal cannot, so only a local terminal makes it local.
+    fn is_local_backend(&self) -> bool {
+        self.local
+            && std::env::var("TERMINAL_ENV").map_or(true, |backend| {
+                matches!(backend.trim().to_ascii_lowercase().as_str(), "" | "local")
+            })
     }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await
@@ -112,6 +167,13 @@ impl BrowserBackend for CdpBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for CamoFoxBrowserBackend {
+    /// Upstream counts Camofox as local whatever the terminal backend.
+    fn is_local_backend(&self) -> bool {
+        self.inner.local
+    }
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        self.inner.blank_page().await
+    }
     async fn navigate(&self, url: &str) -> Result<String, ToolError> {
         let alias = camofox_loopback_alias_from_env();
         let (browser_url, rewrite) = rewrite_loopback_url_for_camofox(

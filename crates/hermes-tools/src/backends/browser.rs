@@ -643,6 +643,12 @@ pub struct CdpBrowserBackend {
     endpoint: String,
     client: reqwest::Client,
     first_navigation: AtomicBool,
+    /// Set by `from_env` when no CDP override chose the endpoint. An override,
+    /// or an endpoint given to `new`, may be off-host, so it counts as remote.
+    local: bool,
+    /// Set when a refused page could not be cleared; every later command
+    /// fails rather than reach it.
+    retired: AtomicBool,
 }
 
 /// CamoFox anti-detection browser backend (compat layer).
@@ -673,6 +679,10 @@ include!("browser/cloud_sessions.rs");
 #[async_trait]
 impl BrowserBackend for UnavailableBrowserBackend {
     async fn navigate(&self, _url: &str) -> Result<String, ToolError> {
+        Err(self.unavailable())
+    }
+
+    async fn blank_page(&self) -> Result<String, ToolError> {
         Err(self.unavailable())
     }
 
@@ -724,6 +734,11 @@ impl<C: CloudBrowserSession + BrowserBackend> BrowserBackend for CloudFallbackBr
         // Reject the URL before a cloud session is created for it.
         validate_url_does_not_exfiltrate_secret(url)?;
         self.run(self.cloud.navigate(url), self.local.navigate(url))
+            .await
+    }
+
+    async fn blank_page(&self) -> Result<String, ToolError> {
+        self.run(self.cloud.blank_page(), self.local.blank_page())
             .await
     }
 

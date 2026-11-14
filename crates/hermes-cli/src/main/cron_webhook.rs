@@ -1039,19 +1039,47 @@ _hermes_agent_ultra_provider_values() {
 }
 
 async fn run_uninstall(yes: bool) -> Result<(), AgentError> {
-    let home = hermes_config::hermes_home();
+    println!("{}", uninstall_home(&hermes_config::hermes_home(), yes)?);
+    Ok(())
+}
+
+/// Remove `home` when `yes` is set; return what to tell the user. Refuses,
+/// with or without `yes`, a home that is or holds the user's home or upstream
+/// Hermes's `~/.hermes`, judged after resolving `..` and symlinks, and any home
+/// when the user's home is unknown.
+fn uninstall_home(home: &std::path::Path, yes: bool) -> Result<String, AgentError> {
+    let resolve =
+        |path: &std::path::Path| std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    let resolved = resolve(home);
+    let user_home = hermes_config::user_home_dir();
+    let refusal = if !user_home.is_absolute() {
+        Some("the user's home is unknown")
+    } else if resolve(&user_home).starts_with(&resolved) || resolved.parent().is_none() {
+        Some("it is the user's home or holds it")
+    } else if resolve(&user_home.join(".hermes")).starts_with(&resolved) {
+        Some("it is upstream Hermes's home or holds it")
+    } else {
+        None
+    };
+    if let Some(reason) = refusal {
+        return Err(AgentError::Config(format!(
+            "Refusing to uninstall {}: {reason}. Set HERMES_HOME to this agent's own home.",
+            home.display()
+        )));
+    }
     if !yes {
-        println!("Uninstall is destructive. Re-run with `hermes uninstall --yes`.");
-        return Ok(());
+        return Ok(format!(
+            "Uninstall would remove {} and everything in it. Re-run uninstall with --yes to remove it.",
+            home.display()
+        ));
     }
     if home.exists() {
-        std::fs::remove_dir_all(&home)
+        std::fs::remove_dir_all(home)
             .map_err(|e| AgentError::Io(format!("Failed to remove {}: {}", home.display(), e)))?;
-        println!("Removed {}", home.display());
+        Ok(format!("Removed {}", home.display()))
     } else {
-        println!("Nothing to uninstall.");
+        Ok(format!("Nothing to uninstall: {} does not exist.", home.display()))
     }
-    Ok(())
 }
 
 /// Handle `hermes lumio [action]`.

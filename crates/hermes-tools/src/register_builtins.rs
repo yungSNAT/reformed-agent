@@ -913,27 +913,9 @@ fn register_builtin_tools_with_data_dir(
 
 /// Return the Hermes data directory, creating it if needed.
 fn hermes_data_dir() -> PathBuf {
-    if let Some(dir) = hermes_home_dir() {
-        let _ = std::fs::create_dir_all(&dir);
-        return dir;
-    }
-    let home = dirs_home().unwrap_or_else(|| PathBuf::from("."));
-    let dir = home.join(".hermes");
+    let dir = hermes_config::hermes_home();
     let _ = std::fs::create_dir_all(&dir);
     dir
-}
-
-fn hermes_home_dir() -> Option<PathBuf> {
-    std::env::var_os("HERMES_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-}
-
-fn dirs_home() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .or_else(|| std::env::var_os("USERPROFILE"))
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -1272,6 +1254,78 @@ mod tests {
             !home.path().join(".hermes").join("sessions.db").exists(),
             "HERMES_HOME must not be nested below HOME/.hermes"
         );
+    }
+
+    #[test]
+    fn data_dir_defaults_to_the_own_home_not_upstreams() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _hermes_home = EnvGuard::remove("HERMES_HOME");
+        let _ultra_home = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+
+        assert_eq!(hermes_data_dir(), home.path().join(".hermes-agent-ultra"));
+        assert!(!home.path().join(".hermes").exists());
+    }
+
+    #[test]
+    fn default_writers_use_the_own_home_not_upstreams() {
+        use crate::tools::memory::MemoryBackend;
+        use crate::tools::todo::TodoBackend;
+
+        let home = tempfile::tempdir().expect("temp home");
+        let upstream = home.path().join(".hermes");
+        std::fs::create_dir_all(upstream.join("memories")).expect("upstream home");
+        std::fs::write(upstream.join("memories").join("MEMORY.md"), "upstream\n")
+            .expect("upstream memory");
+        let (memory, todos, sessions) = {
+            let _global_env = hermes_config::managed_gateway::test_lock::lock();
+            let _lock = lock_env();
+            let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+            let _hermes_home = EnvGuard::remove("HERMES_HOME");
+            let _ultra_home = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+            (
+                crate::backends::memory::FileMemoryBackend::new(),
+                crate::backends::todo::FileTodoBackend::default_path(),
+                crate::backends::session_search::SqliteSessionSearchBackend::default_path(),
+            )
+        };
+        sessions.expect("sessions database");
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .expect("runtime");
+        runtime
+            .block_on(memory.add("memory", "own note"))
+            .expect("memory add");
+        runtime
+            .block_on(todos.create("own task", None, None))
+            .expect("todo create");
+
+        let own = home.path().join(".hermes-agent-ultra");
+        let read = |path: std::path::PathBuf| std::fs::read_to_string(path).unwrap_or_default();
+        let memory_md = |root: &std::path::Path| root.join("memories").join("MEMORY.md");
+        let checks = [
+            (
+                "memory",
+                read(memory_md(&own)).contains("own note")
+                    && read(memory_md(&upstream)) == "upstream\n",
+            ),
+            (
+                "todos",
+                own.join("todos.json").is_file() && !upstream.join("todos.json").exists(),
+            ),
+            (
+                "session search",
+                own.join("sessions.db").is_file() && !upstream.join("sessions.db").exists(),
+            ),
+        ];
+        let wrong: Vec<_> = checks
+            .iter()
+            .filter(|(_, ok)| !ok)
+            .map(|(name, _)| *name)
+            .collect();
+        assert!(wrong.is_empty(), "written outside the own home: {wrong:?}");
     }
 
     #[test]
