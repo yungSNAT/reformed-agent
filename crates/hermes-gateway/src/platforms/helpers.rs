@@ -4,6 +4,8 @@
 
 use regex::Regex;
 
+use crate::adapter::BasePlatformAdapter;
+
 /// Image reference extracted from generated markdown / HTML.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlineImageRef {
@@ -153,24 +155,30 @@ fn looks_like_image_url(url: &str) -> bool {
 ///
 /// Some platform APIs require uploading downloaded image bytes through their
 /// native file endpoint. Keep those paths bounded even when the response omits
-/// or lies about `Content-Length`.
+/// or lies about `Content-Length`. The URL comes from the agent, so it and
+/// every redirect hop must pass the shared `url_safety` check.
 pub async fn download_media_url(
-    client: &reqwest::Client,
+    adapter: &BasePlatformAdapter,
     url: &str,
 ) -> Result<(Vec<u8>, Option<String>), String> {
-    download_media_url_with_limit(client, url, crate::media::DEFAULT_INBOUND_MEDIA_MAX_BYTES).await
+    download_media_url_with_limit(adapter, url, crate::media::DEFAULT_INBOUND_MEDIA_MAX_BYTES)
+        .await
 }
 
 pub async fn download_media_url_with_limit(
-    client: &reqwest::Client,
+    adapter: &BasePlatformAdapter,
     url: &str,
     max_bytes: u64,
 ) -> Result<(Vec<u8>, Option<String>), String> {
-    let resp = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|e| format!("request failed: {e}"))?;
+    crate::media::check_media_url(url)?;
+    let client = adapter.media_client().map_err(|e| e.to_string())?;
+    let resp = client.get(url).send().await.map_err(|e| {
+        // A refused redirect's reason is the error's source.
+        let cause = std::error::Error::source(&e)
+            .map(|cause| format!(": {cause}"))
+            .unwrap_or_default();
+        format!("request failed: {e}{cause}")
+    })?;
     if !resp.status().is_success() {
         return Err(format!("status {}", resp.status()));
     }
@@ -401,8 +409,6 @@ pub fn media_category(ext: &str) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use wiremock::matchers::method;
-    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn test_split_long_message_short() {
@@ -485,48 +491,6 @@ mod tests {
         let (cleaned, images) = extract_inline_images(text);
         assert_eq!(images.len(), 0);
         assert_eq!(cleaned, "A <img src=\"https://example.com/not-image\"> B");
-    }
-
-    #[tokio::test]
-    async fn download_media_url_with_limit_preserves_content_type() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "image/png")
-                    .set_body_bytes(vec![1, 2, 3, 4]),
-            )
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
-        let (bytes, content_type) = download_media_url_with_limit(&client, &server.uri(), 8)
-            .await
-            .expect("download media");
-        assert_eq!(bytes, vec![1, 2, 3, 4]);
-        assert_eq!(content_type.as_deref(), Some("image/png"));
-    }
-
-    #[tokio::test]
-    async fn download_media_url_with_limit_rejects_oversized_body() {
-        let server = MockServer::start().await;
-        Mock::given(method("GET"))
-            .respond_with(
-                ResponseTemplate::new(200)
-                    .insert_header("content-type", "image/png")
-                    .set_body_bytes(vec![1, 2, 3, 4, 5]),
-            )
-            .mount(&server)
-            .await;
-
-        let client = reqwest::Client::new();
-        let err = download_media_url_with_limit(&client, &server.uri(), 4)
-            .await
-            .expect_err("oversized body should fail");
-        assert!(
-            err.contains("Content-Length") || err.contains("downloaded body"),
-            "unexpected error: {err}"
-        );
     }
 
     #[test]

@@ -1445,7 +1445,7 @@ impl PlatformAdapter for FeishuAdapter {
         caption: Option<&str>,
     ) -> Result<(), GatewayError> {
         self.ensure_runtime_available("image-url send")?;
-        let downloaded = download_media_url(&self.client, image_url).await;
+        let downloaded = download_media_url(&self.base, image_url).await;
 
         let (image_bytes, content_type) = match downloaded {
             Ok(result) => result,
