@@ -9,8 +9,8 @@ use serde_json::{Map, Value};
 pub(crate) static TEST_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 const DEFAULT_HOME_DIR: &str = ".hermes-agent-ultra";
-const LEGACY_HOME_DIR: &str = ".hermes";
-
+/// Same rule as `hermes_config::hermes_home`: upstream's `~/.hermes` is never
+/// chosen implicitly.
 pub(crate) fn default_hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_HOME") {
         return home;
@@ -18,15 +18,7 @@ pub(crate) fn default_hermes_home() -> PathBuf {
     if let Some(home) = env_var_path("HERMES_AGENT_ULTRA_HOME") {
         return home;
     }
-
-    let home_dir = user_home_dir();
-    let primary = home_dir.join(DEFAULT_HOME_DIR);
-    let legacy = home_dir.join(LEGACY_HOME_DIR);
-    if primary.exists() || !legacy.exists() {
-        primary
-    } else {
-        legacy
-    }
+    user_home_dir().join(DEFAULT_HOME_DIR)
 }
 
 fn env_var_path(var: &str) -> Option<PathBuf> {
@@ -38,13 +30,11 @@ fn env_var_path(var: &str) -> Option<PathBuf> {
 }
 
 fn user_home_dir() -> PathBuf {
-    if let Ok(home) = std::env::var("HOME") {
-        PathBuf::from(home)
-    } else if let Ok(home) = std::env::var("USERPROFILE") {
-        PathBuf::from(home)
-    } else {
-        PathBuf::from(".")
-    }
+    ["HOME", "USERPROFILE"]
+        .into_iter()
+        .filter_map(std::env::var_os)
+        .find(|home| !home.is_empty())
+        .map_or_else(|| PathBuf::from("."), PathBuf::from)
 }
 
 pub(crate) fn read_json_object(path: &Path) -> Map<String, Value> {
@@ -221,5 +211,18 @@ mod tests {
         let ultra_override = tmp.path().join("custom-ultra-home");
         let _ultra = EnvGuard::set("HERMES_AGENT_ULTRA_HOME", &ultra_override);
         assert_eq!(default_hermes_home(), ultra_override);
+    }
+
+    #[test]
+    fn default_home_never_adopts_upstream_hermes_home() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env lock");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::remove("HERMES_HOME");
+        let _ultra = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _userprofile = EnvGuard::remove("USERPROFILE");
+        let _home_dir = EnvGuard::set("HOME", tmp.path());
+        std::fs::create_dir_all(tmp.path().join(".hermes")).expect("upstream home");
+
+        assert_eq!(default_hermes_home(), tmp.path().join(DEFAULT_HOME_DIR));
     }
 }

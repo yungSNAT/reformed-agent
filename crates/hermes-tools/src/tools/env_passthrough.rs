@@ -1,5 +1,4 @@
 use std::collections::BTreeSet;
-use std::path::PathBuf;
 use std::sync::{LazyLock, Mutex};
 
 use async_trait::async_trait;
@@ -17,20 +16,18 @@ static CONFIG_PASSTHROUGH: LazyLock<Mutex<Option<BTreeSet<String>>>> =
 
 pub struct EnvPassthroughHandler;
 
-fn hermes_home() -> Option<PathBuf> {
-    std::env::var_os("HERMES_HOME")
-        .map(PathBuf::from)
-        .or_else(|| std::env::var_os("HOME").map(|home| PathBuf::from(home).join(".hermes")))
-}
-
 fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
     map.get(serde_yaml::Value::String(key.to_string()))
 }
 
 fn load_config_passthrough_uncached() -> BTreeSet<String> {
-    let Some(home) = hermes_home() else {
+    let home = hermes_config::hermes_home();
+    // A relative home (no HOME or USERPROFILE) sits in the working folder,
+    // which a cloned repository controls; its config must not choose which
+    // host variables reach the terminal.
+    if home.is_relative() {
         return BTreeSet::new();
-    };
+    }
     let path = home.join("config.yaml");
     let Ok(raw) = std::fs::read_to_string(path) else {
         return BTreeSet::new();
@@ -220,6 +217,12 @@ mod tests {
             std::env::set_var(key, value);
             Self { key, original }
         }
+
+        fn remove(key: &'static str) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, original }
+        }
     }
 
     impl Drop for EnvVarGuard {
@@ -285,6 +288,38 @@ mod tests {
             std::env::var(SUBPROCESS_ENV_PASSTHROUGH_VAR).unwrap(),
             "ANOTHER_TOKEN MY_CUSTOM_KEY SKILL_KEY"
         );
+
+        reset();
+    }
+
+    #[test]
+    fn config_passthrough_reads_the_default_home_not_upstreams() {
+        let _global_env = test_lock::lock();
+        reset();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        for (dir, key) in [
+            (".hermes-agent-ultra", "OWN_HOME_KEY"),
+            (".hermes", "UPSTREAM_HOME_KEY"),
+        ] {
+            std::fs::create_dir_all(tmp.path().join(dir)).expect("home dir");
+            std::fs::write(
+                tmp.path().join(dir).join("config.yaml"),
+                format!(
+                    "terminal:
+  env_passthrough:
+    - {key}
+"
+                ),
+            )
+            .expect("write config");
+        }
+        let _hermes_home = EnvVarGuard::remove("HERMES_HOME");
+        let _ultra_home = EnvVarGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        reset_config_passthrough_cache_for_tests();
+
+        assert!(is_env_passthrough("OWN_HOME_KEY"));
+        assert!(!is_env_passthrough("UPSTREAM_HOME_KEY"));
 
         reset();
     }

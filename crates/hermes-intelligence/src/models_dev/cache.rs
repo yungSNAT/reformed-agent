@@ -13,19 +13,10 @@ use std::path::{Path, PathBuf};
 use serde_json::Value;
 use tracing::debug;
 
-/// Default disk cache path: `<HERMES_HOME>/models_dev_cache.json`.
-///
-/// Resolution order:
-/// 1. `$HERMES_HOME` env var
-/// 2. `<dirs::home_dir>/.hermes`
-/// 3. `./.hermes` as a last-resort fallback
+/// Default disk cache path: `models_dev_cache.json` in
+/// `hermes_config::hermes_home`.
 pub fn default_cache_path() -> PathBuf {
-    let home = std::env::var("HERMES_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|d| d.join(".hermes")))
-        .unwrap_or_else(|| PathBuf::from(".hermes"));
-    home.join("models_dev_cache.json")
+    hermes_config::hermes_home().join("models_dev_cache.json")
 }
 
 /// Load a registry snapshot from disk; returns `None` on any failure.
@@ -87,6 +78,29 @@ pub fn save(path: &Path, data: &Value) -> std::io::Result<()> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn default_cache_path_is_in_the_own_home_not_upstreams() {
+        let tmp = tempfile::tempdir().unwrap();
+        let keys = ["HOME", "HERMES_HOME", "HERMES_AGENT_ULTRA_HOME"];
+        let saved: Vec<_> = keys.iter().map(std::env::var_os).collect();
+        std::env::set_var("HOME", tmp.path());
+        std::env::remove_var("HERMES_HOME");
+        std::env::remove_var("HERMES_AGENT_ULTRA_HOME");
+        let path = default_cache_path();
+        for (key, value) in keys.iter().zip(saved) {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        assert_eq!(
+            path,
+            tmp.path()
+                .join(".hermes-agent-ultra")
+                .join("models_dev_cache.json")
+        );
+    }
 
     #[test]
     fn save_then_load_roundtrips() {
