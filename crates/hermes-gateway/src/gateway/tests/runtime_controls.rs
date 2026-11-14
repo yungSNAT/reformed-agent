@@ -1580,3 +1580,170 @@ async fn gateway_streaming_releases_handle_on_handler_error() {
     ));
     assert_eq!(gateway.stream_manager().active_stream_count().await, 0);
 }
+
+/// A terminal backend that records each command instead of running it.
+#[derive(Default)]
+struct RecordingTerminal(Mutex<Vec<String>>);
+
+#[async_trait]
+impl hermes_core::TerminalBackend for RecordingTerminal {
+    async fn execute_command(
+        &self,
+        command: &str,
+        _timeout: Option<u64>,
+        _workdir: Option<&str>,
+        _background: bool,
+        _pty: bool,
+    ) -> Result<hermes_core::CommandOutput, hermes_core::AgentError> {
+        self.0.lock().unwrap().push(command.to_string());
+        Ok(hermes_core::CommandOutput {
+            exit_code: 0,
+            stdout: format!("ran {command}"),
+            stderr: String::new(),
+        })
+    }
+    async fn read_file(
+        &self,
+        _path: &str,
+        _offset: Option<u64>,
+        _limit: Option<u64>,
+    ) -> Result<String, hermes_core::AgentError> {
+        Ok(String::new())
+    }
+    async fn write_file(&self, _path: &str, _content: &str) -> Result<(), hermes_core::AgentError> {
+        Ok(())
+    }
+    async fn file_exists(&self, _path: &str) -> Result<bool, hermes_core::AgentError> {
+        Ok(false)
+    }
+}
+
+#[tokio::test]
+async fn a_command_needing_confirmation_runs_once_after_its_requester_approves() {
+    use hermes_core::ToolHandler;
+
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("alice");
+    dm_manager.authorize_user("bob");
+    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
+    gw.register_adapter("test", adapter).await;
+
+    // Each turn asks for the same command, as the gateway's agent would on
+    // the retry turn, through a terminal bound to that turn's user.
+    let terminal = Arc::new(RecordingTerminal::default());
+    let backend = terminal.clone();
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let shown = prompts.clone();
+    gw.set_message_handler_with_context(Arc::new(move |_messages, ctx| {
+        let backend = backend.clone();
+        let shown = shown.clone();
+        Box::pin(async move {
+            let handler = hermes_tools::tools::terminal::TerminalHandler::new(backend)
+                .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {
+                    session_key: ctx.session_key.clone(),
+                    user_id: ctx.user_id.clone(),
+                    notify: Arc::new(move |text| shown.lock().unwrap().push(text)),
+                });
+            let result = handler
+                .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
+                .await;
+            Ok(match result {
+                Ok(output) => output,
+                Err(err) => err.to_string(),
+            })
+        })
+    }))
+    .await;
+
+    let message = |user: &str, text: &str| IncomingMessage {
+        platform: "test".into(),
+        chat_id: "chat-confirm".into(),
+        user_id: user.into(),
+        text: text.into(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    let last_reply = |sent: &Arc<Mutex<Vec<(String, String)>>>| {
+        sent.lock()
+            .unwrap()
+            .last()
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
+    };
+
+    gw.route_message(&message("alice", "undo my last commit"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("can reply /approve"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(prompts.lock().unwrap().len(), 1);
+    assert!(prompts.lock().unwrap()[0].contains("git reset --hard HEAD~1"));
+
+    gw.route_message(&message("bob", "/approve")).await.unwrap();
+    assert!(
+        last_reply(&sent).contains("Only the user who asked"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert!(
+        terminal.0.lock().unwrap().is_empty(),
+        "ran on another user's approval"
+    );
+
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert_eq!(
+        *terminal.0.lock().unwrap(),
+        vec!["git reset --hard HEAD~1".to_string()],
+        "the approved command did not run once"
+    );
+    assert!(
+        last_reply(&sent).contains("ran git reset"),
+        "{}",
+        last_reply(&sent)
+    );
+
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("No command is waiting"),
+        "{}",
+        last_reply(&sent)
+    );
+    gw.route_message(&message("alice", "and again"))
+        .await
+        .unwrap();
+    assert_eq!(
+        terminal.0.lock().unwrap().len(),
+        1,
+        "one approval ran twice"
+    );
+    assert_eq!(prompts.lock().unwrap().len(), 2);
+
+    gw.route_message(&message("alice", "/approve session"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("Only one-time approval"),
+        "{}",
+        last_reply(&sent)
+    );
+    gw.route_message(&message("alice", "/deny")).await.unwrap();
+    assert!(
+        last_reply(&sent).contains("Denied"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(terminal.0.lock().unwrap().len(), 1, "a denied command ran");
+}

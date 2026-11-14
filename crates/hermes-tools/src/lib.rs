@@ -12,6 +12,7 @@
 pub mod approval;
 pub mod backends;
 pub mod dispatch;
+pub mod gateway_approval;
 pub mod register_builtins;
 pub mod registry;
 pub mod repo;

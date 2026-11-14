@@ -229,6 +229,7 @@ impl Gateway {
     }
 
     async fn emit_session_finalize(&self, session_key: &str, session: &Session, reason: &str) {
+        hermes_tools::gateway_approval::clear(session_key);
         self.emit_hook_event(
             "on_session_finalize",
             Self::session_lifecycle_context(session_key, session, reason),

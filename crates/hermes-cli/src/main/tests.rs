@@ -174,6 +174,47 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_gateway_turns_terminal_asks_that_turns_user() {
+        use hermes_tools::gateway_approval::{self, Resolution};
+
+        let gateway = Arc::new(Gateway::new(
+            Arc::new(SessionManager::new(SessionConfig::default())),
+            DmManager::with_pair_behavior(),
+            RuntimeGatewayConfig::default(),
+        ));
+        let browsers = hermes_tools::SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
+        });
+        let terminal_backend = build_terminal_backend(&GatewayConfig::default());
+        let ctx = GatewayRuntimeContext {
+            session_key: "test:cli-turn".into(),
+            platform: "test".into(),
+            chat_id: "cli-turn".into(),
+            user_id: "alice".into(),
+            ..GatewayRuntimeContext::default()
+        };
+
+        let overrides =
+            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx);
+        let err = overrides["terminal"]
+            .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(err.contains("can reply /approve"), "{err}");
+        assert_eq!(
+            gateway_approval::approve("test:cli-turn", "bob"),
+            Resolution::NotRequester
+        );
+        assert_eq!(
+            gateway_approval::approve("test:cli-turn", "alice"),
+            Resolution::Resolved
+        );
+        gateway_approval::clear("test:cli-turn");
+    }
+
+    #[tokio::test]
     async fn run_model_persists_default_model_to_config_yaml() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let cli = cli_for_temp_state_root(tmp.path());

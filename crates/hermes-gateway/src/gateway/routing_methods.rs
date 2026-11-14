@@ -276,6 +276,8 @@ impl Gateway {
             self.route_non_streaming(incoming, messages, &session_key)
                 .await
         };
+        // A command approval is good only for the turn that retries it.
+        hermes_tools::gateway_approval::end_turn(&session_key);
 
         if let (Some(adapter), Some(message_id), Some(plan)) = (
             &reaction_adapter,

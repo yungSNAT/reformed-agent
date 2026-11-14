@@ -801,6 +801,7 @@ pub fn clear_session(session_key: &str) {
         .expect("session approval lock poisoned")
         .remove(session_key);
     cancel_gateway_approvals(session_key, ApprovalChoice::Deny);
+    crate::gateway_approval::clear(session_key);
 }
 
 /// Return whether yolo approval bypass is enabled for this session key.
