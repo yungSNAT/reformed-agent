@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: README install contract
         run: pipx run --spec pytest==9.2.0 pytest -q -p no:cacheprovider tests/test_readme_install_contract.py
       # The gates compare against the pinned upstream revision, so a result depends
@@ -107,15 +107,15 @@ jobs:
           - x86_64-pc-windows-gnu
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cross
-        run: cargo install cross --git https://github.com/cross-rs/cross
+        run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
       - name: Cross build hermes
-        run: cross build --release --target ${{ matrix.target }} -p hermes-cli
+        run: cross build --locked --release --target ${{ matrix.target }} -p hermes-cli
 
   macos-build:
     strategy:
@@ -128,7 +128,7 @@ jobs:
     runs-on: ${{ matrix.runner }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
       - name: Install the pinned Rust toolchain
         run: |
           rustup toolchain install

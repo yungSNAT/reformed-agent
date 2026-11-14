@@ -12,10 +12,10 @@ use sha2::{Digest, Sha256};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 use std::time::Duration;
 
 use crate::credential_guard::CredentialGuard;
@@ -453,6 +453,10 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
             "hash_edit denied: replacement appears to be internal status text".into(),
         ));
     }
+    // Tool calls in one batch run in parallel; an edit reads, changes and
+    // writes the whole file, so edits to one file take turns.
+    let edit_lock = hash_edit_lock(&path).await;
+    let _turn = edit_lock.lock().await;
     let content = tokio::fs::read_to_string(&path)
         .await
         .map_err(io_err("read hash_edit file"))?;
@@ -491,6 +495,19 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
         "bytes_delta": edit.content.len() as i64 - content.len() as i64
     })
     .to_string())
+}
+
+/// The lock `hash_edit` holds on a file, shared by every path that resolves
+/// to it. Locks no edit holds are dropped as others are handed out.
+async fn hash_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    let file = tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
+    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    Arc::clone(locks.entry(file).or_default())
 }
 
 struct EditResult {
@@ -2693,6 +2710,41 @@ mod tests {
         assert!(fs::read_to_string(&file)
             .unwrap()
             .contains("println!(\"b\");"));
+    }
+
+    /// Tool calls in one batch run in parallel, so edits to one file must not
+    /// overwrite each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_hash_edits_on_one_file_all_apply() {
+        const EDITS: usize = 24;
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("many.txt");
+        let lines: String = (0..EDITS).map(|i| format!("line {i};\n")).collect();
+        fs::write(&file, lines).unwrap();
+        // Half the edits name the file through a symlinked directory.
+        #[cfg(unix)]
+        let other_spelling = {
+            std::os::unix::fs::symlink(tmp.path(), tmp.path().join("link")).unwrap();
+            tmp.path().join("link").join("many.txt")
+        };
+        #[cfg(not(unix))]
+        let other_spelling = file.clone();
+
+        let mut edits = tokio::task::JoinSet::new();
+        for i in 0..EDITS {
+            let path = if i % 2 == 0 { &file } else { &other_spelling };
+            let params = json!({"path":path,"old_string":format!("line {i};"),"new_string":format!("edited {i};")});
+            edits.spawn(hash_edit(params));
+        }
+        while let Some(result) = edits.join_next().await {
+            assert!(result.unwrap().unwrap().contains("\"applied\":true"));
+        }
+
+        let content = fs::read_to_string(&file).unwrap();
+        let lost: Vec<usize> = (0..EDITS)
+            .filter(|i| !content.contains(&format!("edited {i};")))
+            .collect();
+        assert!(lost.is_empty(), "edits lost: {lost:?}\n{content}");
     }
 
     #[tokio::test]
