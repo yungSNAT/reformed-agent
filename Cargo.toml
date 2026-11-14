@@ -108,3 +108,7 @@ matrix-pickle-derive = { path = "third_party/rustsec-patches/matrix-pickle-deriv
 matrix-sdk-crypto = { path = "third_party/rustsec-patches/matrix-sdk-crypto-0.18.0" }
 tungstenite = { path = "third_party/rustsec-patches/tungstenite-0.29.0" }
 vodozemac = { path = "third_party/rustsec-patches/vodozemac-0.10.0" }
+
+[profile.release]
+lto = true
+codegen-units = 1
