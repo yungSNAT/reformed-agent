@@ -113,11 +113,7 @@ impl BrowserbaseBrowserBackend {
         let Some(session) = guard.take() else {
             return Ok(false);
         };
-        self.close_session(&session.bb_session_id).await
-    }
-
-    async fn close_session(&self, session_id: &str) -> Result<bool, ToolError> {
-        Self::request_close(&self.client, &self.config, session_id).await
+        Self::request_close(&self.client, &self.config, &session.bb_session_id).await
     }
 
     async fn request_close(
@@ -136,12 +132,7 @@ impl BrowserbaseBrowserBackend {
             .send()
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Browserbase close failed: {e}")))?;
-        Ok(matches!(
-            resp.status(),
-            reqwest::StatusCode::OK
-                | reqwest::StatusCode::CREATED
-                | reqwest::StatusCode::NO_CONTENT
-        ))
+        Ok(release_accepted(resp.status()))
     }
 }
 
@@ -296,11 +287,7 @@ impl BrowserUseBrowserBackend {
         let Some(session) = guard.take() else {
             return Ok(false);
         };
-        self.close_session(&session.bb_session_id).await
-    }
-
-    async fn close_session(&self, session_id: &str) -> Result<bool, ToolError> {
-        Self::request_close(&self.client, &self.config, session_id).await
+        Self::request_close(&self.client, &self.config, &session.bb_session_id).await
     }
 
     async fn request_close(
@@ -318,12 +305,7 @@ impl BrowserUseBrowserBackend {
             .send()
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Browser Use close failed: {e}")))?;
-        Ok(matches!(
-            resp.status(),
-            reqwest::StatusCode::OK
-                | reqwest::StatusCode::CREATED
-                | reqwest::StatusCode::NO_CONTENT
-        ))
+        Ok(release_accepted(resp.status()))
     }
 }
 
@@ -433,11 +415,7 @@ impl FirecrawlBrowserBackend {
         let Some(session) = guard.take() else {
             return Ok(false);
         };
-        self.close_session(&session.bb_session_id).await
-    }
-
-    async fn close_session(&self, session_id: &str) -> Result<bool, ToolError> {
-        Self::request_close(&self.client, &self.config, session_id).await
+        Self::request_close(&self.client, &self.config, &session.bb_session_id).await
     }
 
     async fn request_close(
@@ -453,12 +431,7 @@ impl FirecrawlBrowserBackend {
             .map_err(|e| {
                 ToolError::ExecutionFailed(format!("Firecrawl browser close failed: {e}"))
             })?;
-        Ok(matches!(
-            resp.status(),
-            reqwest::StatusCode::OK
-                | reqwest::StatusCode::CREATED
-                | reqwest::StatusCode::NO_CONTENT
-        ))
+        Ok(release_accepted(resp.status()))
     }
 }
 
@@ -476,6 +449,14 @@ impl CloudBrowserSession for FirecrawlBrowserBackend {
     async fn release_session(&self) -> Result<bool, ToolError> {
         self.close_active_session().await
     }
+}
+
+/// Whether a vendor accepted a request to end a session.
+fn release_accepted(status: reqwest::StatusCode) -> bool {
+    matches!(
+        status,
+        reqwest::StatusCode::OK | reqwest::StatusCode::CREATED | reqwest::StatusCode::NO_CONTENT
+    )
 }
 
 /// Each cloud backend releases the session it holds when dropped; see

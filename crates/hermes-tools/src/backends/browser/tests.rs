@@ -422,10 +422,13 @@ async fn browser_use_close_session_sends_stop_patch() {
     };
     let backend = BrowserUseBrowserBackend::new(cfg);
 
-    assert!(backend
-        .close_session("bu_local_session_close")
-        .await
-        .expect("close session"));
+    assert!(BrowserUseBrowserBackend::request_close(
+        &backend.client,
+        &backend.config,
+        "bu_local_session_close"
+    )
+    .await
+    .expect("close session"));
     let request = rx.await.expect("captured request").to_ascii_lowercase();
     assert!(request.starts_with("patch /browsers/bu_local_session_close "));
     assert!(request.contains("x-browser-use-api-key: direct-key"));
@@ -582,10 +585,13 @@ async fn firecrawl_browser_close_session_uses_delete_endpoint() {
     };
     let backend = FirecrawlBrowserBackend::new(cfg);
 
-    assert!(backend
-        .close_session("fc_session_close")
-        .await
-        .expect("close session"));
+    assert!(FirecrawlBrowserBackend::request_close(
+        &backend.client,
+        &backend.config,
+        "fc_session_close"
+    )
+    .await
+    .expect("close session"));
     let request = rx.await.expect("captured request").to_ascii_lowercase();
     assert!(request.starts_with("delete /v2/browser/fc_session_close "));
     assert!(request.contains("authorization: bearer fc-key"));
