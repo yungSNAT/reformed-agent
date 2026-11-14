@@ -97,12 +97,19 @@ impl VisionFrameSamplingVideoBackend {
             ));
         }
 
-        let mut frames: Vec<PathBuf> = std::fs::read_dir(frames_dir)
-            .map_err(|e| ToolError::ExecutionFailed(format!("read frame dir failed: {e}")))?
-            .filter_map(Result::ok)
-            .map(|e| e.path())
-            .filter(|p| p.extension().and_then(|x| x.to_str()).is_some())
-            .collect();
+        let dir = frames_dir.to_path_buf();
+        let mut frames = tokio::task::spawn_blocking(move || {
+            std::fs::read_dir(dir).map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|e| e.path())
+                    .filter(|p| p.extension().and_then(|x| x.to_str()).is_some())
+                    .collect::<Vec<PathBuf>>()
+            })
+        })
+        .await
+        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
+        .map_err(|e| ToolError::ExecutionFailed(format!("read frame dir failed: {e}")))?;
         frames.sort();
         if frames.is_empty() {
             return Err(ToolError::ExecutionFailed(

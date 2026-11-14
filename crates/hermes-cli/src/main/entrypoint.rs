@@ -319,7 +319,7 @@ async fn run_main() {
             skip,
         }) => run_computer_use(action, json, include, skip).await,
         CliCommand::Config(ConfigArgs { action, key, value }) => {
-            run_config(cli, action, key, value).await
+            run_config(cli, action, key, value)
         }
         CliCommand::Gateway(GatewayArgs {
             action,
