@@ -172,7 +172,8 @@ pub async fn handle_cli_mcp(
             };
             println!("Adding MCP server: {}", entry_name);
             let mut servers: serde_json::Value = if mcp_config_path.exists() {
-                let content = std::fs::read_to_string(&mcp_config_path)
+                let content = tokio::fs::read_to_string(&mcp_config_path)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 serde_json::from_str(&content).unwrap_or(serde_json::json!({}))
             } else {
@@ -183,7 +184,8 @@ pub async fn handle_cli_mcp(
             }
             let json = serde_json::to_string_pretty(&servers)
                 .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?;
-            std::fs::write(&mcp_config_path, json)
+            tokio::fs::write(&mcp_config_path, json)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             update_yaml_mcp_server(
                 &config_dir,
@@ -215,7 +217,8 @@ pub async fn handle_cli_mcp(
                 println!("No MCP config to modify.");
                 return Ok(());
             }
-            let content = std::fs::read_to_string(&mcp_config_path)
+            let content = tokio::fs::read_to_string(&mcp_config_path)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             let mut servers: serde_json::Value =
                 serde_json::from_str(&content).unwrap_or(serde_json::json!({}));
@@ -223,18 +226,21 @@ pub async fn handle_cli_mcp(
                 if obj.remove(&srv).is_some() {
                     let json = serde_json::to_string_pretty(&servers)
                         .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?;
-                    std::fs::write(&mcp_config_path, json)
+                    tokio::fs::write(&mcp_config_path, json)
+                        .await
                         .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                     update_yaml_mcp_server(&config_dir, &srv, None, None, false, None, true)?;
                     println!("MCP server '{}' removed.", srv);
                     if mcp_auth_path.exists() {
-                        let raw = std::fs::read_to_string(&mcp_auth_path).unwrap_or_default();
+                        let raw = tokio::fs::read_to_string(&mcp_auth_path)
+                            .await
+                            .unwrap_or_default();
                         let mut auth: serde_json::Value =
                             serde_json::from_str(&raw).unwrap_or(serde_json::json!({}));
                         if let Some(auth_obj) = auth.as_object_mut() {
                             auth_obj.remove(&srv);
                             let out = serde_json::to_string_pretty(&auth).unwrap_or_default();
-                            let _ = std::fs::write(&mcp_auth_path, out);
+                            let _ = tokio::fs::write(&mcp_auth_path, out).await;
                         }
                     }
                 } else {
@@ -385,7 +391,8 @@ pub async fn handle_cli_mcp(
                 ));
             }
             let mut auth: serde_json::Value = if mcp_auth_path.exists() {
-                let raw = std::fs::read_to_string(&mcp_auth_path)
+                let raw = tokio::fs::read_to_string(&mcp_auth_path)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 serde_json::from_str(&raw).unwrap_or(serde_json::json!({}))
             } else {
@@ -400,11 +407,12 @@ pub async fn handle_cli_mcp(
                     }),
                 );
             }
-            std::fs::write(
+            tokio::fs::write(
                 &mcp_auth_path,
                 serde_json::to_string_pretty(&auth)
                     .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?,
             )
+            .await
             .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             println!(
                 "Stored MCP auth token for '{}' in {}",

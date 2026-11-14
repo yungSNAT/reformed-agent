@@ -116,7 +116,7 @@ async fn handle_swarm_command(app: &mut App, args: &[&str]) -> Result<CommandRes
                 emit_command_output(app, "No swarm/quorum artifact exists yet for this runtime.");
                 return Ok(CommandResult::Handled);
             };
-            let summary = std::fs::read_to_string(&path)
+            let summary = tokio::fs::read_to_string(&path).await
                 .ok()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
                 .map(|v| {
@@ -364,7 +364,9 @@ async fn handle_heatmap_command(app: &mut App, args: &[&str]) -> Result<CommandR
     let mut counts: HashMap<String, u64> = HashMap::new();
     let ledger_path = objective_runtime_ledger_path();
     if ledger_path.exists() {
-        let raw = std::fs::read_to_string(&ledger_path).unwrap_or_default();
+        let raw = tokio::fs::read_to_string(&ledger_path)
+            .await
+            .unwrap_or_default();
         for line in raw.lines() {
             let Ok(value) = serde_json::from_str::<serde_json::Value>(line) else {
                 continue;

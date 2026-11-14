@@ -106,7 +106,8 @@ pub async fn handle_cli_chat(
         connect_configured_mcp_servers(&config, &hermes_config::hermes_home(), &tool_registry)
             .await;
         let cron_data_dir = hermes_config::cron_dir();
-        std::fs::create_dir_all(&cron_data_dir)
+        tokio::fs::create_dir_all(&cron_data_dir)
+            .await
             .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
         let cron_scheduler = Arc::new(build_runtime_cron_scheduler(
             &config,
@@ -465,8 +466,8 @@ pub async fn handle_cli_skills(
             println!("==============\n");
             let mut categories: std::collections::HashMap<String, Vec<(String, String)>> =
                 std::collections::HashMap::new();
-            if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
+            if let Ok(entries) = read_dir_entries(&skills_dir).await {
+                for entry in entries {
                     let path = entry.path();
                     let skill_md = path.join("SKILL.md");
                     if path.is_dir() && skill_md.exists() {
@@ -475,7 +476,9 @@ pub async fn handle_cli_skills(
                             .unwrap_or_default()
                             .to_string_lossy()
                             .to_string();
-                        let content = std::fs::read_to_string(&skill_md).unwrap_or_default();
+                        let content = tokio::fs::read_to_string(&skill_md)
+                            .await
+                            .unwrap_or_default();
                         let first_line = content
                             .lines()
                             .find(|l| l.starts_with('#'))
@@ -624,20 +627,21 @@ pub async fn handle_cli_skills(
             })?;
             let target = skills_dir.join(&skill_name);
             if target.exists() {
-                std::fs::remove_dir_all(&target).map_err(|e| {
+                tokio::fs::remove_dir_all(&target).await.map_err(|e| {
                     hermes_core::AgentError::Io(format!("Failed to remove skill dir: {}", e))
                 })?;
             }
-            std::fs::create_dir_all(&target).map_err(|e| {
+            tokio::fs::create_dir_all(&target).await.map_err(|e| {
                 hermes_core::AgentError::Io(format!("Failed to create skill dir: {}", e))
             })?;
-            std::fs::write(
+            tokio::fs::write(
                 target.join("SKILL.md"),
                 format!(
                     "# {}\n\nReset by CLI. Replace with canonical skill contents.\n",
                     skill_name
                 ),
             )
+            .await
             .map_err(|e| hermes_core::AgentError::Io(format!("Failed to write SKILL.md: {}", e)))?;
             println!("Skill '{}' reset at {}", skill_name, target.display());
         }
@@ -647,11 +651,13 @@ pub async fn handle_cli_skills(
                     "Missing source. Usage: hermes skills subscribe <name-or-url>".into(),
                 )
             })?;
-            std::fs::create_dir_all(&skills_dir)
+            tokio::fs::create_dir_all(&skills_dir)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             let subscriptions_path = skills_dir.join("subscriptions.json");
             let mut subscriptions: Vec<serde_json::Value> = if subscriptions_path.exists() {
-                let raw = std::fs::read_to_string(&subscriptions_path)
+                let raw = tokio::fs::read_to_string(&subscriptions_path)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 serde_json::from_str(&raw).unwrap_or_default()
             } else {
@@ -678,11 +684,12 @@ pub async fn handle_cli_skills(
                 "added_at": chrono::Utc::now().to_rfc3339(),
                 "options": extra.as_deref().unwrap_or(""),
             }));
-            std::fs::write(
+            tokio::fs::write(
                 &subscriptions_path,
                 serde_json::to_string_pretty(&subscriptions)
                     .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?,
             )
+            .await
             .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             println!(
                 "Subscribed to skill source '{}'. Registry: {}",
@@ -693,7 +700,8 @@ pub async fn handle_cli_skills(
         "inspect" => {
             let skill_name = name.unwrap_or_default();
             if let Some(skill_md) = find_local_skill_markdown(&skills_dir, &skill_name) {
-                let content = std::fs::read_to_string(&skill_md)
+                let content = tokio::fs::read_to_string(&skill_md)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(format!("Read error: {}", e)))?;
                 println!("{}", content);
             } else {
@@ -712,7 +720,7 @@ pub async fn handle_cli_skills(
             })?;
             let target = skills_dir.join(&skill_name);
             if target.exists() {
-                std::fs::remove_dir_all(&target).map_err(|e| {
+                tokio::fs::remove_dir_all(&target).await.map_err(|e| {
                     hermes_core::AgentError::Io(format!("Failed to remove skill: {}", e))
                 })?;
                 let removed = record_skill_uninstall_in_hub_lock(&skills_dir, &skill_name)?;
@@ -741,8 +749,8 @@ pub async fn handle_cli_skills(
                 println!("Checking all installed skills...");
                 let mut ok = 0u32;
                 let mut issues = 0u32;
-                if let Ok(entries) = std::fs::read_dir(&skills_dir) {
-                    for entry in entries.filter_map(|e| e.ok()) {
+                if let Ok(entries) = read_dir_entries(&skills_dir).await {
+                    for entry in entries {
                         let path = entry.path();
                         if !path.is_dir() {
                             continue;
@@ -757,7 +765,9 @@ pub async fn handle_cli_skills(
                             println!("  ✗ {} — missing SKILL.md", dir_name);
                             issues += 1;
                         } else {
-                            let content = std::fs::read_to_string(&skill_md).unwrap_or_default();
+                            let content = tokio::fs::read_to_string(&skill_md)
+                                .await
+                                .unwrap_or_default();
                             if content.trim().is_empty() {
                                 println!("  ⚠ {} — SKILL.md is empty", dir_name);
                                 issues += 1;
@@ -777,7 +787,9 @@ pub async fn handle_cli_skills(
                 } else if !skill_md.exists() {
                     println!("Skill '{}': MISSING SKILL.md", skill_name);
                 } else {
-                    let content = std::fs::read_to_string(&skill_md).unwrap_or_default();
+                    let content = tokio::fs::read_to_string(&skill_md)
+                        .await
+                        .unwrap_or_default();
                     let lines = content.lines().count();
                     let has_frontmatter = content.starts_with("---");
                     println!("Skill '{}': OK", skill_name);

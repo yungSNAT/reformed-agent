@@ -921,8 +921,8 @@ pub async fn handle_cli_sessions(
             }
             let mut entries: Vec<(String, u64, std::time::SystemTime, bool, bool, usize)> =
                 Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
-                for entry in rd.filter_map(|e| e.ok()) {
+            if let Ok(rd) = read_dir_entries(&sessions_dir).await {
+                for entry in rd {
                     let path = entry.path();
                     if path.extension().map(|e| e == "json").unwrap_or(false) {
                         let stem = path
@@ -930,7 +930,7 @@ pub async fn handle_cli_sessions(
                             .unwrap_or_default()
                             .to_string_lossy()
                             .into_owned();
-                        let meta = std::fs::metadata(&path);
+                        let meta = tokio::fs::metadata(&path).await;
                         let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
                         let modified = meta
                             .and_then(|m| m.modified())
@@ -1080,8 +1080,8 @@ pub async fn handle_cli_sessions(
             }
             let mut total_files = 0u32;
             let mut total_size = 0u64;
-            if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
-                for entry in rd.filter_map(|e| e.ok()) {
+            if let Ok(rd) = read_dir_entries(&sessions_dir).await {
+                for entry in rd {
                     if entry
                         .path()
                         .extension()
@@ -1089,7 +1089,8 @@ pub async fn handle_cli_sessions(
                         .unwrap_or(false)
                     {
                         total_files += 1;
-                        total_size += std::fs::metadata(entry.path())
+                        total_size += tokio::fs::metadata(entry.path())
+                            .await
                             .map(|m| m.len())
                             .unwrap_or(0);
                     }
@@ -1119,7 +1120,7 @@ pub async fn handle_cli_sessions(
             }
             let mut pruned = 0u32;
             for entry in candidates {
-                if std::fs::remove_file(&entry.path).is_ok() {
+                if tokio::fs::remove_file(&entry.path).await.is_ok() {
                     println!("  Pruned: {}", entry.id);
                     pruned += 1;
                 }
@@ -1207,7 +1208,8 @@ pub async fn handle_cli_sessions(
                 println!("Session '{}' not found.", session_id);
                 return Ok(());
             }
-            std::fs::rename(&old_path, &new_path)
+            tokio::fs::rename(&old_path, &new_path)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             println!("Session renamed: {} -> {}", session_id, new_name);
         }
@@ -1219,8 +1221,8 @@ pub async fn handle_cli_sessions(
             println!("Session Browser");
             println!("===============\n");
             let mut entries: Vec<(String, u64, std::time::SystemTime, usize)> = Vec::new();
-            if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
-                for entry in rd.filter_map(|e| e.ok()) {
+            if let Ok(rd) = read_dir_entries(&sessions_dir).await {
+                for entry in rd {
                     let path = entry.path();
                     if !path.extension().map(|e| e == "json").unwrap_or(false) {
                         continue;
@@ -1230,14 +1232,15 @@ pub async fn handle_cli_sessions(
                         .unwrap_or_default()
                         .to_string_lossy()
                         .into_owned();
-                    let meta = std::fs::metadata(&path);
+                    let meta = tokio::fs::metadata(&path).await;
                     let size = meta.as_ref().map(|m| m.len()).unwrap_or(0);
                     let modified = meta
                         .as_ref()
                         .ok()
                         .and_then(|m| m.modified().ok())
                         .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
-                    let msg_count = std::fs::read_to_string(&path)
+                    let msg_count = tokio::fs::read_to_string(&path)
+                        .await
                         .ok()
                         .and_then(|c| serde_json::from_str::<serde_json::Value>(&c).ok())
                         .and_then(|v| {
@@ -1316,13 +1319,13 @@ pub async fn handle_cli_insights(
     let mut daily_counts: std::collections::BTreeMap<String, u32> =
         std::collections::BTreeMap::new();
 
-    if let Ok(rd) = std::fs::read_dir(&sessions_dir) {
-        for entry in rd.filter_map(|e| e.ok()) {
+    if let Ok(rd) = read_dir_entries(&sessions_dir).await {
+        for entry in rd {
             let path = entry.path();
             if !path.extension().map(|e| e == "json").unwrap_or(false) {
                 continue;
             }
-            let meta = std::fs::metadata(&path);
+            let meta = tokio::fs::metadata(&path).await;
             let modified = meta
                 .as_ref()
                 .ok()
@@ -1332,7 +1335,7 @@ pub async fn handle_cli_insights(
                 continue;
             }
 
-            if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(content) = tokio::fs::read_to_string(&path).await {
                 if let Ok(data) = serde_json::from_str::<serde_json::Value>(&content) {
                     if let Some(src_filter) = &source {
                         let session_source = data
@@ -1417,7 +1420,9 @@ pub async fn handle_cli_insights(
 pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_core::AgentError> {
     let provider = provider.unwrap_or_else(|| "openai".to_string());
     let creds_dir = hermes_config::hermes_home().join("credentials");
-    std::fs::create_dir_all(&creds_dir).map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
+    tokio::fs::create_dir_all(&creds_dir)
+        .await
+        .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
 
     println!("Login to: {}", provider);
     println!("----------{}", "-".repeat(provider.len()));
@@ -1446,10 +1451,11 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                     "stored_at": chrono::Utc::now().to_rfc3339(),
                     "source": "env",
                 });
-                std::fs::write(
+                tokio::fs::write(
                     &cred_file,
                     serde_json::to_string_pretty(&cred).unwrap_or_default(),
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 println!("Credential reference stored at {}", cred_file.display());
             } else {
@@ -1476,10 +1482,11 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                     "stored_at": chrono::Utc::now().to_rfc3339(),
                     "source": "env",
                 });
-                std::fs::write(
+                tokio::fs::write(
                     &cred_file,
                     serde_json::to_string_pretty(&cred).unwrap_or_default(),
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 println!("Credential reference stored at {}", cred_file.display());
             } else {
@@ -1506,10 +1513,11 @@ pub async fn handle_cli_login(provider: Option<String>) -> Result<(), hermes_cor
                     "stored_at": chrono::Utc::now().to_rfc3339(),
                     "source": "env",
                 });
-                std::fs::write(
+                tokio::fs::write(
                     &cred_file,
                     serde_json::to_string_pretty(&cred).unwrap_or_default(),
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 println!("Credential reference stored.");
             } else {
@@ -1529,7 +1537,8 @@ pub async fn handle_cli_logout(provider: Option<String>) -> Result<(), hermes_co
         Some(p) => {
             let cred_file = creds_dir.join(format!("{}.json", p));
             if cred_file.exists() {
-                std::fs::remove_file(&cred_file)
+                tokio::fs::remove_file(&cred_file)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 println!("Logged out from '{}'. Credential reference removed.", p);
             } else {
@@ -1543,11 +1552,11 @@ pub async fn handle_cli_logout(provider: Option<String>) -> Result<(), hermes_co
         None => {
             if creds_dir.exists() {
                 let mut removed = 0u32;
-                if let Ok(rd) = std::fs::read_dir(&creds_dir) {
-                    for entry in rd.filter_map(|e| e.ok()) {
+                if let Ok(rd) = read_dir_entries(&creds_dir).await {
+                    for entry in rd {
                         let path = entry.path();
                         if path.extension().map(|e| e == "json").unwrap_or(false)
-                            && std::fs::remove_file(&path).is_ok()
+                            && tokio::fs::remove_file(&path).await.is_ok()
                         {
                             let name = path.file_stem().unwrap_or_default().to_string_lossy();
                             println!("  Removed credential: {}", name);
@@ -1682,7 +1691,8 @@ async fn whatsapp_setup() -> Result<(), hermes_core::AgentError> {
 
     let config_path = hermes_config::hermes_home().join("config.yaml");
     let mut config: serde_yaml::Value = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path)
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
             .map_err(|e| hermes_core::AgentError::Io(format!("Read error: {}", e)))?;
         serde_yaml::from_str(&content).unwrap_or(serde_yaml::Value::Mapping(Default::default()))
     } else {
@@ -1721,9 +1731,11 @@ async fn whatsapp_setup() -> Result<(), hermes_core::AgentError> {
 
     let yaml_str = serde_yaml::to_string(&config)
         .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?;
-    std::fs::create_dir_all(hermes_config::hermes_home())
+    tokio::fs::create_dir_all(hermes_config::hermes_home())
+        .await
         .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
-    std::fs::write(&config_path, &yaml_str)
+    tokio::fs::write(&config_path, &yaml_str)
+        .await
         .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
 
     println!(
@@ -1744,7 +1756,8 @@ async fn whatsapp_status() -> Result<(), hermes_core::AgentError> {
         return Ok(());
     }
 
-    let content = std::fs::read_to_string(&config_path)
+    let content = tokio::fs::read_to_string(&config_path)
+        .await
         .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
     let config: serde_yaml::Value =
         serde_yaml::from_str(&content).unwrap_or(serde_yaml::Value::Mapping(Default::default()));
@@ -1805,7 +1818,9 @@ async fn whatsapp_status() -> Result<(), hermes_core::AgentError> {
 async fn whatsapp_qr() -> Result<(), hermes_core::AgentError> {
     let config_path = hermes_config::hermes_home().join("config.yaml");
     let bridge_url = if config_path.exists() {
-        let content = std::fs::read_to_string(&config_path).unwrap_or_default();
+        let content = tokio::fs::read_to_string(&config_path)
+            .await
+            .unwrap_or_default();
         let config: serde_yaml::Value = serde_yaml::from_str(&content)
             .unwrap_or(serde_yaml::Value::Mapping(Default::default()));
         config

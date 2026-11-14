@@ -27,9 +27,11 @@ pub async fn handle_cli_plugins(
                 .unwrap_or_else(|| plugins_dir.join(&plugin_name));
             let disabled_marker = target.join(".disabled");
             if disabled_marker.exists() {
-                std::fs::remove_file(&disabled_marker).map_err(|e| {
-                    hermes_core::AgentError::Io(format!("Failed to enable plugin: {}", e))
-                })?;
+                tokio::fs::remove_file(&disabled_marker)
+                    .await
+                    .map_err(|e| {
+                        hermes_core::AgentError::Io(format!("Failed to enable plugin: {}", e))
+                    })?;
                 println!("Plugin '{}' enabled.", plugin_name);
             } else {
                 println!(
@@ -51,7 +53,7 @@ pub async fn handle_cli_plugins(
                 return Ok(());
             }
             let disabled_marker = plugin_dir.join(".disabled");
-            std::fs::write(&disabled_marker, "").map_err(|e| {
+            tokio::fs::write(&disabled_marker, "").await.map_err(|e| {
                 hermes_core::AgentError::Io(format!("Failed to disable plugin: {}", e))
             })?;
             println!("Plugin '{}' disabled.", plugin_name);
@@ -112,7 +114,7 @@ pub async fn handle_cli_plugins(
                     return Ok(());
                 }
 
-                std::fs::create_dir_all(&plugins_dir).map_err(|e| {
+                tokio::fs::create_dir_all(&plugins_dir).await.map_err(|e| {
                     hermes_core::AgentError::Io(format!("Failed to create plugins dir: {}", e))
                 })?;
 
@@ -140,7 +142,7 @@ pub async fn handle_cli_plugins(
                     println!("  Checking out ref: {} ...", gr);
                     if let Err(e) = git_checkout_ref(&target, gr).await {
                         println!("  ✗ {}", e);
-                        let _ = std::fs::remove_dir_all(&target);
+                        let _ = tokio::fs::remove_dir_all(&target).await;
                         return Ok(());
                     }
                 }
@@ -150,12 +152,13 @@ pub async fn handle_cli_plugins(
                 if !manifest_path.exists() {
                     println!("  ✗ No plugin.yaml found in cloned repository.");
                     println!("    Removing {}...", target.display());
-                    let _ = std::fs::remove_dir_all(&target);
+                    let _ = tokio::fs::remove_dir_all(&target).await;
                     return Ok(());
                 }
 
                 // Parse and display plugin info
-                let manifest_content = std::fs::read_to_string(&manifest_path)
+                let manifest_content = tokio::fs::read_to_string(&manifest_path)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(format!("Read error: {}", e)))?;
                 let manifest: serde_json::Value =
                     serde_yaml::from_str(&manifest_content).unwrap_or(serde_json::json!({}));
@@ -188,7 +191,7 @@ pub async fn handle_cli_plugins(
                     println!(
                         "\n  If you reviewed the code manually, re-run with --allow-untrusted-git-host."
                     );
-                    let _ = std::fs::remove_dir_all(&target);
+                    let _ = tokio::fs::remove_dir_all(&target).await;
                     return Ok(());
                 }
                 if !suspicious.is_empty() {
@@ -215,7 +218,7 @@ pub async fn handle_cli_plugins(
                     return Ok(());
                 }
 
-                std::fs::create_dir_all(&plugins_dir).map_err(|e| {
+                tokio::fs::create_dir_all(&plugins_dir).await.map_err(|e| {
                     hermes_core::AgentError::Io(format!("Failed to create plugins dir: {}", e))
                 })?;
 
@@ -237,7 +240,7 @@ pub async fn handle_cli_plugins(
                     println!("  Checking out ref: {} ...", gr);
                     if let Err(e) = git_checkout_ref(&target, gr).await {
                         println!("  ✗ {}", e);
-                        let _ = std::fs::remove_dir_all(&target);
+                        let _ = tokio::fs::remove_dir_all(&target).await;
                         return Ok(());
                     }
                 }
@@ -245,11 +248,13 @@ pub async fn handle_cli_plugins(
                 let manifest_path = target.join("plugin.yaml");
                 if !manifest_path.exists() {
                     println!("  ✗ No plugin.yaml found in cloned repository.");
-                    let _ = std::fs::remove_dir_all(&target);
+                    let _ = tokio::fs::remove_dir_all(&target).await;
                     return Ok(());
                 }
 
-                let manifest_content = std::fs::read_to_string(&manifest_path).unwrap_or_default();
+                let manifest_content = tokio::fs::read_to_string(&manifest_path)
+                    .await
+                    .unwrap_or_default();
                 let manifest: serde_json::Value =
                     serde_yaml::from_str(&manifest_content).unwrap_or(serde_json::json!({}));
 
@@ -280,7 +285,7 @@ pub async fn handle_cli_plugins(
                     println!(
                         "\n  If you reviewed the code manually, re-run with --allow-untrusted-git-host."
                     );
-                    let _ = std::fs::remove_dir_all(&target);
+                    let _ = tokio::fs::remove_dir_all(&target).await;
                     return Ok(());
                 }
                 if !suspicious.is_empty() {
@@ -326,7 +331,8 @@ pub async fn handle_cli_plugins(
                                     println!("  ✗ Registry git_url host is not allow-listed. Use --allow-untrusted-git-host or HERMES_PLUGIN_GIT_EXTRA_HOSTS.");
                                     return Ok(());
                                 }
-                                std::fs::create_dir_all(&plugins_dir)
+                                tokio::fs::create_dir_all(&plugins_dir)
+                                    .await
                                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
 
                                 let output = tokio::process::Command::new("git")
@@ -346,7 +352,7 @@ pub async fn handle_cli_plugins(
                                         println!("  Checking out ref: {} ...", gr);
                                         if let Err(e) = git_checkout_ref(&target, gr).await {
                                             println!("  ✗ {}", e);
-                                            let _ = std::fs::remove_dir_all(&target);
+                                            let _ = tokio::fs::remove_dir_all(&target).await;
                                             return Ok(());
                                         }
                                     }
@@ -358,7 +364,7 @@ pub async fn handle_cli_plugins(
                                     });
                                     if hard_block && !allow_untrusted_git_host {
                                         println!("  ✗ High-risk patterns — removed clone.");
-                                        let _ = std::fs::remove_dir_all(&target);
+                                        let _ = tokio::fs::remove_dir_all(&target).await;
                                         return Ok(());
                                     }
                                     if !suspicious.is_empty() {
@@ -398,7 +404,7 @@ pub async fn handle_cli_plugins(
             let target = resolve_local_plugin_path_by_name(&plugin_name)
                 .unwrap_or_else(|| plugins_dir.join(&plugin_name));
             if target.exists() {
-                std::fs::remove_dir_all(&target).map_err(|e| {
+                tokio::fs::remove_dir_all(&target).await.map_err(|e| {
                     hermes_core::AgentError::Io(format!("Failed to remove plugin: {}", e))
                 })?;
                 println!("Plugin '{}' removed.", plugin_name);
@@ -414,8 +420,8 @@ pub async fn handle_cli_plugins(
                 println!("No plugins installed.");
                 return Ok(());
             }
-            if let Ok(entries) = std::fs::read_dir(&plugins_dir) {
-                for entry in entries.filter_map(|e| e.ok()) {
+            if let Ok(entries) = read_dir_entries(&plugins_dir).await {
+                for entry in entries {
                     let path = entry.path();
                     if !path.is_dir() {
                         continue;
@@ -572,7 +578,8 @@ pub async fn handle_cli_plugins(
             }
             let manifest_path = target.join("plugin.yaml");
             if manifest_path.exists() {
-                let content = std::fs::read_to_string(&manifest_path)
+                let content = tokio::fs::read_to_string(&manifest_path)
+                    .await
                     .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
                 println!("Plugin: {}", plugin_name);
                 println!("Path:   {}", target.display());
@@ -636,24 +643,27 @@ pub async fn handle_cli_memory(
             }
             println!("Memory Provider Setup");
             println!("---------------------");
-            std::fs::create_dir_all(&memories_dir)
+            tokio::fs::create_dir_all(&memories_dir)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             if !memory_md.exists() {
-                std::fs::write(
+                tokio::fs::write(
                     &memory_md,
                     "# Hermes MEMORY\n\nStore durable assistant memory entries here.\n",
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             }
             if !user_md.exists() {
-                std::fs::write(
+                tokio::fs::write(
                     &user_md,
                     "# Hermes USER\n\nStore durable user profile entries here.\n",
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             }
             if disabled_marker.exists() {
-                let _ = std::fs::remove_file(&disabled_marker);
+                let _ = tokio::fs::remove_file(&disabled_marker).await;
             }
             println!("Initialized file memory backend.");
             println!("  MEMORY.md: {}", memory_md.display());
@@ -661,15 +671,17 @@ pub async fn handle_cli_memory(
             println!("Memory is enabled for subsequent sessions.");
         }
         "off" => {
-            std::fs::create_dir_all(&hermes_home)
+            tokio::fs::create_dir_all(&hermes_home)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
-            std::fs::write(
+            tokio::fs::write(
                 &disabled_marker,
                 format!(
                     "disabled_at={}\nreason=hermes memory off\n",
                     chrono::Utc::now().to_rfc3339()
                 ),
             )
+            .await
             .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             println!("Memory provider disabled.");
             println!("  Marker: {}", disabled_marker.display());
@@ -696,32 +708,35 @@ pub async fn handle_cli_memory(
                     reset_target
                 )));
             }
-            std::fs::create_dir_all(&memories_dir)
+            tokio::fs::create_dir_all(&memories_dir)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             if reset_memory && memory_md.exists() {
-                let _ = std::fs::remove_file(&memory_md);
+                let _ = tokio::fs::remove_file(&memory_md).await;
             }
             if reset_user && user_md.exists() {
-                let _ = std::fs::remove_file(&user_md);
+                let _ = tokio::fs::remove_file(&user_md).await;
             }
             if reset_target == "all" && legacy_memory_db.exists() {
-                let _ = std::fs::remove_file(&legacy_memory_db);
+                let _ = tokio::fs::remove_file(&legacy_memory_db).await;
             }
             if disabled_marker.exists() {
-                let _ = std::fs::remove_file(&disabled_marker);
+                let _ = tokio::fs::remove_file(&disabled_marker).await;
             }
             if reset_memory {
-                std::fs::write(
+                tokio::fs::write(
                     &memory_md,
                     "# Hermes MEMORY\n\nStore durable assistant memory entries here.\n",
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             }
             if reset_user {
-                std::fs::write(
+                tokio::fs::write(
                     &user_md,
                     "# Hermes USER\n\nStore durable user profile entries here.\n",
                 )
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             }
             println!(

@@ -444,7 +444,8 @@ async fn handle_ops_eval_command(
                 emit_command_output(app, "No eval reports found.");
                 return Ok(CommandResult::Handled);
             };
-            let raw = std::fs::read_to_string(&path)
+            let raw = tokio::fs::read_to_string(&path)
+                .await
                 .map_err(|e| AgentError::Io(format!("read {}: {}", path.display(), e)))?;
             emit_command_output(
                 app,

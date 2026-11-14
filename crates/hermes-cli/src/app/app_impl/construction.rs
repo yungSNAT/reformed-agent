@@ -78,7 +78,8 @@ impl App {
         wire_stdio_clarify_backend(&tool_registry);
         connect_configured_mcp_servers(&config, &state_root, &tool_registry).await;
         let cron_data_dir = state_root.join("cron");
-        std::fs::create_dir_all(&cron_data_dir)
+        tokio::fs::create_dir_all(&cron_data_dir)
+            .await
             .map_err(|e| AgentError::Io(format!("cron dir {}: {}", cron_data_dir.display(), e)))?;
         let cron_scheduler = Arc::new(build_runtime_cron_scheduler(
             &config,

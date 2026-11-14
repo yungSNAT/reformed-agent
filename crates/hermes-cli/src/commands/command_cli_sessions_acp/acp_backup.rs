@@ -410,7 +410,8 @@ pub async fn handle_cli_acp(
             hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
             crate::runtime_tool_wiring::wire_stdio_clarify_backend(&tool_registry);
             let cron_data_dir = hermes_config::cron_dir();
-            std::fs::create_dir_all(&cron_data_dir)
+            tokio::fs::create_dir_all(&cron_data_dir)
+                .await
                 .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
             let cron_scheduler = Arc::new(build_runtime_cron_scheduler(
                 &config,
@@ -718,22 +719,32 @@ pub async fn handle_cli_backup(output: Option<String>) -> Result<(), hermes_core
     });
     println!("Backing up {} -> {}", hermes_dir.display(), out);
 
-    let tar_gz = std::fs::File::create(&out)
-        .map_err(|e| hermes_core::AgentError::Io(format!("Cannot create {}: {}", out, e)))?;
-    let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
-    let mut tar = tar::Builder::new(enc);
-    tar.append_dir_all("hermes", &hermes_dir)
-        .map_err(|e| hermes_core::AgentError::Io(format!("Tar error: {}", e)))?;
-    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let external_files = collect_memory_provider_external_backup_files(&hermes_dir, &home_dir);
-    for (file, archive_path) in &external_files {
-        tar.append_path_with_name(file, archive_path)
-            .map_err(|e| hermes_core::AgentError::Io(format!("Tar external error: {}", e)))?;
-    }
-    tar.finish()
-        .map_err(|e| hermes_core::AgentError::Io(format!("Tar finish error: {}", e)))?;
+    let archive_out = out.clone();
+    let external_files = tokio::task::spawn_blocking(move || {
+        let out = archive_out;
+        let tar_gz = std::fs::File::create(&out)
+            .map_err(|e| hermes_core::AgentError::Io(format!("Cannot create {}: {}", out, e)))?;
+        let enc = flate2::write::GzEncoder::new(tar_gz, flate2::Compression::default());
+        let mut tar = tar::Builder::new(enc);
+        tar.append_dir_all("hermes", &hermes_dir)
+            .map_err(|e| hermes_core::AgentError::Io(format!("Tar error: {}", e)))?;
+        let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        let external_files = collect_memory_provider_external_backup_files(&hermes_dir, &home_dir);
+        for (file, archive_path) in &external_files {
+            tar.append_path_with_name(file, archive_path)
+                .map_err(|e| hermes_core::AgentError::Io(format!("Tar external error: {}", e)))?;
+        }
+        tar.finish()
+            .map_err(|e| hermes_core::AgentError::Io(format!("Tar finish error: {}", e)))?;
+        Ok::<_, hermes_core::AgentError>(external_files)
+    })
+    .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;
 
-    let size = std::fs::metadata(&out).map(|m| m.len()).unwrap_or(0);
+    let size = tokio::fs::metadata(&out)
+        .await
+        .map(|m| m.len())
+        .unwrap_or(0);
     println!("Backup complete: {} ({} KB)", out, size / 1024);
     if !external_files.is_empty() {
         println!(
@@ -756,15 +767,23 @@ pub async fn handle_cli_import(path: String) -> Result<(), hermes_core::AgentErr
     println!("Importing configuration from: {}", path);
 
     let hermes_dir = hermes_config::hermes_home();
-    std::fs::create_dir_all(&hermes_dir).map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
+    tokio::fs::create_dir_all(&hermes_dir)
+        .await
+        .map_err(|e| hermes_core::AgentError::Io(e.to_string()))?;
 
-    let file = std::fs::File::open(src)
-        .map_err(|e| hermes_core::AgentError::Io(format!("Cannot open {}: {}", path, e)))?;
-    let dec = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(dec);
-    let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-    let (restored, restored_external) =
-        restore_backup_archive(&mut archive, &hermes_dir, &home_dir)?;
+    let archive_path = path.clone();
+    let restore_dir = hermes_dir.clone();
+    let (restored, restored_external) = tokio::task::spawn_blocking(move || {
+        let file = std::fs::File::open(&archive_path).map_err(|e| {
+            hermes_core::AgentError::Io(format!("Cannot open {}: {}", archive_path, e))
+        })?;
+        let dec = flate2::read::GzDecoder::new(file);
+        let mut archive = tar::Archive::new(dec);
+        let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+        restore_backup_archive(&mut archive, &restore_dir, &home_dir)
+    })
+    .await
+    .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))?;
 
     println!(
         "Import complete. {} files restored to {}",

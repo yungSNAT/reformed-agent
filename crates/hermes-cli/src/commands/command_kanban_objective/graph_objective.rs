@@ -205,7 +205,7 @@ async fn handle_graph_command(app: &mut App, args: &[&str]) -> Result<CommandRes
                     .and_then(|v| v.to_str())
                     .unwrap_or_default()
                     .to_ascii_lowercase();
-                let content = std::fs::read_to_string(path).unwrap_or_default();
+                let content = tokio::fs::read_to_string(path).await.unwrap_or_default();
                 for rf in extract_semantic_refs_for_file(&ext, &content) {
                     let key = (rel.clone(), rf.clone());
                     *edges.entry(key).or_insert(0usize) += 1;

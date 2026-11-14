@@ -1218,7 +1218,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                     stdout,
                     stderr
                 );
-                let _ = std::fs::write(&log_path, log);
+                let _ = tokio::fs::write(&log_path, log).await;
 
                 let mut done = queued.clone();
                 done.insert(
