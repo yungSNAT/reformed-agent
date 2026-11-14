@@ -1,6 +1,6 @@
 {
   "summary": {
-    "covered_paths": 122,
+    "covered_paths": 121,
     "required_backlog_classification_paths": [
       "ui-tui",
       "ui-tui/packages",
@@ -2166,36 +2166,6 @@
         "rust_primary_tui",
         "reference_test_surface",
         "mathUnicode_test"
-      ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        }
-      ],
-      "classification_path": "ui-tui/src"
-    },
-    {
-      "path": "ui-tui/src/__tests__/messages.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui",
-        "reference_test_surface",
-        "messages_test"
       ],
       "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [

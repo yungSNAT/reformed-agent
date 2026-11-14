@@ -37,7 +37,9 @@ def test_readme_quick_start_uses_ultra_commands() -> None:
         "hermes-ultra setup",
         "hermes-ultra",
         'hermes-ultra chat --query "summarize this repository"',
-        "hermes-ultra gateway --live",
+        "hermes-ultra gateway run",
         "hermes-ultra doctor --deep --snapshot --bundle",
     ):
         assert command in text
+    # `gateway` takes an action (`run`, `start`, ...) and rejects `--live`.
+    assert "gateway --live" not in text
