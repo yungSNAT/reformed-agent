@@ -19,7 +19,7 @@ fn include_target(line: &str) -> Option<&str> {
 }
 
 fn declares_sidecar_tests(line: &str) -> bool {
-    line.trim() == "mod tests;"
+    matches!(line.trim(), "mod tests;" | "pub(crate) mod tests;")
 }
 
 fn module_decl_target(line: &str) -> Option<&str> {
