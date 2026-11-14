@@ -392,12 +392,17 @@ async fn run_doctor(
 
         let replay_dir = hermes_state_root(&cli).join("logs").join("replay");
         let replay_summaries = replay_integrity_summaries(&replay_dir, 5);
-        let replay_count = std::fs::read_dir(&replay_dir)
-            .map(|it| {
-                it.filter_map(|e| e.ok().filter(|e| e.path().is_file()).map(|_| ()))
-                    .count()
-            })
-            .unwrap_or(0usize);
+        let dir = replay_dir.clone();
+        let replay_count = tokio::task::spawn_blocking(move || {
+            std::fs::read_dir(&dir)
+                .map(|it| {
+                    it.filter_map(|e| e.ok().filter(|e| e.path().is_file()).map(|_| ()))
+                        .count()
+                })
+                .unwrap_or(0usize)
+        })
+        .await
+        .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
         let replay_chain_ok = replay_summaries
             .iter()
             .all(|entry| entry.hash_chain_ok && entry.invalid_lines == 0);
@@ -484,7 +489,7 @@ async fn run_doctor(
     if snapshot || bundle {
         let out = write_doctor_snapshot(&cli, &snapshot_payload, snapshot_path.as_deref())?;
         println!("\nDoctor snapshot: {}", out.display());
-        if let Ok(snapshot_bytes) = std::fs::read(&out) {
+        if let Ok(snapshot_bytes) = tokio::fs::read(&out).await {
             match sign_artifact_bytes(&cli, &snapshot_bytes, true)
                 .and_then(|sig| write_provenance_sidecar(&out, &sig))
             {

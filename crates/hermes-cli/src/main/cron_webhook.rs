@@ -92,7 +92,8 @@ async fn run_cron(
     all: bool,
 ) -> Result<(), AgentError> {
     let data_dir = hermes_state_root(&cli).join("cron");
-    std::fs::create_dir_all(&data_dir)
+    tokio::fs::create_dir_all(&data_dir)
+        .await
         .map_err(|e| AgentError::Io(format!("cron dir {}: {}", data_dir.display(), e)))?;
     let sched = cron_scheduler_for_data_dir(data_dir.clone());
     sched.load_persisted_jobs().await.map_err(cron_cli_error)?;
@@ -906,11 +907,7 @@ async fn run_cron_gateway_delivery_loop(
     }
 }
 
-async fn run_dump(
-    cli: Cli,
-    session: Option<String>,
-    output: Option<String>,
-) -> Result<(), AgentError> {
+fn run_dump(cli: Cli, session: Option<String>, output: Option<String>) -> Result<(), AgentError> {
     let home = cli
         .config_dir
         .as_deref()

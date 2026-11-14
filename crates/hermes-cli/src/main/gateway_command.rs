@@ -776,7 +776,8 @@ async fn run_gateway(
 
             // Cron: same on-disk dir as `hermes cron` + real LLM/tools as the gateway agent.
             let cron_dir = hermes_state_root(&cli).join("cron");
-            std::fs::create_dir_all(&cron_dir)
+            tokio::fs::create_dir_all(&cron_dir)
+                .await
                 .map_err(|e| AgentError::Io(format!("cron dir {}: {}", cron_dir.display(), e)))?;
             let default_model = config
                 .model
@@ -847,9 +848,11 @@ async fn run_gateway(
                 }));
             }
             let own_pid = std::process::id();
-            std::fs::write(&pid_path, format!("{}\n", own_pid)).map_err(|e| {
-                AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
-            })?;
+            tokio::fs::write(&pid_path, format!("{}\n", own_pid))
+                .await
+                .map_err(|e| {
+                    AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
+                })?;
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             // Keep gateway alive for future adapter/event wiring.
@@ -861,7 +864,7 @@ async fn run_gateway(
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
             gateway.stop_all().await?;
-            let _ = std::fs::remove_file(&pid_path);
+            let _ = tokio::fs::remove_file(&pid_path).await;
             for task in sidecar_tasks {
                 task.abort();
             }
