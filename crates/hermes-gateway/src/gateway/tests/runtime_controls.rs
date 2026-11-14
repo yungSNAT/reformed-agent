@@ -1633,3 +1633,29 @@ async fn a_command_needing_confirmation_runs_once_after_its_requester_approves()
     );
     assert_eq!(terminal.0.lock().unwrap().len(), 1);
 }
+
+#[tokio::test]
+async fn a_status_note_reaches_the_chat_with_its_media_markers_intact() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    let gw = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
+    );
+    gw.register_adapter("test", adapter).await;
+    let text = "```\necho hi MEDIA:/tmp/x; rm -rf ~/y\n\n\n\n![a](https://h/x.png)\n```";
+
+    gw.send_non_conversational_threaded("test", "chat-note", text, None)
+        .await
+        .unwrap();
+    assert_eq!(sent.lock().unwrap().last().unwrap().1, text);
+
+    // A conversational reply would have cut the markers out.
+    gw.send_message_threaded("test", "chat-note", text, None, None)
+        .await
+        .unwrap();
+    assert_ne!(sent.lock().unwrap().last().unwrap().1, text);
+}

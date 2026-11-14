@@ -201,40 +201,24 @@ fn approval_prompt(command: &str, params: &Value) -> Option<String> {
     ))
 }
 
-/// Whether chat clients show `text` as written: it has no control or
-/// invisible formatting characters, and nothing a Markdown code block or
+/// Whether chat clients show `text` as written: printable ASCII, spaces and
+/// line breaks only, so no invisible, look-alike or ambiguous whitespace
+/// character can hide what runs, and nothing a Markdown code block or
 /// Telegram's MarkdownV2 or HTML mode would interpret (backticks,
 /// backslashes, `&` entities, `<` tags).
 fn displays_verbatim(text: &str) -> bool {
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         let next = chars.peek().copied();
-        let hidden = (c.is_control() && c != '\n' && c != '\t') || is_invisible_format(c);
+        let plain = c.is_ascii_graphic() || c == ' ' || c == '\n';
         let markup = matches!(c, '`' | '\\')
             || (c == '&' && next.is_some_and(|n| n == '#' || n.is_ascii_alphabetic()))
             || (c == '<' && next.is_some_and(|n| n == '/' || n.is_ascii_alphabetic()));
-        if hidden || markup {
+        if !plain || markup {
             return false;
         }
     }
     true
-}
-
-/// Invisible formatting characters: soft hyphen, zero-width and joiner
-/// characters, bidirectional controls, invisible operators and tags.
-fn is_invisible_format(c: char) -> bool {
-    matches!(
-        c,
-        '\u{00AD}'
-            | '\u{061C}'
-            | '\u{180E}'
-            | '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{FEFF}'
-            | '\u{FFF9}'..='\u{FFFB}'
-            | '\u{E0000}'..='\u{E007F}'
-    )
 }
 
 /// `/approve` from `user_id`: the pending request becomes a one-shot grant.
@@ -448,6 +432,13 @@ mod tests {
             "rm -rf /tmp/\u{202E}gnp.x",
             "rm -rf /tmp/a\u{200B}b",
             "rm -rf /tmp/\u{1b}[2Kx",
+            "rm -rf /tmp/a\u{034F}b",
+            "rm -rf /tmp/a\u{FE0F}b",
+            "rm -rf /tmp/a\u{3164}b",
+            "rm -rf '/tmp/a\u{00A0}b'",
+            "rm -rf /tmp/a\u{2028}b",
+            "rm -rf '/tmp/a\tb'",
+            "rm -rf /tmp/\u{0430}",
             "rm -rf `pwd`/x",
             "rm -rf /tmp/a\\ b",
             "echo &lt;x&gt; > /tmp/x",

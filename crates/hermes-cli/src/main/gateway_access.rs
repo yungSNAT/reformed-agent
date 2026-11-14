@@ -118,17 +118,25 @@ impl hermes_gateway::hooks::HookHandler for CloseSessionBrowser {
     }
 }
 
-/// Platforms whose sender ids the platform itself authenticates, so a command
-/// approval is bound to a person. Elsewhere (webhook, api_server, email, SMS
-/// and the rest) the id is asserted by the client or unverified here, and the
-/// terminal refuses such commands as before; add a platform once its
-/// adapter's sender id is shown to be authenticated.
-const COMMAND_APPROVAL_PLATFORMS: &[&str] =
-    &["telegram", "discord", "slack", "matrix", "mattermost", "signal"];
+/// Platforms where a command approval is bound to a person: the platform
+/// authenticates the sender id, the gateway receives replies, and the request
+/// reaches the user as one unaltered message. Telegram's ids come from the bot
+/// API's `from`. Elsewhere the terminal refuses such commands as before:
+/// webhook and api_server ids are asserted by the client, and Discord, Slack,
+/// Matrix, Mattermost and Signal have no inbound loop here (Discord would also
+/// split the request at 2,000 characters and Signal reformat it).
+const COMMAND_APPROVAL_PLATFORMS: &[&str] = &["telegram"];
+
+/// Telegram sender ids that stand for more than one person: anonymous group
+/// admins (GroupAnonymousBot), messages sent as a channel (Channel_Bot),
+/// channel posts forwarded to a linked group (Telegram), and the gateway's
+/// stand-in for a message without a sender.
+const SHARED_SENDER_IDS: &[&str] = &["1087968824", "136817688", "777000", "unknown"];
 
 /// The tools one gateway turn runs in place of the registry's: its session's
-/// browser and, on [`COMMAND_APPROVAL_PLATFORMS`], a terminal that asks this
-/// turn's user before running a command that needs confirmation.
+/// browser and, on [`COMMAND_APPROVAL_PLATFORMS`] for a single identified
+/// sender, a terminal that asks this turn's user before running a command
+/// that needs confirmation.
 fn gateway_turn_tool_overrides(
     browsers: &hermes_tools::SessionBrowsers,
     terminal_backend: &Arc<dyn hermes_core::TerminalBackend>,
@@ -136,7 +144,9 @@ fn gateway_turn_tool_overrides(
     ctx: &GatewayRuntimeContext,
 ) -> hermes_tools::ToolOverrides {
     let mut overrides = browsers.tool_overrides(&ctx.session_key);
-    if !COMMAND_APPROVAL_PLATFORMS.contains(&ctx.platform.as_str()) {
+    if !COMMAND_APPROVAL_PLATFORMS.contains(&ctx.platform.as_str())
+        || SHARED_SENDER_IDS.contains(&ctx.user_id.as_str())
+    {
         return overrides;
     }
     let gateway = gateway.clone();
@@ -149,8 +159,10 @@ fn gateway_turn_tool_overrides(
         let gateway = gateway.clone();
         let (platform, chat_id, thread_id) = (platform.clone(), chat_id.clone(), thread_id.clone());
         async move {
+            // Not a conversational reply, whose `MEDIA:` and image markers
+            // the gateway would cut out of the text the user approves.
             match gateway
-                .send_message_threaded(&platform, &chat_id, &text, None, thread_id.as_deref())
+                .send_non_conversational_threaded(&platform, &chat_id, &text, thread_id.as_deref())
                 .await
             {
                 Ok(()) => true,

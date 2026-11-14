@@ -222,18 +222,23 @@ mod tests {
         });
         let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
             Arc::new(UnreachableTerminal);
-        let ctx = |platform: &str| GatewayRuntimeContext {
+        let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
             session_key: format!("{platform}:cli-turn"),
             platform: platform.into(),
             chat_id: "cli-turn".into(),
-            user_id: "alice".into(),
+            user_id: user.into(),
             ..GatewayRuntimeContext::default()
         };
 
-        // Telegram: the terminal asks. No Telegram adapter is registered, so
-        // the request cannot be sent and nothing is left to approve.
-        let overrides =
-            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx("telegram"));
+        // Telegram, one identified sender: the terminal asks. No adapter is
+        // registered, so the request cannot be sent and nothing is left to
+        // approve.
+        let overrides = gateway_turn_tool_overrides(
+            &browsers,
+            &terminal_backend,
+            &gateway,
+            &ctx("telegram", "4242"),
+        );
         let err = overrides["terminal"]
             .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
             .await
@@ -241,16 +246,39 @@ mod tests {
             .to_string();
         assert!(err.contains("could not be sent to the user"), "{err}");
         assert_eq!(
-            gateway_approval::approve("telegram:cli-turn", "alice"),
+            gateway_approval::approve("telegram:cli-turn", "4242"),
             Resolution::NothingPending
         );
 
-        // A webhook's user id is the client's claim: the registry's terminal,
-        // which refuses outright, stays in place.
-        let overrides =
-            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx("webhook"));
-        assert!(!overrides.contains_key("terminal"));
-        assert!(overrides.contains_key("browser_snapshot"));
+        // Anywhere else, or for a sender id shared by many people, the
+        // registry's terminal, which refuses outright, stays in place.
+        let refused = [
+            "webhook",
+            "api_server",
+            "email",
+            "sms",
+            "whatsapp",
+            "discord",
+            "slack",
+            "matrix",
+            "mattermost",
+            "signal",
+        ]
+        .map(|platform| (platform, "4242"))
+        .into_iter()
+        .chain(
+            ["1087968824", "136817688", "777000", "unknown"].map(|user| ("telegram", user)),
+        );
+        for (platform, user) in refused {
+            let overrides = gateway_turn_tool_overrides(
+                &browsers,
+                &terminal_backend,
+                &gateway,
+                &ctx(platform, user),
+            );
+            assert!(!overrides.contains_key("terminal"), "{platform} {user}");
+            assert!(overrides.contains_key("browser_snapshot"), "{platform} {user}");
+        }
     }
 
     #[tokio::test]
