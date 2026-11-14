@@ -191,9 +191,7 @@ async fn rotate_provenance_key_archives_previous_key_and_rekeys() {
     ]);
 
     let old_key = load_or_create_provenance_key(&cli, true).expect("create key");
-    run_rotate_provenance_key(cli.clone(), true)
-        .await
-        .expect("rotate key");
+    run_rotate_provenance_key(cli.clone(), true).expect("rotate key");
     let new_key = load_or_create_provenance_key(&cli, false).expect("load rotated key");
     assert_ne!(old_key, new_key, "rotation must change active key bytes");
 

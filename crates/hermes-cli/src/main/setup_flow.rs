@@ -846,7 +846,7 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
         if dir.exists() {
             println!("  ✓ {} exists", dir.display());
         } else {
-            std::fs::create_dir_all(&dir).map_err(|e| {
+            tokio::fs::create_dir_all(&dir).await.map_err(|e| {
                 AgentError::Io(format!("Failed to create {}: {}", dir.display(), e))
             })?;
             println!("  ✓ Created {}", dir.display());
@@ -1419,7 +1419,8 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
             "# Default Hermes Profile\nname: default\nmodel: {}\npersonality: {}\n",
             profile_model, profile_personality,
         );
-        std::fs::write(&default_profile, profile_content)
+        tokio::fs::write(&default_profile, profile_content)
+            .await
             .map_err(|e| AgentError::Io(format!("Failed to write profile: {}", e)))?;
         println!("  ✓ Created default profile");
     }

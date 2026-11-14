@@ -1,5 +1,5 @@
 /// Handle `hermes status`.
-async fn run_status(cli: Cli) -> Result<(), AgentError> {
+fn run_status(cli: Cli) -> Result<(), AgentError> {
     println!("Reformed Agent — Status");
     println!("=====================\n");
 
@@ -538,7 +538,8 @@ async fn run_debug(
     local: bool,
 ) -> Result<(), AgentError> {
     let reports_dir = debug_reports_dir_for_cli(&cli);
-    std::fs::create_dir_all(&reports_dir)
+    tokio::fs::create_dir_all(&reports_dir)
+        .await
         .map_err(|e| AgentError::Io(format!("mkdir {}: {}", reports_dir.display(), e)))?;
     let now_unix = chrono::Utc::now().timestamp();
     let pending_removed = best_effort_sweep_expired_pending_pastes(&reports_dir, now_unix);
@@ -564,7 +565,8 @@ async fn run_debug(
                 chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
             );
             let path = reports_dir.join(filename);
-            std::fs::write(&path, &report)
+            tokio::fs::write(&path, &report)
+                .await
                 .map_err(|e| AgentError::Io(format!("write {}: {}", path.display(), e)))?;
             println!("Debug report saved: {}", path.display());
             if local {
@@ -617,7 +619,8 @@ async fn run_debug(
                 PathBuf::from(&target)
             };
             if path.exists() {
-                std::fs::remove_file(&path)
+                tokio::fs::remove_file(&path)
+                    .await
                     .map_err(|e| AgentError::Io(format!("remove {}: {}", path.display(), e)))?;
                 println!("Removed debug report {}", path.display());
             } else {
@@ -625,14 +628,19 @@ async fn run_debug(
             }
         }
         "list" => {
-            let mut entries: Vec<PathBuf> = std::fs::read_dir(&reports_dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .map(|e| e.path())
-                        .filter(|p| p.is_file())
-                        .collect()
-                })
-                .unwrap_or_default();
+            let dir = reports_dir.clone();
+            let mut entries: Vec<PathBuf> = tokio::task::spawn_blocking(move || {
+                std::fs::read_dir(&dir)
+                    .map(|rd| {
+                        rd.filter_map(|e| e.ok())
+                            .map(|e| e.path())
+                            .filter(|p| p.is_file())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
             entries.sort();
             if entries.is_empty() {
                 println!("No debug reports in {}", reports_dir.display());
@@ -693,7 +701,8 @@ async fn run_logs(cli: Cli, lines: u32, follow: bool) -> Result<(), AgentError> 
             }
         }
     } else {
-        let content = std::fs::read_to_string(&log_file)
+        let content = tokio::fs::read_to_string(&log_file)
+            .await
             .map_err(|e| AgentError::Io(format!("Failed to read log file: {}", e)))?;
         let all_lines: Vec<&str> = content.lines().collect();
         let start = all_lines.len().saturating_sub(lines as usize);
@@ -886,7 +895,8 @@ async fn run_profile(
                         requested, resolved
                     )));
                 };
-                let raw = std::fs::read_to_string(&path)
+                let raw = tokio::fs::read_to_string(&path)
+                    .await
                     .map_err(|e| AgentError::Io(format!("read {}: {}", path.display(), e)))?;
                 println!("{}", raw);
                 return Ok(());
@@ -921,23 +931,28 @@ async fn run_profile(
                 return Ok(());
             }
             let active = read_active_profile_name(&profiles_dir);
-            let mut entries: Vec<String> = std::fs::read_dir(&profiles_dir)
-                .map(|rd| {
-                    rd.filter_map(|e| e.ok())
-                        .filter(|e| {
-                            e.path()
-                                .extension()
-                                .map(|ext| ext == "yaml" || ext == "yml")
-                                .unwrap_or(false)
-                        })
-                        .filter_map(|e| {
-                            e.path()
-                                .file_stem()
-                                .map(|s| s.to_string_lossy().into_owned())
-                        })
-                        .collect()
-                })
-                .unwrap_or_default();
+            let dir = profiles_dir.clone();
+            let mut entries: Vec<String> = tokio::task::spawn_blocking(move || {
+                std::fs::read_dir(&dir)
+                    .map(|rd| {
+                        rd.filter_map(|e| e.ok())
+                            .filter(|e| {
+                                e.path()
+                                    .extension()
+                                    .map(|ext| ext == "yaml" || ext == "yml")
+                                    .unwrap_or(false)
+                            })
+                            .filter_map(|e| {
+                                e.path()
+                                    .file_stem()
+                                    .map(|s| s.to_string_lossy().into_owned())
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+            .await
+            .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()));
             entries.sort();
 
             if entries.is_empty() {
@@ -971,7 +986,8 @@ async fn run_profile(
             })?;
             let profile_name = validate_profile_name(&profile_name)?;
 
-            std::fs::create_dir_all(&profiles_dir)
+            tokio::fs::create_dir_all(&profiles_dir)
+                .await
                 .map_err(|e| AgentError::Io(format!("Failed to create profiles dir: {}", e)))?;
 
             let profile_path = profiles_dir.join(format!("{}.yaml", profile_name));
@@ -1135,12 +1151,13 @@ async fn run_profile(
                 println!("Aborted.");
                 return Ok(());
             }
-            std::fs::remove_file(&path)
+            tokio::fs::remove_file(&path)
+                .await
                 .map_err(|e| AgentError::Io(format!("remove {}: {}", path.display(), e)))?;
             aliases.retain(|alias, target| alias != &requested && target != &resolved);
             save_profile_aliases(&aliases_path, &aliases)?;
             if read_active_profile_name(&profiles_dir).as_deref() == Some(resolved.as_str()) {
-                let _ = std::fs::remove_file(active_profile_marker_path(&profiles_dir));
+                let _ = tokio::fs::remove_file(active_profile_marker_path(&profiles_dir)).await;
             }
             println!("Deleted profile '{}' ({})", resolved, path.display());
         }
@@ -1199,7 +1216,7 @@ async fn run_profile(
                     new_name
                 )));
             }
-            std::fs::rename(&old_path, &new_path).map_err(|e| {
+            tokio::fs::rename(&old_path, &new_path).await.map_err(|e| {
                 AgentError::Io(format!(
                     "rename {} -> {}: {}",
                     old_path.display(),
@@ -1250,7 +1267,7 @@ async fn run_profile(
             let source = resolve_profile_yaml_path(&profiles_dir, &target)
                 .ok_or_else(|| AgentError::Config(format!("Profile '{}' not found", target)))?;
             let out = output.unwrap_or_else(|| format!("{}.profile.yaml", target));
-            std::fs::copy(&source, &out).map_err(|e| {
+            tokio::fs::copy(&source, &out).await.map_err(|e| {
                 AgentError::Io(format!("copy {} -> {}: {}", source.display(), out, e))
             })?;
             println!("Exported profile '{}' to {}", target, out);
@@ -1275,11 +1292,12 @@ async fn run_profile(
                     .into_owned()
             });
             let target_name = validate_profile_name(&target_name_raw)?;
-            std::fs::create_dir_all(&profiles_dir)
+            tokio::fs::create_dir_all(&profiles_dir)
+                .await
                 .map_err(|e| AgentError::Io(format!("mkdir {}: {}", profiles_dir.display(), e)))?;
             let target_path = profiles_dir.join(format!("{}.yaml", target_name));
             if target_path.exists() {
-                let metadata = std::fs::metadata(&target_path).map_err(|e| {
+                let metadata = tokio::fs::metadata(&target_path).await.map_err(|e| {
                     AgentError::Io(format!("stat {}: {}", target_path.display(), e))
                 })?;
                 if metadata.is_dir() {
@@ -1308,12 +1326,12 @@ async fn run_profile(
             ));
             save_profile_yaml(&staged_path, &value)?;
             if target_path.exists() {
-                std::fs::remove_file(&target_path).map_err(|e| {
+                tokio::fs::remove_file(&target_path).await.map_err(|e| {
                     AgentError::Io(format!("remove {}: {}", target_path.display(), e))
                 })?;
             }
-            if let Err(err) = std::fs::rename(&staged_path, &target_path) {
-                let _ = std::fs::remove_file(&staged_path);
+            if let Err(err) = tokio::fs::rename(&staged_path, &target_path).await {
+                let _ = tokio::fs::remove_file(&staged_path).await;
                 return Err(AgentError::Io(format!(
                     "rename {} -> {}: {}",
                     staged_path.display(),

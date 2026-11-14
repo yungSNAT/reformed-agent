@@ -607,9 +607,7 @@ async fn run_dump_writes_real_saved_session_export_with_system_prompt() {
     )
     .expect("write session");
 
-    run_dump(cli, Some("abc123".to_string()), None)
-        .await
-        .expect("dump session");
+    run_dump(cli, Some("abc123".to_string()), None).expect("dump session");
 
     let saved_dir = tmp.path().join("sessions").join("saved");
     let entries = std::fs::read_dir(&saved_dir)

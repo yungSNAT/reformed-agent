@@ -78,11 +78,7 @@ fn load_route_learning_state_for_cli(path: &Path) -> Result<RouteLearningStateRe
         .map_err(|e| AgentError::Config(format!("parse {}: {}", path.display(), e)))
 }
 
-async fn run_route_learning(
-    cli: Cli,
-    action: Option<String>,
-    json: bool,
-) -> Result<(), AgentError> {
+fn run_route_learning(cli: Cli, action: Option<String>, json: bool) -> Result<(), AgentError> {
     let action = action
         .as_deref()
         .map(|s| s.trim().to_ascii_lowercase())
@@ -401,7 +397,7 @@ fn route_health_tier(stats: &RouteLearningStatsRecord, score: f64) -> (String, V
     (tier.to_string(), reasons, health_score)
 }
 
-async fn run_route_health(cli: Cli, action: Option<String>, json: bool) -> Result<(), AgentError> {
+fn run_route_health(cli: Cli, action: Option<String>, json: bool) -> Result<(), AgentError> {
     let action = action
         .as_deref()
         .map(|s| s.trim().to_ascii_lowercase())
@@ -573,7 +569,7 @@ async fn run_route_health(cli: Cli, action: Option<String>, json: bool) -> Resul
     Ok(())
 }
 
-async fn run_route_autotune(
+fn run_route_autotune(
     cli: Cli,
     action: Option<String>,
     apply: bool,
@@ -780,7 +776,7 @@ async fn run_route_autotune(
     Ok(())
 }
 
-async fn run_incident_pack(
+fn run_incident_pack(
     cli: Cli,
     snapshot: Option<String>,
     output: Option<String>,
@@ -859,7 +855,7 @@ async fn run_incident_pack(
     Ok(())
 }
 
-async fn run_rotate_provenance_key(cli: Cli, json: bool) -> Result<(), AgentError> {
+fn run_rotate_provenance_key(cli: Cli, json: bool) -> Result<(), AgentError> {
     let path = provenance_key_path_for_cli(&cli);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)

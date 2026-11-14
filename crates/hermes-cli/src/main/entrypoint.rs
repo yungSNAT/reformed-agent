@@ -397,26 +397,26 @@ async fn run_main() {
             json,
         }) => run_verify_provenance(cli, path, signature, strict, json).await,
         CliCommand::RotateProvenanceKey(RotateProvenanceKeyArgs { json }) => {
-            run_rotate_provenance_key(cli, json).await
+            run_rotate_provenance_key(cli, json)
         }
         CliCommand::RouteLearning(RouteLearningArgs { action, json }) => {
-            run_route_learning(cli, action, json).await
+            run_route_learning(cli, action, json)
         }
         CliCommand::RouteHealth(RouteHealthArgs { action, json }) => {
-            run_route_health(cli, action, json).await
+            run_route_health(cli, action, json)
         }
         CliCommand::RouteAutotune(RouteAutotuneArgs {
             action,
             apply,
             strict,
             json,
-        }) => run_route_autotune(cli, action, apply, strict, json).await,
+        }) => run_route_autotune(cli, action, apply, strict, json),
         CliCommand::IncidentPack(IncidentPackArgs {
             snapshot,
             output,
             json,
-        }) => run_incident_pack(cli, snapshot, output, json).await,
-        CliCommand::Status => run_status(cli).await,
+        }) => run_incident_pack(cli, snapshot, output, json),
+        CliCommand::Status => run_status(cli),
         CliCommand::Kanban(KanbanArgs { args }) => run_kanban(args),
         CliCommand::Dashboard(DashboardArgs {
             host,
@@ -788,7 +788,7 @@ async fn run_main() {
             )
             .await
         }
-        CliCommand::Dump(DumpArgs { session, output }) => run_dump(cli, session, output).await,
+        CliCommand::Dump(DumpArgs { session, output }) => run_dump(cli, session, output),
         CliCommand::Completion(CompletionArgs { shell }) => run_completion(shell),
         CliCommand::Uninstall(UninstallArgs { yes }) => run_uninstall(yes).await,
         CliCommand::Lumio(LumioArgs { action, model }) => run_lumio(action, model).await,
