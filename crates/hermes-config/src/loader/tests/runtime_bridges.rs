@@ -332,8 +332,12 @@ terminal:
     .unwrap();
     // SAFETY: test process serializes env mutation via ENV_LOCK.
     unsafe { std::env::set_var("TERMINAL_DOCKER_IMAGE", "already-set") };
+    // load_dotenv reads the HERMES_HOME .env, so a TERMINAL_ENV in the
+    // developer's own home would otherwise override this config.yaml.
+    set_test_env("HERMES_HOME", dir.path());
 
     let cfg = load_config(Some(dir.path().to_string_lossy().as_ref())).unwrap();
+    remove_test_env("HERMES_HOME");
     assert_eq!(cfg.terminal.backend, TerminalBackendType::Docker);
     assert_eq!(cfg.terminal.docker_image.as_deref(), Some("already-set"));
     assert_eq!(std::env::var("TERMINAL_ENV").unwrap(), "docker");
