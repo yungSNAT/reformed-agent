@@ -396,6 +396,46 @@ async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
     }
 }
 
+/// How long a dropped cloud backend waits for its session to be released.
+const RELEASE_ON_DROP_TIMEOUT: Duration = Duration::from_secs(10);
+
+/// Release a cloud session as its backend is dropped, at the end of the
+/// tool registry or the process, since a session with keepAlive outlives
+/// its connection and is billed until it times out. A drop cannot await and
+/// may run whilst the runtime shuts down, so `close` runs on its own thread
+/// and runtime with a new client, within [`RELEASE_ON_DROP_TIMEOUT`].
+fn release_on_drop<F>(provider: &str, close: impl FnOnce(reqwest::Client) -> F + Send)
+where
+    F: std::future::Future<Output = Result<bool, ToolError>>,
+{
+    let outcome = std::thread::scope(|scope| {
+        scope
+            .spawn(|| {
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| ToolError::ExecutionFailed(format!("no runtime: {e}")))?;
+                runtime.block_on(async {
+                    tokio::time::timeout(RELEASE_ON_DROP_TIMEOUT, close(reqwest::Client::new()))
+                        .await
+                        .unwrap_or_else(|_| {
+                            Err(ToolError::ExecutionFailed(format!(
+                                "timed out after {}",
+                                duration_label(RELEASE_ON_DROP_TIMEOUT)
+                            )))
+                        })
+                })
+            })
+            .join()
+    });
+    match outcome {
+        Ok(Ok(true)) => tracing::debug!("released {provider} session"),
+        Ok(Ok(false)) => tracing::warn!("{provider} refused to release the session"),
+        Ok(Err(err)) => tracing::warn!("releasing {provider} session failed: {err}"),
+        Err(_) => tracing::warn!("releasing {provider} session panicked"),
+    }
+}
+
 /// Make sure the cloud browser can take commands: a session exists and its
 /// CDP connection is open and attached to a page. An error here means the
 /// provider is unavailable, unlike an error from a command the page ran.

@@ -516,8 +516,10 @@ fn register_builtin_tools_with_data_dir(
 
     // -- Browser (10 tools) --------------------------------------------------
     {
-        let browser_backend: Arc<dyn crate::tools::browser::BrowserBackend> =
-            crate::backends::browser::browser_backend_from_env();
+        // One lock for the 10 tools, so their calls take turns on the page.
+        let browser_backend = crate::tools::browser::SharedBrowser::new(
+            crate::backends::browser::browser_backend_from_env(),
+        );
         reg(
             registry,
             "browser",

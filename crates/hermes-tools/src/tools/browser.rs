@@ -46,16 +46,58 @@ pub trait BrowserBackend: Send + Sync {
     async fn console(&self, action: &str) -> Result<String, ToolError>;
 }
 
+/// The browser the browser tools share. The agent runs several tool calls at
+/// once, so a tool reaches the backend only through [`SharedBrowser::lock`]
+/// and holds it for its whole action: otherwise a snapshot could read a page
+/// that `browser_navigate` has opened and is about to refuse and blank.
+/// Handlers made from clones of one `SharedBrowser` share its lock.
+#[derive(Clone)]
+pub struct SharedBrowser {
+    backend: std::sync::Arc<dyn BrowserBackend>,
+    lock: std::sync::Arc<tokio::sync::Mutex<()>>,
+}
+
+impl SharedBrowser {
+    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+        Self {
+            backend,
+            lock: std::sync::Arc::default(),
+        }
+    }
+
+    /// Wait for the other browser tools to finish, then hold the browser.
+    pub async fn lock(&self) -> BrowserGuard<'_> {
+        BrowserGuard {
+            _held: self.lock.lock().await,
+            backend: self.backend.as_ref(),
+        }
+    }
+}
+
+/// The browser, held until this is dropped.
+pub struct BrowserGuard<'a> {
+    _held: tokio::sync::MutexGuard<'a, ()>,
+    backend: &'a (dyn BrowserBackend + 'static),
+}
+
+impl std::ops::Deref for BrowserGuard<'_> {
+    type Target = dyn BrowserBackend;
+
+    fn deref(&self) -> &Self::Target {
+        self.backend
+    }
+}
+
 // ---------------------------------------------------------------------------
 // BrowserNavigateHandler
 // ---------------------------------------------------------------------------
 
 pub struct BrowserNavigateHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserNavigateHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -67,9 +109,10 @@ impl ToolHandler for BrowserNavigateHandler {
             .get("url")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'url' parameter".into()))?;
-        let local = self.backend.is_local_backend();
+        let browser = self.backend.lock().await;
+        let local = browser.is_local_backend();
         check_navigation(url, local, false).await?;
-        let result = self.backend.navigate(url).await?;
+        let result = browser.navigate(url).await?;
         // Checked even when unchanged: the host may resolve or be listed
         // differently now than before navigating.
         let landed = serde_json::from_str::<Value>(&result)
@@ -83,7 +126,7 @@ impl ToolHandler for BrowserNavigateHandler {
                 ToolError::ExecutionFailed(message) => message,
                 other => other.to_string(),
             };
-            return Err(match self.backend.blank_page().await {
+            return Err(match browser.blank_page().await {
                 Ok(_) => err,
                 Err(blank) => {
                     ToolError::ExecutionFailed(format!("{}; {}", message(err), message(blank)))
@@ -148,11 +191,11 @@ async fn check_navigation(url: &str, local: bool, landed: bool) -> Result<(), To
 // ---------------------------------------------------------------------------
 
 pub struct BrowserSnapshotHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserSnapshotHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -160,7 +203,7 @@ impl BrowserSnapshotHandler {
 #[async_trait]
 impl ToolHandler for BrowserSnapshotHandler {
     async fn execute(&self, _params: Value) -> Result<String, ToolError> {
-        self.backend.snapshot().await
+        self.backend.lock().await.snapshot().await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -177,11 +220,11 @@ impl ToolHandler for BrowserSnapshotHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserClickHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserClickHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -193,7 +236,7 @@ impl ToolHandler for BrowserClickHandler {
             .get("selector")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'selector' parameter".into()))?;
-        self.backend.click(selector).await
+        self.backend.lock().await.click(selector).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -218,11 +261,11 @@ impl ToolHandler for BrowserClickHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserTypeHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserTypeHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -238,7 +281,7 @@ impl ToolHandler for BrowserTypeHandler {
             .get("text")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'text' parameter".into()))?;
-        self.backend.r#type(selector, text).await
+        self.backend.lock().await.r#type(selector, text).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -270,11 +313,11 @@ impl ToolHandler for BrowserTypeHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserScrollHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserScrollHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -290,7 +333,7 @@ impl ToolHandler for BrowserScrollHandler {
             .get("amount")
             .and_then(|v| v.as_u64())
             .map(|n| n as u32);
-        self.backend.scroll(direction, amount).await
+        self.backend.lock().await.scroll(direction, amount).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -324,11 +367,11 @@ impl ToolHandler for BrowserScrollHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserBackHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserBackHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -336,7 +379,7 @@ impl BrowserBackHandler {
 #[async_trait]
 impl ToolHandler for BrowserBackHandler {
     async fn execute(&self, _params: Value) -> Result<String, ToolError> {
-        self.backend.go_back().await
+        self.backend.lock().await.go_back().await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -353,11 +396,11 @@ impl ToolHandler for BrowserBackHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserPressHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserPressHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -369,7 +412,7 @@ impl ToolHandler for BrowserPressHandler {
             .get("key")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'key' parameter".into()))?;
-        self.backend.press(key).await
+        self.backend.lock().await.press(key).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -394,11 +437,11 @@ impl ToolHandler for BrowserPressHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserGetImagesHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserGetImagesHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -407,7 +450,7 @@ impl BrowserGetImagesHandler {
 impl ToolHandler for BrowserGetImagesHandler {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
         let selector = params.get("selector").and_then(|v| v.as_str());
-        self.backend.get_images(selector).await
+        self.backend.lock().await.get_images(selector).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -432,14 +475,14 @@ impl ToolHandler for BrowserGetImagesHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserVisionHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
     /// The vision model, or why none is configured.
     vision: Result<std::sync::Arc<dyn VisionBackend>, String>,
 }
 
 impl BrowserVisionHandler {
     pub fn new(
-        backend: std::sync::Arc<dyn BrowserBackend>,
+        backend: SharedBrowser,
         vision: Result<std::sync::Arc<dyn VisionBackend>, String>,
     ) -> Self {
         Self { backend, vision }
@@ -453,7 +496,7 @@ impl ToolHandler for BrowserVisionHandler {
             .get("instruction")
             .and_then(|v| v.as_str())
             .ok_or_else(|| ToolError::InvalidParams("Missing 'instruction' parameter".into()))?;
-        let raw = self.backend.screenshot().await?;
+        let raw = self.backend.lock().await.screenshot().await?;
         let mut result: Value = serde_json::from_str(&raw).map_err(|e| {
             ToolError::ExecutionFailed(format!("Invalid browser screenshot result: {e}"))
         })?;
@@ -528,11 +571,11 @@ impl ToolHandler for BrowserVisionHandler {
 // ---------------------------------------------------------------------------
 
 pub struct BrowserConsoleHandler {
-    backend: std::sync::Arc<dyn BrowserBackend>,
+    backend: SharedBrowser,
 }
 
 impl BrowserConsoleHandler {
-    pub fn new(backend: std::sync::Arc<dyn BrowserBackend>) -> Self {
+    pub fn new(backend: SharedBrowser) -> Self {
         Self { backend }
     }
 }
@@ -552,7 +595,7 @@ impl ToolHandler for BrowserConsoleHandler {
                 .and_then(|v| v.as_str())
                 .unwrap_or("read")
         };
-        self.backend.console(action).await
+        self.backend.lock().await.console(action).await
     }
 
     fn schema(&self) -> ToolSchema {
@@ -621,8 +664,8 @@ mod tests {
         }
     }
 
-    fn backend() -> std::sync::Arc<dyn BrowserBackend> {
-        std::sync::Arc::new(MockBrowserBackend)
+    fn backend() -> SharedBrowser {
+        SharedBrowser::new(std::sync::Arc::new(MockBrowserBackend))
     }
 
     #[tokio::test]
@@ -761,7 +804,7 @@ mod tests {
     }
 
     async fn open(backend: &std::sync::Arc<NavBackend>, url: &str) -> Result<String, ToolError> {
-        BrowserNavigateHandler::new(backend.clone())
+        BrowserNavigateHandler::new(SharedBrowser::new(backend.clone()))
             .execute(json!({"url": url}))
             .await
     }
@@ -843,6 +886,91 @@ mod tests {
             );
             assert_eq!(backend.opened(), [start, "blank_page"]);
         }
+    }
+
+    /// Opens a refused redirect, then waits in `blank_page` until released,
+    /// so a test can act whilst `browser_navigate` is blanking the page.
+    #[derive(Default)]
+    struct BlankingBackend {
+        page: std::sync::Mutex<String>,
+        blank_started: tokio::sync::Notify,
+        release_blank: tokio::sync::Notify,
+    }
+
+    #[async_trait]
+    impl BrowserBackend for BlankingBackend {
+        async fn navigate(&self, _url: &str) -> Result<String, ToolError> {
+            let landed = "http://169.254.169.254/latest/meta-data/";
+            *self.page.lock().unwrap() = landed.into();
+            Ok(json!({"status": "navigated", "url": landed}).to_string())
+        }
+        async fn blank_page(&self) -> Result<String, ToolError> {
+            self.blank_started.notify_one();
+            self.release_blank.notified().await;
+            *self.page.lock().unwrap() = "about:blank".into();
+            Ok(json!({"status": "blank"}).to_string())
+        }
+        fn is_local_backend(&self) -> bool {
+            true
+        }
+        async fn snapshot(&self) -> Result<String, ToolError> {
+            Ok(self.page.lock().unwrap().clone())
+        }
+        async fn click(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn r#type(&self, _: &str, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn scroll(&self, _: &str, _: Option<u32>) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn go_back(&self) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn press(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn get_images(&self, _: Option<&str>) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn screenshot(&self) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+        async fn console(&self, _: &str) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed("unused".into()))
+        }
+    }
+
+    /// A snapshot that runs alongside `browser_navigate` waits until the
+    /// refused page is blanked, rather than reading it.
+    #[tokio::test]
+    async fn snapshot_waits_whilst_navigate_blanks_a_refused_redirect() {
+        let _env = CheckEnv::new("");
+        let backend = std::sync::Arc::new(BlankingBackend::default());
+        let browser = SharedBrowser::new(backend.clone());
+        let navigate = BrowserNavigateHandler::new(browser.clone());
+        let snapshot = BrowserSnapshotHandler::new(browser);
+
+        let navigated = tokio::spawn(async move {
+            navigate
+                .execute(json!({"url": "https://93.184.215.14/"}))
+                .await
+        });
+        backend.blank_started.notified().await;
+        let mut snapped = tokio::spawn(async move { snapshot.execute(json!({})).await });
+        let early = tokio::time::timeout(std::time::Duration::from_millis(200), &mut snapped).await;
+        assert!(
+            early.is_err(),
+            "snapshot ran whilst navigate held the browser: {early:?}"
+        );
+
+        backend.release_blank.notify_one();
+        assert_refused(
+            navigated.await.unwrap(),
+            "redirect landed on a cloud metadata endpoint",
+        );
+        assert_eq!(snapped.await.unwrap().unwrap(), "about:blank");
     }
 
     #[tokio::test]

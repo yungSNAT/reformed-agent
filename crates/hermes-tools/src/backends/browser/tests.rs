@@ -897,7 +897,7 @@ async fn spawn_local_cdp(
         command.get("sessionId").is_some()
     })
     .await;
-    let http = MockServer::start().await;
+    let http = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/json/version"))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -1184,7 +1184,7 @@ async fn a_navigation_that_was_never_sent_leaves_the_browser_usable() {
         |command| command.get("sessionId").is_some(),
     )
     .await;
-    let http = wiremock::MockServer::start().await;
+    let http = wiremock::MockServer::builder().start().await;
     wiremock::Mock::given(wiremock::matchers::path("/json/version"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(
             json!({"webSocketDebuggerUrl": format!("ws://{ws_addr}/devtools/browser/B")}),
@@ -1868,11 +1868,14 @@ fn remote_browser(page: fn(&Value) -> Value) -> CdpResponder {
 }
 
 /// Vendor API stub that creates one session whose CDP URL is `cdp_url`.
+// The mock servers in these tests are not pooled: a cloud backend dropped
+// after its server releases its session, and that request must find the
+// port closed rather than a pooled server another test has taken.
 async fn vendor_api(route: &str, cdp_url: String) -> wiremock::MockServer {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let api = MockServer::start().await;
+    let api = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path(route))
         .respond_with(ResponseTemplate::new(200).set_body_json(
@@ -2115,7 +2118,7 @@ async fn queued_cloud_action_waits_for_lost_page_cleanup() {
         Some(vec![result])
     }))
     .await;
-    let api = MockServer::start().await;
+    let api = MockServer::builder().start().await;
     let vendor_created = created.clone();
     Mock::given(method("POST"))
         .and(path("/v1/sessions"))
@@ -2322,7 +2325,7 @@ async fn concurrent_browser_actions_share_one_cloud_failure() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let api = MockServer::start().await;
+    let api = MockServer::builder().start().await;
     Mock::given(method("POST"))
         .and(path("/v2/browser"))
         .respond_with(ResponseTemplate::new(503))
@@ -2360,7 +2363,7 @@ async fn cdp_discovery(status: u16, body: Value) -> wiremock::MockServer {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
-    let discovery = MockServer::start().await;
+    let discovery = MockServer::builder().start().await;
     Mock::given(method("GET"))
         .and(path("/json/version"))
         .respond_with(ResponseTemplate::new(status).set_body_json(body))
@@ -2483,7 +2486,10 @@ fn vision_handler(
     backend: Arc<dyn BrowserBackend>,
     vision: Result<Arc<dyn crate::tools::vision::VisionBackend>, String>,
 ) -> crate::tools::browser::BrowserVisionHandler {
-    crate::tools::browser::BrowserVisionHandler::new(backend, vision)
+    crate::tools::browser::BrowserVisionHandler::new(
+        crate::tools::browser::SharedBrowser::new(backend),
+        vision,
+    )
 }
 
 /// Run `browser_vision` against a local fixture whose screenshot is `TEST_PNG`.
@@ -2556,4 +2562,78 @@ async fn browser_vision_without_vision_model_returns_path_and_note() {
     let encoded = base64::Engine::encode(&base64::engine::general_purpose::STANDARD, TEST_PNG);
     assert!(!raw.contains(&encoded));
     assert!(!raw.contains("requires LLM integration"));
+}
+
+/// Each cloud backend releases its session when dropped, as at the end of
+/// the tool registry or the process, since a keepAlive session is billed
+/// until it times out. A backend without a session sends nothing.
+#[tokio::test]
+async fn dropping_a_cloud_backend_releases_its_session() {
+    use wiremock::matchers::{body_partial_json, header, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::builder().start().await;
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions/bb_held"))
+        .and(header("X-BB-API-Key", "bb-key"))
+        .and(body_partial_json(
+            json!({"projectId": "proj", "status": "REQUEST_RELEASE"}),
+        ))
+        .respond_with(ResponseTemplate::new(200))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("PATCH"))
+        .and(path("/browsers/bu_held"))
+        .and(header("X-Browser-Use-API-Key", "bu-key"))
+        .and(body_partial_json(json!({"action": "stop"})))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("DELETE"))
+        .and(path("/v2/browser/fc_held"))
+        .and(header("Authorization", "Bearer fc-key"))
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&server)
+        .await;
+
+    let mut browserbase = BrowserbaseConfig::new("bb-key".into(), "proj".into());
+    browserbase.base_url = server.uri();
+    drop(BrowserbaseBrowserBackend::new(browserbase.clone()));
+    let backend = BrowserbaseBrowserBackend::new(browserbase);
+    *backend.session.lock().await = Some(BrowserbaseSession {
+        bb_session_id: "bb_held".into(),
+        cdp_url: "wss://browserbase.example/held".into(),
+    });
+    drop(backend);
+
+    let backend = BrowserUseBrowserBackend::new(BrowserUseConfig {
+        api_key: "bu-key".into(),
+        base_url: server.uri(),
+        managed_mode: false,
+        task_id: "task-drop".into(),
+    });
+    *backend.session.lock().await = Some(BrowserUseSession {
+        bb_session_id: "bu_held".into(),
+        cdp_url: "wss://browser-use.example/held".into(),
+    });
+    drop(backend);
+
+    let backend = FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+        api_key: "fc-key".into(),
+        base_url: server.uri(),
+        ttl_secs: 300,
+        task_id: "task-drop".into(),
+    });
+    *backend.session.lock().await = Some(FirecrawlBrowserSession {
+        bb_session_id: "fc_held".into(),
+        cdp_url: "wss://firecrawl.example/held".into(),
+    });
+    drop(backend);
+
+    server.verify().await;
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 3, "only the 3 held sessions are released");
 }
