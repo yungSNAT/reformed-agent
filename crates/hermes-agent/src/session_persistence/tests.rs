@@ -630,6 +630,47 @@ fn gateway_results_save_only_under_a_session_key() {
 }
 
 #[test]
+fn gateway_results_that_fail_to_save_are_logged() {
+    #[derive(Clone, Default)]
+    struct Log(std::sync::Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Log {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let tmp = tempfile::tempdir().unwrap();
+    // A file where the home folder should be, so the save cannot open its database.
+    let home = tmp.path().join("home");
+    std::fs::write(&home, "not a folder").unwrap();
+    let result = AgentResult {
+        messages: vec![Message::user("heron")],
+        ..AgentResult::default()
+    };
+    let log = Log::default();
+    let writer = log.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .with_writer(move || writer.clone())
+        .with_ansi(false)
+        .finish();
+
+    tracing::subscriber::with_default(subscriber, || {
+        persist_gateway_result(home.to_str(), "chat-42", &result, "m", "telegram");
+    });
+
+    let logged = String::from_utf8(log.0.lock().unwrap().clone()).unwrap();
+    assert!(
+        logged.contains("WARN") && logged.contains("failed to save a telegram session"),
+        "the failed save is logged: {logged:?}"
+    );
+    assert!(!logged.contains("chat-42"), "the session key stays out of the log");
+}
+
+#[test]
 fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
