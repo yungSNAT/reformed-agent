@@ -161,17 +161,6 @@ impl CloudBrowserSession for BrowserbaseBrowserBackend {
     }
 }
 
-impl Drop for BrowserbaseBrowserBackend {
-    fn drop(&mut self) {
-        if let Some(session) = self.session.get_mut().take() {
-            let config = &self.config;
-            release_on_drop(Self::PROVIDER, |client| async move {
-                Self::request_close(&client, config, &session.bb_session_id).await
-            });
-        }
-    }
-}
-
 impl BrowserUseBrowserBackend {
     pub fn new(config: BrowserUseConfig) -> Self {
         Self {
@@ -354,17 +343,6 @@ impl CloudBrowserSession for BrowserUseBrowserBackend {
     }
 }
 
-impl Drop for BrowserUseBrowserBackend {
-    fn drop(&mut self) {
-        if let Some(session) = self.session.get_mut().take() {
-            let config = &self.config;
-            release_on_drop(Self::PROVIDER, |client| async move {
-                Self::request_close(&client, config, &session.bb_session_id).await
-            });
-        }
-    }
-}
-
 impl FirecrawlBrowserBackend {
     pub fn new(config: FirecrawlBrowserConfig) -> Self {
         Self {
@@ -500,16 +478,28 @@ impl CloudBrowserSession for FirecrawlBrowserBackend {
     }
 }
 
-impl Drop for FirecrawlBrowserBackend {
-    fn drop(&mut self) {
-        if let Some(session) = self.session.get_mut().take() {
-            let config = &self.config;
-            release_on_drop(Self::PROVIDER, |client| async move {
-                Self::request_close(&client, config, &session.bb_session_id).await
-            });
+/// Each cloud backend releases the session it holds when dropped; see
+/// [`release_on_drop`].
+macro_rules! release_session_on_drop {
+    ($($backend:ty),+) => {$(
+        impl Drop for $backend {
+            fn drop(&mut self) {
+                if let Some(session) = self.session.get_mut().take() {
+                    let config = &self.config;
+                    release_on_drop(Self::PROVIDER, |client| async move {
+                        Self::request_close(&client, config, &session.bb_session_id).await
+                    });
+                }
+            }
         }
-    }
+    )+};
 }
+
+release_session_on_drop!(
+    BrowserbaseBrowserBackend,
+    BrowserUseBrowserBackend,
+    FirecrawlBrowserBackend
+);
 
 fn browser_use_headers(
     config: &BrowserUseConfig,
