@@ -536,6 +536,10 @@
         let p2 = app
             .persist_session_snapshot(Some("older-2"))
             .expect("persist snapshot 2");
+        // Back-to-back saves can share a modification time, and pruning then
+        // follows directory order, so date them apart.
+        date_snapshot(&p1, 20);
+        date_snapshot(&p2, 10);
         let p3 = app
             .persist_session_snapshot(Some("newest"))
             .expect("persist snapshot 3");

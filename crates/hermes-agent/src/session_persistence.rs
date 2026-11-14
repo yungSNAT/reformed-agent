@@ -44,8 +44,8 @@ pub fn leading_system_prompt_for_persist(messages: &[Message]) -> Option<String>
 
 /// Save a gateway or HTTP API run as session `session_key` under `home` with
 /// [`SessionPersistence::persist_agent_result`]. A blank `home` or
-/// `session_key` saves nothing, and a failed save is ignored: the reply still
-/// goes out.
+/// `session_key` saves nothing. A failed save is logged as a warning and the
+/// reply still goes out.
 pub fn persist_gateway_result(
     home: Option<&str>,
     session_key: &str,
@@ -59,12 +59,15 @@ pub fn persist_gateway_result(
     if session_key.trim().is_empty() {
         return;
     }
-    let _ = SessionPersistence::new(home).persist_agent_result(
+    if let Err(err) = SessionPersistence::new(home).persist_agent_result(
         session_key,
         result,
         Some(model),
         Some(platform),
-    );
+    ) {
+        // The session key can carry a chat or user id, so it stays out of the log.
+        tracing::warn!("failed to save a {} session: {}", platform, err);
+    }
 }
 
 /// Manages session persistence to SQLite and markdown log files.
