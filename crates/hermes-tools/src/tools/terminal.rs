@@ -238,6 +238,7 @@ impl ToolHandler for TerminalHandler {
             ApprovalDecision::RequiresConfirmation => {
                 if let Some(binding) = &self.gateway_approval {
                     crate::gateway_approval::authorise(binding, command, &params)
+                        .await
                         .map_err(ToolError::ExecutionFailed)?;
                 } else {
                     tracing::warn!(

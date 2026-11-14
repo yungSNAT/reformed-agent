@@ -118,9 +118,17 @@ impl hermes_gateway::hooks::HookHandler for CloseSessionBrowser {
     }
 }
 
+/// Platforms whose sender ids the platform itself authenticates, so a command
+/// approval is bound to a person. Elsewhere (webhook, api_server, email, SMS
+/// and the rest) the id is asserted by the client or unverified here, and the
+/// terminal refuses such commands as before; add a platform once its
+/// adapter's sender id is shown to be authenticated.
+const COMMAND_APPROVAL_PLATFORMS: &[&str] =
+    &["telegram", "discord", "slack", "matrix", "mattermost", "signal"];
+
 /// The tools one gateway turn runs in place of the registry's: its session's
-/// browser, and a terminal that asks this turn's user before running a
-/// command that needs confirmation.
+/// browser and, on [`COMMAND_APPROVAL_PLATFORMS`], a terminal that asks this
+/// turn's user before running a command that needs confirmation.
 fn gateway_turn_tool_overrides(
     browsers: &hermes_tools::SessionBrowsers,
     terminal_backend: &Arc<dyn hermes_core::TerminalBackend>,
@@ -128,23 +136,30 @@ fn gateway_turn_tool_overrides(
     ctx: &GatewayRuntimeContext,
 ) -> hermes_tools::ToolOverrides {
     let mut overrides = browsers.tool_overrides(&ctx.session_key);
+    if !COMMAND_APPROVAL_PLATFORMS.contains(&ctx.platform.as_str()) {
+        return overrides;
+    }
     let gateway = gateway.clone();
     let (platform, chat_id, thread_id) = (
         ctx.platform.clone(),
         ctx.chat_id.clone(),
         ctx.thread_id.clone(),
     );
-    let notify: hermes_tools::gateway_approval::Notify = Arc::new(move |text: String| {
+    let notify = hermes_tools::gateway_approval::notify_with(move |text: String| {
         let gateway = gateway.clone();
         let (platform, chat_id, thread_id) = (platform.clone(), chat_id.clone(), thread_id.clone());
-        tokio::spawn(async move {
-            if let Err(err) = gateway
+        async move {
+            match gateway
                 .send_message_threaded(&platform, &chat_id, &text, None, thread_id.as_deref())
                 .await
             {
-                tracing::warn!("Failed to send a command approval request: {}", err);
+                Ok(()) => true,
+                Err(err) => {
+                    tracing::warn!("Failed to send a command approval request: {}", err);
+                    false
+                }
             }
-        });
+        }
     });
     let terminal = hermes_tools::tools::terminal::TerminalHandler::new(terminal_backend.clone())
         .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {

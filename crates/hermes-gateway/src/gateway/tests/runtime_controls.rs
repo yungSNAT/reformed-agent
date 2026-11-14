@@ -1633,24 +1633,30 @@ async fn a_command_needing_confirmation_runs_once_after_its_requester_approves()
     let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
     gw.register_adapter("test", adapter).await;
 
-    // Each turn asks for the same command, as the gateway's agent would on
-    // the retry turn, through a terminal bound to that turn's user.
+    // Each turn asks for the command in `next`, as the gateway's agent would,
+    // through a terminal bound to that turn's user.
     let terminal = Arc::new(RecordingTerminal::default());
     let backend = terminal.clone();
     let prompts = Arc::new(Mutex::new(Vec::new()));
     let shown = prompts.clone();
+    let next = Arc::new(Mutex::new("git reset --hard HEAD~1".to_string()));
+    let command = next.clone();
     gw.set_message_handler_with_context(Arc::new(move |_messages, ctx| {
         let backend = backend.clone();
         let shown = shown.clone();
+        let command = command.lock().unwrap().clone();
         Box::pin(async move {
             let handler = hermes_tools::tools::terminal::TerminalHandler::new(backend)
                 .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {
                     session_key: ctx.session_key.clone(),
                     user_id: ctx.user_id.clone(),
-                    notify: Arc::new(move |text| shown.lock().unwrap().push(text)),
+                    notify: hermes_tools::gateway_approval::notify_with(move |text| {
+                        shown.lock().unwrap().push(text);
+                        async { true }
+                    }),
                 });
             let result = handler
-                .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
+                .execute(serde_json::json!({ "command": command }))
                 .await;
             Ok(match result {
                 Ok(output) => output,
@@ -1746,4 +1752,39 @@ async fn a_command_needing_confirmation_runs_once_after_its_requester_approves()
         last_reply(&sent)
     );
     assert_eq!(terminal.0.lock().unwrap().len(), 1, "a denied command ran");
+
+    // The retry turn asks for something else, so the grant goes unused; it
+    // lapses with that turn and cannot run the approved command later.
+    *next.lock().unwrap() = "git clean -fdx".to_string();
+    gw.route_message(&message("alice", "tidy up"))
+        .await
+        .unwrap();
+    *next.lock().unwrap() = "git reset --hard HEAD~2".to_string();
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    *next.lock().unwrap() = "git clean -fdx".to_string();
+    gw.route_message(&message("alice", "go on")).await.unwrap();
+    assert_eq!(
+        terminal.0.lock().unwrap().len(),
+        1,
+        "an unused grant outlived its retry turn"
+    );
+    assert!(
+        last_reply(&sent).contains("can reply /approve"),
+        "{}",
+        last_reply(&sent)
+    );
+
+    // A reset drops the pending request.
+    gw.route_message(&message("alice", "/new")).await.unwrap();
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("No command is waiting"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(terminal.0.lock().unwrap().len(), 1);
 }

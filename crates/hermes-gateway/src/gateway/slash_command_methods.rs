@@ -238,22 +238,23 @@ impl Gateway {
                     "Only the user who asked for this command can approve or deny it."
                 }
                 Resolution::Resolved if deny => "Denied. The command will not run.",
+                // Nothing is sent first: a failed send must not leave a grant
+                // without the turn that uses or revokes it.
                 Resolution::Resolved => {
-                    self.send_message(
-                        &incoming.platform,
-                        &incoming.chat_id,
-                        "Approved once. Running it now.",
-                        None,
-                    )
-                    .await?;
                     return Ok(SlashCommandOutcome::ForwardToAgent {
                         message: gateway_approval::APPROVED_RETRY_MESSAGE.to_string(),
                     });
                 }
             }
         };
-        self.send_message(&incoming.platform, &incoming.chat_id, reply, None)
-            .await?;
+        self.send_message_threaded(
+            &incoming.platform,
+            &incoming.chat_id,
+            reply,
+            None,
+            Self::reply_thread_id(incoming),
+        )
+        .await?;
         Ok(SlashCommandOutcome::Handled)
     }
 

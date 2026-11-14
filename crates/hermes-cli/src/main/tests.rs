@@ -173,8 +173,43 @@ mod tests {
         assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
     }
 
+    /// A terminal backend that must never be reached.
+    struct UnreachableTerminal;
+
+    #[async_trait::async_trait]
+    impl hermes_core::TerminalBackend for UnreachableTerminal {
+        async fn execute_command(
+            &self,
+            command: &str,
+            _timeout: Option<u64>,
+            _workdir: Option<&str>,
+            _background: bool,
+            _pty: bool,
+        ) -> Result<hermes_core::CommandOutput, hermes_core::AgentError> {
+            panic!("the terminal ran {command}");
+        }
+        async fn read_file(
+            &self,
+            _path: &str,
+            _offset: Option<u64>,
+            _limit: Option<u64>,
+        ) -> Result<String, hermes_core::AgentError> {
+            unreachable!()
+        }
+        async fn write_file(
+            &self,
+            _path: &str,
+            _content: &str,
+        ) -> Result<(), hermes_core::AgentError> {
+            unreachable!()
+        }
+        async fn file_exists(&self, _path: &str) -> Result<bool, hermes_core::AgentError> {
+            unreachable!()
+        }
+    }
+
     #[tokio::test]
-    async fn a_gateway_turns_terminal_asks_that_turns_user() {
+    async fn gateway_turns_ask_for_approval_only_where_the_platform_vouches_for_the_user() {
         use hermes_tools::gateway_approval::{self, Resolution};
 
         let gateway = Arc::new(Gateway::new(
@@ -185,33 +220,37 @@ mod tests {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
         });
-        let terminal_backend = build_terminal_backend(&GatewayConfig::default());
-        let ctx = GatewayRuntimeContext {
-            session_key: "test:cli-turn".into(),
-            platform: "test".into(),
+        let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
+            Arc::new(UnreachableTerminal);
+        let ctx = |platform: &str| GatewayRuntimeContext {
+            session_key: format!("{platform}:cli-turn"),
+            platform: platform.into(),
             chat_id: "cli-turn".into(),
             user_id: "alice".into(),
             ..GatewayRuntimeContext::default()
         };
 
+        // Telegram: the terminal asks. No Telegram adapter is registered, so
+        // the request cannot be sent and nothing is left to approve.
         let overrides =
-            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx);
+            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx("telegram"));
         let err = overrides["terminal"]
             .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
             .await
             .unwrap_err()
             .to_string();
+        assert!(err.contains("could not be sent to the user"), "{err}");
+        assert_eq!(
+            gateway_approval::approve("telegram:cli-turn", "alice"),
+            Resolution::NothingPending
+        );
 
-        assert!(err.contains("can reply /approve"), "{err}");
-        assert_eq!(
-            gateway_approval::approve("test:cli-turn", "bob"),
-            Resolution::NotRequester
-        );
-        assert_eq!(
-            gateway_approval::approve("test:cli-turn", "alice"),
-            Resolution::Resolved
-        );
-        gateway_approval::clear("test:cli-turn");
+        // A webhook's user id is the client's claim: the registry's terminal,
+        // which refuses outright, stays in place.
+        let overrides =
+            gateway_turn_tool_overrides(&browsers, &terminal_backend, &gateway, &ctx("webhook"));
+        assert!(!overrides.contains_key("terminal"));
+        assert!(overrides.contains_key("browser_snapshot"));
     }
 
     #[tokio::test]
