@@ -734,7 +734,10 @@ pub async fn handle_cli_backup(output: Option<String>) -> Result<(), hermes_core
             tar.append_path_with_name(file, archive_path)
                 .map_err(|e| hermes_core::AgentError::Io(format!("Tar external error: {}", e)))?;
         }
-        tar.finish()
+        // Finish the gzip stream explicitly: dropping the encoder ignores a
+        // failed final write and leaves a truncated archive.
+        tar.into_inner()
+            .and_then(flate2::write::GzEncoder::finish)
             .map_err(|e| hermes_core::AgentError::Io(format!("Tar finish error: {}", e)))?;
         Ok::<_, hermes_core::AgentError>(external_files)
     })
