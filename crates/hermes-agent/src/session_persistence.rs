@@ -42,6 +42,31 @@ pub fn leading_system_prompt_for_persist(messages: &[Message]) -> Option<String>
     }
 }
 
+/// Save a gateway or HTTP API run as session `session_key` under `home` with
+/// [`SessionPersistence::persist_agent_result`]. A blank `home` or
+/// `session_key` saves nothing, and a failed save is ignored: the reply still
+/// goes out.
+pub fn persist_gateway_result(
+    home: Option<&str>,
+    session_key: &str,
+    result: &AgentResult,
+    model: &str,
+    platform: &str,
+) {
+    let Some(home) = home.map(str::trim).filter(|h| !h.is_empty()) else {
+        return;
+    };
+    if session_key.trim().is_empty() {
+        return;
+    }
+    let _ = SessionPersistence::new(home).persist_agent_result(
+        session_key,
+        result,
+        Some(model),
+        Some(platform),
+    );
+}
+
 /// Manages session persistence to SQLite and markdown log files.
 pub struct SessionPersistence {
     /// Path to the SQLite database file.

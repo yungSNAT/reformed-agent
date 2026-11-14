@@ -31,7 +31,7 @@ use axum::{Json, Router};
 use chrono::Utc;
 use futures::StreamExt;
 use hermes_agent::agent_loop::ToolRegistry as AgentToolRegistry;
-use hermes_agent::session_persistence::SessionPersistence;
+use hermes_agent::session_persistence::{persist_gateway_result, SessionPersistence};
 use hermes_agent::smart_model_routing::ApiMode;
 use hermes_agent::{
     build_auxiliary_client_with_main_runtime, run_oneshot_with_client, AgentConfig, AgentLoop,
@@ -177,23 +177,13 @@ impl HttpServerState {
                         .run(messages, None)
                         .await
                         .map_err(|e| GatewayError::Platform(e.to_string()))?;
-                    let home = ctx
-                        .home
-                        .as_deref()
-                        .or(config.home_dir.as_deref())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty());
-                    if let Some(h) = home {
-                        if !ctx.session_key.trim().is_empty() {
-                            let sp = SessionPersistence::new(FsPath::new(h));
-                            let _ = sp.persist_agent_result(
-                                &ctx.session_key,
-                                &result,
-                                Some(&effective_model),
-                                Some(ctx.platform.as_str()),
-                            );
-                        }
-                    }
+                    persist_gateway_result(
+                        ctx.home.as_deref().or(config.home_dir.as_deref()),
+                        &ctx.session_key,
+                        &result,
+                        &effective_model,
+                        &ctx.platform,
+                    );
                     Ok(extract_last_assistant_reply(&result.messages))
                 })
             }))
@@ -254,23 +244,13 @@ impl HttpServerState {
                         .run_stream(messages, None, Some(stream_cb))
                         .await
                         .map_err(|e| GatewayError::Platform(e.to_string()))?;
-                    let home = ctx
-                        .home
-                        .as_deref()
-                        .or(config.home_dir.as_deref())
-                        .map(str::trim)
-                        .filter(|s| !s.is_empty());
-                    if let Some(h) = home {
-                        if !ctx.session_key.trim().is_empty() {
-                            let sp = SessionPersistence::new(FsPath::new(h));
-                            let _ = sp.persist_agent_result(
-                                &ctx.session_key,
-                                &result,
-                                Some(&effective_model),
-                                Some(ctx.platform.as_str()),
-                            );
-                        }
-                    }
+                    persist_gateway_result(
+                        ctx.home.as_deref().or(config.home_dir.as_deref()),
+                        &ctx.session_key,
+                        &result,
+                        &effective_model,
+                        &ctx.platform,
+                    );
                     Ok(extract_last_assistant_reply(&result.messages))
                 })
             }))

@@ -11,7 +11,7 @@ use clap::CommandFactory;
 use clap::Parser;
 use clap_complete::{generate, Shell as CompletionShell};
 use hermes_agent::provider_profiles;
-use hermes_agent::session_persistence::SessionPersistence;
+use hermes_agent::session_persistence::{persist_gateway_result, SessionPersistence};
 use hermes_agent::{leading_system_prompt_for_persist, AgentCallbacks, AgentLoop};
 use hermes_auth::{
     exchange_refresh_token, AuthManager, FileTokenStore, OAuth2Endpoints, OAuthCredential,

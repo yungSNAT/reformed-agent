@@ -613,6 +613,23 @@ fn gateway_runs_keep_compressed_turns_searchable_and_the_system_prompt() {
 }
 
 #[test]
+fn gateway_results_save_only_under_a_session_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = format!(" {} ", tmp.path().display());
+    let sp = SessionPersistence::new(tmp.path());
+    let result = AgentResult {
+        messages: vec![Message::user("heron")],
+        ..AgentResult::default()
+    };
+
+    persist_gateway_result(Some(&home), " ", &result, "m", "telegram");
+    assert!(!sp.db_path.exists(), "a blank session key saves nothing");
+
+    persist_gateway_result(Some(&home), "live", &result, "m", "telegram");
+    assert_eq!(sp.load_session("live").unwrap(), result.messages);
+}
+
+#[test]
 fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
