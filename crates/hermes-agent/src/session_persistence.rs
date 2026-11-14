@@ -13,7 +13,7 @@ use std::{
 };
 
 use chrono::{Duration as ChronoDuration, Utc};
-use hermes_core::{AgentError, Message, MessageRole};
+use hermes_core::{AgentError, AgentResult, Message, MessageRole};
 
 // ---------------------------------------------------------------------------
 // SessionPersistence
@@ -40,6 +40,31 @@ pub fn leading_system_prompt_for_persist(messages: &[Message]) -> Option<String>
     } else {
         Some(parts.join("\n\n"))
     }
+}
+
+/// Save a gateway or HTTP API run as session `session_key` under `home` with
+/// [`SessionPersistence::persist_agent_result`]. A blank `home` or
+/// `session_key` saves nothing, and a failed save is ignored: the reply still
+/// goes out.
+pub fn persist_gateway_result(
+    home: Option<&str>,
+    session_key: &str,
+    result: &AgentResult,
+    model: &str,
+    platform: &str,
+) {
+    let Some(home) = home.map(str::trim).filter(|h| !h.is_empty()) else {
+        return;
+    };
+    if session_key.trim().is_empty() {
+        return;
+    }
+    let _ = SessionPersistence::new(home).persist_agent_result(
+        session_key,
+        result,
+        Some(model),
+        Some(platform),
+    );
 }
 
 /// Manages session persistence to SQLite and markdown log files.
@@ -620,29 +645,10 @@ impl SessionPersistence {
     }
 
     /// Create using default home resolution:
-    /// `HERMES_HOME` → `HERMES_AGENT_ULTRA_HOME` → `~/.hermes-agent-ultra`
-    /// with legacy fallback to `~/.hermes`.
+    /// `HERMES_HOME` → `HERMES_AGENT_ULTRA_HOME` → `~/.hermes-agent-ultra`,
+    /// never upstream's `~/.hermes`.
     pub fn default_home() -> Self {
-        if let Ok(home) = std::env::var("HERMES_HOME") {
-            let home = home.trim();
-            if !home.is_empty() {
-                return Self::new(home);
-            }
-        }
-        if let Ok(home) = std::env::var("HERMES_AGENT_ULTRA_HOME") {
-            let home = home.trim();
-            if !home.is_empty() {
-                return Self::new(home);
-            }
-        }
-        let base = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-        let primary = base.join(".hermes-agent-ultra");
-        let legacy = base.join(".hermes");
-        if primary.exists() || !legacy.exists() {
-            Self::new(primary)
-        } else {
-            Self::new(legacy)
-        }
+        Self::new(crate::memory_plugins::default_hermes_home())
     }
 
     pub fn ensure_db(&self) -> Result<(), AgentError> {

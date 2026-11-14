@@ -15,11 +15,7 @@ fn claim_verifier_enabled_runtime() -> bool {
             "0" | "false" | "off" | "no"
         );
     }
-    let hermes_home = std::env::var("HERMES_HOME")
-        .ok()
-        .map(PathBuf::from)
-        .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-        .unwrap_or_else(|| PathBuf::from(".hermes"));
+    let hermes_home = crate::context::resolve_hermes_home(None);
     let path = hermes_home.join("alpha").join("claim_verifier_policy.json");
     let raw = match std::fs::read_to_string(path) {
         Ok(v) => v,

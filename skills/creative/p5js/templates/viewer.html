@@ -25,7 +25,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Generative Art Viewer</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.11.3/p5.min.js" integrity="sha512-I0Pwwz3PPNQkWes+rcSoQqikKFfRmTfGQrcNzZbm8ALaUyJuFdyRinl805shE8xT6iEWsWgvRxdXb3yhQNXKoA==" crossorigin="anonymous"></script>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
@@ -197,7 +197,7 @@
       <button onclick="randomizeSeed()">Random</button>
     </div>
     <div class="seed-jump">
-      <input type="number" id="seed-input" placeholder="Seed #" min="0">
+      <input type="number" id="seed-input" placeholder="Seed #" min="0" aria-label="Seed">
       <button onclick="jumpToSeed()">Go</button>
     </div>
   </div>
@@ -208,19 +208,19 @@
 
     <!-- === REPLACE THESE WITH YOUR PARAMETERS === -->
     <div class="control-group">
-      <label>Count <span class="value" id="count-val">500</span></label>
+      <label for="count">Count <span class="value" id="count-val">500</span></label>
       <input type="range" id="count" min="50" max="2000" step="50" value="500"
              oninput="updateParam('count', +this.value)">
     </div>
 
     <div class="control-group">
-      <label>Scale <span class="value" id="scale-val">0.005</span></label>
+      <label for="scale">Scale <span class="value" id="scale-val">0.005</span></label>
       <input type="range" id="scale" min="0.001" max="0.02" step="0.001" value="0.005"
              oninput="updateParam('scale', +this.value)">
     </div>
 
     <div class="control-group">
-      <label>Speed <span class="value" id="speed-val">2.0</span></label>
+      <label for="speed">Speed <span class="value" id="speed-val">2.0</span></label>
       <input type="range" id="speed" min="0.5" max="5" step="0.1" value="2.0"
              oninput="updateParam('speed', +this.value)">
     </div>
@@ -232,12 +232,12 @@
   <div>
     <div class="section-title">Colors</div>
     <div class="control-group">
-      <label>Background</label>
+      <label for="bg-color">Background</label>
       <input type="color" id="bg-color" value="#0a0a14"
              oninput="updateParam('bgColor', this.value)">
     </div>
     <div class="control-group">
-      <label>Primary</label>
+      <label for="primary-color">Primary</label>
       <input type="color" id="primary-color" value="#6a9bcc"
              oninput="updateParam('primaryColor', this.value)">
     </div>

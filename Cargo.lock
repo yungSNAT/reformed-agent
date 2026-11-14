@@ -1836,8 +1836,8 @@ version = "0.22.0"
 dependencies = [
  "async-trait",
  "chrono",
- "dirs",
  "futures",
+ "hermes-config",
  "hermes-core",
  "minijinja",
  "regex",
@@ -1987,6 +1987,7 @@ dependencies = [
  "base64",
  "bytes",
  "chrono",
+ "dirs",
  "futures",
  "hermes-config",
  "hermes-core",

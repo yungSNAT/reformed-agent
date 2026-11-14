@@ -255,6 +255,93 @@
     }
 
     #[test]
+    fn default_state_paths_use_the_own_home_not_upstreams() {
+        struct DummyProvider;
+        #[async_trait::async_trait]
+        impl LlmProvider for DummyProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("dummy"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let _guard = env_test_lock();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let upstream = tmp.path().join(".hermes");
+        std::fs::create_dir_all(upstream.join("memories")).expect("upstream memories");
+        std::fs::write(upstream.join("memories").join("MEMORY.md"), "upstream fact")
+            .expect("upstream memory");
+        std::fs::create_dir_all(upstream.join("alpha")).expect("upstream alpha");
+        std::fs::write(
+            upstream.join("alpha").join("claim_verifier_policy.json"),
+            r#"{"enabled": false}"#,
+        )
+        .expect("upstream policy");
+        let _home = EnvVarGuard::set("HOME", &tmp.path().to_string_lossy());
+        let _hermes_home = EnvVarGuard::remove("HERMES_HOME");
+        let _ultra_home = EnvVarGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _verifier = EnvVarGuard::remove("HERMES_CLAIM_VERIFIER_ENABLED");
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            Arc::new(DummyProvider),
+        );
+
+        let own = tmp.path().join(".hermes-agent-ultra");
+        let checks = [
+            (
+                "hook spills",
+                agent.hook_context_spill_dir() == own.join("hooks").join("spills"),
+            ),
+            (
+                "auth tokens",
+                agent.auth_tokens_path() == own.join("auth").join("tokens.json"),
+            ),
+            (
+                "runtime ledger",
+                agent.objective_runtime_ledger_path()
+                    == own.join("alpha").join("objective_runtime_ledger.jsonl"),
+            ),
+            (
+                "eval trend",
+                agent.objective_eval_trend_path()
+                    == own.join("alpha").join("objective_eval_trend.json"),
+            ),
+            (
+                "memory snapshot",
+                crate::context::load_builtin_memory_snapshot(None) == (None, None),
+            ),
+            ("claim verifier policy", claim_verifier_enabled_runtime()),
+        ];
+        let wrong: Vec<_> = checks.iter().filter(|(_, ok)| !ok).map(|(name, _)| *name).collect();
+        assert!(wrong.is_empty(), "read or written outside the own home: {wrong:?}");
+    }
+
+    #[test]
     fn max_delegate_depth_resolves_env_then_config_with_floor() {
         let _guard = env_test_lock();
         struct DummyProvider;
@@ -1036,7 +1123,15 @@
             for prefill in ["prefill question", "prefill answer"] {
                 assert!(has(sent, prefill), "the model still sees {prefill:?}");
                 assert!(!has(&result.messages, prefill), "{prefill:?} is not returned");
+                assert!(
+                    !result.compressed_transcripts.iter().any(|t| has(t, prefill)),
+                    "{prefill:?} is not returned as a compressed turn"
+                );
             }
+            assert!(
+                result.compressed_transcripts[0].contains(&history[0]),
+                "the replaced turns are returned"
+            );
             assert!(
                 result.messages.iter().any(|m| m
                     .content
@@ -1051,6 +1146,25 @@
                 .rfind(|m| m.role == MessageRole::User)
                 .and_then(|m| m.content.as_deref());
             assert_eq!(last_user, Some("kingfisher, as typed"));
+        }
+
+        // Once the run is saved, session search does not find the prefill.
+        let store = tempfile::tempdir().expect("tempdir");
+        let sp = crate::session_persistence::SessionPersistence::new(store.path());
+        sp.persist_agent_result("live", &results[0], None, None)
+            .expect("persist");
+        let conn = rusqlite::Connection::open(sp.db_path()).expect("open db");
+        let hits = |phrase: &str| -> i64 {
+            conn.query_row(
+                "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+                [format!("\"{phrase}\"")],
+                |row| row.get(0),
+            )
+            .expect("search")
+        };
+        assert!(hits("heron question") > 0, "the replaced turns are found");
+        for prefill in ["prefill question", "prefill answer"] {
+            assert_eq!(hits(prefill), 0, "session search finds {prefill:?}");
         }
     }
 

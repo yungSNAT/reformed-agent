@@ -411,11 +411,11 @@ def main(argv: list[str] | None = None) -> int:
         with wf_path.open() as f:
             payload = json.load(f)
         workflow = unwrap_workflow(payload)
-    except ValueError as e:
-        emit_json({"error": str(e)})
-        return 1
     except json.JSONDecodeError as e:
         emit_json({"error": f"Invalid JSON: {e}"})
+        return 1
+    except ValueError as e:
+        emit_json({"error": str(e)})
         return 1
 
     try:

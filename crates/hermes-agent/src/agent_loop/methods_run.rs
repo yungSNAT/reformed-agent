@@ -74,7 +74,7 @@ impl AgentLoop {
         if prefill_range.is_some() {
             // Compression must not summarise or move the prefill, which is
             // dropped by index before the history is returned.
-            ctx.protect_head(prefill_end);
+            ctx.protect_prefill(prefill_start..prefill_end);
         }
 
         // Add initial messages

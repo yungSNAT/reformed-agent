@@ -544,6 +544,7 @@ fn compressed_turns_stay_searchable_and_resume_follows_the_session() {
         &after,
         Some("m"),
         None,
+        None,
     )
     .unwrap();
 
@@ -580,13 +581,62 @@ fn compressed_turns_stay_searchable_and_resume_follows_the_session() {
 }
 
 #[test]
+fn gateway_runs_keep_compressed_turns_searchable_and_the_system_prompt() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let result = AgentResult {
+        messages: vec![
+            Message::system("be brief"),
+            Message::user("[Conversation summary] a heron"),
+            Message::user("and the kingfisher"),
+        ],
+        compressed_transcripts: vec![vec![
+            Message::system("be brief"),
+            Message::user("where did the heron nest"),
+            Message::assistant("under the willow bridge"),
+        ]],
+        ..AgentResult::default()
+    };
+
+    sp.persist_agent_result("live", &result, Some("m"), Some("telegram"))
+        .unwrap();
+
+    let hits = fts_hit_sessions(&sp, "willow");
+    assert_eq!(hits.len(), 1, "the replaced turn stays indexed");
+    assert_ne!(hits[0], "live");
+    assert_eq!(sp.resolve_resume_session_id(&hits[0]).unwrap(), "live");
+    assert_eq!(sp.load_session("live").unwrap().len(), 3);
+    assert_eq!(
+        sp.get_system_prompt("live").unwrap().as_deref(),
+        Some("be brief")
+    );
+}
+
+#[test]
+fn gateway_results_save_only_under_a_session_key() {
+    let tmp = tempfile::tempdir().unwrap();
+    let home = format!(" {} ", tmp.path().display());
+    let sp = SessionPersistence::new(tmp.path());
+    let result = AgentResult {
+        messages: vec![Message::user("heron")],
+        ..AgentResult::default()
+    };
+
+    persist_gateway_result(Some(&home), " ", &result, "m", "telegram");
+    assert!(!sp.db_path.exists(), "a blank session key saves nothing");
+
+    persist_gateway_result(Some(&home), "live", &result, "m", "telegram");
+    assert_eq!(sp.load_session("live").unwrap(), result.messages);
+}
+
+#[test]
 fn pruning_keeps_compressed_turns_whilst_their_session_is_active() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
     let first = vec![Message::user("heron"), Message::assistant("willow")];
     let second = vec![Message::system("summary one"), Message::user("kingfisher")];
     let after = vec![Message::system("summary two"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None, None)
         .unwrap();
     let older = fts_hit_sessions(&sp, "willow").remove(0);
     let newer = fts_hit_sessions(&sp, "kingfisher").remove(0);
@@ -619,7 +669,7 @@ fn compressions_in_one_save_chain_oldest_first() {
         Message::assistant("mill"),
     ];
     let after = vec![Message::system("summary two"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[first, second], &after, None, None)
+    sp.persist_session_after_compression("live", &[first, second], &after, None, None, None)
         .unwrap();
 
     let older = fts_hit_sessions(&sp, "willow").remove(0);
@@ -647,7 +697,7 @@ fn failed_compressed_save_keeps_the_previous_session() {
     .unwrap();
     let replaced = vec![Message::user("heron"), Message::assistant("boom")];
     let after = vec![Message::system("summary"), Message::user("otter")];
-    sp.persist_session_after_compression("live", &[replaced], &after, None, None)
+    sp.persist_session_after_compression("live", &[replaced], &after, None, None, None)
         .expect_err("forced insert failure");
     conn.execute_batch("DROP TRIGGER fail_insert").unwrap();
 

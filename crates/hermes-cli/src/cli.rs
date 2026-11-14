@@ -211,7 +211,7 @@ pub enum CliCommand {
     /// Generate shell completion scripts.
     Completion(CompletionArgs),
 
-    /// Uninstall helper (removes ~/.hermes by default).
+    /// Uninstall helper (removes this agent's home: ~/.hermes-agent-ultra unless HERMES_HOME is set).
     Uninstall(UninstallArgs),
 
     /// Lumio API Gateway login and setup.

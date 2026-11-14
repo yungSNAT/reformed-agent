@@ -104,8 +104,32 @@ fn mapped_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
     ip.to_ipv4_mapped()
 }
 
+/// The IPv4 address an IPv6 address delivers to: IPv4-mapped and
+/// IPv4-compatible (`::ffff:a.b.c.d`, `::a.b.c.d`), NAT64's well-known prefix
+/// (`64:ff9b::/96`, RFC 6052) or 6to4 (`2002::/16`, RFC 3056).
+fn embedded_ipv4(ip: &Ipv6Addr) -> Option<Ipv4Addr> {
+    let segments = ip.segments();
+    match segments {
+        [0x2002, high, low, ..] => Some(Ipv4Addr::from((u32::from(high) << 16) | u32::from(low))),
+        [0x64, 0xff9b, 0, 0, 0, 0, ..] => Some(Ipv4Addr::from(u128::from(*ip) as u32)),
+        _ => ip.to_ipv4(),
+    }
+}
+
+/// NAT64 local-use prefix `64:ff9b:1::/48` (RFC 8215): the operator's
+/// translator picks where the IPv4 address sits, so it cannot be decoded.
+fn is_nat64_local_use(ip: &Ipv6Addr) -> bool {
+    ip.segments()[..3] == [0x64, 0xff9b, 1]
+}
+
+/// Teredo (`2001:0::/32`, RFC 4380) tunnels to IPv4 hosts and is never a
+/// fetch target.
+fn is_teredo(ip: &Ipv6Addr) -> bool {
+    ip.segments()[..2] == [0x2001, 0]
+}
+
 fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
-    if let Some(v4) = mapped_ipv4(ip) {
+    if let Some(v4) = embedded_ipv4(ip) {
         return is_blocked_ipv4(&v4);
     }
 
@@ -115,9 +139,13 @@ fn is_blocked_ipv6(ip: &Ipv6Addr) -> bool {
         || ip.is_multicast()
         || (segments[0] & 0xffc0) == 0xfe80
         || (segments[0] & 0xfe00) == 0xfc00
+        || is_nat64_local_use(ip)
+        || is_teredo(ip)
 }
 
-fn is_blocked_ip(ip: &IpAddr) -> bool {
+/// Private, internal and reserved addresses, including IPv6 forms that carry
+/// one, before `allow_private_urls` applies.
+pub(crate) fn is_blocked_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_blocked_ipv4(v4),
         IpAddr::V6(v6) => is_blocked_ipv6(v6),
@@ -133,10 +161,12 @@ fn is_always_blocked_ip(ip: &IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => is_always_blocked_ipv4(v4),
         IpAddr::V6(v6) => {
-            if let Some(v4) = mapped_ipv4(v6) {
+            if let Some(v4) = embedded_ipv4(v6) {
                 return is_always_blocked_ipv4(&v4);
             }
-            *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
+            is_nat64_local_use(v6)
+                || is_teredo(v6)
+                || *v6 == Ipv6Addr::new(0xfd00, 0x0ec2, 0, 0, 0, 0, 0, 0x0254)
         }
     }
 }
@@ -502,6 +532,56 @@ mod tests {
             "http://[fd00:ec2::254]/latest/",
             resolver_err
         ));
+    }
+
+    #[test]
+    fn ipv6_forms_that_carry_an_ipv4_address_are_judged_by_it() {
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "false");
+        let _no_proxy = without_proxy();
+        for address in [
+            // NAT64 well-known prefix (RFC 6052): 127.0.0.1 and 10.0.0.1.
+            "64:ff9b::7f00:1",
+            "64:ff9b::a00:1",
+            // The NAT64 local-use prefix (RFC 8215) can translate to any address.
+            "64:ff9b:1::a00:1",
+            // 6to4 (RFC 3056): 192.168.1.1.
+            "2002:c0a8:101::1",
+            // IPv4-compatible (deprecated): 127.0.0.1.
+            "::7f00:1",
+            // Teredo (RFC 4380) tunnels to IPv4 hosts and is never a fetch target.
+            "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+        ] {
+            let literal = format!("http://[{address}]/");
+            assert!(
+                !is_safe_url_with_resolver(&literal, resolver_err),
+                "{literal} should be refused"
+            );
+            assert!(
+                !is_safe_url_with_resolver("http://rebind.example/", with_ip(address)),
+                "an AAAA answer of {address} should be refused"
+            );
+        }
+        for literal in [
+            "http://[64:ff9b::a9fe:a9fe]/latest/meta-data/",
+            "http://[2002:a9fe:a9fe::1]/latest/meta-data/",
+            // A local-use NAT64 translator may place 169.254.169.254 in the low 32 bits.
+            "http://[64:ff9b:1::a9fe:a9fe]/latest/meta-data/",
+            // Teredo cannot be judged by an IPv4 address, so it stays out too.
+            "http://[2001:0:4136:e378:8000:63bf:3fff:fdd2]/",
+        ] {
+            assert!(
+                is_always_blocked_url_with_resolver(literal, resolver_err),
+                "{literal} reaches the metadata address"
+            );
+        }
+        // Public IPv4 addresses behind the same prefixes stay reachable.
+        for literal in ["http://[64:ff9b::808:808]/", "http://[2002:808:808::1]/"] {
+            assert!(
+                is_safe_url_with_resolver(literal, resolver_err),
+                "{literal} should be allowed"
+            );
+        }
     }
 
     fn ips(values: &[&str]) -> Vec<IpAddr> {

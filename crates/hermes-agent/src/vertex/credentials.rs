@@ -49,8 +49,9 @@ const METADATA_FLAVOR_VALUE: &str = "Google";
 const METADATA_GET_ATTEMPTS: u32 = 5;
 const GCE_PRODUCT_NAME_FILE: &str = "/sys/class/dmi/id/product_name";
 
-/// A short-lived OAuth2 access token. `expires_at` is `None` when the token
-/// endpoint gave no `expires_in`, which google-auth treats as never expiring.
+/// A short-lived OAuth2 access token. `expires_at` is `None`, a token that
+/// never expires, when the token endpoint gave no `expires_in` (as
+/// google-auth treats it) or one too far ahead for `Instant` to represent.
 pub(super) struct AccessToken {
     pub(super) value: String,
     pub(super) expires_at: Option<Instant>,
@@ -544,8 +545,10 @@ fn parse_access_token(body: &Value) -> Result<AccessToken, String> {
         Some(Value::String(s)) => Some(s.trim().parse::<i64>().map_err(|_| invalid_expiry())?),
         Some(_) => return Err(invalid_expiry()),
     };
-    let expires_at =
-        expires_in.map(|secs| Instant::now() + Duration::from_secs(secs.max(0).unsigned_abs()));
+    // An expiry too far ahead for `Instant` is as good as none.
+    let expires_at = expires_in.and_then(|secs| {
+        Instant::now().checked_add(Duration::from_secs(secs.max(0).unsigned_abs()))
+    });
     Ok(AccessToken { value, expires_at })
 }
 

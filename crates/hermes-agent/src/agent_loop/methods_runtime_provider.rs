@@ -472,40 +472,19 @@ impl AgentLoop {
     }
 
     fn auth_tokens_path(&self) -> PathBuf {
-        let hermes_home = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-            .unwrap_or_else(|| PathBuf::from(".hermes"));
+        let hermes_home = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref());
         hermes_home.join("auth").join("tokens.json")
     }
 
     fn objective_runtime_ledger_path(&self) -> PathBuf {
-        let hermes_home = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-            .unwrap_or_else(|| PathBuf::from(".hermes"));
+        let hermes_home = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref());
         hermes_home
             .join("alpha")
             .join("objective_runtime_ledger.jsonl")
     }
 
     fn objective_eval_trend_path(&self) -> PathBuf {
-        let hermes_home = self
-            .config
-            .hermes_home
-            .as_deref()
-            .map(PathBuf::from)
-            .or_else(|| std::env::var("HERMES_HOME").ok().map(PathBuf::from))
-            .or_else(|| dirs::home_dir().map(|h| h.join(".hermes")))
-            .unwrap_or_else(|| PathBuf::from(".hermes"));
+        let hermes_home = crate::context::resolve_hermes_home(self.config.hermes_home.as_deref());
         hermes_home.join("alpha").join("objective_eval_trend.json")
     }
 

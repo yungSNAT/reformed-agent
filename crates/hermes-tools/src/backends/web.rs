@@ -347,7 +347,7 @@ fn ranked_search_results(mut rows: Vec<Value>) -> Vec<Value> {
     rows
 }
 
-fn source_quality_summary(rows: &[Value]) -> Value {
+pub(crate) fn source_quality_summary(rows: &[Value]) -> Value {
     let mut primary = 0usize;
     let mut community = 0usize;
     let mut secondary = 0usize;

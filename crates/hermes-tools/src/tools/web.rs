@@ -137,7 +137,8 @@ impl ToolHandler for WebCrawlHandler {
         let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(20) as usize;
 
         crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
-        self.backend.crawl(url, instructions, depth, limit).await
+        let output = self.backend.crawl(url, instructions, depth, limit).await?;
+        withhold_blocklisted_pages(output)
     }
 
     fn schema(&self) -> ToolSchema {
@@ -211,7 +212,8 @@ impl ToolHandler for WebExtractHandler {
             .unwrap_or(true);
 
         crate::tools::url_safety::ensure_url_fetch_allowed(url).await?;
-        self.backend.extract(url, include_links).await
+        let output = self.backend.extract(url, include_links).await?;
+        withhold_blocklisted_pages(output)
     }
 
     fn schema(&self) -> ToolSchema {
@@ -238,6 +240,109 @@ impl ToolHandler for WebExtractHandler {
             JsonSchema::object(props, vec!["url".into()]),
         )
     }
+}
+
+/// Remote providers follow redirects and crawl links themselves, so only the
+/// seed URL is checked before the call. With the website blocklist on, each
+/// page in `results` that it refuses, or whose URLs it cannot judge, is
+/// replaced by an error entry, as upstream does. The top-level `content` and
+/// `source_quality_summary` that the extract backends copy from `results` are
+/// then recomputed. Output without `results` is a single page (Firecrawl, the
+/// built-in extractor) and is judged the same way as a whole.
+fn withhold_blocklisted_pages(output: String) -> Result<String, ToolError> {
+    let Ok(mut value) = serde_json::from_str::<Value>(&output) else {
+        return Ok(output);
+    };
+    if !value.is_object() {
+        return Ok(output);
+    }
+    let policy = crate::website_policy::load_website_blocklist(None).map_err(|e| {
+        ToolError::ExecutionFailed(format!("Blocked: website blocklist could not be read: {e}"))
+    })?;
+    if !policy.enabled {
+        return Ok(output);
+    }
+    let Some(pages) = value.get_mut("results").and_then(Value::as_array_mut) else {
+        return match withheld_page_error(&value, &policy) {
+            Some(error) => to_json(&error),
+            None => Ok(output),
+        };
+    };
+    let mut kept = Vec::with_capacity(pages.len());
+    let mut withheld = false;
+    for page in pages.iter_mut() {
+        match withheld_page_error(page, &policy) {
+            Some(error) => {
+                *page = error;
+                withheld = true;
+            }
+            None => kept.push(page.clone()),
+        }
+    }
+    if !withheld {
+        return Ok(output);
+    }
+    let first_content = pages
+        .first()
+        .and_then(|page| page.get("content"))
+        .cloned()
+        .unwrap_or_else(|| json!(""));
+    let top = value.as_object_mut().expect("checked to be an object");
+    if top.contains_key("content") {
+        top.insert("content".into(), first_content);
+    }
+    if top.contains_key("source_quality_summary") {
+        top.insert(
+            "source_quality_summary".into(),
+            crate::backends::web::source_quality_summary(&kept),
+        );
+    }
+    to_json(&value)
+}
+
+/// The non-empty URLs a provider page names: its own and, for Firecrawl, the
+/// final and source URLs in its metadata.
+fn page_urls(page: &Value) -> impl Iterator<Item = &str> + '_ {
+    ["/url", "/metadata/url", "/metadata/sourceURL"]
+        .into_iter()
+        .filter_map(|pointer| page.pointer(pointer)?.as_str())
+        .filter(|url| !url.is_empty())
+}
+
+/// The error entry that replaces `page`, or `None` to keep it: a page is
+/// withheld when it names no URL, names one without a host to judge, or names
+/// one the blocklist refuses.
+fn withheld_page_error(
+    page: &Value,
+    policy: &crate::website_policy::WebsiteBlocklistPolicy,
+) -> Option<Value> {
+    if page_urls(page).next().is_none() {
+        return Some(json!({
+            "error": "Withheld: the page has no URL to check against the website blocklist",
+        }));
+    }
+    if let Some(url) = page_urls(page).find(|url| {
+        url::Url::parse(url)
+            .ok()
+            .and_then(|parsed| parsed.host_str().map(str::is_empty))
+            .unwrap_or(true)
+    }) {
+        return Some(json!({
+            "url": url,
+            "error": format!("Withheld: '{url}' has no host to check against the website blocklist"),
+        }));
+    }
+    let block = page_urls(page)
+        .find_map(|url| crate::website_policy::check_website_access_with_policy(url, policy))?;
+    Some(json!({
+        "url": block.url,
+        "error": format!("Blocked: '{}' matches website blocklist rule '{}'", block.url, block.rule),
+    }))
+}
+
+fn to_json(value: &Value) -> Result<String, ToolError> {
+    serde_json::to_string_pretty(value)
+        .map_err(|e| ToolError::ExecutionFailed(format!("Serialization error: {e}")))
 }
 
 #[cfg(test)]
@@ -436,6 +541,167 @@ mod tests {
             !called.load(std::sync::atomic::Ordering::SeqCst),
             "no backend may run for a refused URL"
         );
+    }
+
+    /// A remote provider that followed a redirect or crawled a link onto a
+    /// blocklisted site, in the shape the Tavily, Exa and Parallel extract
+    /// backends return: the first page's text and a quality count are copied
+    /// to the top level.
+    struct ProviderPagesBackend;
+    const PROVIDER_PAGES: &str = r#"{
+        "url": "https://1.1.1.1/",
+        "content": "blocklisted page",
+        "results": [
+            {"url": "https://blocked.example/landing", "content": "blocklisted page", "source_quality": "primary"},
+            {"url": "https://1.1.1.1/docs", "content": "allowed page", "source_quality": "secondary"},
+            {"content": "page without a url", "source_quality": "community"}
+        ],
+        "provider": "tavily",
+        "source_quality_summary": {"primary": 1, "community": 1, "secondary": 1}
+    }"#;
+    #[async_trait]
+    impl WebExtractBackend for ProviderPagesBackend {
+        async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
+            Ok(PROVIDER_PAGES.into())
+        }
+    }
+    #[async_trait]
+    impl WebCrawlBackend for ProviderPagesBackend {
+        async fn crawl(
+            &self,
+            _url: &str,
+            _instructions: Option<&str>,
+            _depth: &str,
+            _limit: usize,
+        ) -> Result<String, ToolError> {
+            Ok(PROVIDER_PAGES.into())
+        }
+    }
+
+    #[tokio::test]
+    async fn provider_pages_on_blocklisted_sites_are_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        let seed = json!({"url": "https://1.1.1.1/"});
+        let outputs = [
+            WebExtractHandler::new(Box::new(ProviderPagesBackend))
+                .execute(seed.clone())
+                .await
+                .expect("extract"),
+            WebCrawlHandler::new(Box::new(ProviderPagesBackend))
+                .execute(seed)
+                .await
+                .expect("crawl"),
+        ];
+        for output in outputs {
+            let value: Value = serde_json::from_str(&output).expect("JSON results");
+            let pages = value["results"].as_array().expect("results");
+            assert_eq!(pages[0]["url"], "https://blocked.example/landing");
+            assert!(
+                pages[0]["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("blocked.example")),
+                "{output}"
+            );
+            assert_eq!(pages[1]["content"], "allowed page");
+            assert!(pages[2]["error"].is_string(), "{output}");
+            assert_eq!(value["content"], "", "{output}");
+            assert_eq!(
+                value["source_quality_summary"],
+                json!({"primary": 0, "community": 0, "secondary": 1})
+            );
+            assert!(!output.contains("blocklisted page"), "{output}");
+            assert!(!output.contains("page without a url"), "{output}");
+        }
+    }
+
+    /// Firecrawl's extract output: one page, no `results`, with the final URL
+    /// in `metadata`.
+    struct FirecrawlShapeBackend(String);
+    #[async_trait]
+    impl WebExtractBackend for FirecrawlShapeBackend {
+        async fn extract(&self, _url: &str, _include_links: bool) -> Result<String, ToolError> {
+            Ok(self.0.clone())
+        }
+    }
+
+    #[tokio::test]
+    async fn a_single_page_redirected_onto_a_blocklisted_site_is_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        let seed = json!({"url": "https://1.1.1.1/"});
+        for metadata in [
+            r#"{"url": "https://blocked.example/after-redirect"}"#,
+            r#"{"sourceURL": "https://blocked.example/after-redirect"}"#,
+        ] {
+            let page = format!(
+                r#"{{"content": "redirected page", "metadata": {metadata}, "links": ["https://blocked.example/more"]}}"#
+            );
+            let output = WebExtractHandler::new(Box::new(FirecrawlShapeBackend(page)))
+                .execute(seed.clone())
+                .await
+                .expect("extract");
+            let value: Value = serde_json::from_str(&output).expect("JSON");
+            assert!(
+                value["error"]
+                    .as_str()
+                    .is_some_and(|e| e.contains("blocked.example")),
+                "{output}"
+            );
+            assert!(!output.contains("redirected page"), "{output}");
+        }
+        let allowed =
+            r#"{"content": "allowed page", "metadata": {"sourceURL": "https://1.1.1.1/docs"}}"#;
+        let output = WebExtractHandler::new(Box::new(FirecrawlShapeBackend(allowed.into())))
+            .execute(seed)
+            .await
+            .expect("extract");
+        assert_eq!(output, allowed);
+    }
+
+    #[tokio::test]
+    async fn pages_whose_urls_cannot_be_judged_are_withheld() {
+        let _home = IsolatedHome::new();
+        std::fs::write(
+            hermes_config::config_path(),
+            "security:\n  website_blocklist:\n    enabled: true\n    domains: [blocked.example]\n",
+        )
+        .unwrap();
+        async fn extract(output: &str) -> Result<String, ToolError> {
+            WebExtractHandler::new(Box::new(FirecrawlShapeBackend(output.into())))
+                .execute(json!({"url": "https://1.1.1.1/"}))
+                .await
+        }
+        // A single page that names no URL, or one without a host.
+        for page in [
+            r#"{"content": "unjudged page", "metadata": {}}"#,
+            r#"{"content": "unjudged page", "metadata": {"url": "blocked.example/after-redirect"}}"#,
+        ] {
+            let output = extract(page).await.expect("extract");
+            assert!(!output.contains("unjudged page"), "{output}");
+        }
+        // In `results`, the first page's text stays at the top level only
+        // while that page is kept.
+        let pages = r#"{
+            "content": "allowed page",
+            "results": [
+                {"url": "https://1.1.1.1/docs", "content": "allowed page"},
+                {"url": "blocked.example/landing", "content": "unjudged page"}
+            ]
+        }"#;
+        let output = extract(pages).await.expect("extract");
+        let value: Value = serde_json::from_str(&output).expect("JSON");
+        assert_eq!(value["content"], "allowed page", "{output}");
+        assert!(value["results"][1]["error"].is_string(), "{output}");
+        assert!(!output.contains("unjudged page"), "{output}");
     }
 
     #[tokio::test]

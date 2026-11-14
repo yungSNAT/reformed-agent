@@ -6,6 +6,7 @@
 
 pub mod byterover;
 mod config_io;
+pub(crate) use config_io::default_hermes_home;
 pub mod contextlattice;
 pub mod hindsight;
 pub mod holographic;

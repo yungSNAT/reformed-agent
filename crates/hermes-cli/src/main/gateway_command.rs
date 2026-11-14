@@ -447,26 +447,13 @@ async fn run_gateway(
                             .run(messages, Some(tool_schemas))
                             .await
                             .map_err(|e| hermes_gateway::GatewayError::Platform(e.to_string()))?;
-                        let home = ctx
-                            .home
-                            .as_deref()
-                            .or(config.home_dir.as_deref())
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty());
-                        if let Some(h) = home {
-                            if !ctx.session_key.trim().is_empty() {
-                                let sp = SessionPersistence::new(Path::new(h));
-                                let sys = leading_system_prompt_for_persist(&result.messages);
-                                let _ = sp.persist_session(
-                                    &ctx.session_key,
-                                    &result.messages,
-                                    Some(&effective_model),
-                                    Some(ctx.platform.as_str()),
-                                    None,
-                                    sys.as_deref(),
-                                );
-                            }
-                        }
+                        persist_gateway_result(
+                            ctx.home.as_deref().or(config.home_dir.as_deref()),
+                            &ctx.session_key,
+                            &result,
+                            &effective_model,
+                            &ctx.platform,
+                        );
                         Ok(extract_last_assistant_reply(&result.messages))
                     })
                 }))
@@ -775,26 +762,13 @@ async fn run_gateway(
                             .run_stream(messages, Some(tool_schemas), Some(stream_cb))
                             .await
                             .map_err(|e| hermes_gateway::GatewayError::Platform(e.to_string()))?;
-                        let home = ctx
-                            .home
-                            .as_deref()
-                            .or(config.home_dir.as_deref())
-                            .map(str::trim)
-                            .filter(|s| !s.is_empty());
-                        if let Some(h) = home {
-                            if !ctx.session_key.trim().is_empty() {
-                                let sp = SessionPersistence::new(Path::new(h));
-                                let sys = leading_system_prompt_for_persist(&result.messages);
-                                let _ = sp.persist_session(
-                                    &ctx.session_key,
-                                    &result.messages,
-                                    Some(&effective_model),
-                                    Some(ctx.platform.as_str()),
-                                    None,
-                                    sys.as_deref(),
-                                );
-                            }
-                        }
+                        persist_gateway_result(
+                            ctx.home.as_deref().or(config.home_dir.as_deref()),
+                            &ctx.session_key,
+                            &result,
+                            &effective_model,
+                            &ctx.platform,
+                        );
                         Ok(extract_last_assistant_reply(&result.messages))
                     })
                 }))
