@@ -5,7 +5,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::tools::file::{PatchBackend, SearchBackend};
+use crate::tools::file::{file_edit_lock, PatchBackend, SearchBackend};
 use hermes_core::ToolError;
 
 // ---------------------------------------------------------------------------
@@ -461,6 +461,8 @@ impl PatchBackend for LocalPatchBackend {
         hermes_config::tool_guard::check_write(std::path::Path::new(path))
             .await
             .map_err(ToolError::ExecutionFailed)?;
+        let edit_lock = file_edit_lock(std::path::Path::new(path)).await;
+        let _turn = edit_lock.lock().await;
         let content = tokio::fs::read_to_string(path)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
@@ -1205,5 +1207,44 @@ mod tests {
             .expect_err("identical strings should fail");
         assert!(err.to_string().contains("identical"));
         assert_eq!(std::fs::read_to_string(path).unwrap(), "abc");
+    }
+
+    /// Tool calls in one batch run in parallel, so patches to one file must
+    /// not overwrite each other.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_patches_on_one_file_all_apply() {
+        const EDITS: usize = 24;
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("many.txt");
+        let lines: String = (0..EDITS).map(|i| format!("line {i};\n")).collect();
+        std::fs::write(&file, lines).unwrap();
+        // Half the patches name the file through a symlinked directory.
+        #[cfg(unix)]
+        let other_spelling = {
+            std::os::unix::fs::symlink(tmp.path(), tmp.path().join("link")).unwrap();
+            tmp.path().join("link").join("many.txt")
+        };
+        #[cfg(not(unix))]
+        let other_spelling = file.clone();
+
+        let mut patches = tokio::task::JoinSet::new();
+        for i in 0..EDITS {
+            let path = if i % 2 == 0 { &file } else { &other_spelling };
+            let path = path.to_str().unwrap().to_owned();
+            patches.spawn(async move {
+                LocalPatchBackend::new()
+                    .patch_file(&path, &format!("line {i};"), &format!("edited {i};"), false)
+                    .await
+            });
+        }
+        while let Some(result) = patches.join_next().await {
+            result.unwrap().unwrap();
+        }
+
+        let content = std::fs::read_to_string(&file).unwrap();
+        let lost: Vec<usize> = (0..EDITS)
+            .filter(|i| !content.contains(&format!("edited {i};")))
+            .collect();
+        assert!(lost.is_empty(), "patches lost: {lost:?}\n{content}");
     }
 }

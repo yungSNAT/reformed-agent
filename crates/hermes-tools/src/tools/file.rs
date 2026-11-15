@@ -6,8 +6,9 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, TerminalBackend, ToolError, ToolHandler, ToolSchema};
 
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use crate::credential_guard::CredentialGuard;
 
@@ -187,6 +188,44 @@ pub fn resolve_tool_path(
     clean_path(base.join(expanded))
 }
 
+/// The lock `write_file`, `patch` and `hash_edit` hold on a file, shared by
+/// every path that resolves to it. Tool calls in one batch run in parallel, and
+/// an edit reads, changes and writes the whole file, so calls on one file take
+/// turns. Locks no call holds are dropped as others are handed out. A file not
+/// yet created is keyed by its nearest existing folder's real path, so it keeps
+/// its lock once it exists; a symlink to it is keyed as the file it names.
+pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    // Follow a dangling symlink to the file a write through it creates (40
+    // links at most, as the kernel allows).
+    let mut named = path.to_path_buf();
+    for _ in 0..40 {
+        if tokio::fs::metadata(&named).await.is_ok() {
+            break;
+        }
+        let Ok(target) = tokio::fs::read_link(&named).await else {
+            break;
+        };
+        named = named.parent().unwrap_or(Path::new("")).join(target);
+    }
+    let mut file = named.clone();
+    for existing in named.ancestors() {
+        if let Ok(real) = tokio::fs::canonicalize(existing).await {
+            let missing = named.strip_prefix(existing).unwrap_or(Path::new(""));
+            file = if missing.as_os_str().is_empty() {
+                real
+            } else {
+                real.join(missing)
+            };
+            break;
+        }
+    }
+    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    Arc::clone(locks.entry(file).or_default())
+}
+
 pub fn content_looks_like_internal_read_status(content: &str) -> bool {
     if !content.contains(READ_DEDUP_STATUS_MESSAGE) {
         return false;
@@ -312,6 +351,8 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
+        let edit_lock = file_edit_lock(Path::new(path)).await;
+        let _turn = edit_lock.lock().await;
         self.backend
             .write_file(path, content)
             .await
@@ -884,6 +925,149 @@ mod tests {
         assert_eq!(
             resolve_tool_path(absolute.to_str().unwrap(), Some(&start), Some(&live)),
             absolute
+        );
+    }
+
+    /// Writes files the way the local terminal backend does.
+    struct DiskBackend;
+    #[async_trait]
+    impl TerminalBackend for DiskBackend {
+        async fn execute_command(
+            &self,
+            _cmd: &str,
+            _timeout: Option<u64>,
+            _workdir: Option<&str>,
+            _bg: bool,
+            _pty: bool,
+        ) -> Result<CommandOutput, AgentError> {
+            unreachable!("file tools run no commands")
+        }
+        async fn read_file(
+            &self,
+            path: &str,
+            _offset: Option<u64>,
+            _limit: Option<u64>,
+        ) -> Result<String, AgentError> {
+            tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| AgentError::Io(e.to_string()))
+        }
+        async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
+            tokio::fs::write(path, content)
+                .await
+                .map_err(|e| AgentError::Io(e.to_string()))
+        }
+        async fn file_exists(&self, path: &str) -> Result<bool, AgentError> {
+            Ok(Path::new(path).exists())
+        }
+    }
+
+    /// A patch that read the file before a parallel write must not put the
+    /// old content back over the write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn write_file_racing_a_patch_is_not_lost() {
+        const FILES: usize = 48;
+        let tmp = tempfile::tempdir().unwrap();
+        let write = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
+        let patch = Arc::new(PatchHandler::new(Arc::new(
+            crate::backends::file::LocalPatchBackend::new(),
+        )));
+        let mut calls = tokio::task::JoinSet::new();
+        for i in 0..FILES {
+            let path = tmp.path().join(format!("{i}.txt"));
+            std::fs::write(&path, "old line;\nkeep A\n").unwrap();
+            let path = path.to_str().unwrap().to_owned();
+            let params = json!({"path": path, "old_string": "old line;", "new_string": "patched;"});
+            let patch = patch.clone();
+            calls.spawn(async move {
+                patch.execute(params).await.unwrap();
+            });
+            // The write keeps the patched line, so in either order the patch
+            // applies and the write's second line survives.
+            let params = json!({"path": path, "content": "old line;\nkeep B\n"});
+            let write = write.clone();
+            calls.spawn(async move {
+                write.execute(params).await.unwrap();
+            });
+        }
+        while let Some(result) = calls.join_next().await {
+            result.unwrap();
+        }
+
+        let lost: Vec<usize> = (0..FILES)
+            .filter(|i| {
+                !std::fs::read_to_string(tmp.path().join(format!("{i}.txt")))
+                    .unwrap()
+                    .ends_with("keep B\n")
+            })
+            .collect();
+        assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
+    }
+
+    /// write_file waits whilst another edit holds the file, so it cannot land
+    /// between a patch's read and write.
+    #[tokio::test]
+    async fn write_file_waits_for_the_files_edit_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        let write = WriteFileHandler::new(Arc::new(DiskBackend));
+        let params = json!({"path": path.to_str().unwrap(), "content": "after\n"});
+        let edit_lock = file_edit_lock(&path).await;
+        let turn = edit_lock.lock().await;
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            write.execute(params.clone()),
+        )
+        .await;
+        assert!(
+            waited.is_err(),
+            "write_file ran whilst an edit held the file"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "before\n");
+        drop(turn);
+        write.execute(params).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    }
+
+    /// A file created through a symlinked folder keeps the lock it had before
+    /// it existed, so a call that names it by its real path takes turns with it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_new_file_keeps_its_lock_once_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("link")).unwrap();
+        let before = file_edit_lock(&tmp.path().join("link").join("new.txt")).await;
+        std::fs::write(real.join("new.txt"), "x").unwrap();
+        let after = file_edit_lock(&real.join("new.txt")).await;
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "creating the file changed its lock"
+        );
+    }
+
+    /// A symlink to a file not yet created shares the lock of that file, as
+    /// writing through the symlink creates it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dangling_symlink_shares_its_targets_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let alias = tmp.path().join("alias.txt");
+        let target = tmp.path().join("target.txt");
+        std::os::unix::fs::symlink("target.txt", &alias).unwrap();
+        let through_alias = file_edit_lock(&alias).await;
+        let direct = file_edit_lock(&target).await;
+        assert!(
+            Arc::ptr_eq(&through_alias, &direct),
+            "a symlink and the file it will create got different locks"
+        );
+        std::fs::write(&target, "x").unwrap();
+        let after = file_edit_lock(&alias).await;
+        assert!(
+            Arc::ptr_eq(&through_alias, &after),
+            "creating the file changed its lock"
         );
     }
 }
