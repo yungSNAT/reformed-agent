@@ -449,19 +449,7 @@ fn unapplied_wal_changes_are_refused_and_the_hermes_home_left_as_it_was() {
         if shared_memory {
             fs::write(from.join("state.db-shm"), b"").unwrap();
         }
-        let listing = || {
-            let mut entries: Vec<(String, u64)> = fs::read_dir(&from)
-                .unwrap()
-                .map(|entry| {
-                    let entry = entry.unwrap();
-                    let name = entry.file_name().to_string_lossy().into_owned();
-                    (name, entry.metadata().unwrap().len())
-                })
-                .collect();
-            entries.sort();
-            entries
-        };
-        let before = listing();
+        let before = tree(&from);
 
         let report = run(&from, &root.path().join("reformed"), false, false);
 
@@ -471,7 +459,7 @@ fn unapplied_wal_changes_are_refused_and_the_hermes_home_left_as_it_was() {
             text.contains("unapplied changes are in state.db-wal"),
             "{text}"
         );
-        assert_eq!(listing(), before, "shared memory: {shared_memory}");
+        assert_eq!(tree(&from), before, "shared memory: {shared_memory}");
     }
 }
 
@@ -674,12 +662,27 @@ fn cron_schedules_convert_to_the_same_instants_in_utc() {
         (
             json!({"kind": "interval", "minutes": 1440}),
             json!({"created_at": "2026-11-16T06:30:00.123456+00:00"}),
+            "1 30 6 * * *",
+        ),
+        (
+            json!({"kind": "interval", "minutes": 30}),
+            json!({"next_run_at": "2026-11-15T20:37:59.5+11:00"}),
+            "0 8,38 * * * *",
+        ),
+        (
+            json!({"kind": "interval", "minutes": 1440}),
+            json!({"created_at": "2026-11-16T06:30:00+00:00"}),
             "0 30 6 * * *",
         ),
         (
             json!({"kind": "once", "run_at": "2099-12-01T09:30:05+11:00"}),
             json!({}),
             "5 30 22 30 11 * 2099",
+        ),
+        (
+            json!({"kind": "once", "run_at": "2098-12-31T23:59:59.000001+00:00"}),
+            json!({}),
+            "0 0 0 1 1 * 2099",
         ),
     ] {
         let mut job = json!({"id": "j1", "prompt": "p", "schedule": schedule.clone()});
