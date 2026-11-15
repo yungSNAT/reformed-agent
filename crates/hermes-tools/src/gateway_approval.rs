@@ -205,7 +205,7 @@ fn approval_prompt(command: &str, params: &Value) -> Option<String> {
 /// line breaks only, so no invisible, look-alike or ambiguous whitespace
 /// character can hide what runs, and nothing a Markdown code block or
 /// Telegram's MarkdownV2 or HTML mode would interpret (backticks,
-/// backslashes, `&` entities, `<` tags).
+/// backslashes, `&` entities, `<` tags, comments and declarations).
 fn displays_verbatim(text: &str) -> bool {
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
@@ -213,7 +213,8 @@ fn displays_verbatim(text: &str) -> bool {
         let plain = c.is_ascii_graphic() || c == ' ' || c == '\n';
         let markup = matches!(c, '`' | '\\')
             || (c == '&' && next.is_some_and(|n| n == '#' || n.is_ascii_alphabetic()))
-            || (c == '<' && next.is_some_and(|n| n == '/' || n.is_ascii_alphabetic()));
+            || (c == '<'
+                && next.is_some_and(|n| matches!(n, '/' | '!' | '?') || n.is_ascii_alphabetic()));
         if !plain || markup {
             return false;
         }
@@ -443,6 +444,7 @@ mod tests {
             "rm -rf /tmp/a\\ b",
             "echo &lt;x&gt; > /tmp/x",
             "rm -rf /tmp/<b>x</b>",
+            "rm -rf /tmp/x <!-- y -->",
         ] {
             let err = authorise(&alice, disguised, &json!({"command": disguised}))
                 .await

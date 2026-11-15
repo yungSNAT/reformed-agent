@@ -389,6 +389,20 @@ mod tests {
     }
 
     #[test]
+    fn test_telegram_keeps_a_command_approval_request_exact() {
+        let command = "rm -rf ./build_*.tmp && git reset --hard HEAD~1 | tee [x](y) #!";
+        let result = to_telegram_markdown_v2(&format!(
+            "Approval needed to run this command once:\n```\n{command}\n```\nReply /approve to run it once, or /deny."
+        ));
+        assert_eq!(
+            result,
+            format!(
+                "Approval needed to run this command once:\n```\n{command}\n```\nReply /approve to run it once, or /deny\\."
+            )
+        );
+    }
+
+    #[test]
     fn test_slack_mrkdwn_conversion() {
         let result = to_slack_mrkdwn("**bold** and [link](https://example.com)");
         assert!(result.contains("*bold*"));
