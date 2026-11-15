@@ -362,6 +362,11 @@ impl Lexer<'_> {
         }
         let value = String::from_utf8_lossy(&word.value).into_owned();
         if let Some(strip_tabs) = self.delimiter.take() {
+            if self.src[start..self.pos].contains(['$', '`']) {
+                // bash ends the body at the delimiter's text unexpanded,
+                // which `value` does not hold.
+                self.opaque();
+            }
             self.pending.push(HereDoc {
                 delimiter: value.clone(),
                 literal: word.quoted,
@@ -380,9 +385,12 @@ impl Lexer<'_> {
 
     /// `\` outside quotes (or, with `in_double`, inside double quotes).
     fn escape(&mut self, word: &mut Builder, in_double: bool) {
+        if self.peek_at(1) == Some(b'\n') {
+            self.pos += 2;
+            return;
+        }
         word.quoted = true;
         match self.peek_at(1) {
-            Some(b'\n') => self.pos += 2,
             Some(b'`' | b'$' | b'\\') if self.backticks > 0 => {
                 // bash removes these backslashes before it parses a backtick
                 // substitution, so `\$(` and `` \` `` there run commands.

@@ -387,9 +387,10 @@ impl Walk<'_> {
     fn command_word(&mut self, word: &Word) {
         let text = self.text;
         let raw = &text[word.start..word.end];
+        let joined = raw.replace("\\\n", "");
         let list = self.list();
         let piped = list.piped();
-        let reserved = if word.quoted { "" } else { raw };
+        let reserved = if word.quoted { "" } else { joined.as_str() };
         match reserved {
             "{" | "if" | "while" | "until" | "then" | "do" | "else" | "elif" | "!" | "coproc" => {
                 if matches!(reserved, "{" | "if" | "while" | "until") {
@@ -415,7 +416,7 @@ impl Walk<'_> {
             }
             _ => {}
         }
-        if is_assignment(raw) {
+        if is_assignment(&joined) {
             return;
         }
         let arith = list.arith;
@@ -426,7 +427,7 @@ impl Walk<'_> {
             }
             return;
         }
-        let name = CommandName::new(raw);
+        let name = CommandName::new(raw, &word.value);
         if let Some(&(launcher, short, long)) = LAUNCHERS.iter().find(|(l, _, _)| name.is(&[*l])) {
             list.command.state = State::Launcher(Launcher {
                 name: launcher,
@@ -486,15 +487,16 @@ impl Walk<'_> {
 
     /// `env -S` text, which env splits into a command and its arguments: in
     /// a piped position, any word in it that names a shell or `su`, or text
-    /// computed at run time, is a sink. env runs programs, not builtins.
+    /// computed at run time (env expands `${NAME}` itself), is a sink. env
+    /// runs programs, not builtins.
     fn split_string(&mut self, text: &str, computed: bool) {
         let names_sink = || {
             text.split_whitespace().any(|word| {
-                let name = CommandName::new(word);
+                let name = CommandName::new(word, word);
                 name.is(PIPE_SHELL_NAMES) || name.is(&["su"])
             })
         };
-        if self.list().command.piped && (computed || names_sink()) {
+        if self.list().command.piped && (computed || text.contains('$') || names_sink()) {
             self.scan.pipes = true;
         }
     }
@@ -646,13 +648,14 @@ impl Carrier {
     }
 }
 
-/// A command word's name, compared without quoting (`b'a'sh`, `e\val`),
-/// line continuations, a zsh `=` prefix, directory (`/bin/sh`,
-/// `C:\x\bash.exe`), `.exe` suffix or ASCII case.
-struct CommandName([String; 2]);
+/// A command word's name, compared without quoting (`b'a'sh`, `e\val`,
+/// `$'bash'`), line continuations, a zsh `=` prefix, directory (`/bin/sh`,
+/// `C:\x\bash.exe`), `.exe` suffix or ASCII case. `value` is the lexer's
+/// reading of the word; `raw` keeps the backslashes of a Windows path.
+struct CommandName([String; 3]);
 
 impl CommandName {
-    fn new(raw: &str) -> Self {
+    fn new(raw: &str, value: &str) -> Self {
         let joined = raw.replace("\\\n", "");
         let unquoted: String = joined
             .chars()
@@ -671,7 +674,12 @@ impl CommandName {
                 None => base,
             }
         };
-        Self([base(unquoted, &['/', '\\']), base(&unescaped, &['/'])])
+        let value = value.strip_prefix('=').unwrap_or(value);
+        Self([
+            base(unquoted, &['/', '\\']),
+            base(&unescaped, &['/']),
+            base(value, &['/']),
+        ])
     }
 
     fn is(&self, names: &[&str]) -> bool {
