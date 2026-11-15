@@ -746,7 +746,10 @@ mod tests {
     #[test]
     fn generate_token_refuses_an_empty_key() {
         let client = SkillsHubClient::new("");
-        assert!(client.generate_token().is_err());
+        assert!(matches!(
+            client.generate_token(),
+            Err(SkillError::HubError(_))
+        ));
     }
 
     #[test]

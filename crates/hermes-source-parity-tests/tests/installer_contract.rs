@@ -137,6 +137,8 @@ if [ -z "$outdir" ]; then
 fi
 : > "${HERMES_FAKE_TAR_MARK:?}"
 mkdir -p "$outdir"
+# An archive that holds no recognised binary.
+[ -n "${HERMES_FAKE_TAR_EMPTY:-}" ] && exit 0
 cat > "$outdir/hermes-agent-ultra" <<'BIN'
 #!/usr/bin/env sh
 printf '%s\n' "$*" >> "${HERMES_FAKE_BIN_LOG:?}"
@@ -326,6 +328,18 @@ impl InstallerFixture {
         .expect("write fake cosign");
         log
     }
+
+    /// Puts a fake `cargo` on PATH, so a source build is seen without
+    /// building. Returns the file it creates when it runs.
+    fn fake_cargo(&self) -> PathBuf {
+        let mark = self.root.join("cargo-ran");
+        write_executable(
+            &self.tools_dir.join("cargo"),
+            &format!("#!/usr/bin/env sh\n: > '{}'\nexit 0\n", mark.display()),
+        )
+        .expect("write fake cargo");
+        mark
+    }
 }
 
 /// Asserts the installer refused before extracting or installing anything.
@@ -511,16 +525,7 @@ fn required_signature_without_cosign_is_refused() {
 fn required_signature_refuses_the_source_build_fallback() {
     let fixture = InstallerFixture::new("cosign-required-no-archive");
     fixture.fake_cosign(0);
-    // Stands in for cargo, so a fallback build is seen without building.
-    let cargo_mark = fixture.root.join("cargo-ran");
-    write_executable(
-        &fixture.tools_dir.join("cargo"),
-        &format!(
-            "#!/usr/bin/env sh\n: > '{}'\nexit 0\n",
-            cargo_mark.display()
-        ),
-    )
-    .expect("write fake cargo");
+    let cargo_mark = fixture.fake_cargo();
 
     let output = fixture
         .command()
@@ -531,6 +536,37 @@ fn required_signature_refuses_the_source_build_fallback() {
 
     assert_refused(&fixture, &output, "no signed release archive");
     assert!(!cargo_mark.exists(), "{}", output_text(&output));
+}
+
+#[test]
+fn required_signature_refuses_a_verified_archive_without_a_binary() {
+    let fixture = InstallerFixture::new("cosign-required-empty-archive");
+    fixture.fake_cosign(0);
+    let cargo_mark = fixture.fake_cargo();
+
+    let output = fixture
+        .command()
+        .env("HERMES_FAKE_TAR_EMPTY", "1")
+        .env("HERMES_REQUIRE_SIGNATURE", "true")
+        .output()
+        .expect("run installer");
+    let text = output_text(&output);
+
+    // The archive passed its checks and was extracted, but held no binary.
+    assert!(
+        text.contains("Verified the signature on SHA256SUMS."),
+        "{text}"
+    );
+    assert!(fixture.tar_mark.exists(), "{text}");
+    assert!(!output.status.success(), "{text}");
+    assert!(text.contains("Refusing to install:"), "{text}");
+    assert!(text.contains("no signed release archive"), "{text}");
+    assert!(!text.contains("building from source"), "{text}");
+    assert!(!cargo_mark.exists(), "{text}");
+    assert!(
+        !fixture.install_dir.join("hermes-agent-ultra").exists(),
+        "{text}"
+    );
 }
 
 #[test]
