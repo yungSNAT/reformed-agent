@@ -29,6 +29,12 @@ updates:
       interval: "weekly"
       day: "monday"
     open-pull-requests-limit: 5
+    # Wait a week before proposing a new action release, so a compromised or
+    # withdrawn release is usually caught first. Security updates are not
+    # delayed. Version updates are not yet enabled for this repository, so
+    # this takes effect once they are.
+    cooldown:
+      default-days: 7
     labels:
       - "dependencies"
       - "github-actions"

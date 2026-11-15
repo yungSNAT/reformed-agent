@@ -4,6 +4,7 @@
 //! `BasePlatformAdapter` with common fields (token, webhook_url, proxy)
 //! and helper methods shared by all platform adapters.
 
+use std::sync::OnceLock;
 use std::time::Duration;
 
 use reqwest::{Client, ClientBuilder};
@@ -53,6 +54,9 @@ pub struct BasePlatformAdapter {
 
     /// Whether the adapter is currently running.
     pub running: std::sync::atomic::AtomicBool,
+
+    /// Client for media URLs from the agent, built on first use.
+    media_client: OnceLock<Client>,
 }
 
 /// Return a non-reversible token descriptor suitable for logs.
@@ -129,6 +133,12 @@ pub fn platform_http_client_builder() -> ClientBuilder {
         .pool_max_idle_per_host(limits.max_keepalive_connections)
 }
 
+fn build(builder: ClientBuilder) -> Result<Client, GatewayError> {
+    builder
+        .build()
+        .map_err(|e| GatewayError::ConnectionFailed(format!("Failed to build HTTP client: {}", e)))
+}
+
 impl BasePlatformAdapter {
     /// Create a new `BasePlatformAdapter` with the given token.
     pub fn new(token: impl Into<String>) -> Self {
@@ -137,6 +147,7 @@ impl BasePlatformAdapter {
             webhook_url: None,
             proxy: AdapterProxyConfig::default(),
             running: std::sync::atomic::AtomicBool::new(false),
+            media_client: OnceLock::new(),
         }
     }
 
@@ -162,6 +173,25 @@ impl BasePlatformAdapter {
 
     /// Build a `reqwest::Client` configured with proxy settings if any.
     pub fn build_client(&self) -> Result<Client, GatewayError> {
+        build(self.proxied_client_builder()?)
+    }
+
+    /// The client for downloading media URLs from the agent: the adapter's
+    /// proxy settings, and a redirect followed only to a URL that passes the
+    /// shared `url_safety` check. The platform API client follows any
+    /// redirect, so it must not fetch these URLs.
+    pub fn media_client(&self) -> Result<&Client, GatewayError> {
+        if let Some(client) = self.media_client.get() {
+            return Ok(client);
+        }
+        let client = build(
+            self.proxied_client_builder()?
+                .redirect(crate::media::checked_redirects()),
+        )?;
+        Ok(self.media_client.get_or_init(|| client))
+    }
+
+    fn proxied_client_builder(&self) -> Result<ClientBuilder, GatewayError> {
         let mut builder = platform_http_client_builder();
 
         if let Some(ref http_proxy) = self.proxy.http_proxy {
@@ -178,9 +208,7 @@ impl BasePlatformAdapter {
             builder = builder.proxy(proxy);
         }
 
-        builder.build().map_err(|e| {
-            GatewayError::ConnectionFailed(format!("Failed to build HTTP client: {}", e))
-        })
+        Ok(builder)
     }
 
     /// Mark the adapter as running.

@@ -25,6 +25,8 @@ jobs:
         run: rustup toolchain install
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate parity governance artifacts
         run: |
           python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch parity-reference --no-fetch
@@ -112,6 +114,8 @@ jobs:
         run: rustup toolchain install
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cross
         run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
       - name: Cross build hermes
@@ -135,8 +139,17 @@ jobs:
           rustup target add x86_64-apple-darwin
       - name: Cache cargo
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hermes
+        if: matrix.target == 'aarch64-apple-darwin'
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli
+      # The x86_64 leg cross-compiles on an arm64 runner and runs nothing, so a
+      # type check catches its target-specific errors; release.yml builds the
+      # shipped x86_64 binary.
+      - name: Check hermes
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo check --locked --target ${{ matrix.target }} -p hermes-cli
       # macOS temp folders sit behind the /var -> /private/var link, which the
       # own-home refusal must resolve; the Ubuntu job has no such link.
       - name: Linked-home refusal tests
