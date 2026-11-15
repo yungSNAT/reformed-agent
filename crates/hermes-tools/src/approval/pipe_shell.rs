@@ -305,12 +305,16 @@ struct Command {
     output_given: bool,
     /// curl `-O` or `--remote-name`: save under the URL's last segment.
     remote_name: bool,
-    /// The last path segments of the fetch's URLs.
-    urls: Vec<String>,
-    /// A shell without `-c`, `source` or `.`: its arguments may be a script.
+    /// The last path segments of the fetch's URLs; `None` when computed.
+    urls: Vec<Option<String>>,
+    /// A shell without `-c`, `source` or `.`: its first operand may be a script.
     runs_file: bool,
     /// After `--`: every later argument is an operand, not an option.
     operands: bool,
+    /// The next argument is the value of a shell option (`-o pipefail`).
+    option_value: bool,
+    /// The script operand has been read; later arguments are its own.
+    script_read: bool,
     /// That target is a here-string's text.
     here_string: bool,
     /// The command may run a file argument or its stdin as shell code: a
@@ -559,12 +563,22 @@ impl Walk<'_> {
                 }
                 let command = &mut self.list().command;
                 let value = word.value.as_str();
-                if command.runs_file && command.carrier.as_ref().is_none_or(|c| !c.started) {
-                    if value == "--" && !word.computed && !command.operands {
-                        command.operands = true;
+                if command.runs_file
+                    && !command.script_read
+                    && command.carrier.as_ref().is_none_or(|c| !c.started)
+                {
+                    if std::mem::take(&mut command.option_value) {
+                        // The value of the option before it, not the script.
                     } else if command.operands || !value.starts_with(['-', '+']) {
+                        command.script_read = true;
                         command.reads_descriptor |= names_descriptor(&word, false);
                         self.scan.runs |= self.runs_saved(&word);
+                    } else if value == "--" && !word.computed {
+                        command.operands = true;
+                    } else {
+                        // `-o`/`-O` take a value, also at the end of a cluster.
+                        command.option_value = matches!(value, "--rcfile" | "--init-file")
+                            || (!value.starts_with("--") && value.ends_with(['o', 'O']));
                     }
                 }
                 if let Some(carrier) = &mut self.list().command.carrier {
@@ -649,8 +663,15 @@ impl Walk<'_> {
             if let Some((_, rest)) = value.split_once("://") {
                 let path = rest.split(['?', '#']).next().unwrap_or_default();
                 let name = file_name(path.split_once('/').map_or("", |(_, path)| path));
-                if !word.computed && !name.is_empty() {
-                    self.list().command.urls.push(name.to_string());
+                // The query may be computed whilst the file name is written out.
+                let text = self.text;
+                let raw = &text[word.start..word.end];
+                let raw_path = raw.split(['?', '#']).next().unwrap_or(raw);
+                let urls = &mut self.list().command.urls;
+                if word.computed && file_name(raw_path).contains(['$', '`']) {
+                    urls.push(None);
+                } else if !name.is_empty() {
+                    urls.push(Some(name.to_string()));
                 }
             }
             None
@@ -842,7 +863,9 @@ impl Walk<'_> {
             self.scan.sources = true;
         }
         if command.fetch && (command.remote_name || (command.wget && !command.output_given)) {
-            self.scan.saved.names.extend(command.urls.iter().cloned());
+            for name in &command.urls {
+                self.saved_name(name.as_deref());
+            }
         }
         let start = command.start.unwrap_or(0);
         if interpreter && command.reads_descriptor && self.after_fetch(start) {
