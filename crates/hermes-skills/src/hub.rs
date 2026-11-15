@@ -380,12 +380,10 @@ impl SkillsHubClient {
             exp: now + 3600, // 1 hour
         };
 
-        encode(
-            &Header::default(),
-            &claims,
-            &EncodingKey::from_secret(self.api_key.as_bytes()),
-        )
-        .map_err(|e| SkillError::HubError(format!("JWT encoding failed: {}", e)))
+        let key = EncodingKey::from_secret(self.api_key.as_bytes())
+            .map_err(|e| SkillError::HubError(format!("JWT encoding failed: {}", e)))?;
+        encode(&Header::default(), &claims, &key)
+            .map_err(|e| SkillError::HubError(format!("JWT encoding failed: {}", e)))
     }
 
     // -----------------------------------------------------------------------
@@ -743,6 +741,12 @@ mod tests {
         let client = SkillsHubClient::new("test-key-12345");
         let token = client.generate_token().unwrap();
         assert!(!token.is_empty());
+    }
+
+    #[test]
+    fn generate_token_refuses_an_empty_key() {
+        let client = SkillsHubClient::new("");
+        assert!(client.generate_token().is_err());
     }
 
     #[test]

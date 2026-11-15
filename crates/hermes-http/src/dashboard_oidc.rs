@@ -880,6 +880,56 @@ mod tests {
         assert!(claim_allowed(&claims, &cfg));
     }
 
+    /// GHSA-h395-gr6q-cpjc: before jsonwebtoken 10.3, an `nbf` claim of the
+    /// wrong JSON type was treated as absent, so a token not yet valid passed.
+    #[test]
+    fn jwt_verifier_rejects_a_mistyped_not_before_claim() {
+        use aws_lc_rs::rand::SystemRandom;
+        use aws_lc_rs::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+
+        let cfg = test_config();
+        let pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
+                .expect("generate P-256 key");
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
+            .expect("parse P-256 key");
+        // An uncompressed point: 0x04, then x and y.
+        let point = pair.public_key().as_ref();
+        let jwks: JwkSet = serde_json::from_value(json!({
+            "keys": [{
+                "kty": "EC",
+                "crv": "P-256",
+                "x": URL_SAFE_NO_PAD.encode(&point[1..33]),
+                "y": URL_SAFE_NO_PAD.encode(&point[33..65])
+            }]
+        }))
+        .expect("jwks");
+        let key = EncodingKey::from_ec_der(pkcs8.as_ref());
+        let token_with_nbf = |nbf: Value| {
+            encode(
+                &Header::new(Algorithm::ES256),
+                &json!({
+                    "iss": cfg.issuer,
+                    "sub": "user-1",
+                    "aud": cfg.client_id,
+                    "exp": 4_102_444_800_u64,
+                    "nbf": nbf,
+                    "nonce": "nonce-1"
+                }),
+                &key,
+            )
+            .expect("encode")
+        };
+
+        let valid = token_with_nbf(json!(1_000_000_000_u64));
+        verify_id_token_with_jwks(&valid, &jwks, &cfg, Some("nonce-1"))
+            .expect("a token already valid is accepted");
+        let mistyped = token_with_nbf(json!("4102444800"));
+        let err = verify_id_token_with_jwks(&mistyped, &jwks, &cfg, Some("nonce-1"))
+            .expect_err("a string nbf must not be skipped");
+        assert!(err.contains("OIDC token rejected"), "{err}");
+    }
+
     #[test]
     fn jwt_verifier_rejects_symmetric_algorithms() {
         let cfg = test_config();
@@ -892,7 +942,7 @@ mod tests {
                 "exp": 4_102_444_800_u64,
                 "nonce": "nonce-1"
             }),
-            &EncodingKey::from_secret(b"secret"),
+            &EncodingKey::from_secret(b"secret").expect("HMAC key"),
         )
         .expect("encode");
         let jwks: JwkSet = serde_json::from_value(json!({
