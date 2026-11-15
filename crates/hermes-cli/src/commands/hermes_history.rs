@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::fs::{self, File, FileTimes};
 use std::io::{self, BufRead, BufReader, BufWriter, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
 
 use hermes_agent::session_persistence::{ImportedSession, SessionImport, SessionPersistence};
@@ -20,7 +20,7 @@ pub struct HermesHistorySummary {
 }
 
 #[derive(Deserialize)]
-struct ExportSession {
+pub(crate) struct ExportSession {
     id: String,
     started_at: f64,
     ended_at: Option<f64>,
@@ -63,7 +63,7 @@ impl From<ExportToolCall> for ToolCall {
     }
 }
 
-fn safe_session_id(id: &str) -> bool {
+pub(crate) fn safe_session_id(id: &str) -> bool {
     !id.is_empty()
         && id.len() <= 128
         && id
@@ -203,38 +203,31 @@ fn validate_tool_history(messages: &[Message]) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn import_records(
-    input: File,
-    sessions: &Path,
-    store: &SessionImport<'_>,
-) -> Result<HermesHistorySummary, AgentError> {
-    let mut summary = HermesHistorySummary::default();
-    let mut reader = BufReader::new(input);
-    let mut bytes = Vec::new();
-    let mut line = 0;
-    let mut ids = HashSet::new();
-    loop {
-        bytes.clear();
-        let read = reader
-            .by_ref()
-            .take(MAX_RECORD_BYTES + 1)
-            .read_until(b'\n', &mut bytes)
-            .map_err(io_error)?;
-        if read == 0 {
-            break;
+/// Converts Hermes sessions one at a time and, given a target, writes each:
+/// its snapshot under the sessions folder and its rows through the import.
+pub(crate) struct SessionImporter<'a> {
+    target: Option<(&'a Path, &'a SessionImport<'a>)>,
+    ids: HashSet<String>,
+    pub summary: HermesHistorySummary,
+}
+
+impl<'a> SessionImporter<'a> {
+    pub(crate) fn new(target: Option<(&'a Path, &'a SessionImport<'a>)>) -> Self {
+        Self {
+            target,
+            ids: HashSet::new(),
+            summary: HermesHistorySummary::default(),
         }
-        line += 1;
-        let invalid =
-            |reason: &str| AgentError::Config(format!("Hermes export line {line}: {reason}"));
-        if read as u64 > MAX_RECORD_BYTES {
-            return Err(invalid("session exceeds the 64 MiB record limit"));
-        }
-        if bytes.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        let exported: ExportSession =
-            serde_json::from_slice(&bytes).map_err(|_| invalid("invalid session record"))?;
-        if !safe_session_id(&exported.id) || !ids.insert(exported.id.to_ascii_lowercase()) {
+    }
+
+    /// Converts and, with a target, writes one session; `invalid` names the
+    /// record in an error.
+    pub(crate) fn add(
+        &mut self,
+        exported: ExportSession,
+        invalid: &dyn Fn(&str) -> AgentError,
+    ) -> Result<(), AgentError> {
+        if !safe_session_id(&exported.id) || !self.ids.insert(exported.id.to_ascii_lowercase()) {
             return Err(invalid("invalid or duplicate session ID"));
         }
         let created_at =
@@ -273,13 +266,18 @@ fn import_records(
                     messages.push(message);
                     recorded.push(time.map(|(_, text)| text));
                 }
-                None => summary.excluded_rows += 1,
+                None => self.summary.excluded_rows += 1,
             }
         }
         validate_tool_history(&messages).map_err(invalid)?;
         let activity = activity.unwrap_or(exported.started_at);
         let modified = epoch_time(activity).ok_or_else(|| invalid("invalid activity time"))?;
         let updated_at = epoch_text(activity).ok_or_else(|| invalid("invalid activity time"))?;
+        self.summary.sessions += 1;
+        self.summary.messages += messages.len();
+        let Some((sessions, store)) = self.target else {
+            return Ok(());
+        };
         let snapshot = json!({
             "session_info": {
                 "session_id": exported.id,
@@ -321,11 +319,43 @@ fn import_records(
             ended_at: ended_at.as_deref(),
             end_reason: exported.end_reason.as_deref(),
             messages: &messages,
-        })?;
-        summary.sessions += 1;
-        summary.messages += messages.len();
+        })
     }
-    Ok(summary)
+}
+
+fn import_records(
+    input: File,
+    sessions: &Path,
+    store: &SessionImport<'_>,
+) -> Result<HermesHistorySummary, AgentError> {
+    let mut importer = SessionImporter::new(Some((sessions, store)));
+    let mut reader = BufReader::new(input);
+    let mut bytes = Vec::new();
+    let mut line = 0;
+    loop {
+        bytes.clear();
+        let read = reader
+            .by_ref()
+            .take(MAX_RECORD_BYTES + 1)
+            .read_until(b'\n', &mut bytes)
+            .map_err(io_error)?;
+        if read == 0 {
+            break;
+        }
+        line += 1;
+        let invalid =
+            |reason: &str| AgentError::Config(format!("Hermes export line {line}: {reason}"));
+        if read as u64 > MAX_RECORD_BYTES {
+            return Err(invalid("session exceeds the 64 MiB record limit"));
+        }
+        if bytes.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        let exported: ExportSession =
+            serde_json::from_slice(&bytes).map_err(|_| invalid("invalid session record"))?;
+        importer.add(exported, &invalid)?;
+    }
+    Ok(importer.summary)
 }
 
 fn io_error(error: io::Error) -> AgentError {
@@ -333,7 +363,7 @@ fn io_error(error: io::Error) -> AgentError {
 }
 
 #[cfg(windows)]
-fn create_private_profile(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_profile(path: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
     use std::os::windows::fs::OpenOptionsExt;
     use std::os::windows::io::AsRawHandle;
@@ -413,9 +443,39 @@ fn create_private_profile(path: &Path) -> io::Result<()> {
 }
 
 #[cfg(unix)]
-fn create_private_profile(path: &Path) -> io::Result<()> {
+pub(crate) fn create_private_profile(path: &Path) -> io::Result<()> {
     use std::os::unix::fs::DirBuilderExt;
     fs::DirBuilder::new().mode(0o700).create(path)
+}
+
+/// The absolute path a new profile directory will have: its existing parent,
+/// resolved, joined to a name Windows can create.
+pub(crate) fn new_profile_path(profile: &Path) -> io::Result<PathBuf> {
+    let leaf = profile.file_name().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "A new profile directory name is required",
+        )
+    })?;
+    #[cfg(windows)]
+    {
+        let name = leaf.to_string_lossy();
+        if name.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
+            || name.chars().any(char::is_control)
+            || name.ends_with([' ', '.'])
+            || windows_device_name(&name)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Invalid Windows profile directory name",
+            ));
+        }
+    }
+    let parent = profile
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    Ok(fs::canonicalize(parent)?.join(leaf))
 }
 
 /// Convert the export in a fresh profile, publishing the snapshots and session
@@ -430,27 +490,7 @@ pub fn import_hermes_sessions(
         ));
     }
     let input = File::open(export).map_err(io_error)?;
-    let leaf = profile
-        .file_name()
-        .ok_or_else(|| AgentError::Config("A new profile directory name is required".into()))?;
-    #[cfg(windows)]
-    {
-        let name = leaf.to_string_lossy();
-        if name.contains(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
-            || name.chars().any(char::is_control)
-            || name.ends_with([' ', '.'])
-            || windows_device_name(&name)
-        {
-            return Err(AgentError::Config(
-                "Invalid Windows profile directory name".into(),
-            ));
-        }
-    }
-    let parent = profile
-        .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .unwrap_or_else(|| Path::new("."));
-    let profile = fs::canonicalize(parent).map_err(io_error)?.join(leaf);
+    let profile = new_profile_path(profile).map_err(io_error)?;
     create_private_profile(&profile).map_err(io_error)?;
     let result = (|| {
         let stage = tempfile::tempdir_in(&profile).map_err(io_error)?;
