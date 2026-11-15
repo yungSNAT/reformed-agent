@@ -137,7 +137,12 @@ struct List {
     /// The compound depth of the pipe that feeds the current pipeline
     /// element, while one does.
     region: Option<usize>,
-    compound: usize,
+    /// One entry per open compound command: whether a command in it may
+    /// run its stdin as code.
+    compounds: Vec<bool>,
+    /// A command in this list, or in a frame inside it, may run its stdin
+    /// as code.
+    sink_seen: bool,
     /// A command word in this frame or a nested one names `curl`/`wget`.
     ran_fetch: bool,
     /// A here-document frame whose body a shell, `source` or `.` reads as
@@ -153,7 +158,8 @@ impl List {
             arith,
             inherited,
             region: None,
-            compound: 0,
+            compounds: Vec::new(),
+            sink_seen: false,
             ran_fetch: false,
             body_is_code: false,
             command: Command::default(),
@@ -162,6 +168,14 @@ impl List {
 
     fn piped(&self) -> bool {
         self.inherited || self.region.is_some()
+    }
+
+    /// Notes a command that may run its stdin as code.
+    fn saw_sink(&mut self) {
+        self.sink_seen = true;
+        if let Some(open) = self.compounds.last_mut() {
+            *open = true;
+        }
     }
 
     /// Notes where the simple command starts and whether it is piped.
@@ -211,6 +225,10 @@ struct Command {
     interpreter: bool,
     /// A `<(...)` in its words or redirections runs a fetch.
     fetching_file: bool,
+    /// It starts at the end of a compound command (`done`, `}`, `fi`,
+    /// `esac`, a subshell's `)`) holding a command that may run its stdin
+    /// as code, so its redirections give that command code.
+    after_compound: bool,
     /// The last here-string's text, and whether it holds an expansion.
     stdin: Option<(String, bool)>,
     /// Here-documents this command queued.
@@ -263,7 +281,7 @@ impl Scan {
             walk.token(token);
         }
         while let Some(mut list) = walk.lists.pop() {
-            walk.finish(&mut list.command);
+            let _ = walk.finish(&mut list.command);
         }
         walk.scan
     }
@@ -338,11 +356,19 @@ impl Walk<'_> {
             return;
         }
         let mut child = self.lists.pop().expect("checked above");
-        self.finish(&mut child.command);
+        if self.finish(&mut child.command) {
+            child.saw_sink();
+        }
         let parent = self.list();
         parent.ran_fetch |= child.ran_fetch;
         if child.frame == Some(Frame::ProcessIn) && child.ran_fetch {
             parent.command.fetching_file = true;
+        }
+        if child.sink_seen {
+            // A substitution's commands share the stdin of the compound
+            // command around them.
+            parent.saw_sink();
+            parent.command.after_compound |= child.frame == Some(Frame::Subshell);
         }
         if child.frame == Some(Frame::Subshell) {
             // A case pattern's `)` or a subshell: a command may follow.
@@ -370,12 +396,16 @@ impl Walk<'_> {
             }
             Op::Pipe | Op::Terminator => {
                 let mut command = std::mem::take(&mut self.list().command);
-                self.finish(&mut command);
+                let sink = self.finish(&mut command);
                 let after_fetch = self.after_fetch(at);
                 let list = self.list();
+                if sink {
+                    list.saw_sink();
+                }
+                let depth = list.compounds.len();
                 if op == Op::Pipe && after_fetch {
-                    list.region = Some(list.region.map_or(list.compound, |r| r.min(list.compound)));
-                } else if op == Op::Terminator && list.region == Some(list.compound) {
+                    list.region = Some(list.region.map_or(depth, |r| r.min(depth)));
+                } else if op == Op::Terminator && list.region == Some(depth) {
                     list.region = None;
                 }
             }
@@ -416,12 +446,12 @@ impl Walk<'_> {
         match reserved {
             "{" | "if" | "while" | "until" | "then" | "do" | "else" | "elif" | "!" | "coproc" => {
                 if matches!(reserved, "{" | "if" | "while" | "until") {
-                    list.compound += 1;
+                    list.compounds.push(false);
                 }
                 return;
             }
             "for" | "select" | "case" => {
-                list.compound += 1;
+                list.compounds.push(false);
                 list.command.state = State::Arguments;
                 if reserved == "case" && list.frame.is_some() {
                     // Its patterns' `)` would close this frame early.
@@ -430,8 +460,13 @@ impl Walk<'_> {
                 return;
             }
             "}" | "fi" | "done" | "esac" => {
-                list.compound = list.compound.saturating_sub(1);
-                if list.region.is_some_and(|r| r > list.compound) {
+                let sink = list.compounds.pop().unwrap_or(false);
+                if let Some(open) = list.compounds.last_mut() {
+                    *open |= sink;
+                }
+                list.command.after_compound = sink;
+                let depth = list.compounds.len();
+                if list.region.is_some_and(|r| r > depth) {
                     list.region = None;
                 }
                 return;
@@ -529,14 +564,20 @@ impl Walk<'_> {
     }
 
     /// Ends the simple command: a launcher left without a command, then
-    /// code given to a shell as stdin or as carrier arguments.
-    fn finish(&mut self, command: &mut Command) {
+    /// code given to a shell as stdin or as carrier arguments. Returns
+    /// whether the command may run its stdin as code.
+    fn finish(&mut self, command: &mut Command) -> bool {
         let command = std::mem::take(command);
         let shell_launcher = matches!(&command.state, State::Launcher(launcher) if launcher.shell);
         if shell_launcher && command.piped {
             self.scan.pipes = true;
         }
-        let interpreter = command.interpreter || shell_launcher;
+        // `exec` with no command gives its redirections to every later
+        // command, as a compound command's do to the commands in it.
+        let exec_alone =
+            matches!(&command.state, State::Launcher(launcher) if launcher.name == "exec");
+        let interpreter =
+            command.interpreter || shell_launcher || exec_alone || command.after_compound;
         // Its here-documents are the last queued; a newline inside the
         // command that read them earlier fails closed in the lexer.
         let queued = command.here_documents.min(self.here_documents.len());
@@ -551,12 +592,13 @@ impl Walk<'_> {
         if let Some((code, computed)) = command.stdin.as_ref().filter(|_| interpreter) {
             self.code(code, start, command.end, *computed);
         }
-        let Some(carrier) = command.carrier.filter(|c| !c.shell || c.started) else {
-            return;
-        };
-        if !command.piped {
+        if let Some(carrier) = command
+            .carrier
+            .filter(|c| (!c.shell || c.started) && !command.piped)
+        {
             self.code(&carrier.code, start, command.end, carrier.computed);
         }
+        interpreter
     }
 
     /// Code a shell runs from `start` to `end` of the text: carrier
