@@ -8,7 +8,7 @@
 
 use std::path::{Component, Path};
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use chrono::{DateTime, Datelike, TimeDelta, Timelike, Utc};
 use hermes_cron::{CronJob, DeliverConfig, JobStatus, ModelConfig};
 use serde_json::{Map, Value};
 
@@ -139,6 +139,7 @@ pub(super) fn convert(
                 .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
                 .ok_or("its one-off time is not a time with a zone")?
                 .with_timezone(&Utc);
+            let at = whole_second(at);
             if at <= now {
                 return Err("its one-off time has passed".into());
             }
@@ -266,13 +267,21 @@ fn anchor(fields: &Map<String, Value>) -> Option<DateTime<Utc>> {
         .iter()
         .filter_map(|field| fields.get(*field).and_then(Value::as_str))
         .find_map(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| at.with_timezone(&Utc))
+        .map(|at| whole_second(at.with_timezone(&Utc)))
+}
+
+/// `at` rounded up to a whole second, as Reformed's schedules have no
+/// fractions: a converted job then never runs before its Hermes time.
+fn whole_second(at: DateTime<Utc>) -> DateTime<Utc> {
+    match at.with_nanosecond(0) {
+        Some(whole) if whole < at => whole + TimeDelta::seconds(1),
+        _ => at,
+    }
 }
 
 /// An interval that divides the hour or the day, as a UTC expression with
-/// seconds firing at the same whole seconds as from `at`. Fractions of a
-/// second are dropped: Hermes checks for due jobs once a minute
-/// (`TICKER_INTERVAL_SECONDS = 60`), so they never decide when a job runs.
+/// seconds firing at the same whole seconds as from `at`, which
+/// `whole_second` has rounded up.
 fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
     let hourly = minutes < 60 && 60_u64.is_multiple_of(minutes);
     if !hourly && !(minutes.is_multiple_of(60) && 1440_u64.is_multiple_of(minutes)) {
