@@ -121,6 +121,10 @@ pub(super) fn pipes_remote_content_to_shell(command: &str) -> bool {
     scan.pipes || scan.opaque
 }
 
+pub(super) fn runs_downloaded_script(_command: &str) -> bool {
+    false
+}
+
 /// What one scan found.
 #[derive(Default)]
 struct Scan {
