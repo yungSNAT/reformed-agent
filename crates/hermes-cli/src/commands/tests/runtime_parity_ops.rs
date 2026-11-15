@@ -487,7 +487,7 @@ fn self_evolution_recommendations_extracts_lines() {
 
 #[test]
 fn native_session_eval_harness_writes_compatible_report() {
-    let repo = tempdir().expect("repo");
+    let reports = tempdir().expect("reports");
     let home = tempdir().expect("home");
     let sessions_dir = home.path().join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
@@ -504,7 +504,7 @@ fn native_session_eval_harness_writes_compatible_report() {
     )
     .expect("write session");
 
-    let (report, path) = run_session_eval_harness_native(repo.path(), &sessions_dir, 25, None)
+    let (report, path) = run_session_eval_harness_native(reports.path(), &sessions_dir, 25)
         .expect("run native session eval");
     assert!(path
         .file_name()
@@ -615,6 +615,46 @@ async fn ops_eval_run_uses_native_report_not_python_script() {
         Some(value) => std::env::set_var("HERMES_REPO_ROOT", value),
         None => std::env::remove_var("HERMES_REPO_ROOT"),
     }
+}
+
+/// A `cargo install` binary finds its cargo git checkout as the repo root; the
+/// session eval report must still go to the state root, never into that checkout.
+#[tokio::test]
+async fn ops_eval_run_writes_report_under_hermes_home_not_repo_checkout() {
+    let _guard = test_env_lock::lock_async().await;
+    let checkout = tempdir().expect("checkout");
+    std::fs::create_dir_all(checkout.path().join("docs/parity")).expect("docs/parity");
+    std::fs::write(checkout.path().join("README.md"), "# checkout\n").expect("README");
+    let home = tempdir().expect("home");
+    let _home_guard = TempHomeGuard::new(home.path());
+    let previous_repo_root = std::env::var("HERMES_REPO_ROOT").ok();
+    std::env::set_var("HERMES_REPO_ROOT", checkout.path());
+    let mut app = build_test_app_with_stream(home.path()).await;
+
+    handle_ops_eval_command(&mut app, &["run"])
+        .await
+        .expect("handle ops eval run");
+    handle_ops_eval_command(&mut app, &["latest"])
+        .await
+        .expect("handle ops eval latest");
+    let latest = latest_ui_assistant_text(&app);
+
+    match previous_repo_root {
+        Some(value) => std::env::set_var("HERMES_REPO_ROOT", value),
+        None => std::env::remove_var("HERMES_REPO_ROOT"),
+    }
+    assert!(
+        !checkout.path().join(".sync-reports").exists(),
+        "eval run wrote into the repo checkout"
+    );
+    let written: Vec<_> = std::fs::read_dir(home.path().join("eval-reports"))
+        .expect("eval-reports under HERMES_HOME")
+        .filter_map(|entry| entry.ok())
+        .map(|entry| entry.file_name().to_string_lossy().to_string())
+        .collect();
+    assert_eq!(written.len(), 1, "{written:?}");
+    assert!(written[0].starts_with("session-eval-harness-"));
+    assert!(latest.contains(&written[0]), "{latest}");
 }
 
 #[test]

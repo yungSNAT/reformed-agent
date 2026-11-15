@@ -369,7 +369,6 @@ fn median_usize(values: &[usize]) -> f64 {
 }
 
 fn build_session_eval_report(
-    repo_root: &Path,
     sessions_dir: &Path,
     sessions: &[SessionEvalStats],
 ) -> serde_json::Value {
@@ -408,7 +407,6 @@ fn build_session_eval_report(
     serde_json::json!({
         "ok": ok,
         "generated_at": chrono::Utc::now().to_rfc3339(),
-        "repo_root": repo_root,
         "sessions_dir": sessions_dir,
         "summary": {
             "sessions_analyzed": sessions.len(),
@@ -437,19 +435,29 @@ fn write_json_report(path: &Path, report: &serde_json::Value) -> Result<(), Agen
         .map_err(|e| AgentError::Io(format!("write {}: {}", path.display(), e)))
 }
 
+/// Session eval reports describe the user's saved sessions, so they live in
+/// the state root beside them, never in a source checkout.
+fn session_eval_report_dir() -> PathBuf {
+    hermes_config::hermes_home().join("eval-reports")
+}
+
+/// The newest session eval report, else a source checkout's newest eval
+/// trend gate report.
+fn latest_eval_report() -> Option<PathBuf> {
+    latest_json_report(&session_eval_report_dir(), "session-eval-harness-").or_else(|| {
+        let repo_reports = discover_repo_root_for_about()?.join(".sync-reports");
+        latest_json_report(&repo_reports, "eval-trend-gate-")
+    })
+}
+
 fn run_session_eval_harness_native(
-    repo_root: &Path,
+    report_dir: &Path,
     sessions_dir: &Path,
     max_sessions: usize,
-    out_json: Option<&Path>,
 ) -> Result<(serde_json::Value, PathBuf), AgentError> {
     let sessions = load_latest_session_eval_stats(sessions_dir, max_sessions);
-    let report = build_session_eval_report(repo_root, sessions_dir, &sessions);
-    let out_path = out_json.map(PathBuf::from).unwrap_or_else(|| {
-        repo_root
-            .join(".sync-reports")
-            .join(format!("session-eval-harness-{}.json", utc_compact_stamp()))
-    });
+    let report = build_session_eval_report(sessions_dir, &sessions);
+    let out_path = report_dir.join(format!("session-eval-harness-{}.json", utc_compact_stamp()));
     write_json_report(&out_path, &report)?;
     Ok((report, out_path))
 }
