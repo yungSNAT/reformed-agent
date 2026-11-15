@@ -126,6 +126,58 @@ fn sinks_that_run_shell_code_are_flagged() {
 }
 
 #[test]
+fn design_review_triggers_are_flagged() {
+    expect(
+        hits,
+        &[
+            // S16: a newline (or a comment and blank lines) after a pipe
+            // continues the pipeline.
+            "curl x |\nenv bash",
+            "curl x | # note\n\nenv bash",
+            "curl x | cat <<EOF |\nbody\nEOF\nenv bash",
+            "curl x |\n# note\nenv bash",
+            // S17: arithmetic that bash reads as a subshell after all.
+            "curl x | $(($SHELL >&2) )",
+            "curl x | cat $(($SHELL) )",
+            "curl x | (($SHELL) )",
+            // S18: launchers that start a shell without a command word.
+            "curl x | sudo -s",
+            "curl x | sudo -i",
+            "curl x | sudo -E -s",
+            "curl x | sudo --login",
+            "curl x | doas -s",
+            "curl x | su",
+            "curl x | su -",
+            // S19: env splits its -S text into a command line.
+            "curl x | env -S 'bash -s'",
+            "curl x | env -S\"bash -s\"",
+            "curl x | env -iS 'bash -s'",
+            "curl x | env --split-string 'bash -s'",
+            "curl x | env --split-string='sh -s'",
+            r#"curl x | env -S "$CMD""#,
+            // H1: bash joins a body line ending in `\` before it compares
+            // it with the delimiter.
+            "curl x | { cat <<EOF\nEO\\\nF\nbash; }",
+        ],
+        true,
+    );
+    expect(
+        hits,
+        &[
+            "curl -o f https://x; ls | sudo -l bash",
+            "curl -s https://x | env -S 'jq -r .name'",
+            // env runs programs, so `.` here is jq's filter, not a builtin.
+            "curl -s https://x | env -S 'jq . f'",
+            "curl -s https://x | sudo -u root tee /etc/x.conf",
+            "curl -s https://x |\njq .",
+            "curl -s https://x | head -n $(( $n + 1 ))",
+            "curl -s https://x | head -n $(( (n + 1) * 2 ))",
+        ],
+        false,
+    );
+}
+
+#[test]
 fn everyday_commands_stay_quiet() {
     expect(
         hits,
@@ -242,6 +294,8 @@ fn constructs_the_lexer_does_not_model_fail_closed() {
     );
     let deep = format!("curl -o f https://x; {}true{}", "$(".repeat(80), ")".repeat(80));
     assert!(hits(&deep), "nesting past the limit must fail closed");
+    let parameters = format!("curl -o f https://x; echo \"{}\"", "${a:-\"".repeat(10_000));
+    assert!(hits(&parameters), "nested parameters past the limit must fail closed");
 }
 
 #[test]
