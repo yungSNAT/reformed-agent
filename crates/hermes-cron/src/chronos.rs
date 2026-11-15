@@ -621,9 +621,126 @@ cron:
         assert!(err.to_string().contains("unsupported signing algorithm"));
     }
 
+    /// A fresh P-256 key: the inline JWKS that verifies it and a signer for
+    /// fire tokens with the given claims.
+    fn es256_fixture() -> (String, impl Fn(Value) -> String) {
+        use aws_lc_rs::rand::SystemRandom;
+        use aws_lc_rs::signature::{EcdsaKeyPair, KeyPair, ECDSA_P256_SHA256_FIXED_SIGNING};
+
+        let pkcs8 =
+            EcdsaKeyPair::generate_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, &SystemRandom::new())
+                .expect("generate P-256 key");
+        let pair = EcdsaKeyPair::from_pkcs8(&ECDSA_P256_SHA256_FIXED_SIGNING, pkcs8.as_ref())
+            .expect("parse P-256 key");
+        // An uncompressed point: 0x04, then x and y.
+        let point = pair.public_key().as_ref();
+        let jwks = json!({
+            "keys": [{
+                "kty": "EC",
+                "crv": "P-256",
+                "x": base64_url_bytes(&point[1..33]),
+                "y": base64_url_bytes(&point[33..65])
+            }]
+        })
+        .to_string();
+        let key = EncodingKey::from_ec_der(pkcs8.as_ref());
+        let sign = move |claims: Value| {
+            encode(&Header::new(Algorithm::ES256), &claims, &key).expect("encode test token")
+        };
+        (jwks, sign)
+    }
+
+    fn fire_config(portal_url: &str, jwks: String) -> ChronosConfig {
+        ChronosConfig {
+            provider: "chronos".to_string(),
+            portal_url: portal_url.to_string(),
+            expected_audience: "agent:abc".to_string(),
+            nas_jwks_url: jwks,
+            ..ChronosConfig::default()
+        }
+    }
+
+    fn fire_claims(iss: Option<&str>) -> Value {
+        let mut claims = json!({
+            "aud": "agent:abc",
+            "exp": 4_102_444_800_u64,
+            "purpose": FIRE_PURPOSE
+        });
+        if let Some(iss) = iss {
+            claims["iss"] = json!(iss);
+        }
+        claims
+    }
+
+    #[tokio::test]
+    async fn fire_verifier_checks_the_issuer_against_the_portal_url() {
+        let (jwks, sign) = es256_fixture();
+        let config = fire_config("https://portal.example/", jwks);
+
+        let claims =
+            verify_nas_fire_token(&sign(fire_claims(Some("https://portal.example"))), &config)
+                .await
+                .expect("a token from the portal is accepted");
+        assert_eq!(claims.iss.as_deref(), Some("https://portal.example"));
+
+        for iss in [Some("https://other.example"), None] {
+            let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
+                .await
+                .expect_err("a token without the portal's issuer is refused");
+            assert!(err.to_string().contains("Chronos token rejected"), "{err}");
+        }
+    }
+
+    /// The contract (`iss == cron.chronos.portal_url`) has no issuer-free mode:
+    /// without a portal URL there is nothing to check `iss` against, so no fire
+    /// token is accepted, whatever its issuer.
+    #[tokio::test]
+    async fn fire_verifier_refuses_every_token_without_a_portal_url() {
+        let (jwks, sign) = es256_fixture();
+        let config = fire_config("  ", jwks);
+        assert!(!config.can_verify_fire());
+
+        for iss in [
+            Some("https://portal.example"),
+            Some("https://any.example"),
+            None,
+        ] {
+            let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
+                .await
+                .expect_err("no issuer to check against");
+            assert!(err.to_string().contains("not configured"), "{err}");
+        }
+    }
+
+    /// GHSA-h395-gr6q-cpjc: before jsonwebtoken 10.3, an `nbf` claim of the
+    /// wrong JSON type was treated as absent, so a token not yet valid passed.
+    /// The 2 tokens differ only in `nbf`, so the refusal is the claim's.
+    #[tokio::test]
+    async fn fire_verifier_rejects_a_mistyped_not_before_claim() {
+        let (jwks, sign) = es256_fixture();
+        let config = fire_config("https://portal.example", jwks);
+        let token_with_nbf = |nbf: Value| {
+            let mut claims = fire_claims(Some("https://portal.example"));
+            claims["nbf"] = nbf;
+            sign(claims)
+        };
+
+        verify_nas_fire_token(&token_with_nbf(json!(1_000_000_000_u64)), &config)
+            .await
+            .expect("a token already valid is accepted");
+        let err = verify_nas_fire_token(&token_with_nbf(json!("4102444800")), &config)
+            .await
+            .expect_err("a string nbf must not be skipped");
+        assert!(err.to_string().contains("Chronos token rejected"), "{err}");
+    }
+
     fn base64_url(raw: &str) -> String {
+        base64_url_bytes(raw.as_bytes())
+    }
+
+    fn base64_url_bytes(raw: &[u8]) -> String {
         use base64::engine::general_purpose::URL_SAFE_NO_PAD;
         use base64::Engine;
-        URL_SAFE_NO_PAD.encode(raw.as_bytes())
+        URL_SAFE_NO_PAD.encode(raw)
     }
 }
