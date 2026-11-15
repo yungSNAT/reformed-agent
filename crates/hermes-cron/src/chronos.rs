@@ -108,8 +108,11 @@ impl ChronosConfig {
             && peek_nous_access_token().is_some()
     }
 
+    /// The portal URL is the fire token's required issuer, so verification
+    /// needs it as much as the audience and the keys.
     pub fn can_verify_fire(&self) -> bool {
         self.provider_enabled()
+            && !self.portal_url.trim().is_empty()
             && !self.expected_audience.trim().is_empty()
             && !self.nas_jwks_url.trim().is_empty()
     }
@@ -375,10 +378,8 @@ pub async fn verify_nas_fire_token(
     validation.set_audience(&[config.expected_audience.as_str()]);
     validation.required_spec_claims.insert("aud".to_string());
     validation.required_spec_claims.insert("exp".to_string());
-    if !config.portal_url.trim().is_empty() {
-        validation.set_issuer(&[config.portal_url.trim_end_matches('/')]);
-        validation.required_spec_claims.insert("iss".to_string());
-    }
+    validation.set_issuer(&[config.portal_url.trim_end_matches('/')]);
+    validation.required_spec_claims.insert("iss".to_string());
 
     let data = decode::<ChronosFireClaims>(token, &key, &validation)
         .map_err(|err| CronError::Scheduler(format!("Chronos token rejected: {err}")))?;
