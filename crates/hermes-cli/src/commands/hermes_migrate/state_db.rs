@@ -1,8 +1,8 @@
 //! Hermes `state.db` read as the records `hermes sessions export` writes.
 //!
-//! The database is opened read-only. Without unapplied WAL changes it is
-//! opened `immutable`, which takes no lock and creates no sidecar file in the
-//! Hermes home; with them, Hermes's own `state.db-shm` must already exist.
+//! The database is opened read-only and `immutable`, which takes no lock and
+//! creates or writes no sidecar file in the Hermes home. Unapplied journal or
+//! WAL changes are refused, as only Hermes can apply them.
 //! Errors name a session and a fixed reason, never a stored value.
 
 use std::collections::HashSet;
@@ -85,18 +85,17 @@ pub(super) fn open(path: &Path) -> Result<Connection, String> {
             "an unfinished write is in state.db-journal; {RERUN}"
         ));
     }
-    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let opened = if matches!(wal, Sidecar::Full) {
-        if matches!(shm, Sidecar::Absent) {
-            return Err(format!(
-                "unapplied changes are in state.db-wal without state.db-shm; {RERUN}"
-            ));
-        }
-        Connection::open_with_flags(path, flags)
-    } else {
-        Connection::open_with_flags(immutable_uri(path)?, flags | OpenFlags::SQLITE_OPEN_URI)
-    };
-    opened.map_err(|error| failure(&error))
+    // A read-only open of a WAL database still writes, and can create,
+    // state.db-shm; only the immutable open leaves the Hermes home as it is.
+    if matches!(wal, Sidecar::Full) {
+        return Err(format!(
+            "unapplied changes are in state.db-wal; stop Hermes if it runs, else {RERUN}"
+        ));
+    }
+    let flags = OpenFlags::SQLITE_OPEN_READ_ONLY
+        | OpenFlags::SQLITE_OPEN_NO_MUTEX
+        | OpenFlags::SQLITE_OPEN_URI;
+    Connection::open_with_flags(immutable_uri(path)?, flags).map_err(|error| failure(&error))
 }
 
 fn failure(error: &rusqlite::Error) -> String {
