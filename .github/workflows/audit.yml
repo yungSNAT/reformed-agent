@@ -56,7 +56,7 @@ jobs:
       # dry run installs nothing.
       - name: package-lock.json matches package.json
         working-directory: ${{ matrix.dir }}
-        run: npm ci --dry-run --ignore-scripts
+        run: npm ci --dry-run --ignore-scripts --no-audit
       - name: npm audit
         working-directory: ${{ matrix.dir }}
         run: npm audit --package-lock-only
