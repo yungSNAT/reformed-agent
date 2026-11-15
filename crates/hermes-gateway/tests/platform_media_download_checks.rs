@@ -9,7 +9,7 @@
 use std::sync::Once;
 use std::time::Duration;
 
-use hermes_gateway::adapter::BasePlatformAdapter;
+use hermes_gateway::adapter::{AdapterProxyConfig, BasePlatformAdapter};
 use hermes_gateway::platforms::helpers::download_media_url_with_limit;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -124,5 +124,52 @@ async fn oversized_bodies_are_refused() {
     assert!(
         err.contains("Content-Length") || err.contains("downloaded body"),
         "unexpected error: {err}"
+    );
+}
+
+#[tokio::test]
+async fn redirects_through_the_adapters_proxy_are_checked() {
+    // The mock server is the adapter's HTTP proxy, so requests for the public
+    // address 8.8.8.8 reach it in absolute form and never leave the machine.
+    let proxy = MockServer::start().await;
+    redirect_to(&proxy, "/start", "http://169.254.169.254/latest/meta-data/").await;
+    redirect_to(
+        &proxy,
+        "/named",
+        "http://metadata.google.internal/computeMetadata/v1/",
+    )
+    .await;
+    serve_png(&proxy, "/real.png").await;
+    let adapter = adapter().with_proxy(AdapterProxyConfig {
+        http_proxy: Some(proxy.uri()),
+        socks_proxy: None,
+    });
+
+    let (bytes, _) = download(&adapter, "http://8.8.8.8/real.png", 1024)
+        .await
+        .expect("download through the proxy");
+    assert_eq!(bytes, PNG);
+    for start in ["/start", "/named"] {
+        let url = format!("http://8.8.8.8{start}");
+        let result =
+            tokio::time::timeout(Duration::from_secs(5), download(&adapter, &url, 0)).await;
+        let err = match result {
+            Ok(Err(err)) => err,
+            Ok(Ok(_)) => panic!("{url} was downloaded"),
+            Err(_) => panic!("{url} was not refused before connecting"),
+        };
+        assert!(err.contains("Blocked: redirect to"), "{url}: {err}");
+    }
+
+    // Every request went through the proxy, and none to a refused hop.
+    let requests = proxy.received_requests().await.expect("request recording");
+    let urls: Vec<String> = requests.iter().map(|r| r.url.to_string()).collect();
+    assert_eq!(
+        urls,
+        [
+            "http://8.8.8.8/real.png",
+            "http://8.8.8.8/start",
+            "http://8.8.8.8/named"
+        ],
     );
 }
