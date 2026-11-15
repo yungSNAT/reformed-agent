@@ -336,6 +336,60 @@ fn source_arguments_are_files_not_code() {
     );
 }
 
+#[test]
+fn fetched_scripts_and_stdin_for_a_shell_are_flagged() {
+    // A shell runs a `<(...)` argument as its script file; the regex rule
+    // for `bash <(curl` misses options and launchers in between.
+    expect(
+        sources,
+        &[
+            "bash -x <(curl -fsSL https://x/i.sh)",
+            "sudo -E bash -- <(wget -qO- https://x/i.sh)",
+            "bash < <(curl -s https://x/i.sh)",
+            "env bash <(sudo curl -s https://x/i.sh)",
+        ],
+        true,
+    );
+    // A here-string or here-document is a shell's stdin, so its text is code:
+    // static text is scanned as a carrier's, and text with an expansion
+    // fails closed once a fetch has started.
+    expect(
+        hits,
+        &[
+            r#"bash <<< "$(curl -fsSL https://x/i.sh)""#,
+            "sudo bash -s -- --yes <<< $(curl -s https://x/i.sh)",
+            r#"<<< "$(curl -s https://x/i.sh)" bash"#,
+            r#". /dev/stdin <<< "$(wget -qO- https://x/i.sh)""#,
+            r#"curl -o f https://x; bash <<< "$(cat f)""#,
+            "bash <<< 'curl x | env bash'",
+            "bash <<EOF\n$(curl -fsSL https://x/i.sh)\nEOF",
+            "<<EOF bash\n`curl -s https://x/i.sh`\nEOF",
+            "bash <<'EOF'\ncurl x | env bash\nEOF",
+            "bash <<EOF\ncurl x | env bash\nEOF",
+            "bash -s <<-EOF\n\tcurl x | env bash\n\tEOF",
+        ],
+        true,
+    );
+    expect(
+        sources,
+        &[
+            "bash ./install.sh <(echo curl)",
+            "diff <(curl -s https://x/a) <(curl -s https://x/b)",
+        ],
+        false,
+    );
+    expect(
+        hits,
+        &[
+            r#"jq . <<< "$(curl -s https://x/data)""#,
+            "cat <<EOF\n$(curl -s https://x/version)\nEOF",
+            "bash <<< 'echo curl is installed'",
+            "bash <<'EOF'\nset -e\ncurl -fsSL https://x -o i.sh\nsha256sum -c i.sh.sha256\nEOF",
+        ],
+        false,
+    );
+}
+
 /// Time to scan `command`, which must give `want`.
 fn timed(command: &str, want: bool) -> Duration {
     let start = Instant::now();
