@@ -470,6 +470,9 @@ if [[ -n "${DOWNLOADED_ASSET}" ]]; then
 fi
 
 if [[ -z "${SOURCE_BIN}" ]]; then
+  if truthy_env "${HERMES_REQUIRE_SIGNATURE}"; then
+    refuse_install "HERMES_REQUIRE_SIGNATURE is set but there is no signed release archive for ${TARGET} in ${VERSION}, and a source build carries no signature."
+  fi
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   SOURCE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
   if [[ -f "${SOURCE_ROOT}/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then
