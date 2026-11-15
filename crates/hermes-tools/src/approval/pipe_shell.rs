@@ -410,9 +410,15 @@ impl Walk<'_> {
             self.list().command.state = State::Arguments;
             return;
         }
-        let next = if std::mem::take(&mut launcher.value_next) || is_assignment(value) || is_duration(value) {
+        let next = if std::mem::take(&mut launcher.value_next)
+            || is_assignment(value)
+            || is_duration(value)
+        {
             Some(launcher)
-        } else if let Some(flag) = value.strip_prefix('-').filter(|f| !f.is_empty() && !word.computed) {
+        } else if let Some(flag) = value
+            .strip_prefix('-')
+            .filter(|f| !f.is_empty() && !word.computed)
+        {
             launcher.option(flag)
         } else {
             self.command_word(word);
@@ -501,7 +507,8 @@ impl Launcher {
                 }
                 return Some(self);
             }
-            self.value_next = value.is_empty() && !long.contains('=') && self.long.contains(&name.as_str());
+            self.value_next =
+                value.is_empty() && !long.contains('=') && self.long.contains(&name.as_str());
             return Some(self);
         }
         if self.name == "command" {
@@ -511,7 +518,9 @@ impl Launcher {
         // The bare letters run up to the first valued letter, digit or
         // non-word character; a valued letter at the end takes the next word.
         let letters = flag
-            .find(|c: char| !(c.is_alphanumeric() || c == '_') || c.is_ascii_digit() || self.short.contains(c))
+            .find(|c: char| {
+                !(c.is_alphanumeric() || c == '_') || c.is_ascii_digit() || self.short.contains(c)
+            })
             .unwrap_or(flag.len());
         let bare = &flag[..letters];
         match self.name {
@@ -531,7 +540,10 @@ impl Launcher {
             }
             _ => {}
         }
-        let valued = flag[letters..].chars().next().filter(|c| self.short.contains(*c));
+        let valued = flag[letters..]
+            .chars()
+            .next()
+            .filter(|c| self.short.contains(*c));
         self.value_next = valued.is_some_and(|c| letters + c.len_utf8() == flag.len());
         Some(self)
     }
@@ -551,7 +563,8 @@ impl Carrier {
     fn add(&mut self, word: &Word) {
         let value = word.value.as_str();
         if !self.started {
-            self.started = value.starts_with('-') && !value.starts_with("--") && value.contains('c');
+            self.started =
+                value.starts_with('-') && !value.starts_with("--") && value.contains('c');
             return;
         }
         if self.options && (value == "--" || (self.shell && value.starts_with(['-', '+']))) {
@@ -574,11 +587,18 @@ struct CommandName([String; 2]);
 impl CommandName {
     fn new(raw: &str) -> Self {
         let joined = raw.replace("\\\n", "");
-        let unquoted: String = joined.chars().filter(|c| !matches!(c, '\'' | '"')).collect();
+        let unquoted: String = joined
+            .chars()
+            .filter(|c| !matches!(c, '\'' | '"'))
+            .collect();
         let unquoted = unquoted.strip_prefix('=').unwrap_or(&unquoted);
         let unescaped: String = unquoted.chars().filter(|&c| c != '\\').collect();
         let base = |text: &str, separators: &[char]| {
-            let base = text.rsplit(separators).next().unwrap_or(text).to_ascii_lowercase();
+            let base = text
+                .rsplit(separators)
+                .next()
+                .unwrap_or(text)
+                .to_ascii_lowercase();
             match base.strip_suffix(".exe") {
                 Some(stem) => stem.to_string(),
                 None => base,
@@ -588,7 +608,9 @@ impl CommandName {
     }
 
     fn is(&self, names: &[&str]) -> bool {
-        self.0.iter().any(|base| !base.is_empty() && names.contains(&base.as_str()))
+        self.0
+            .iter()
+            .any(|base| !base.is_empty() && names.contains(&base.as_str()))
     }
 }
 
@@ -605,7 +627,9 @@ fn is_assignment(word: &str) -> bool {
 /// `infinity`, `60`, `1.5`, `1e3` or `.5`, optionally suffixed `s`, `m`, `h`
 /// or `d`.
 fn is_duration(word: &str) -> bool {
-    let number = word.strip_suffix(['s', 'm', 'h', 'd', 'S', 'M', 'H', 'D']).unwrap_or(word);
+    let number = word
+        .strip_suffix(['s', 'm', 'h', 'd', 'S', 'M', 'H', 'D'])
+        .unwrap_or(word);
     if number.eq_ignore_ascii_case("infinity") {
         return true;
     }

@@ -56,8 +56,15 @@ pub(super) struct Word {
 #[derive(Debug)]
 pub(super) enum Token {
     Word(Word),
-    Op { op: Op, at: usize },
-    Open { frame: Frame, arith: bool, at: usize },
+    Op {
+        op: Op,
+        at: usize,
+    },
+    Open {
+        frame: Frame,
+        arith: bool,
+        at: usize,
+    },
     Close,
     Opaque,
 }
@@ -314,7 +321,11 @@ impl Lexer<'_> {
                 b' ' | b'\t' | b'\n' | b';' | b'&' | b'|' | b'(' | b')' => break,
                 b'`' if end == End::Backtick => break,
                 b'<' | b'>' if self.peek_at(1) == Some(b'(') => {
-                    let frame = if b == b'<' { Frame::ProcessIn } else { Frame::ProcessOut };
+                    let frame = if b == b'<' {
+                        Frame::ProcessIn
+                    } else {
+                        Frame::ProcessOut
+                    };
                     let at = self.pos;
                     self.pos += 2;
                     word.computed = true;
@@ -456,7 +467,10 @@ impl Lexer<'_> {
                 word.computed = true;
                 self.pos += 2;
                 if b.is_ascii_alphabetic() || b == b'_' {
-                    while self.peek().is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_') {
+                    while self
+                        .peek()
+                        .is_some_and(|b| b.is_ascii_alphanumeric() || b == b'_')
+                    {
                         self.pos += 1;
                     }
                 }

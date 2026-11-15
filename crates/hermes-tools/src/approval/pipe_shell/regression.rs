@@ -10,7 +10,12 @@ use std::time::{Duration, Instant};
 fn expect(check: fn(&str) -> bool, cases: &[&str], want: bool) {
     let wrong: Vec<&str> = cases.iter().copied().filter(|c| check(c) != want).collect();
     let what = if want { "not caught" } else { "false positive" };
-    assert!(wrong.is_empty(), "{what} ({} of {}): {wrong:#?}", wrong.len(), cases.len());
+    assert!(
+        wrong.is_empty(),
+        "{what} ({} of {}): {wrong:#?}",
+        wrong.len(),
+        cases.len()
+    );
 }
 
 #[test]
@@ -292,10 +297,17 @@ fn constructs_the_lexer_does_not_model_fail_closed() {
         ],
         true,
     );
-    let deep = format!("curl -o f https://x; {}true{}", "$(".repeat(80), ")".repeat(80));
+    let deep = format!(
+        "curl -o f https://x; {}true{}",
+        "$(".repeat(80),
+        ")".repeat(80)
+    );
     assert!(hits(&deep), "nesting past the limit must fail closed");
     let parameters = format!("curl -o f https://x; echo \"{}\"", "${a:-\"".repeat(10_000));
-    assert!(hits(&parameters), "nested parameters past the limit must fail closed");
+    assert!(
+        hits(&parameters),
+        "nested parameters past the limit must fail closed"
+    );
 }
 
 #[test]
@@ -418,8 +430,8 @@ fn wrapping_keeps_the_verdict() {
 #[test]
 fn arbitrary_input_never_panics_and_stays_fast() {
     let pieces = [
-        "'", "\"", "\\", "$", "(", ")", "{", "}", "<", ">", "|", ";", "&", "`", "#", "\n",
-        " ", "x", "=", "curl ", "bash", "$(", "${", "<<", "EOF", "\t", "é", "-c ", "eval ",
+        "'", "\"", "\\", "$", "(", ")", "{", "}", "<", ">", "|", ";", "&", "`", "#", "\n", " ",
+        "x", "=", "curl ", "bash", "$(", "${", "<<", "EOF", "\t", "é", "-c ", "eval ",
     ];
     let mut rng = Rng(0x0dd_ba11_cafe_f00d);
     let start = Instant::now();
@@ -428,5 +440,9 @@ fn arbitrary_input_never_panics_and_stays_fast() {
         let _ = hits(&command);
         let _ = sources(&command);
     }
-    assert!(start.elapsed() < Duration::from_secs(10), "{:?}", start.elapsed());
+    assert!(
+        start.elapsed() < Duration::from_secs(10),
+        "{:?}",
+        start.elapsed()
+    );
 }
