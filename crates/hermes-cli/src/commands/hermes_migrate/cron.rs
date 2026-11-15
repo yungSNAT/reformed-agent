@@ -262,8 +262,8 @@ fn anchor(fields: &Map<String, Value>) -> Option<DateTime<Utc>> {
 /// An interval that divides the hour or the day, as a UTC expression firing
 /// at the same instants as from `at`.
 fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
-    let hourly = minutes < 60 && 60 % minutes == 0;
-    if !hourly && (minutes % 60 != 0 || 1440 % minutes != 0) {
+    let hourly = minutes < 60 && 60_u64.is_multiple_of(minutes);
+    if !hourly && !(minutes.is_multiple_of(60) && 1440_u64.is_multiple_of(minutes)) {
         return Err(format!(
             "it runs every {minutes} minutes, which does not divide an hour or a day"
         ));
