@@ -3,7 +3,6 @@ import typescriptEslint from '@typescript-eslint/eslint-plugin'
 import typescriptParser from '@typescript-eslint/parser'
 import perfectionist from 'eslint-plugin-perfectionist'
 import reactPlugin from 'eslint-plugin-react'
-import reactCompiler from 'eslint-plugin-react-compiler'
 import hooksPlugin from 'eslint-plugin-react-hooks'
 import unusedImports from 'eslint-plugin-unused-imports'
 import globals from 'globals'
@@ -12,6 +11,16 @@ const noopRule = {
   meta: { schema: [], type: 'problem' },
   create: () => ({})
 }
+
+// eslint-plugin-react-hooks 7 carries the React Compiler checks that
+// eslint-plugin-react-compiler ran as one rule: every rule in its recommended
+// set other than the 2 classic hooks rules.
+const compilerRules = severity =>
+  Object.fromEntries(
+    Object.keys(hooksPlugin.configs.recommended.rules)
+      .filter(name => !['react-hooks/exhaustive-deps', 'react-hooks/rules-of-hooks'].includes(name))
+      .map(name => [name, severity])
+  )
 
 const customRules = {
   rules: {
@@ -44,7 +53,6 @@ export default [
       'custom-rules': customRules,
       perfectionist,
       react: reactPlugin,
-      'react-compiler': reactCompiler,
       'react-hooks': hooksPlugin,
       'unused-imports': unusedImports
     },
@@ -55,7 +63,7 @@ export default [
       '@typescript-eslint/no-unused-vars': 'off',
       'no-undef': 'off',
       'no-unused-vars': 'off',
-      'react-compiler/react-compiler': 'warn',
+      ...compilerRules('warn'),
       'padding-line-between-statements': [
         1,
         { blankLine: 'always', next: ['block-like', 'block', 'return', 'if', 'class', 'continue', 'debugger', 'break', 'multiline-const', 'multiline-let'], prev: '*' },
@@ -92,7 +100,7 @@ export default [
       'no-constant-condition': 'off',
       'no-empty': 'off',
       'no-redeclare': 'off',
-      'react-compiler/react-compiler': 'off',
+      ...compilerRules('off'),
       'react-hooks/exhaustive-deps': 'off'
     }
   },

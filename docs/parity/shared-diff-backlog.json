@@ -14510,7 +14510,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "09af222979eafe40a6b638cd759a91ed1cd32fae",
+      "local_blob": "7fc4a6c803e5bd422c00ea506081ec35f54a7aa2",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/eslint.config.mjs",
@@ -14525,7 +14525,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "7faa4044e9d09368f614480a28d31b1d07f9c7d1",
+      "local_blob": "63274e64f00380add9461036c9ab61df7cd7951f",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/package.json",
@@ -19291,10 +19291,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-15T08:06:12.758490+00:00",
+  "generated_at_utc": "2026-11-15T08:55:48.163108+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "079864b7f03477cb198752146b22b2d6a3bc6e0c",
+    "local_sha": "5d4e5a350cafc6f0082575c775b74cbbcb6935b7",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796"
   },
