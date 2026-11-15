@@ -210,6 +210,11 @@ static DANGEROUS_COMMAND_RULES: LazyLock<Vec<CommandPatternRule>> = LazyLock::ne
             key: "execute remote script via process substitution",
             description: "execute remote script via process substitution",
         },
+        CommandPatternRule {
+            matcher: RuleMatcher::Function(pipe_shell::runs_downloaded_script),
+            key: "execute downloaded script",
+            description: "run a script the same command downloaded",
+        },
         CommandPatternRule::new(
             r"(?is)\bgateway\s+run\b.*(?:--replace\b|&\s*disown\b|disown\b|&\s*$)",
             "unmanaged gateway process start",
