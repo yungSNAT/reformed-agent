@@ -102,7 +102,7 @@ dirs = "6"
 reqwest = { workspace = true, features = ["blocking"] }
 flate2 = "1"
 tar = "0.4"
-serde_yaml = "0.9"
+serde_yaml = { workspace = true }
 regex = { workspace = true }
 urlencoding = "2"
 hmac = "0.12"
