@@ -142,7 +142,14 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hermes
+        if: matrix.target == 'aarch64-apple-darwin'
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli
+      # The x86_64 leg cross-compiles on an arm64 runner and runs nothing, so a
+      # type check catches its target-specific errors; release.yml builds the
+      # shipped x86_64 binary.
+      - name: Check hermes
+        if: matrix.target == 'x86_64-apple-darwin'
+        run: cargo check --locked --target ${{ matrix.target }} -p hermes-cli
       # macOS temp folders sit behind the /var -> /private/var link, which the
       # own-home refusal must resolve; the Ubuntu job has no such link.
       - name: Linked-home refusal tests
