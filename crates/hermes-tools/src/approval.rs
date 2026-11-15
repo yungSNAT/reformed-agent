@@ -869,7 +869,7 @@ fn detect_dangerous_command_detail(command: &str) -> Option<DangerousCommandFind
         });
     }
     for rule in DANGEROUS_COMMAND_RULES.iter() {
-        if rule.is_match(&normalized) {
+        if rule.is_match(command, &normalized) {
             return Some(DangerousCommandFinding {
                 pattern_key: rule.key.to_string(),
                 description: rule.description.to_string(),
@@ -1245,8 +1245,8 @@ impl ApprovalManager {
 
         let normalized = collapse_command(command);
         if delete_without_where(&normalized)
-            || pipe_shell::pipes_remote_content_to_shell(&normalized)
-            || pipe_shell::sources_remote_process_substitution(&normalized)
+            || pipe_shell::pipes_remote_content_to_shell(command)
+            || pipe_shell::sources_remote_process_substitution(command)
         {
             return ApprovalDecision::RequiresConfirmation;
         }
