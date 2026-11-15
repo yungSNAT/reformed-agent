@@ -927,7 +927,10 @@ mod tests {
         let mistyped = token_with_nbf(json!("4102444800"));
         let err = verify_id_token_with_jwks(&mistyped, &jwks, &cfg, Some("nonce-1"))
             .expect_err("a string nbf must not be skipped");
-        assert!(err.contains("OIDC token rejected"), "{err}");
+        assert!(
+            err.contains("OIDC token rejected: Invalid format for claim: nbf"),
+            "{err}"
+        );
     }
 
     #[test]

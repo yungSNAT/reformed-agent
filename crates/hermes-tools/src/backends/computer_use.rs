@@ -311,12 +311,34 @@ mod tests {
         assert!(command_available(&current.to_string_lossy()));
     }
 
+    /// Writes an executable script through a child `sh`, so this process never
+    /// holds a write handle to it. A handle held here is copied into any child
+    /// another test thread forks meanwhile, and running the script whilst that
+    /// copy is open fails with ETXTBSY ('Text file busy').
+    #[cfg(unix)]
+    fn write_script(path: &Path, body: &str) {
+        use std::io::Write;
+
+        let mut child = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(r#"cat > "$1" && chmod 755 "$1""#)
+            .arg("sh")
+            .arg(path)
+            .stdin(Stdio::piped())
+            .spawn()
+            .expect("spawn sh");
+        child
+            .stdin
+            .take()
+            .expect("sh stdin")
+            .write_all(body.as_bytes())
+            .expect("write script");
+        assert!(child.wait().expect("wait for sh").success());
+    }
+
     #[tokio::test]
     #[cfg(unix)]
     async fn resolves_manifest_invocation_and_calls_mcp_tool() {
-        use std::io::Write;
-        use std::os::unix::fs::PermissionsExt;
-
         let tmp = tempfile::tempdir().expect("tempdir");
         let script = tmp.path().join("fake-cua-driver");
         let log = tmp.path().join("stdin.log");
@@ -344,13 +366,7 @@ exit 64
 "#,
             log.display()
         );
-        {
-            let mut file = std::fs::File::create(&script).expect("create script");
-            file.write_all(body.as_bytes()).expect("write script");
-        }
-        let mut perms = std::fs::metadata(&script).expect("metadata").permissions();
-        perms.set_mode(0o755);
-        std::fs::set_permissions(&script, perms).expect("chmod");
+        write_script(&script, &body);
 
         let (command, args) = resolve_mcp_invocation(&script.to_string_lossy()).await;
         assert_eq!(std::path::PathBuf::from(&command), script);
