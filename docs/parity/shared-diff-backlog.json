@@ -16,11 +16,26 @@
       "workstream": "WS8"
     },
     {
+      "action": "No runtime implementation; keep rationale current.",
+      "classification": "policy_only",
+      "classification_path": ".github/dependabot.yml",
+      "existing_coverage": "claimed_by_shared_diff_classification",
+      "local_blob": "33c60998a4b4dfe7f509f7060db1c807025709e0",
+      "necessity": "not_runtime_required",
+      "owner": "sheawinkler",
+      "path": ".github/dependabot.yml",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_non_runtime",
+      "ticket": 25,
+      "upstream_blob": "3854c8f9302fdc1a1bdbb5c37932d27a0dc3c69f",
+      "workstream": "WS8"
+    },
+    {
       "action": "No vendoring; verify approved divergence remains current.",
       "classification": "intentional_divergence",
       "classification_path": ".github/workflows/ci.yml",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "a9da59274f7d5d6e200fda4c7c8eb08573359a9f",
+      "local_blob": "f4125af929535a53fa13b755496acce88b0ace31",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": ".github/workflows/ci.yml",
@@ -19276,10 +19291,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-14T22:18:12.334396+00:00",
+  "generated_at_utc": "2026-11-15T00:52:35.308797+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "42c0e598554fc62e29b17ceb5e3729a3aa404609",
+    "local_sha": "daea7331c74da21dc26df7e51e30dca667021a94",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796"
   },
@@ -19287,26 +19302,26 @@
     "by_classification": {
       "branding_only": 1,
       "intentional_divergence": 1061,
-      "policy_only": 223
+      "policy_only": 224
     },
     "by_rust_requirement": {
-      "not_required_for_runtime": 1285
+      "not_required_for_runtime": 1286
     },
     "by_status": {
       "cleared_intentional_divergence": 1061,
-      "cleared_non_runtime": 224
+      "cleared_non_runtime": 225
     },
     "by_workstream": {
       "WS3": 102,
       "WS4": 45,
       "WS5": 320,
       "WS6": 798,
-      "WS8": 20
+      "WS8": 21
     },
     "cleared_intentional_divergence": 1061,
-    "cleared_non_runtime": 224,
+    "cleared_non_runtime": 225,
     "pending_classification": 0,
     "pending_review": 0,
-    "total_shared_different": 1285
+    "total_shared_different": 1286
   }
 }
