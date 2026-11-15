@@ -49,20 +49,45 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
-fn non_empty(path: &Path) -> bool {
-    fs::symlink_metadata(path).is_ok_and(|meta| meta.len() > 0)
+/// A sidecar's state: absent, an empty or non-empty regular file, or something
+/// else (a link or special file), which SQLite would follow and is refused.
+enum Sidecar {
+    Absent,
+    Empty,
+    Full,
+    Other,
+}
+
+fn sidecar_state(path: &Path) -> Sidecar {
+    match fs::symlink_metadata(path) {
+        Err(_) => Sidecar::Absent,
+        Ok(meta) if !meta.is_file() => Sidecar::Other,
+        Ok(meta) if meta.len() == 0 => Sidecar::Empty,
+        Ok(_) => Sidecar::Full,
+    }
 }
 
 pub(super) fn open(path: &Path) -> Result<Connection, String> {
     const RERUN: &str = "start and stop Hermes once, then run this again";
-    if non_empty(&sidecar(path, "-journal")) {
+    let (journal, wal, shm) = (
+        sidecar_state(&sidecar(path, "-journal")),
+        sidecar_state(&sidecar(path, "-wal")),
+        sidecar_state(&sidecar(path, "-shm")),
+    );
+    if [&journal, &wal, &shm]
+        .iter()
+        .any(|state| matches!(state, Sidecar::Other))
+    {
+        return Err("a state.db sidecar file is a link or special file".into());
+    }
+    if matches!(journal, Sidecar::Full) {
         return Err(format!(
             "an unfinished write is in state.db-journal; {RERUN}"
         ));
     }
     let flags = OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX;
-    let opened = if non_empty(&sidecar(path, "-wal")) {
-        if fs::symlink_metadata(sidecar(path, "-shm")).is_err() {
+    let opened = if matches!(wal, Sidecar::Full) {
+        if matches!(shm, Sidecar::Absent) {
             return Err(format!(
                 "unapplied changes are in state.db-wal without state.db-shm; {RERUN}"
             ));

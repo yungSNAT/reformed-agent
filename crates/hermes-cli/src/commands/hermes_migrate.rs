@@ -131,14 +131,26 @@ pub fn migrate_hermes(request: &MigrateRequest<'_>) -> Result<MigrateReport, Age
             Ok(report)
         }
         outcome => {
-            writer.rollback();
-            if !existing {
-                let _ = fs::remove_dir(to.as_path());
+            let mut left = writer.rollback();
+            if !existing && fs::remove_dir(to.as_path()).is_err() {
+                left.push(to.clone());
             }
-            let mut report = with_header(header, outcome?);
-            report
-                .lines
-                .push("Nothing was written: the Hermes home changed during the run.".into());
+            let cleanup = if left.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    " {} entries it created could not be removed, first {}",
+                    left.len(),
+                    left[0].display()
+                )
+            };
+            let mut report = match outcome {
+                Err(error) => return Err(AgentError::Io(format!("{error}.{cleanup}"))),
+                Ok(report) => with_header(header, report),
+            };
+            report.lines.push(format!(
+                "Nothing was written: the Hermes home changed during the run.{cleanup}"
+            ));
             Ok(report)
         }
     }
@@ -271,14 +283,20 @@ impl Writer {
         Ok(())
     }
 
-    fn rollback(self) {
-        for path in self.created.iter().rev() {
-            if fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir()) {
-                let _ = fs::remove_dir(path);
+    /// Removes what this run created, newest first; returns what it could not.
+    fn rollback(self) -> Vec<PathBuf> {
+        let mut left = Vec::new();
+        for path in self.created.into_iter().rev() {
+            let removed = if fs::symlink_metadata(&path).is_ok_and(|meta| meta.is_dir()) {
+                fs::remove_dir(&path)
             } else {
-                let _ = fs::remove_file(path);
+                fs::remove_file(&path)
+            };
+            if removed.is_err() {
+                left.push(path);
             }
         }
+        left
     }
 }
 

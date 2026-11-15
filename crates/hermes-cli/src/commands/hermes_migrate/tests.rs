@@ -261,7 +261,7 @@ fn a_dry_run_writes_nothing_and_prints_no_secret() {
         "state.db: to copy 2 sessions with 5 active messages; 2 inactive or metadata rows left out",
         "cron/jobs.json: 2 jobs to write paused, 1 skipped",
         "  job a1b2c3: 0 9 * * 1, now read in UTC",
-        "  job d4e5f6: every 30 minutes, as 7,37 * * * * in UTC",
+        "  job d4e5f6: every 30 minutes, as 0 7,37 * * * * in UTC",
         "  job #3: skipped, its id is not a safe file name",
         "auth.json: not migrated",
         "Dry run: nothing was written.",
@@ -561,6 +561,34 @@ fn links_are_neither_copied_nor_written_through() {
 
 #[cfg(unix)]
 #[test]
+fn linked_sidecars_and_script_folders_are_refused() {
+    use std::os::unix::fs::symlink;
+    let root = tempfile::tempdir().unwrap();
+    let from = hermes_home(root.path());
+    let outside = root.path().join("outside");
+    fs::write(&outside, b"x").unwrap();
+    symlink(outside, from.join("state.db-wal")).unwrap();
+    let elsewhere = root.path().join("elsewhere");
+    fs::create_dir(&elsewhere).unwrap();
+    fs::rename(from.join("scripts/check.sh"), elsewhere.join("check.sh")).unwrap();
+    fs::remove_dir(from.join("scripts")).unwrap();
+    symlink(elsewhere, from.join("scripts")).unwrap();
+
+    let report = run(&from, &root.path().join("reformed"), false, false);
+
+    let text = report.lines.join("\n");
+    assert!(report.failed, "{text}");
+    for line in [
+        "error: state.db: a state.db sidecar file is a link or special file",
+        "scripts/: skipped, not a folder",
+        "job d4e5f6: skipped, its script is not a file in the scripts folder",
+    ] {
+        assert!(text.contains(line), "missing {line:?} in\n{text}");
+    }
+}
+
+#[cfg(unix)]
+#[test]
 fn a_failed_apply_removes_what_it_created() {
     use std::os::unix::fs::PermissionsExt;
     // Root reads a mode-000 file, so the failure cannot be staged.
@@ -616,18 +644,18 @@ fn cron_schedules_convert_to_the_same_instants_in_utc() {
         ),
         (
             json!({"kind": "interval", "minutes": 30}),
-            json!({"next_run_at": "2026-11-15T20:37:00+11:00"}),
-            "7,37 * * * *",
+            json!({"next_run_at": "2026-11-15T20:37:42+11:00"}),
+            "42 7,37 * * * *",
         ),
         (
             json!({"kind": "interval", "minutes": 120}),
             json!({"last_run_at": "2026-11-15T03:15:00+00:00"}),
-            "15 1,3,5,7,9,11,13,15,17,19,21,23 * * *",
+            "0 15 1,3,5,7,9,11,13,15,17,19,21,23 * * *",
         ),
         (
             json!({"kind": "interval", "minutes": 1440}),
             json!({"created_at": "2026-11-16T06:30:00.123456+00:00"}),
-            "30 6 * * *",
+            "0 30 6 * * *",
         ),
         (
             json!({"kind": "once", "run_at": "2099-12-01T09:30:05+11:00"}),
@@ -679,6 +707,18 @@ fn cron_fields_map_and_unsupported_jobs_are_skipped_with_a_reason() {
 
     for (job, reason) in [
         (with("timezone", json!("Australia/Hobart")), "sets timezone"),
+        (with("repeat", json!("forever")), "repeat is not an object"),
+        (
+            with("workdir", json!(format!("relative/{SECRET}"))),
+            "Reformed rejects its workdir",
+        ),
+        (
+            with(
+                "schedule",
+                json!({"kind": "cron", "expr": format!("0 9 * * {SECRET}")}),
+            ),
+            "Reformed rejects its schedule",
+        ),
         (
             with("deliver", json!("telegram:1,discord:2")),
             "several targets",
@@ -728,6 +768,7 @@ fn cron_fields_map_and_unsupported_jobs_are_skipped_with_a_reason() {
     ] {
         let error = convert(job.clone()).unwrap_err();
         assert!(error.contains(reason), "{job}: {error}");
+        assert!(!error.contains(SECRET), "{job}: {error}");
     }
 }
 

@@ -85,6 +85,12 @@ pub(super) fn convert(
     {
         return Err(format!("sets {field}, which Reformed cannot carry"));
     }
+    if fields
+        .get("repeat")
+        .is_some_and(|repeat| !repeat.is_null() && !repeat.is_object())
+    {
+        return Err("repeat is not an object".into());
+    }
     let times = match fields.get("repeat").and_then(|repeat| repeat.get("times")) {
         None | Some(Value::Null) => None,
         Some(times) => Some(count(times, "repeat.times")?),
@@ -183,8 +189,12 @@ pub(super) fn convert(
         Some(Value::Array(ids)) => Some(strings(ids, "context_from")?),
         Some(_) => return Err("context_from is not a list of job ids".into()),
     };
-    converted.normalize_paths()?;
-    converted.validate()?;
+    converted
+        .normalize_paths()
+        .map_err(|_| "Reformed rejects its workdir")?;
+    converted
+        .validate()
+        .map_err(|_| "Reformed rejects its schedule or fields")?;
     Ok((converted, note))
 }
 
@@ -259,17 +269,16 @@ fn anchor(fields: &Map<String, Value>) -> Option<DateTime<Utc>> {
         .map(|at| at.with_timezone(&Utc))
 }
 
-/// An interval that divides the hour or the day, as a UTC expression firing
-/// at the same instants as from `at`.
+/// An interval that divides the hour or the day, as a UTC expression with
+/// seconds firing at the same whole seconds as from `at`. Fractions of a
+/// second are dropped: Hermes checks for due jobs once a minute
+/// (`TICKER_INTERVAL_SECONDS = 60`), so they never decide when a job runs.
 fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
     let hourly = minutes < 60 && 60_u64.is_multiple_of(minutes);
     if !hourly && !(minutes.is_multiple_of(60) && 1440_u64.is_multiple_of(minutes)) {
         return Err(format!(
             "it runs every {minutes} minutes, which does not divide an hour or a day"
         ));
-    }
-    if minutes == 1 {
-        return Ok("* * * * *".into());
     }
     let at = at.ok_or("its interval has no next, last or creation time to keep its timing")?;
     let list = |start: u64, step: u64, span: u64| {
@@ -278,13 +287,12 @@ fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join(",")
     };
-    let (minute, hour) = (u64::from(at.minute()), u64::from(at.hour()));
-    Ok(if hourly {
-        format!("{} * * * *", list(minute, minutes, 60))
-    } else if minutes == 60 {
-        format!("{minute} * * * *")
-    } else {
-        format!("{minute} {} * * *", list(hour, minutes / 60, 24))
+    let (second, minute, hour) = (at.second(), u64::from(at.minute()), u64::from(at.hour()));
+    Ok(match minutes {
+        1 => format!("{second} * * * * *"),
+        60 => format!("{second} {minute} * * * *"),
+        _ if hourly => format!("{second} {} * * * *", list(minute, minutes, 60)),
+        _ => format!("{second} {minute} {} * * *", list(hour, minutes / 60, 24)),
     })
 }
 
@@ -327,6 +335,32 @@ fn deliver(fields: &Map<String, Value>) -> Result<Option<DeliverConfig>, String>
         .ok_or_else(|| "it delivers to a platform Reformed does not support".into())
 }
 
+/// True when `root` and every folder on the way to `relative` are real
+/// folders and `relative` is a regular file: no link is followed, so the
+/// file is one the `scripts` tree copy also copies.
+fn regular_file_under(root: &Path, relative: &Path) -> bool {
+    let mut current = root.to_path_buf();
+    if !std::fs::symlink_metadata(&current).is_ok_and(|meta| meta.is_dir()) {
+        return false;
+    }
+    let mut parts = relative.components().peekable();
+    while let Some(part) = parts.next() {
+        current.push(part);
+        let Ok(meta) = std::fs::symlink_metadata(&current) else {
+            return false;
+        };
+        let expected = if parts.peek().is_some() {
+            meta.is_dir()
+        } else {
+            meta.is_file()
+        };
+        if !expected {
+            return false;
+        }
+    }
+    true
+}
+
 /// A script file in Hermes's `scripts` folder, written as a path so Reformed
 /// never reads the name as inline shell.
 fn script(fields: &Map<String, Value>, scripts: &Path) -> Result<Option<String>, String> {
@@ -339,7 +373,7 @@ fn script(fields: &Map<String, Value>, scripts: &Path) -> Result<Option<String>,
         && path
             .components()
             .all(|component| matches!(component, Component::Normal(_)));
-    if !inside || !std::fs::symlink_metadata(scripts.join(path)).is_ok_and(|meta| meta.is_file()) {
+    if !inside || !regular_file_under(scripts, path) {
         return Err("its script is not a file in the scripts folder".into());
     }
     Ok(Some(if name.contains(['/', '\\']) {
