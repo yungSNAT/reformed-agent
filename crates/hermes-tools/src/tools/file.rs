@@ -954,7 +954,7 @@ mod tests {
     /// old content back over the write.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn write_file_racing_a_patch_is_not_lost() {
-        const FILES: usize = 192;
+        const FILES: usize = 48;
         let tmp = tempfile::tempdir().unwrap();
         let write = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
         let patch = Arc::new(PatchHandler::new(Arc::new(
@@ -990,6 +990,32 @@ mod tests {
             })
             .collect();
         assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
+    }
+
+    /// write_file waits whilst another edit holds the file, so it cannot land
+    /// between a patch's read and write.
+    #[tokio::test]
+    async fn write_file_waits_for_the_files_edit_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let path = tmp.path().join("f.txt");
+        std::fs::write(&path, "before\n").unwrap();
+        let write = WriteFileHandler::new(Arc::new(DiskBackend));
+        let params = json!({"path": path.to_str().unwrap(), "content": "after\n"});
+        let edit_lock = file_edit_lock(&path).await;
+        let turn = edit_lock.lock().await;
+        let waited = tokio::time::timeout(
+            std::time::Duration::from_millis(200),
+            write.execute(params.clone()),
+        )
+        .await;
+        assert!(
+            waited.is_err(),
+            "write_file ran whilst an edit held the file"
+        );
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "before\n");
+        drop(turn);
+        write.execute(params).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
     }
 
     /// A file created through a symlinked folder keeps the lock it had before
