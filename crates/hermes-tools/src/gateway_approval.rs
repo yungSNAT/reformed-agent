@@ -221,7 +221,7 @@ fn approval_prompt(command: &str, params: &Value) -> Option<String> {
 /// HTML mode would interpret (backticks, backslashes, `&` entities, `<` tags,
 /// comments and declarations).
 fn displays_verbatim(text: &str) -> bool {
-    if text.contains("\n\n") || text.contains("   ") {
+    if text.lines().any(|line| line.trim().is_empty()) || text.contains("   ") {
         return false;
     }
     let mut chars = text.chars().peekable();
@@ -397,6 +397,15 @@ mod tests {
             )
         );
         clear("t:forged");
+
+        // The parameter block is held to the same rules as the command.
+        let escaping = json!({"command": "rm -rf ./build", "workdir": "/srv/`x`"});
+        let err = authorise(&alice, "rm -rf ./build", &escaping)
+            .await
+            .unwrap_err();
+        assert!(err.contains("exactly as it would run"), "{err}");
+        assert_eq!(shown.lock().unwrap().len(), 1);
+        assert_eq!(approve("t:forged", "alice"), Resolution::NothingPending);
     }
 
     #[tokio::test]
@@ -499,6 +508,8 @@ mod tests {
             "rm -rf /tmp/x <!-- y -->",
             "ls\n\nrm -rf ~/x",
             "ls   ; rm -rf ~/x",
+            "ls\n \nrm -rf ./build",
+            "ls\n  \nrm -rf ./build",
         ] {
             let err = authorise(&alice, disguised, &json!({"command": disguised}))
                 .await
