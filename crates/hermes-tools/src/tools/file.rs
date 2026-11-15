@@ -1035,4 +1035,27 @@ mod tests {
             "creating the file changed its lock"
         );
     }
+
+    /// A symlink to a file not yet created shares the lock of that file, as
+    /// writing through the symlink creates it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_dangling_symlink_shares_its_targets_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let alias = tmp.path().join("alias.txt");
+        let target = tmp.path().join("target.txt");
+        std::os::unix::fs::symlink("target.txt", &alias).unwrap();
+        let through_alias = file_edit_lock(&alias).await;
+        let direct = file_edit_lock(&target).await;
+        assert!(
+            Arc::ptr_eq(&through_alias, &direct),
+            "a symlink and the file it will create got different locks"
+        );
+        std::fs::write(&target, "x").unwrap();
+        let after = file_edit_lock(&alias).await;
+        assert!(
+            Arc::ptr_eq(&through_alias, &after),
+            "creating the file changed its lock"
+        );
+    }
 }
