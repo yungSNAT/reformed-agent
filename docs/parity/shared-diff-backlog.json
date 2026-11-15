@@ -35,7 +35,7 @@
       "classification": "intentional_divergence",
       "classification_path": ".github/workflows/ci.yml",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "dedfa2379932f603311e5896922596ed8fd11769",
+      "local_blob": "f4125af929535a53fa13b755496acce88b0ace31",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": ".github/workflows/ci.yml",
@@ -14525,7 +14525,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "2bb1616a0a29c9d1a07fac2b4d83b91d8c7699df",
+      "local_blob": "7faa4044e9d09368f614480a28d31b1d07f9c7d1",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/package.json",
@@ -19085,7 +19085,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "6246225b9b279946f072be1757a36bce5028e83f",
+      "local_blob": "a3a770313bc56718e204979fb55e518058edfccc",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/package-lock.json",
@@ -19100,7 +19100,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "77ec0be928e0aee14b3a1cc581cd915f969ea1af",
+      "local_blob": "5d4214b55f47b13fe5525ab4252df52e8fe03228",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/package.json",
@@ -19291,10 +19291,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-15T00:52:25.987212+00:00",
+  "generated_at_utc": "2026-11-15T00:52:35.308797+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "2e0259b918563851eedbd762c3fec714a87cfa92",
+    "local_sha": "daea7331c74da21dc26df7e51e30dca667021a94",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796"
   },
