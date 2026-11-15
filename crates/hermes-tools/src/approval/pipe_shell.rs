@@ -576,13 +576,17 @@ impl Walk<'_> {
                     } else if value == "--" && !word.computed {
                         command.operands = true;
                     } else {
-                        // `-o`/`-O` take a value, also at the end of a cluster.
+                        // `-o`/`-O` take the next word, also inside a cluster (`-oe`).
                         command.option_value = matches!(value, "--rcfile" | "--init-file")
-                            || (!value.starts_with("--") && value.ends_with(['o', 'O']));
+                            || (!value.starts_with("--") && value.contains(['o', 'O']));
                     }
                 }
-                if let Some(carrier) = &mut self.list().command.carrier {
-                    carrier.add(&word);
+                // After a shell's script, `-c` is the script's argument.
+                let command = &mut self.list().command;
+                if !(command.runs_file && command.script_read) {
+                    if let Some(carrier) = &mut command.carrier {
+                        carrier.add(&word);
+                    }
                 }
             }
         }
