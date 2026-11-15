@@ -191,13 +191,24 @@ pub fn resolve_tool_path(
 /// The lock `write_file`, `patch` and `hash_edit` hold on a file, shared by
 /// every path that resolves to it. Tool calls in one batch run in parallel, and
 /// an edit reads, changes and writes the whole file, so calls on one file take
-/// turns. Locks no call holds are dropped as others are handed out.
+/// turns. Locks no call holds are dropped as others are handed out. A file not
+/// yet created is keyed by its nearest existing folder's real path, so it keeps
+/// its lock once it exists.
 pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
         LazyLock::new(Mutex::default);
-    let file = tokio::fs::canonicalize(path)
-        .await
-        .unwrap_or_else(|_| path.to_path_buf());
+    let mut file = path.to_path_buf();
+    for existing in path.ancestors() {
+        if let Ok(real) = tokio::fs::canonicalize(existing).await {
+            let missing = path.strip_prefix(existing).unwrap_or(Path::new(""));
+            file = if missing.as_os_str().is_empty() {
+                real
+            } else {
+                real.join(missing)
+            };
+            break;
+        }
+    }
     let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
     locks.retain(|_, lock| Arc::strong_count(lock) > 1);
     Arc::clone(locks.entry(file).or_default())
