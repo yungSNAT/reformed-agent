@@ -886,4 +886,108 @@ mod tests {
             absolute
         );
     }
+
+    /// Writes files the way the local terminal backend does.
+    struct DiskBackend;
+    #[async_trait]
+    impl TerminalBackend for DiskBackend {
+        async fn execute_command(
+            &self,
+            _cmd: &str,
+            _timeout: Option<u64>,
+            _workdir: Option<&str>,
+            _bg: bool,
+            _pty: bool,
+        ) -> Result<CommandOutput, AgentError> {
+            unreachable!("file tools run no commands")
+        }
+        async fn read_file(
+            &self,
+            path: &str,
+            _offset: Option<u64>,
+            _limit: Option<u64>,
+        ) -> Result<String, AgentError> {
+            tokio::fs::read_to_string(path)
+                .await
+                .map_err(|e| AgentError::Io(e.to_string()))
+        }
+        async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
+            tokio::fs::write(path, content)
+                .await
+                .map_err(|e| AgentError::Io(e.to_string()))
+        }
+        async fn file_exists(&self, path: &str) -> Result<bool, AgentError> {
+            Ok(Path::new(path).exists())
+        }
+    }
+
+    /// Parallel writes to one file must leave one of them whole, not a mix.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_write_files_on_one_file_leave_one_whole() {
+        const WRITES: usize = 8;
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("one.txt");
+        let path = file.to_str().unwrap().to_owned();
+        let handler = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
+        let contents: Vec<String> = (0..WRITES)
+            .map(|i| i.to_string().repeat((i + 1) * 4096))
+            .collect();
+        for round in 0..20 {
+            let mut writes = tokio::task::JoinSet::new();
+            for content in &contents {
+                let (handler, params) =
+                    (handler.clone(), json!({"path": path, "content": content}));
+                writes.spawn(async move { handler.execute(params).await });
+            }
+            while let Some(result) = writes.join_next().await {
+                result.unwrap().unwrap();
+            }
+            let written = std::fs::read_to_string(&file).unwrap();
+            assert!(
+                contents.contains(&written),
+                "round {round}: file holds a mix of writes ({} bytes)",
+                written.len()
+            );
+        }
+    }
+
+    /// A patch that read the file before a parallel write must not put the
+    /// old content back over the write.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn write_file_racing_a_patch_is_not_lost() {
+        const FILES: usize = 48;
+        let tmp = tempfile::tempdir().unwrap();
+        let write = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
+        let patch = Arc::new(PatchHandler::new(Arc::new(
+            crate::backends::file::LocalPatchBackend::new(),
+        )));
+        let mut calls = tokio::task::JoinSet::new();
+        for i in 0..FILES {
+            let path = tmp.path().join(format!("{i}.txt"));
+            std::fs::write(&path, "old line;\n").unwrap();
+            let path = path.to_str().unwrap().to_owned();
+            let params = json!({"path": path, "old_string": "old line;", "new_string": "patched;"});
+            let patch = patch.clone();
+            // The patch fails if the write lands first; either order ends with the write.
+            calls.spawn(async move {
+                let _ = patch.execute(params).await;
+            });
+            let params = json!({"path": path, "content": "rewritten\n"});
+            let write = write.clone();
+            calls.spawn(async move {
+                write.execute(params).await.unwrap();
+            });
+        }
+        while let Some(result) = calls.join_next().await {
+            result.unwrap();
+        }
+
+        let lost: Vec<usize> = (0..FILES)
+            .filter(|i| {
+                std::fs::read_to_string(tmp.path().join(format!("{i}.txt"))).unwrap()
+                    != "rewritten\n"
+            })
+            .collect();
+        assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
+    }
 }
