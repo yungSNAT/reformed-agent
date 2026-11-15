@@ -1111,7 +1111,7 @@ mod tests {
 
         assert_eq!(out, vec!["default".to_string()]);
         assert!(
-            !provider_catalog_cache_path("moa").exists(),
+            !provider_catalog_cache_path("moa").unwrap().exists(),
             "virtual provider catalog should not be persisted to dynamic cache"
         );
     }
@@ -1275,8 +1275,8 @@ mod tests {
 
         assert!(clear_provider_catalog_cache("openai").expect("clear cache"));
         assert!(cached_provider_catalog_status("openai").is_none());
-        assert!(!provider_catalog_cache_path("openai").exists());
-        assert!(!provider_catalog_signature_path("openai").exists());
+        assert!(!provider_catalog_cache_path("openai").unwrap().exists());
+        assert!(!provider_catalog_signature_path("openai").unwrap().exists());
         assert!(!clear_provider_catalog_cache("openai").expect("idempotent clear"));
     }
 
@@ -1288,7 +1288,7 @@ mod tests {
 
         let models = vec!["gpt-4o".to_string()];
         persist_provider_catalog_cache("openai", &models);
-        let path = provider_catalog_cache_path("openai");
+        let path = provider_catalog_cache_path("openai").unwrap();
         let mut raw = std::fs::read_to_string(&path).expect("read cache");
         raw = raw.replace("gpt-4o", "gpt-4o-tampered");
         std::fs::write(&path, raw).expect("write tampered cache");
@@ -1299,5 +1299,67 @@ mod tests {
         );
         let status = cached_provider_catalog_status("openai").expect("cache status");
         assert!(!status.verified);
+    }
+
+    /// `/model refresh <provider>` clears the cache for a typed name, so a
+    /// name that is not a plain file stem has no cache to read, write or clear.
+    #[test]
+    fn provider_catalog_cache_rejects_names_that_leave_the_cache_folder() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
+        persist_provider_catalog_cache("openai", &["gpt-4o".to_string()]);
+        for file in ["victim.json", "victim.sig.json"] {
+            std::fs::write(tmp.path().join(file), "{}").expect("write victim");
+        }
+        let absolute = tmp.path().join("victim");
+
+        for name in [
+            "../../victim",
+            absolute.to_str().unwrap(),
+            "sub/openai",
+            "sub\\openai",
+            "..",
+            ".",
+            "",
+            "  ",
+            "c:victim",
+            "con",
+            "NUL",
+            "aux.x",
+            "com1",
+            "lpt9",
+        ] {
+            assert!(
+                matches!(clear_provider_catalog_cache(name), Ok(false)),
+                "clearing {name:?} should touch nothing"
+            );
+            persist_provider_catalog_cache(name, &["m".to_string()]);
+        }
+        for file in ["victim.json", "victim.sig.json"] {
+            assert_eq!(
+                std::fs::read_to_string(tmp.path().join(file))
+                    .ok()
+                    .as_deref(),
+                Some("{}"),
+                "{file} was changed"
+            );
+        }
+        let cache = tmp.path().join("cache");
+        let written: Vec<_> = std::fs::read_dir(cache.join("provider-model-catalog"))
+            .expect("cache folder")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(written.len(), 2, "persist wrote {written:?}");
+        assert!(
+            provider_catalog_cache_path("com1").is_none()
+                && provider_catalog_cache_path("comx").is_some(),
+            "only device names are refused"
+        );
+        assert!(
+            cached_provider_catalog_status("../provider-model-catalog/openai").is_none(),
+            "a traversal name must not read the cache"
+        );
+        assert!(cached_provider_catalog_status("OpenAI").is_some());
     }
 }
