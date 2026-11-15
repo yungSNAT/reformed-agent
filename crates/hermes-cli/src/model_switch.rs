@@ -1300,4 +1300,43 @@ mod tests {
         let status = cached_provider_catalog_status("openai").expect("cache status");
         assert!(!status.verified);
     }
+
+    /// `/model refresh <provider>` clears the cache for a typed name, so a
+    /// name that is not a plain file stem must not reach a path.
+    #[test]
+    fn provider_catalog_cache_rejects_names_that_leave_the_cache_folder() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
+        persist_provider_catalog_cache("openai", &["gpt-4o".to_string()]);
+        for file in ["victim.json", "victim.sig.json"] {
+            std::fs::write(tmp.path().join(file), "{}").expect("write victim");
+        }
+        let absolute = tmp.path().join("victim");
+
+        for name in [
+            "../../victim",
+            absolute.to_str().unwrap(),
+            "sub/openai",
+            "sub\\openai",
+            "..",
+            ".",
+            "",
+            "  ",
+            "c:victim",
+        ] {
+            assert!(
+                clear_provider_catalog_cache(name).is_err(),
+                "clearing {name:?} should be refused"
+            );
+        }
+        for file in ["victim.json", "victim.sig.json"] {
+            assert!(tmp.path().join(file).exists(), "{file} was deleted");
+        }
+        assert!(
+            cached_provider_catalog_status("../provider-model-catalog/openai").is_none(),
+            "a traversal name must not read the cache"
+        );
+        assert!(cached_provider_catalog_status("OpenAI").is_some());
+    }
 }
