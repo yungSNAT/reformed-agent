@@ -1,0 +1,130 @@
+model: openai-codex:dynamic
+model_switch: {}
+max_turns: 250
+tools:
+  - bash
+  - read
+  - write
+  - edit
+  - glob
+  - grep
+  - web_search
+  - web_fetch
+budget:
+  max_result_size_chars: 100000
+  max_aggregate_chars: 1000000
+tool_output:
+  max_bytes: 50000
+  max_lines: 2000
+  max_line_length: 2000
+platforms: {}
+platform_toolsets:
+  desktop:
+    - hermes-cli
+  cron:
+    - hermes-cron
+  cli:
+    - hermes-cli
+  whatsapp:
+    - hermes-whatsapp
+  telegram:
+    - hermes-telegram
+  acp:
+    - hermes-acp
+  discord:
+    - hermes-discord
+  slack:
+    - hermes-slack
+  tui:
+    - hermes-cli
+delegation: {}
+session:
+  reset_policy:
+    type: idle
+    timeout_minutes: 30
+  compression_enabled: false
+  platform_overrides: {}
+sessions:
+  auto_prune: true
+  retention_days: 90
+  vacuum_after_prune: true
+  min_interval_hours: 24
+streaming:
+  enabled: false
+  edit_interval_ms: 1000
+  buffer_threshold: 50
+  max_message_length: 4096
+display: {}
+terminal:
+  backend: local
+  timeout: 180
+  max_output_size: 1048576
+  workdir: .
+web:
+  search_backend: auto
+  extract_backend: auto
+  crawl_backend: auto
+llm_providers:
+  openrouter:
+    api_key_env: OPENROUTER_API_KEY
+    base_url: https://openrouter.ai/api/v1
+    model: anthropic/claude-opus-4.6
+  openai-codex:
+    request_timeout_seconds: 900.0
+    model: dynamic
+    model_context_windows:
+      dynamic: 272000
+      gpt-5: 272000
+    api_mode: codex_responses
+    oauth_token_url: ${HERMES_OPENAI_CODEX_OAUTH_TOKEN_URL}
+    oauth_client_id: ${HERMES_OPENAI_CODEX_OAUTH_CLIENT_ID}
+  local-openai:
+    api_key_env: LMSTUDIO_API_KEY
+    base_url: http://127.0.0.1:1234/v1
+    model: local-model
+fallback_model: openrouter:anthropic/claude-sonnet-4.6
+fallback_models:
+  - openrouter:anthropic/claude-sonnet-4.6
+smart_model_routing:
+  enabled: true
+  max_simple_chars: 160
+  max_simple_words: 28
+  cheap_model:
+    provider: openrouter
+    model: openai/gpt-5-mini
+kanban:
+  dispatch_in_gateway: true
+approval:
+  enabled: false
+  dangerous_commands: []
+  require_approval: false
+  whitelist_commands: []
+security:
+  allow_private_urls: false
+  website_blocklist:
+    enabled: false
+    domains: []
+    shared_files: []
+skills:
+  enabled: []
+  disabled: []
+tools_config:
+  enabled: []
+  disabled: []
+  per_tool: {}
+mcp_servers: []
+profile:
+  available: []
+agent:
+  memory_nudge_interval: 10
+  skill_creation_nudge_interval: 10
+  skip_context_files: false
+  coding_context: auto
+  disabled_toolsets: []
+  background_review_enabled: true
+  code_index_enabled: true
+  code_index_max_files: 32
+  code_index_max_symbols: 160
+  lsp_context_enabled: true
+  lsp_context_max_chars: 2800
+  preflight_context_compress: true

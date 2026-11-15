@@ -1,0 +1,9 @@
+error: duplicate entry with key "duplicate"
+error: deserializing from YAML containing more than one document is not supported
+error: did not find expected key at line 3 column 2, while parsing a block mapping
+error: found unexpected end of stream at line 2 column 1, while scanning a quoted scalar at line 1 column 4
+error: found character that cannot start any token at line 2 column 1, while scanning for the next token
+error: unknown anchor at line 1 column 4
+error: too_big: invalid type: integer `18446744073709551616` as u128, expected any YAML value at line 1 column 10
+error: did not find expected ',' or ']' at line 2 column 1, while parsing a flow sequence at line 1 column 6
+error: recursion limit exceeded at line 1 column 129

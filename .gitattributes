@@ -14,3 +14,6 @@ plugins/**/*.py linguist-vendored
 # Shell scripts keep LF endings on every checkout; bash rejects CRLF.
 *.sh text eol=lf
 scripts/git-hooks/* text eol=lf
+
+# YAML golden fixtures compare byte for byte.
+crates/hermes-config/tests/fixtures/yaml_backend/* text eol=lf

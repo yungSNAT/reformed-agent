@@ -1,0 +1,83 @@
+plain: hello world
+quoted_single: it's quoted
+quoted_double: "tab\there é 😀"
+empty_string: ''
+digits_as_string: '0123'
+leading_zero: '0123'
+octal: 15
+hex: 31
+negative: -42
+big_unsigned: 18446744073709551615
+float: 3.14159
+exponent: 1000.0
+infinity: .inf
+not_a_number: .nan
+null_tilde: null
+null_word: null
+null_empty: null
+bool_true: true
+bool_false: false
+yes_word: yes
+no_word: no
+on_word: on
+date_like: 2026-11-15
+time_like: 12:30:45
+version_like: 1.1
+colon_inside: 'key: value'
+hash_inside: 'a # b'
+url: https://example.com/path?q=1#frag
+env_ref: ${HOME}/data
+windows_path: C:\Users\example
+unicode_key_ñ: value
+1: integer key
+true: boolean key
+null: null key
+literal_block: |
+  line one
+    indented line
+
+  after blank
+folded_block: |
+  folded line one folded line two
+  new paragraph
+keep_trailing: |+
+  kept
+
+strip_trailing: stripped
+nested:
+  list:
+    - a
+    - b: 1
+      c:
+        - x
+        - y
+    - - inner
+      - list
+  flow_map:
+    k1: v1
+    k2: 2
+  empty_list: []
+  empty_map: {}
+anchor_source:
+  timeout: 30
+  retries: 3
+merged:
+  <<:
+    timeout: 30
+    retries: 3
+  retries: 5
+alias_use:
+  timeout: 30
+  retries: 3
+tagged: !custom value
+tagged_map: !Variant
+  field: 1
+long_string: This is a long string that goes on and on so that an emitter might want to wrap it across lines if it wrapped long scalars at all.
+multiline_quoted: |
+  first line
+  second line
+trailing_spaces: 'ends with space '
+leading_spaces: '  starts with spaces'
+special_start: '- not a list'
+star_start: '*not an alias'
+# trailer
