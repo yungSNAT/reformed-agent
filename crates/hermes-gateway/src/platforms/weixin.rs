@@ -1377,7 +1377,7 @@ impl PlatformAdapter for WeChatAdapter {
             return self.send_file(chat_id, &decoded_path, caption).await;
         }
 
-        let downloaded = download_media_url(&self.inner.client, image_url).await;
+        let downloaded = download_media_url(&self.inner.base, image_url).await;
 
         let (bytes, content_type) = match downloaded {
             Ok(result) => result,
