@@ -22,7 +22,7 @@ pub(super) enum Frame {
     /// `(...)`; with `arith`, a frame of `((...))` or `$((...))`.
     Subshell,
     /// A here-document body, in the order of the `<<` operators. A literal
-    /// body (quoted delimiter) is an empty frame.
+    /// body (quoted delimiter) holds only its [`Token::Body`].
     HereDoc,
 }
 
@@ -33,10 +33,13 @@ pub(super) enum Op {
     /// `;`, `&`, `&&`, `||`, a newline, `;;`, `;&`, `;;&` or a `)` that
     /// closes nothing.
     Terminator,
-    /// A redirection other than a here-document; the next word is its target.
+    /// A redirection other than a here-document or here-string; the next
+    /// word is its target.
     Redirect,
     /// `<<` or `<<-`; the next word is the delimiter.
     HereDoc,
+    /// `<<<`; the next word is the text given as stdin.
+    HereString,
 }
 
 #[derive(Debug)]
@@ -64,6 +67,14 @@ pub(super) enum Token {
         frame: Frame,
         arith: bool,
         at: usize,
+    },
+    /// The text of a here-document body, last in its frame. `computed`:
+    /// the body is unquoted and holds an expansion or a backslash, so the
+    /// text a command reads differs from `start..end`.
+    Body {
+        start: usize,
+        end: usize,
+        computed: bool,
     },
     Close,
     Opaque,
@@ -270,7 +281,7 @@ impl Lexer<'_> {
     /// A redirection operator at `pos` (after any descriptor).
     fn redirect(&mut self, at: usize) {
         const OPS: [(&str, Op); 8] = [
-            ("<<<", Op::Redirect),
+            ("<<<", Op::HereString),
             ("<<-", Op::HereDoc),
             ("<<", Op::HereDoc),
             ("<>", Op::Redirect),
@@ -579,28 +590,36 @@ impl Lexer<'_> {
                 arith: false,
                 at: body,
             });
-            if !doc.literal {
+            let computed = !doc.literal && {
                 let outer_end = std::mem::replace(&mut self.end, body_end);
                 self.pos = body;
-                self.here_document_body();
+                let computed = self.here_document_body();
                 self.end = outer_end;
-            }
+                computed
+            };
+            self.tokens.push(Token::Body {
+                start: body,
+                end: body_end,
+                computed,
+            });
             self.tokens.push(Token::Close);
             self.pos = after;
         }
     }
 
     /// An unquoted here-document body: expansions are active, quotes are not.
-    fn here_document_body(&mut self) {
+    /// Returns whether it holds an expansion or a backslash.
+    fn here_document_body(&mut self) -> bool {
         let mut word = Builder::default();
         while !self.stop {
             match self.peek() {
-                None => return,
+                None => break,
                 Some(b'\\') => self.escape(&mut word, true),
                 Some(b'$') => self.dollar(&mut word, true),
                 Some(b'`') => self.backtick(&mut word),
                 Some(_) => self.pos += 1,
             }
         }
+        word.computed || word.quoted
     }
 }

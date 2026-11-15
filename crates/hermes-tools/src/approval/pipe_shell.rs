@@ -7,10 +7,11 @@
 //! After it, a pipe, `|&` or `>(` feeds a sink, and the command is flagged
 //! when that sink, or anything run inside it (a compound command, a
 //! substitution in its words, a here-document), is a shell, `eval`,
-//! `source`, `su`, `sudo -s` or a command word computed at run time. A
-//! carrier's code (`eval` arguments, a shell's `-c` arguments) is scanned as
-//! a command too, and code not known until run time fails closed after a
-//! fetch. Lookups (`command -v bash`, `sudo -l bash`) run nothing.
+//! `source`, `su`, `sudo -s` or a command word computed at run time. Code a
+//! shell is given (`eval` arguments, a shell's `-c` arguments, a here-string
+//! or here-document for a shell, `source` or `.`) is scanned as a command
+//! too, and code not known until run time fails closed after a fetch.
+//! Lookups (`command -v bash`, `sudo -l bash`) run nothing.
 //!
 //! Out of scope: other downloaders and interpreters, a fetch named at run
 //! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
@@ -95,9 +96,9 @@ const LAUNCHERS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-/// Whether `command` runs `source <(curl ...)` or `. <(wget ...)`: a `source`
-/// whose argument is a process substitution that runs a fetch. Other
-/// `source` arguments are file names, not code.
+/// Whether `command` runs `source <(curl ...)`, `bash -x <(wget ...)` or
+/// `bash < <(curl ...)`: a shell, `source` or `.` given a process
+/// substitution that runs a fetch. Other arguments are file names, not code.
 pub(super) fn sources_remote_process_substitution(command: &str) -> bool {
     let Some(fetch_end) = first_fetch_end(command) else {
         return false;
@@ -138,6 +139,9 @@ struct List {
     compound: usize,
     /// A command word in this frame or a nested one names `curl`/`wget`.
     ran_fetch: bool,
+    /// A here-document frame whose body a shell, `source` or `.` reads as
+    /// code.
+    body_is_code: bool,
     command: Command,
 }
 
@@ -150,6 +154,7 @@ impl List {
             region: None,
             compound: 0,
             ran_fetch: false,
+            body_is_code: false,
             command: Command::default(),
         }
     }
@@ -196,8 +201,15 @@ struct Command {
     state: State,
     /// The next word is a redirection's target or a here-document delimiter.
     target: bool,
-    /// The command word is `source` or `.`.
-    source: bool,
+    /// That target is a here-string's text.
+    here_string: bool,
+    /// The command word is a shell, `source` or `.`, which runs a script
+    /// file argument and may read its stdin as code.
+    interpreter: bool,
+    /// The last here-string's text, and whether it holds an expansion.
+    stdin: Option<(String, bool)>,
+    /// Here-documents this command queued.
+    here_documents: usize,
     /// Piped when its first word was read.
     piped: bool,
     start: Option<usize>,
@@ -242,8 +254,17 @@ struct Walk<'a> {
     depth: usize,
     scan: Scan,
     lists: Vec<List>,
-    /// Whether each queued here-document's command is piped.
-    here_documents: std::collections::VecDeque<bool>,
+    /// Here-documents whose bodies have not been read yet.
+    here_documents: std::collections::VecDeque<HereDocument>,
+}
+
+/// A queued here-document.
+#[derive(Default)]
+struct HereDocument {
+    /// Its command is piped.
+    piped: bool,
+    /// Its command is a shell, `source` or `.`, which reads it as code.
+    interpreter: bool,
 }
 
 impl Walk<'_> {
@@ -260,13 +281,30 @@ impl Walk<'_> {
             Token::Word(word) => self.word(word),
             Token::Op { op, at } => self.op(op, at),
             Token::Open { frame, arith, at } => {
+                let mut body_is_code = false;
                 let inherited = match frame {
-                    Frame::HereDoc => self.here_documents.pop_front().unwrap_or(false),
+                    Frame::HereDoc => {
+                        let document = self.here_documents.pop_front().unwrap_or_default();
+                        body_is_code = document.interpreter;
+                        document.piped
+                    }
                     Frame::ProcessOut => self.list().piped() || self.after_fetch(at),
                     _ => self.list().piped(),
                 };
                 self.list().begin(at);
-                self.lists.push(List::new(Some(frame), arith, inherited));
+                let mut list = List::new(Some(frame), arith, inherited);
+                list.body_is_code = body_is_code;
+                self.lists.push(list);
+            }
+            Token::Body {
+                start,
+                end,
+                computed,
+            } => {
+                if self.list().body_is_code {
+                    let text = self.text;
+                    self.code(&text[start..end], start, end, computed);
+                }
             }
             Token::Close => self.close(),
             Token::Opaque => self.scan.opaque = true,
@@ -281,7 +319,7 @@ impl Walk<'_> {
         self.finish(&mut child.command);
         let parent = self.list();
         parent.ran_fetch |= child.ran_fetch;
-        if child.frame == Some(Frame::ProcessIn) && child.ran_fetch && parent.command.source {
+        if child.frame == Some(Frame::ProcessIn) && child.ran_fetch && parent.command.interpreter {
             self.scan.sources = true;
         }
         if child.frame == Some(Frame::Subshell) {
@@ -293,10 +331,20 @@ impl Walk<'_> {
     fn op(&mut self, op: Op, at: usize) {
         match op {
             Op::Redirect => self.list().command.target = true,
+            Op::HereString => {
+                let command = &mut self.list().command;
+                command.target = true;
+                command.here_string = true;
+            }
             Op::HereDoc => {
-                let piped = self.list().piped();
-                self.here_documents.push_back(piped);
-                self.list().command.target = true;
+                let list = self.list();
+                let document = HereDocument {
+                    piped: list.piped(),
+                    interpreter: list.command.interpreter,
+                };
+                list.command.target = true;
+                list.command.here_documents += 1;
+                self.here_documents.push_back(document);
             }
             Op::Pipe | Op::Terminator => {
                 let mut command = std::mem::take(&mut self.list().command);
@@ -318,6 +366,9 @@ impl Walk<'_> {
         let command = &mut list.command;
         command.end = word.end;
         if std::mem::take(&mut command.target) {
+            if std::mem::take(&mut command.here_string) {
+                command.stdin = Some((word.value, word.computed));
+            }
             return;
         }
         match std::mem::take(&mut command.state) {
@@ -389,7 +440,7 @@ impl Walk<'_> {
             return;
         }
         if name.is(PIPE_SHELL_NAMES) || name.is(PIPE_RUNNERS) {
-            list.command.source = name.is(&["source", "."]);
+            list.command.interpreter = name.is(PIPE_SHELL_NAMES) || name.is(&["source", "."]);
             if name.is(&["eval"]) || name.is(PIPE_SHELL_NAMES) {
                 list.command.carrier = Some(Carrier::new(name.is(PIPE_SHELL_NAMES)));
             }
@@ -449,24 +500,40 @@ impl Walk<'_> {
     }
 
     /// Ends the simple command: a launcher left without a command, then
-    /// carrier code.
+    /// code given to a shell as stdin or as carrier arguments.
     fn finish(&mut self, command: &mut Command) {
         let command = std::mem::take(command);
+        // Its here-documents are the last queued, unless a newline inside
+        // the command read their bodies already (`bash <<E $(` newline `)`).
+        let queued = command.here_documents.min(self.here_documents.len());
+        let from = self.here_documents.len() - queued;
+        for document in self.here_documents.range_mut(from..) {
+            document.interpreter |= command.interpreter;
+        }
         if let State::Launcher(launcher) = &command.state {
             if launcher.shell && command.piped {
                 self.scan.pipes = true;
             }
         }
+        let start = command.start.unwrap_or(0);
+        if let Some((code, computed)) = command.stdin.as_ref().filter(|_| command.interpreter) {
+            self.code(code, start, command.end, *computed);
+        }
         let Some(carrier) = command.carrier.filter(|c| !c.shell || c.started) else {
             return;
         };
-        if command.piped {
-            return;
+        if !command.piped {
+            self.code(&carrier.code, start, command.end, carrier.computed);
         }
-        let start = command.start.unwrap_or(0);
-        if carrier.computed {
-            // Code not known until run time, after or around a fetch.
-            if self.fetch_end.is_some_and(|end| end <= command.end) {
+    }
+
+    /// Code a shell runs from `start` to `end` of the text: carrier
+    /// arguments, a here-string or a here-document body. Code holding an
+    /// expansion is not known until run time and flags when a fetch starts
+    /// before `end`; static code is scanned as a command.
+    fn code(&mut self, code: &str, start: usize, end: usize, computed: bool) {
+        if computed {
+            if self.fetch_end.is_some_and(|fetch_end| fetch_end <= end) {
                 self.scan.pipes = true;
             }
             return;
@@ -478,9 +545,9 @@ impl Walk<'_> {
         let fetch_end = if self.after_fetch(start) {
             Some(0)
         } else {
-            first_fetch_end(&carrier.code)
+            first_fetch_end(code)
         };
-        let inner = Scan::run(&carrier.code, fetch_end, self.depth + 1);
+        let inner = Scan::run(code, fetch_end, self.depth + 1);
         self.scan.pipes |= inner.pipes;
         self.scan.sources |= inner.sources;
         self.scan.opaque |= inner.opaque;
