@@ -161,8 +161,8 @@ struct Scan {
 /// Files the fetches read so far may have saved, shared with carrier code.
 #[derive(Default, Clone)]
 struct Saved {
-    /// File names: each argument and output redirection of a fetch, a URL's
-    /// last path segment.
+    /// File names: a fetch's output option or redirection, or a URL's last
+    /// path segment when curl runs with `-O` or wget without `-O`.
     names: Vec<String>,
     /// An output name is computed at run time.
     computed: bool,
@@ -297,10 +297,20 @@ struct Command {
     reads_descriptor: bool,
     /// It is `curl` or `wget`.
     fetch: bool,
+    /// The fetch is wget, whose `-O` names the output file (curl's is `-o`).
+    wget: bool,
     /// The next word is a fetch's output file.
     output_next: bool,
+    /// The fetch names its output file.
+    output_given: bool,
+    /// curl `-O` or `--remote-name`: save under the URL's last segment.
+    remote_name: bool,
+    /// The last path segments of the fetch's URLs.
+    urls: Vec<String>,
     /// A shell without `-c`, `source` or `.`: its arguments may be a script.
     runs_file: bool,
+    /// After `--`: every later argument is an operand, not an option.
+    operands: bool,
     /// That target is a here-string's text.
     here_string: bool,
     /// The command may run a file argument or its stdin as shell code: a
@@ -549,12 +559,13 @@ impl Walk<'_> {
                 }
                 let command = &mut self.list().command;
                 let value = word.value.as_str();
-                if command.runs_file
-                    && command.carrier.as_ref().is_none_or(|c| !c.started)
-                    && !value.starts_with(['-', '+'])
-                {
-                    command.reads_descriptor |= names_descriptor(&word, false);
-                    self.scan.runs |= self.runs_saved(&word);
+                if command.runs_file && command.carrier.as_ref().is_none_or(|c| !c.started) {
+                    if value == "--" && !word.computed && !command.operands {
+                        command.operands = true;
+                    } else if command.operands || !value.starts_with(['-', '+']) {
+                        command.reads_descriptor |= names_descriptor(&word, false);
+                        self.scan.runs |= self.runs_saved(&word);
+                    }
                 }
                 if let Some(carrier) = &mut self.list().command.carrier {
                     carrier.add(&word);
@@ -563,44 +574,103 @@ impl Walk<'_> {
         }
     }
 
-    /// Notes the file a fetch's argument or output redirection may name.
-    fn save(&mut self, word: &Word, output: bool) {
-        let value = word.value.as_str();
+    /// The file name `word` ends in when that last component is written out,
+    /// even if folders before it are computed (`"$TMP/i.sh"`).
+    fn static_name<'w>(&self, word: &'w Word) -> Option<&'w str> {
         if word.computed {
-            self.scan.saved.computed |= output
-                || value.starts_with("-o")
-                || value.starts_with("-O")
-                || value.starts_with("--output");
+            let raw = &self.text[word.start..word.end];
+            if raw
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(raw)
+                .contains(['$', '`'])
+            {
+                return None;
+            }
+        }
+        Some(file_name(&word.value)).filter(|name| !name.is_empty())
+    }
+
+    /// Notes a saved name; `None` is a name computed at run time.
+    fn saved_name(&mut self, name: Option<&str>) {
+        match name {
+            Some(name) => self.scan.saved.names.push(name.to_string()),
+            None => self.scan.saved.computed = true,
+        }
+    }
+
+    /// Reads a fetch's argument, or its output file when `output`: the
+    /// output options of curl (`-o`, `--output`, `-O`, `--remote-name`) and
+    /// wget (`-O`, `--output-document`), and its URLs.
+    fn save(&mut self, word: &Word, output: bool) {
+        if output {
+            self.list().command.output_given = true;
+            let name = self.static_name(word);
+            self.saved_name(name);
             return;
         }
-        self.list().command.output_next = !output
-            && (matches!(value, "--output" | "--output-document")
-                || (value.starts_with('-')
-                    && !value.starts_with("--")
-                    && value.ends_with(['o', 'O'])));
-        let name = if let Some((_, rest)) = value.split_once("://") {
-            let path = rest.split(['?', '#']).next().unwrap_or_default();
-            path.split_once('/').map_or("", |(_, path)| path)
-        } else if let Some(option) = value.strip_prefix("--") {
-            option.split_once('=').map_or("", |(_, name)| name)
-        } else if value.starts_with('-') {
-            value.get(2..).unwrap_or_default()
+        let value = word.value.as_str();
+        let wget = self.list().command.wget;
+        // An output name written into the option word: `-oi.sh`, `--output=i.sh`.
+        let attached = if let Some(option) = value.strip_prefix("--") {
+            let (key, attached) = option
+                .split_once('=')
+                .map_or((option, None), |(k, v)| (k, Some(v)));
+            let command = &mut self.list().command;
+            match key {
+                "output" | "output-document" => match attached {
+                    Some(name) => Some(name),
+                    None => {
+                        command.output_next = true;
+                        None
+                    }
+                },
+                "remote-name" | "remote-name-all" => {
+                    command.remote_name = true;
+                    None
+                }
+                _ => None,
+            }
+        } else if let Some(cluster) = value.strip_prefix('-').filter(|c| !c.is_empty()) {
+            let letter = if wget { 'O' } else { 'o' };
+            let (flags, rest) = cluster
+                .split_once(letter)
+                .map_or((cluster, None), |(flags, rest)| (flags, Some(rest)));
+            let command = &mut self.list().command;
+            command.remote_name |= !wget && flags.contains('O');
+            match rest {
+                Some("") if !word.computed => {
+                    command.output_next = true;
+                    None
+                }
+                rest => rest,
+            }
         } else {
-            value
+            if let Some((_, rest)) = value.split_once("://") {
+                let path = rest.split(['?', '#']).next().unwrap_or_default();
+                let name = file_name(path.split_once('/').map_or("", |(_, path)| path));
+                if !word.computed && !name.is_empty() {
+                    self.list().command.urls.push(name.to_string());
+                }
+            }
+            None
         };
-        let name = file_name(name);
-        if !name.is_empty() {
-            self.scan.saved.names.push(name.to_string());
+        if let Some(attached) = attached {
+            self.list().command.output_given = true;
+            let name = self
+                .static_name(word)
+                .map(|_| file_name(attached))
+                .filter(|name| !name.is_empty());
+            self.saved_name(name);
         }
     }
 
     /// Whether `word`, a script or a command run by path, names a file a
     /// fetch saved.
     fn runs_saved(&self, word: &Word) -> bool {
-        if word.computed {
-            self.scan.saved.computed
-        } else {
-            self.scan.saved.has(&word.value)
+        match self.static_name(word) {
+            Some(name) => self.scan.saved.has(name),
+            None => self.scan.saved.computed,
         }
     }
 
@@ -690,6 +760,7 @@ impl Walk<'_> {
         } else if name.is(FETCH_NAMES) {
             list.ran_fetch = true;
             list.command.fetch = true;
+            list.command.wget = name.is(&["wget"]);
         }
     }
 
@@ -769,6 +840,9 @@ impl Walk<'_> {
         }
         if interpreter && command.fetching_file {
             self.scan.sources = true;
+        }
+        if command.fetch && (command.remote_name || (command.wget && !command.output_given)) {
+            self.scan.saved.names.extend(command.urls.iter().cloned());
         }
         let start = command.start.unwrap_or(0);
         if interpreter && command.reads_descriptor && self.after_fetch(start) {
