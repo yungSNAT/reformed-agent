@@ -19055,7 +19055,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "6d6904d6cbfa0a075abc3edd43d055e00bf84bc6",
+      "local_blob": "450d2c241d2efb0a143e9b847a7073309a0319aa",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docusaurus.config.ts",
@@ -19085,7 +19085,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "a3a770313bc56718e204979fb55e518058edfccc",
+      "local_blob": "865029ef2ee8f6fd44e75a3f80485bbd60bba25a",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/package-lock.json",
@@ -19100,7 +19100,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "5d4214b55f47b13fe5525ab4252df52e8fe03228",
+      "local_blob": "5b92e9a961332f890375004c8f75d3bad3911c9a",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/package.json",
@@ -19291,10 +19291,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-15T02:30:26.510384+00:00",
+  "generated_at_utc": "2026-11-15T08:06:12.758490+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "94b80e5c4fe8cab41bcc590c5254ff3540115d08",
+    "local_sha": "079864b7f03477cb198752146b22b2d6a3bc6e0c",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796"
   },
