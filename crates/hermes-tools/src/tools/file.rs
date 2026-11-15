@@ -193,14 +193,26 @@ pub fn resolve_tool_path(
 /// an edit reads, changes and writes the whole file, so calls on one file take
 /// turns. Locks no call holds are dropped as others are handed out. A file not
 /// yet created is keyed by its nearest existing folder's real path, so it keeps
-/// its lock once it exists.
+/// its lock once it exists; a symlink to it is keyed as the file it names.
 pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
     static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
         LazyLock::new(Mutex::default);
-    let mut file = path.to_path_buf();
-    for existing in path.ancestors() {
+    // Follow a dangling symlink to the file a write through it creates (40
+    // links at most, as the kernel allows).
+    let mut named = path.to_path_buf();
+    for _ in 0..40 {
+        if tokio::fs::metadata(&named).await.is_ok() {
+            break;
+        }
+        let Ok(target) = tokio::fs::read_link(&named).await else {
+            break;
+        };
+        named = named.parent().unwrap_or(Path::new("")).join(target);
+    }
+    let mut file = named.clone();
+    for existing in named.ancestors() {
         if let Ok(real) = tokio::fs::canonicalize(existing).await {
-            let missing = path.strip_prefix(existing).unwrap_or(Path::new(""));
+            let missing = named.strip_prefix(existing).unwrap_or(Path::new(""));
             file = if missing.as_os_str().is_empty() {
                 real
             } else {
