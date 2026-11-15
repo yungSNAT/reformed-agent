@@ -128,6 +128,8 @@ struct Scan {
     sources: bool,
     /// A construct the lexer does not model, or nesting past a limit.
     opaque: bool,
+    /// A command in it names `curl`/`wget`.
+    ran_fetch: bool,
 }
 
 /// A command list being walked: the top level or one frame.
@@ -283,9 +285,11 @@ impl Scan {
         for token in tokens {
             walk.token(token);
         }
-        while let Some(mut list) = walk.lists.pop() {
-            let _ = walk.finish(&mut list.command);
+        while walk.lists.len() > 1 {
+            walk.close();
         }
+        let _ = walk.end_command();
+        walk.scan.ran_fetch = walk.list().ran_fetch;
         walk.scan
     }
 }
@@ -358,8 +362,11 @@ impl Walk<'_> {
         if self.lists.len() < 2 {
             return;
         }
+        // Finished whilst its frame is open, so code it runs reports a
+        // fetch to the frame.
+        let sink = self.end_command();
         let mut child = self.lists.pop().expect("checked above");
-        if self.finish(&mut child.command) {
+        if sink {
             child.saw_sink();
         }
         let parent = self.list();
@@ -398,8 +405,7 @@ impl Walk<'_> {
                 self.here_documents.push_back(document);
             }
             Op::Pipe | Op::Terminator => {
-                let mut command = std::mem::take(&mut self.list().command);
-                let sink = self.finish(&mut command);
+                let sink = self.end_command();
                 let after_fetch = self.after_fetch(at);
                 let list = self.list();
                 if sink {
@@ -569,8 +575,8 @@ impl Walk<'_> {
     /// Ends the simple command: a launcher left without a command, then
     /// code given to a shell as stdin or as carrier arguments. Returns
     /// whether the command may run its stdin as code.
-    fn finish(&mut self, command: &mut Command) -> bool {
-        let command = std::mem::take(command);
+    fn end_command(&mut self) -> bool {
+        let command = std::mem::take(&mut self.list().command);
         let shell_launcher = matches!(&command.state, State::Launcher(launcher) if launcher.shell);
         if shell_launcher && command.piped {
             self.scan.pipes = true;
@@ -628,6 +634,7 @@ impl Walk<'_> {
         self.scan.pipes |= inner.pipes;
         self.scan.sources |= inner.sources;
         self.scan.opaque |= inner.opaque;
+        self.list().ran_fetch |= inner.ran_fetch;
     }
 }
 
