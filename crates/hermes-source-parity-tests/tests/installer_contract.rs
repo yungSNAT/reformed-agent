@@ -63,7 +63,8 @@ impl InstallerFixture {
         fs::create_dir_all(&home_dir).expect("create home dir");
         fs::create_dir_all(&tools_dir).expect("create fake tools dir");
 
-        // Serves a fixed archive, a SHA256SUMS that lists it under every asset
+        // Serves a fixed archive (none when HERMES_FAKE_ARCHIVE is "missing"),
+        // a SHA256SUMS that lists it under every asset
         // name (or a wrong hash, near-miss names or no file, per
         // HERMES_FAKE_SUMS), an empty signature bundle, and a redirect from
         // releases/latest to the tag in HERMES_FAKE_LATEST_TAG (none when
@@ -110,7 +111,10 @@ case "$url" in
     done
     ;;
   */SHA256SUMS.sigstore.json) printf '{}\n' > "$out" ;;
-  *) printf 'fake-archive\n' > "$out" ;;
+  *)
+    [ "${HERMES_FAKE_ARCHIVE:-}" = "missing" ] && exit 22
+    printf 'fake-archive\n' > "$out"
+    ;;
 esac
 "#,
         )
@@ -501,6 +505,32 @@ fn required_signature_without_cosign_is_refused() {
         .expect("run installer");
 
     assert_refused(&fixture, &output, "cosign is not on PATH");
+}
+
+#[test]
+fn required_signature_refuses_the_source_build_fallback() {
+    let fixture = InstallerFixture::new("cosign-required-no-archive");
+    fixture.fake_cosign(0);
+    // Stands in for cargo, so a fallback build is seen without building.
+    let cargo_mark = fixture.root.join("cargo-ran");
+    write_executable(
+        &fixture.tools_dir.join("cargo"),
+        &format!(
+            "#!/usr/bin/env sh\n: > '{}'\nexit 0\n",
+            cargo_mark.display()
+        ),
+    )
+    .expect("write fake cargo");
+
+    let output = fixture
+        .command()
+        .env("HERMES_FAKE_ARCHIVE", "missing")
+        .env("HERMES_REQUIRE_SIGNATURE", "true")
+        .output()
+        .expect("run installer");
+
+    assert_refused(&fixture, &output, "no signed release archive");
+    assert!(!cargo_mark.exists(), "{}", output_text(&output));
 }
 
 #[test]
