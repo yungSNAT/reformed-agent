@@ -1730,6 +1730,7 @@ name = "hermes-cron"
 version = "0.22.0"
 dependencies = [
  "async-trait",
+ "aws-lc-rs",
  "base64 0.22.1",
  "chrono",
  "cron",
