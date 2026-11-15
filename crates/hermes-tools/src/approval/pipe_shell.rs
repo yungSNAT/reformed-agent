@@ -219,9 +219,10 @@ struct Command {
     /// That target is a here-string's text.
     here_string: bool,
     /// The command may run a file argument or its stdin as shell code: a
-    /// shell, `source`, `.`, `su`, `env -S` naming a shell, or a command
-    /// word computed at run time. A launcher left as a shell (`sudo -s`)
-    /// counts at the command's end.
+    /// shell, `eval` (`eval "$(cat)"`), `source`, `.`, `su`, `env -S`
+    /// naming a shell, or a command word computed at run time. A launcher
+    /// left as a shell (`sudo -s`), a lone `exec` and the end of a compound
+    /// command holding one count at the command's end.
     interpreter: bool,
     /// A `<(...)` in its words or redirections runs a fetch.
     fetching_file: bool,
@@ -499,7 +500,7 @@ impl Walk<'_> {
             return;
         }
         if name.is(PIPE_SHELL_NAMES) || name.is(PIPE_RUNNERS) {
-            list.command.interpreter = !name.is(&["eval"]);
+            list.command.interpreter = true;
             if name.is(&["eval"]) || name.is(PIPE_SHELL_NAMES) {
                 list.command.carrier = Some(Carrier::new(name.is(PIPE_SHELL_NAMES)));
             }
