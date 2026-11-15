@@ -1,6 +1,10 @@
 import {themes as prismThemes} from 'prism-react-renderer';
-import type {Config} from '@docusaurus/types';
-import type * as Preset from '@docusaurus/preset-classic';
+import type {Options as DocsOptions} from '@docusaurus/plugin-content-docs';
+import type {UserThemeConfig} from '@docusaurus/theme-common';
+import type {Options as ThemeOptions} from '@docusaurus/theme-classic';
+import type {Config, ThemeConfig} from '@docusaurus/types';
+
+const isProd = process.env.NODE_ENV === 'production';
 
 const config: Config = {
   title: 'Hermes Agent',
@@ -36,7 +40,29 @@ const config: Config = {
     },
   },
 
+  // The classic preset's plugins and theme without @docusaurus/plugin-svgr: no
+  // page imports an SVG as a component, and svgr's plugin-svgo pulls in
+  // deepmerge (GHSA-gcqx-w48m-w2h4, no fixed release). Same order as the preset.
+  plugins: [
+    [
+      '@docusaurus/plugin-content-docs',
+      {
+        routeBasePath: '/',  // Docs at the root of /docs/
+        sidebarPath: './sidebars.ts',
+        editUrl: 'https://github.com/NousResearch/hermes-agent/edit/main/website/',
+      } satisfies DocsOptions,
+    ],
+    '@docusaurus/plugin-content-pages',
+    isProd ? '@docusaurus/plugin-sitemap' : '@docusaurus/plugin-debug',
+  ],
+
   themes: [
+    [
+      '@docusaurus/theme-classic',
+      {
+        customCss: './src/css/custom.css',
+      } satisfies ThemeOptions,
+    ],
     '@docusaurus/theme-mermaid',
     [
       require.resolve('@easyops-cn/docusaurus-search-local'),
@@ -63,23 +89,6 @@ const config: Config = {
           /^user-guide\/skills\/optional\//,
         ],
       }),
-    ],
-  ],
-
-  presets: [
-    [
-      'classic',
-      {
-        docs: {
-          routeBasePath: '/',  // Docs at the root of /docs/
-          sidebarPath: './sidebars.ts',
-          editUrl: 'https://github.com/NousResearch/hermes-agent/edit/main/website/',
-        },
-        blog: false,
-        theme: {
-          customCss: './src/css/custom.css',
-        },
-      } satisfies Preset.Options,
     ],
   ],
 
@@ -172,7 +181,7 @@ const config: Config = {
     mermaid: {
       theme: {light: 'neutral', dark: 'dark'},
     },
-  } satisfies Preset.ThemeConfig,
+  } satisfies ThemeConfig & UserThemeConfig,
 };
 
 export default config;
