@@ -391,13 +391,14 @@ mod tests {
     #[test]
     fn test_telegram_keeps_a_command_approval_request_exact() {
         let command = "rm -rf ./build_*.tmp && git reset --hard HEAD~1 | tee [x](y) #!";
+        let others = r#"{"workdir":"/srv/a_b","timeout":30}"#;
         let result = to_telegram_markdown_v2(&format!(
-            "Approval needed to run this command once:\n```\n{command}\n```\nReply /approve to run it once, or /deny."
+            "Approval needed to run this command once.\nCommand:\n```\n{command}\n```\nOther parameters:\n```\n{others}\n```\nReply /approve to run it once, or /deny."
         ));
         assert_eq!(
             result,
             format!(
-                "Approval needed to run this command once:\n```\n{command}\n```\nReply /approve to run it once, or /deny\\."
+                "Approval needed to run this command once\\.\nCommand:\n```\n{command}\n```\nOther parameters:\n```\n{others}\n```\nReply /approve to run it once, or /deny\\."
             )
         );
     }

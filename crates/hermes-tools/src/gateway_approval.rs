@@ -111,13 +111,16 @@ async fn authorise_at(
     if (binding.notify)(prompt).await {
         return Err("Command requires explicit user approval and was not executed. The user has been shown it and can reply /approve or /deny. Do NOT run anything else to the same end. If they approve, you will be asked to run it again: then run exactly the same command with the same parameters.".to_string());
     }
-    let mut state = state();
-    if state
-        .pending
-        .get(&binding.session_key)
-        .is_some_and(|request| request.id == id)
-    {
-        state.pending.remove(&binding.session_key);
+    // Withdraw the request, and any grant made from it, which the user never saw.
+    let mut guard = state();
+    let state = &mut *guard;
+    for requests in [&mut state.pending, &mut state.grants] {
+        if requests
+            .get(&binding.session_key)
+            .is_some_and(|request| request.id == id)
+        {
+            requests.remove(&binding.session_key);
+        }
     }
     Err(refusal(
         "the approval request could not be sent to the user",
@@ -179,34 +182,48 @@ fn consume_or_reserve(
     Ok(Some((id, prompt)))
 }
 
-/// The text the user approves: the whole command and every other parameter
-/// the grant is bound to, in a code block. `None` when the user might not see
+/// The text the user approves: the whole command in one code block and every
+/// other parameter the grant is bound to in another, which the command cannot
+/// reach since it holds no backticks. `None` when the user might not see
 /// exactly what runs: the text would be cut or redacted, or a chat client
 /// could render it differently.
 fn approval_prompt(command: &str, params: &Value) -> Option<String> {
     let mut others = params.as_object()?.clone();
     others.remove("command");
-    let mut shown = command.to_string();
-    if !others.is_empty() {
-        shown.push_str(&format!("\n\nwith {}", Value::Object(others)));
-    }
-    if shown.chars().count() > MAX_PROMPT_CHARS
-        || redact_approval_command(&shown) != shown
-        || !displays_verbatim(&shown)
+    let others = (!others.is_empty()).then(|| Value::Object(others).to_string());
+    let shown = [Some(command), others.as_deref()];
+    if shown
+        .iter()
+        .flatten()
+        .map(|text| text.chars().count())
+        .sum::<usize>()
+        > MAX_PROMPT_CHARS
+        || shown
+            .iter()
+            .flatten()
+            .any(|text| redact_approval_command(text) != *text || !displays_verbatim(text))
     {
         return None;
     }
+    let others = match others {
+        Some(json) => format!("Other parameters:\n```\n{json}\n```\n"),
+        None => "Other parameters: none\n".to_string(),
+    };
     Some(format!(
-        "Approval needed to run this command once:\n```\n{shown}\n```\nReply /approve to run it once, or /deny."
+        "Approval needed to run this command once.\nCommand:\n```\n{command}\n```\n{others}Reply /approve to run it once, or /deny."
     ))
 }
 
-/// Whether chat clients show `text` as written: printable ASCII, spaces and
-/// line breaks only, so no invisible, look-alike or ambiguous whitespace
-/// character can hide what runs, and nothing a Markdown code block or
-/// Telegram's MarkdownV2 or HTML mode would interpret (backticks,
-/// backslashes, `&` entities, `<` tags, comments and declarations).
+/// Whether chat clients show `text` as written: printable ASCII, single line
+/// breaks and short runs of spaces only, so no invisible, look-alike or
+/// ambiguous whitespace character, and no blank lines or wide gaps, can hide
+/// what runs; and nothing a Markdown code block or Telegram's MarkdownV2 or
+/// HTML mode would interpret (backticks, backslashes, `&` entities, `<` tags,
+/// comments and declarations).
 fn displays_verbatim(text: &str) -> bool {
+    if text.contains("\n\n") || text.contains("   ") {
+        return false;
+    }
     let mut chars = text.chars().peekable();
     while let Some(c) = chars.next() {
         let next = chars.peek().copied();
@@ -334,8 +351,10 @@ mod tests {
             .unwrap_err();
         assert!(err.contains("can reply /approve"), "{err}");
         let prompt = shown.lock().unwrap().join("");
-        assert!(prompt.contains("```\nrm -rf /tmp/a\n"), "{prompt}");
-        assert!(prompt.contains("\"workdir\":\"/srv\""), "{prompt}");
+        assert!(
+            prompt.contains("Command:\n```\nrm -rf /tmp/a\n```\nOther parameters:\n```\n{\"workdir\":\"/srv\"}\n```\n"),
+            "{prompt}"
+        );
 
         assert_eq!(approve("t:approve-once", "alice"), Resolution::Resolved);
         assert_eq!(authorise(&alice, "rm -rf /tmp/a", &params).await, Ok(()));
@@ -364,6 +383,39 @@ mod tests {
         assert_eq!(approve("t:group", "bob"), Resolution::NothingPending);
         assert_eq!(authorise(&alice, "rm -rf /tmp/b", &params).await, Ok(()));
         clear("t:group");
+    }
+
+    #[tokio::test]
+    async fn a_command_cannot_pass_itself_off_as_its_parameters() {
+        let (alice, shown) = binding("t:forged", "alice");
+        let forged = "rm -rf ./build\nwith {\"workdir\":\"/home/u/project\"}";
+        let _ = authorise(&alice, forged, &json!({ "command": forged })).await;
+        assert_eq!(
+            shown.lock().unwrap().join(""),
+            format!(
+                "Approval needed to run this command once.\nCommand:\n```\n{forged}\n```\nOther parameters: none\nReply /approve to run it once, or /deny."
+            )
+        );
+        clear("t:forged");
+    }
+
+    #[tokio::test]
+    async fn an_answer_that_arrives_before_a_failed_send_leaves_nothing_to_run() {
+        let params = rm("/tmp/v");
+        let failing = GatewayApprovalBinding {
+            notify: notify_with(|_| {
+                approve("t:early", "alice");
+                async { false }
+            }),
+            ..binding("t:early", "alice").0
+        };
+        assert!(authorise(&failing, "rm -rf /tmp/v", &params).await.is_err());
+        let (alice, _) = binding("t:early", "alice");
+        assert!(
+            authorise(&alice, "rm -rf /tmp/v", &params).await.is_err(),
+            "a grant for a request the user never saw ran"
+        );
+        clear("t:early");
     }
 
     #[tokio::test]
@@ -445,6 +497,8 @@ mod tests {
             "echo &lt;x&gt; > /tmp/x",
             "rm -rf /tmp/<b>x</b>",
             "rm -rf /tmp/x <!-- y -->",
+            "ls\n\nrm -rf ~/x",
+            "ls   ; rm -rf ~/x",
         ] {
             let err = authorise(&alice, disguised, &json!({"command": disguised}))
                 .await
