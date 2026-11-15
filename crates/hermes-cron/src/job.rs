@@ -276,13 +276,18 @@ impl CronJob {
 
     /// Normalize a cron expression to 7-field format.
     ///
-    /// - 5 fields: `min hour dom month dow` -> `0 min hour dom month dow *`
+    /// - 5 fields: `min hour dom month dow` -> `0 min hour dom month dow *`,
+    ///   with standard cron's weekday numbers (0 to 7 from Sunday) written as
+    ///   names, as the crate numbers them 1 to 7 from Sunday
     /// - 6 fields: `sec min hour dom month dow` -> `sec min hour dom month dow *`
     /// - 7 fields: already correct, return as-is
     fn normalize_cron_expr(expr: &str) -> String {
         let parts: Vec<&str> = expr.split_whitespace().collect();
         match parts.len() {
-            5 => format!("0 {} *", expr.trim()),
+            5 => match standard_weekdays(parts[4]) {
+                Some(days) => format!("0 {} {days} *", parts[..4].join(" ")),
+                None => format!("0 {} *", expr.trim()),
+            },
             6 => format!("{} *", expr.trim()),
             7 => expr.trim().to_string(),
             _ => expr.trim().to_string(),
@@ -324,6 +329,50 @@ impl CronJob {
     pub fn mark_failed(&mut self) {
         self.status = JobStatus::Failed;
     }
+}
+
+/// A standard cron weekday field (`1-5`, `0,6`, `5-7`, `*/2`, `MON-FRI`) as
+/// the `cron` crate's comma list of day names, or `None` to pass it through:
+/// `*` and `?`, and anything this does not read (`L`, `#`), which the crate
+/// then accepts or rejects itself.
+fn standard_weekdays(field: &str) -> Option<String> {
+    const NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    // 0 to 7, where 7 is Sunday again, so `5-7` is Friday to Sunday.
+    let day = |text: &str| match text.parse::<usize>() {
+        Ok(number) => (number <= 7).then_some(number),
+        Err(_) => NAMES
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(text)),
+    };
+    if matches!(field, "*" | "?") {
+        return None;
+    }
+    let mut days = [false; 7];
+    for item in field.split(',') {
+        let (range, step) = match item.split_once('/') {
+            Some((range, step)) => (range, step.parse::<usize>().ok().filter(|s| *s > 0)?),
+            None => (item, 1),
+        };
+        let (first, last) = match range.split_once('-') {
+            _ if range == "*" => (0, 6),
+            Some((first, last)) => (day(first)?, day(last)?),
+            // `1/2` runs from 1 to the end of the week.
+            None if step > 1 => (day(range)?, 6),
+            None => (day(range)?, day(range)?),
+        };
+        if first > last {
+            return None;
+        }
+        for number in (first..=last).step_by(step) {
+            days[number % 7] = true;
+        }
+    }
+    let names: Vec<&str> = NAMES
+        .iter()
+        .zip(days)
+        .filter_map(|(name, on)| on.then_some(*name))
+        .collect();
+    Some(names.join(","))
 }
 
 /// Normalize an optional per-job working directory.
@@ -390,6 +439,39 @@ mod tests {
         assert_eq!(job.run_count, 0);
         assert!(job.next_run.is_some());
         assert!(!job.id.is_empty());
+    }
+
+    #[test]
+    fn five_field_weekdays_are_numbered_as_in_standard_cron() {
+        use chrono::{Datelike, TimeZone, Weekday::*};
+        // The weekdays of the next 7 runs after Sunday 15 November 2026.
+        let days = |schedule: &str| {
+            let job = CronJob::new(schedule, "x");
+            let mut at = Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap();
+            let mut days = Vec::new();
+            for _ in 0..7 {
+                at = job
+                    .compute_next_run(at)
+                    .unwrap_or_else(|| panic!("{schedule} does not parse"));
+                days.push(at.weekday());
+            }
+            days.sort_by_key(|day| day.num_days_from_sunday());
+            days.dedup();
+            days
+        };
+        assert_eq!(days("0 9 * * 1"), [Mon]);
+        assert_eq!(days("0 9 * * 0"), [Sun]);
+        assert_eq!(days("0 9 * * 7"), [Sun]);
+        assert_eq!(days("15 10 * * 1-5"), [Mon, Tue, Wed, Thu, Fri]);
+        assert_eq!(days("0 9 * * 0,6"), [Sun, Sat]);
+        assert_eq!(days("0 9 * * 5-7"), [Sun, Fri, Sat]);
+        assert_eq!(days("0 9 * * */2"), [Sun, Tue, Thu, Sat]);
+        assert_eq!(days("0 9 * * 1-5/2"), [Mon, Wed, Fri]);
+        assert_eq!(days("0 9 * * MON-FRI"), [Mon, Tue, Wed, Thu, Fri]);
+        assert_eq!(days("0 9 * * sun,Wed"), [Sun, Wed]);
+        assert_eq!(days("0 9 * * *").len(), 7);
+        // Seconds-first forms are the cron crate's own and keep its numbers.
+        assert_eq!(days("0 0 9 * * 2"), [Mon]);
     }
 
     #[test]
