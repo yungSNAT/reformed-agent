@@ -13,6 +13,7 @@ use hermes_core::{
 };
 
 use crate::approval::{ApprovalDecision, ApprovalManager};
+use crate::gateway_approval::GatewayApprovalBinding;
 
 const DEFAULT_FOREGROUND_MAX_TIMEOUT_SECS: u64 = 600;
 
@@ -146,6 +147,7 @@ pub struct TerminalHandler {
     backend: Arc<dyn TerminalBackend>,
     approval: ApprovalManager,
     task_cwds: Arc<Mutex<HashMap<String, String>>>,
+    gateway_approval: Option<GatewayApprovalBinding>,
 }
 
 impl TerminalHandler {
@@ -154,7 +156,15 @@ impl TerminalHandler {
             backend,
             approval: ApprovalManager::new(),
             task_cwds: Arc::new(Mutex::new(HashMap::new())),
+            gateway_approval: None,
         }
+    }
+
+    /// For one gateway turn: a command that needs confirmation runs only on
+    /// that user's approval, as [`crate::gateway_approval`] describes.
+    pub fn with_gateway_approval(mut self, binding: GatewayApprovalBinding) -> Self {
+        self.gateway_approval = Some(binding);
+        self
     }
 
     pub fn set_task_cwd(&self, task_id: impl Into<String>, cwd: impl Into<String>) {
@@ -226,13 +236,19 @@ impl ToolHandler for TerminalHandler {
                 )));
             }
             ApprovalDecision::RequiresConfirmation => {
-                tracing::warn!(
-                    command,
-                    "command requires explicit confirmation; denying because no user approval was supplied"
-                );
-                return Err(ToolError::ExecutionFailed(format!(
-                    "Command requires explicit user approval and was not executed: {command}. Do NOT retry, rephrase, or achieve the same outcome via a different command. Silence is not consent."
-                )));
+                if let Some(binding) = &self.gateway_approval {
+                    crate::gateway_approval::authorise(binding, command, &params)
+                        .await
+                        .map_err(ToolError::ExecutionFailed)?;
+                } else {
+                    tracing::warn!(
+                        command,
+                        "command requires explicit confirmation; denying because no user approval was supplied"
+                    );
+                    return Err(ToolError::ExecutionFailed(format!(
+                        "Command requires explicit user approval and was not executed: {command}. Do NOT retry, rephrase, or achieve the same outcome via a different command. Silence is not consent."
+                    )));
+                }
             }
             ApprovalDecision::Approved => {}
         }

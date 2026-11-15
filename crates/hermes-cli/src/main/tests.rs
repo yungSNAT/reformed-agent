@@ -173,6 +173,114 @@ mod tests {
         assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
     }
 
+    /// A terminal backend that must never be reached.
+    struct UnreachableTerminal;
+
+    #[async_trait::async_trait]
+    impl hermes_core::TerminalBackend for UnreachableTerminal {
+        async fn execute_command(
+            &self,
+            command: &str,
+            _timeout: Option<u64>,
+            _workdir: Option<&str>,
+            _background: bool,
+            _pty: bool,
+        ) -> Result<hermes_core::CommandOutput, hermes_core::AgentError> {
+            panic!("the terminal ran {command}");
+        }
+        async fn read_file(
+            &self,
+            _path: &str,
+            _offset: Option<u64>,
+            _limit: Option<u64>,
+        ) -> Result<String, hermes_core::AgentError> {
+            unreachable!()
+        }
+        async fn write_file(
+            &self,
+            _path: &str,
+            _content: &str,
+        ) -> Result<(), hermes_core::AgentError> {
+            unreachable!()
+        }
+        async fn file_exists(&self, _path: &str) -> Result<bool, hermes_core::AgentError> {
+            unreachable!()
+        }
+    }
+
+    #[tokio::test]
+    async fn gateway_turns_ask_for_approval_only_where_the_platform_vouches_for_the_user() {
+        use hermes_tools::gateway_approval::{self, Resolution};
+
+        let gateway = Arc::new(Gateway::new(
+            Arc::new(SessionManager::new(SessionConfig::default())),
+            DmManager::with_pair_behavior(),
+            RuntimeGatewayConfig::default(),
+        ));
+        let browsers = hermes_tools::SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
+        });
+        let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
+            Arc::new(UnreachableTerminal);
+        let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
+            session_key: format!("{platform}:cli-turn"),
+            platform: platform.into(),
+            chat_id: "cli-turn".into(),
+            user_id: user.into(),
+            ..GatewayRuntimeContext::default()
+        };
+
+        // Telegram, one identified sender: the terminal asks. No adapter is
+        // registered, so the request cannot be sent and nothing is left to
+        // approve.
+        let overrides = gateway_turn_tool_overrides(
+            &browsers,
+            &terminal_backend,
+            &gateway,
+            &ctx("telegram", "4242"),
+        );
+        let err = overrides["terminal"]
+            .execute(serde_json::json!({"command": "git reset --hard HEAD~1"}))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("could not be sent to the user"), "{err}");
+        assert_eq!(
+            gateway_approval::approve("telegram:cli-turn", "4242"),
+            Resolution::NothingPending
+        );
+
+        // Anywhere else, or for a sender id shared by many people, the
+        // registry's terminal, which refuses outright, stays in place.
+        let refused = [
+            "webhook",
+            "api_server",
+            "email",
+            "sms",
+            "whatsapp",
+            "discord",
+            "slack",
+            "matrix",
+            "mattermost",
+            "signal",
+        ]
+        .map(|platform| (platform, "4242"))
+        .into_iter()
+        .chain(
+            ["1087968824", "136817688", "777000", "unknown"].map(|user| ("telegram", user)),
+        );
+        for (platform, user) in refused {
+            let overrides = gateway_turn_tool_overrides(
+                &browsers,
+                &terminal_backend,
+                &gateway,
+                &ctx(platform, user),
+            );
+            assert!(!overrides.contains_key("terminal"), "{platform} {user}");
+            assert!(overrides.contains_key("browser_snapshot"), "{platform} {user}");
+        }
+    }
+
     #[tokio::test]
     async fn run_model_persists_default_model_to_config_yaml() {
         let tmp = tempfile::tempdir().expect("tempdir");

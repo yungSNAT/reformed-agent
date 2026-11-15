@@ -751,161 +751,6 @@ async fn gateway_switch_session_clears_yolo_for_current_chat_context() {
 }
 
 #[tokio::test]
-async fn gateway_approve_resolves_oldest_blocking_command() {
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(TestAdapter {
-        messages: sent.clone(),
-    });
-
-    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
-    let mut dm_manager = DmManager::with_pair_behavior();
-    dm_manager.authorize_user("user1");
-    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
-    gw.register_adapter("test", adapter).await;
-
-    let session_key =
-        gw.session_manager
-            .compose_session_key("test", "chat-approve-command", "user1");
-    hermes_tools::approval::clear_session(&session_key);
-    let (tx, rx) = std::sync::mpsc::channel();
-    hermes_tools::approval::register_gateway_notify(&session_key, move |request| {
-        tx.send(request).expect("approval request should send");
-    });
-
-    let session_for_thread = session_key.clone();
-    let handle = std::thread::spawn(move || {
-        hermes_tools::approval::check_all_command_guards_with_context(
-            "rm -rf /tmp/gateway-approve-command",
-            "local",
-            hermes_tools::approval::CommandGuardContext {
-                gateway: true,
-                ask: true,
-                session_key: Some(session_for_thread),
-                gateway_approval_timeout: std::time::Duration::from_secs(5),
-                tirith_result: Ok(Some(hermes_tools::approval::TirithResult::allow())),
-                ..hermes_tools::approval::CommandGuardContext::default()
-            },
-            None,
-        )
-        .expect("approval guard should return")
-    });
-
-    let request = rx
-        .recv_timeout(std::time::Duration::from_secs(2))
-        .expect("gateway approval notify should fire");
-    assert_eq!(request.command, "rm -rf /tmp/gateway-approve-command");
-    assert!(hermes_tools::approval::has_blocking_approval(&session_key));
-
-    let approve = IncomingMessage {
-        platform: "test".into(),
-        chat_id: "chat-approve-command".into(),
-        user_id: "user1".into(),
-        text: "/approve".into(),
-        message_id: None,
-        thread_id: None,
-        is_dm: true,
-    };
-    assert!(gw.route_message(&approve).await.is_ok());
-
-    let result = handle.join().expect("approval guard thread should join");
-    assert!(result.approved);
-    assert!(result.user_approved);
-    assert!(!hermes_tools::approval::has_blocking_approval(&session_key));
-
-    let replies = sent.lock().unwrap();
-    assert!(replies.iter().any(|(_, text)| {
-        text.to_ascii_lowercase().contains("approved") && text.contains("Resuming")
-    }));
-    hermes_tools::approval::unregister_gateway_notify(&session_key);
-    hermes_tools::approval::clear_session(&session_key);
-}
-
-#[tokio::test]
-async fn gateway_deny_all_resolves_all_blocking_commands() {
-    let sent = Arc::new(Mutex::new(Vec::new()));
-    let adapter = Arc::new(TestAdapter {
-        messages: sent.clone(),
-    });
-
-    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
-    let mut dm_manager = DmManager::with_pair_behavior();
-    dm_manager.authorize_user("user1");
-    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
-    gw.register_adapter("test", adapter).await;
-
-    let session_key =
-        gw.session_manager
-            .compose_session_key("test", "chat-deny-all-command", "user1");
-    hermes_tools::approval::clear_session(&session_key);
-    let (tx, rx) = std::sync::mpsc::channel();
-    hermes_tools::approval::register_gateway_notify(&session_key, move |request| {
-        tx.send(request).expect("approval request should send");
-    });
-
-    let mut handles = Vec::new();
-    for suffix in ["a", "b"] {
-        let session_for_thread = session_key.clone();
-        handles.push(std::thread::spawn(move || {
-            hermes_tools::approval::check_all_command_guards_with_context(
-                &format!("rm -rf /tmp/gateway-deny-{suffix}"),
-                "local",
-                hermes_tools::approval::CommandGuardContext {
-                    gateway: true,
-                    ask: true,
-                    session_key: Some(session_for_thread),
-                    gateway_approval_timeout: std::time::Duration::from_secs(5),
-                    tirith_result: Ok(Some(hermes_tools::approval::TirithResult::allow())),
-                    ..hermes_tools::approval::CommandGuardContext::default()
-                },
-                None,
-            )
-            .expect("approval guard should return")
-        }));
-    }
-
-    for _ in 0..2 {
-        rx.recv_timeout(std::time::Duration::from_secs(2))
-            .expect("gateway approval notify should fire");
-    }
-    assert_eq!(
-        hermes_tools::approval::pending_gateway_approval_count(&session_key),
-        2
-    );
-
-    let deny = IncomingMessage {
-        platform: "test".into(),
-        chat_id: "chat-deny-all-command".into(),
-        user_id: "user1".into(),
-        text: "/deny all".into(),
-        message_id: None,
-        thread_id: None,
-        is_dm: true,
-    };
-    assert!(gw.route_message(&deny).await.is_ok());
-
-    let results = handles
-        .into_iter()
-        .map(|handle| handle.join().expect("approval guard thread should join"))
-        .collect::<Vec<_>>();
-    assert!(results.iter().all(|result| !result.approved));
-    assert!(results.iter().all(|result| {
-        result
-            .message
-            .as_deref()
-            .unwrap_or_default()
-            .contains("User denied")
-    }));
-    assert!(!hermes_tools::approval::has_blocking_approval(&session_key));
-
-    let replies = sent.lock().unwrap();
-    assert!(replies
-        .iter()
-        .any(|(_, text)| text.contains("Denied 2 pending commands")));
-    hermes_tools::approval::unregister_gateway_notify(&session_key);
-    hermes_tools::approval::clear_session(&session_key);
-}
-
-#[tokio::test]
 async fn gateway_new_denies_blocked_approval_for_target_session() {
     let sent = Arc::new(Mutex::new(Vec::new()));
     let adapter = Arc::new(TestAdapter {
@@ -1579,4 +1424,238 @@ async fn gateway_streaming_releases_handle_on_handler_error() {
         Err(GatewayError::Platform(message)) if message == "stream timed out"
     ));
     assert_eq!(gateway.stream_manager().active_stream_count().await, 0);
+}
+
+/// A terminal backend that records each command instead of running it.
+#[derive(Default)]
+struct RecordingTerminal(Mutex<Vec<String>>);
+
+#[async_trait]
+impl hermes_core::TerminalBackend for RecordingTerminal {
+    async fn execute_command(
+        &self,
+        command: &str,
+        _timeout: Option<u64>,
+        _workdir: Option<&str>,
+        _background: bool,
+        _pty: bool,
+    ) -> Result<hermes_core::CommandOutput, hermes_core::AgentError> {
+        self.0.lock().unwrap().push(command.to_string());
+        Ok(hermes_core::CommandOutput {
+            exit_code: 0,
+            stdout: format!("ran {command}"),
+            stderr: String::new(),
+        })
+    }
+    async fn read_file(
+        &self,
+        _path: &str,
+        _offset: Option<u64>,
+        _limit: Option<u64>,
+    ) -> Result<String, hermes_core::AgentError> {
+        Ok(String::new())
+    }
+    async fn write_file(&self, _path: &str, _content: &str) -> Result<(), hermes_core::AgentError> {
+        Ok(())
+    }
+    async fn file_exists(&self, _path: &str) -> Result<bool, hermes_core::AgentError> {
+        Ok(false)
+    }
+}
+
+#[tokio::test]
+async fn a_command_needing_confirmation_runs_once_after_its_requester_approves() {
+    use hermes_core::ToolHandler;
+
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    let session_mgr = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("alice");
+    dm_manager.authorize_user("bob");
+    let gw = Gateway::new(session_mgr, dm_manager, GatewayConfig::default());
+    gw.register_adapter("test", adapter).await;
+
+    // Each turn asks for the command in `next`, as the gateway's agent would,
+    // through a terminal bound to that turn's user.
+    let terminal = Arc::new(RecordingTerminal::default());
+    let backend = terminal.clone();
+    let prompts = Arc::new(Mutex::new(Vec::new()));
+    let shown = prompts.clone();
+    let next = Arc::new(Mutex::new("git reset --hard HEAD~1".to_string()));
+    let command = next.clone();
+    gw.set_message_handler_with_context(Arc::new(move |_messages, ctx| {
+        let backend = backend.clone();
+        let shown = shown.clone();
+        let command = command.lock().unwrap().clone();
+        Box::pin(async move {
+            let handler = hermes_tools::tools::terminal::TerminalHandler::new(backend)
+                .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {
+                    session_key: ctx.session_key.clone(),
+                    user_id: ctx.user_id.clone(),
+                    notify: hermes_tools::gateway_approval::notify_with(move |text| {
+                        shown.lock().unwrap().push(text);
+                        async { true }
+                    }),
+                });
+            let result = handler
+                .execute(serde_json::json!({ "command": command }))
+                .await;
+            Ok(match result {
+                Ok(output) => output,
+                Err(err) => err.to_string(),
+            })
+        })
+    }))
+    .await;
+
+    let message = |user: &str, text: &str| IncomingMessage {
+        platform: "test".into(),
+        chat_id: "chat-confirm".into(),
+        user_id: user.into(),
+        text: text.into(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    let last_reply = |sent: &Arc<Mutex<Vec<(String, String)>>>| {
+        sent.lock()
+            .unwrap()
+            .last()
+            .map(|(_, text)| text.clone())
+            .unwrap_or_default()
+    };
+
+    gw.route_message(&message("alice", "undo my last commit"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("can reply /approve"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(prompts.lock().unwrap().len(), 1);
+    assert!(prompts.lock().unwrap()[0].contains("git reset --hard HEAD~1"));
+
+    gw.route_message(&message("bob", "/approve")).await.unwrap();
+    assert!(
+        last_reply(&sent).contains("Only the user who asked"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert!(
+        terminal.0.lock().unwrap().is_empty(),
+        "ran on another user's approval"
+    );
+
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert_eq!(
+        *terminal.0.lock().unwrap(),
+        vec!["git reset --hard HEAD~1".to_string()],
+        "the approved command did not run once"
+    );
+    assert!(
+        last_reply(&sent).contains("ran git reset"),
+        "{}",
+        last_reply(&sent)
+    );
+
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("No command is waiting"),
+        "{}",
+        last_reply(&sent)
+    );
+    gw.route_message(&message("alice", "and again"))
+        .await
+        .unwrap();
+    assert_eq!(
+        terminal.0.lock().unwrap().len(),
+        1,
+        "one approval ran twice"
+    );
+    assert_eq!(prompts.lock().unwrap().len(), 2);
+
+    gw.route_message(&message("alice", "/approve session"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("Only one-time approval"),
+        "{}",
+        last_reply(&sent)
+    );
+    gw.route_message(&message("alice", "/deny")).await.unwrap();
+    assert!(
+        last_reply(&sent).contains("Denied"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(terminal.0.lock().unwrap().len(), 1, "a denied command ran");
+
+    // The retry turn asks for something else, so the grant goes unused; it
+    // lapses with that turn and cannot run the approved command later.
+    *next.lock().unwrap() = "git clean -fdx".to_string();
+    gw.route_message(&message("alice", "tidy up"))
+        .await
+        .unwrap();
+    *next.lock().unwrap() = "git reset --hard HEAD~2".to_string();
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    *next.lock().unwrap() = "git clean -fdx".to_string();
+    gw.route_message(&message("alice", "go on")).await.unwrap();
+    assert_eq!(
+        terminal.0.lock().unwrap().len(),
+        1,
+        "an unused grant outlived its retry turn"
+    );
+    assert!(
+        last_reply(&sent).contains("can reply /approve"),
+        "{}",
+        last_reply(&sent)
+    );
+
+    // A reset drops the pending request.
+    gw.route_message(&message("alice", "/new")).await.unwrap();
+    gw.route_message(&message("alice", "/approve"))
+        .await
+        .unwrap();
+    assert!(
+        last_reply(&sent).contains("No command is waiting"),
+        "{}",
+        last_reply(&sent)
+    );
+    assert_eq!(terminal.0.lock().unwrap().len(), 1);
+}
+
+#[tokio::test]
+async fn a_status_note_reaches_the_chat_with_its_media_markers_intact() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    let gw = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
+    );
+    gw.register_adapter("test", adapter).await;
+    let text = "```\necho hi MEDIA:/tmp/x; rm -rf ~/y\n\n\n\n![a](https://h/x.png)\n```";
+
+    gw.send_non_conversational_threaded("test", "chat-note", text, None)
+        .await
+        .unwrap();
+    assert_eq!(sent.lock().unwrap().last().unwrap().1, text);
+
+    // A conversational reply would have cut the markers out.
+    gw.send_message_threaded("test", "chat-note", text, None, None)
+        .await
+        .unwrap();
+    assert_ne!(sent.lock().unwrap().last().unwrap().1, text);
 }

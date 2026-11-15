@@ -861,6 +861,25 @@ impl Gateway {
         .await
     }
 
+    /// Send plain text that is not part of the conversation into a thread,
+    /// exactly as given: media and image markers stay in the text.
+    pub async fn send_non_conversational_threaded(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        text: &str,
+        thread_id: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        self.send_message_with_options(
+            platform,
+            chat_id,
+            text,
+            None,
+            SendMessageOptions::non_conversational_threaded(thread_id),
+        )
+        .await
+    }
+
     /// Send a message to a caller-supplied platform chat/topic.
     ///
     /// This keeps explicit tool targets distinct from gateway-origin replies

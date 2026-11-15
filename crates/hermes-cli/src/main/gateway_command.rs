@@ -184,7 +184,7 @@ async fn run_gateway(
             // session's instead, and nothing else may share a browser.
             hermes_tools::register_builtin_tools_with_browser(
                 &tool_registry,
-                terminal_backend,
+                terminal_backend.clone(),
                 skill_provider,
                 hermes_tools::unbound_browser(),
             );
@@ -193,6 +193,8 @@ async fn run_gateway(
             let tool_registry_for_stream = tool_registry.clone();
             let browsers_for_msg = session_browsers.clone();
             let browsers_for_stream = session_browsers.clone();
+            let terminal_for_msg = terminal_backend.clone();
+            let terminal_for_stream = terminal_backend;
             let agent_tools_for_cron = Arc::new(bridge_tool_registry(&tool_registry));
             let clarify_for_msg = clarify_dispatcher.clone();
             let clarify_for_stream = clarify_dispatcher.clone();
@@ -205,6 +207,7 @@ async fn run_gateway(
                     let config = config_arc.clone();
                     let runtime_tools = tool_registry_for_msg.clone();
                     let browsers = browsers_for_msg.clone();
+                    let terminal_backend = terminal_for_msg.clone();
                     let gateway_for_review = gateway_for_review.clone();
                     let clarify = clarify_for_msg.clone();
                     Box::pin(async move {
@@ -225,7 +228,12 @@ async fn run_gateway(
                         }
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
-                            browsers.tool_overrides(&ctx.session_key),
+                            gateway_turn_tool_overrides(
+                                &browsers,
+                                &terminal_backend,
+                                &gateway_for_review,
+                                &ctx,
+                            ),
                         ));
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
@@ -484,6 +492,7 @@ async fn run_gateway(
                     let config = config_arc_stream.clone();
                     let runtime_tools = tool_registry_for_stream.clone();
                     let browsers = browsers_for_stream.clone();
+                    let terminal_backend = terminal_for_stream.clone();
                     let gateway_for_review = gateway_for_review_stream.clone();
                     let clarify = clarify_for_stream.clone();
                     Box::pin(async move {
@@ -504,7 +513,12 @@ async fn run_gateway(
                         }
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
-                            browsers.tool_overrides(&ctx.session_key),
+                            gateway_turn_tool_overrides(
+                                &browsers,
+                                &terminal_backend,
+                                &gateway_for_review,
+                                &ctx,
+                            ),
                         ));
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),

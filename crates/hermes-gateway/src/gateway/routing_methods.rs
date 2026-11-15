@@ -169,6 +169,9 @@ impl Gateway {
             .as_ref()
             .map(|s| s.created_at != session.created_at)
             .unwrap_or(false);
+        if session_auto_reset {
+            hermes_tools::gateway_approval::clear(&session_key);
+        }
         if session_started || session_auto_reset {
             self.emit_hook_event(
                 "session:start",
@@ -266,6 +269,7 @@ impl Gateway {
         let messages = self.session_manager.get_messages(&session_key).await;
 
         // 5. Process through agent loop (streaming or non-streaming)
+        let turn_started = std::time::Instant::now();
         {
             let mut busy = self.busy_sessions.write().await;
             busy.mark_active(&session_key, None);
@@ -276,6 +280,8 @@ impl Gateway {
             self.route_non_streaming(incoming, messages, &session_key)
                 .await
         };
+        // A command approval is good only for the turn that retries it.
+        hermes_tools::gateway_approval::end_turn(&session_key, turn_started);
 
         if let (Some(adapter), Some(message_id), Some(plan)) = (
             &reaction_adapter,

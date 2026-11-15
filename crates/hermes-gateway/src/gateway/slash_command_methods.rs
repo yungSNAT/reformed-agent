@@ -188,6 +188,15 @@ impl Gateway {
         if let GatewayCommandResult::ForwardPrompt { prompt } = result {
             return Ok(SlashCommandOutcome::ForwardToAgent { message: prompt });
         }
+        if let GatewayCommandResult::ResolveCommandApproval {
+            choice,
+            resolve_all,
+        } = result
+        {
+            return self
+                .resolve_command_approval(incoming, session_key, choice, resolve_all)
+                .await;
+        }
         let handled = self
             .apply_command_result(incoming, session_key, result)
             .await?;
@@ -198,6 +207,55 @@ impl Gateway {
                 message: command_text,
             }
         })
+    }
+
+    /// `/approve` and `/deny`: answer the session's pending terminal command
+    /// (see `hermes_tools::gateway_approval`). Only the user who asked may
+    /// answer, and only once scope exists here; an approval forwards the turn
+    /// that retries the command.
+    async fn resolve_command_approval(
+        &self,
+        incoming: &IncomingMessage,
+        session_key: &str,
+        choice: hermes_tools::approval::ApprovalChoice,
+        resolve_all: bool,
+    ) -> Result<SlashCommandOutcome, GatewayError> {
+        use hermes_tools::approval::ApprovalChoice;
+        use hermes_tools::gateway_approval::{self, Resolution};
+
+        let deny = choice == ApprovalChoice::Deny;
+        let reply = if !deny && (resolve_all || choice != ApprovalChoice::Once) {
+            "Only one-time approval is available here: reply /approve."
+        } else {
+            let resolution = if deny {
+                gateway_approval::deny(session_key, &incoming.user_id)
+            } else {
+                gateway_approval::approve(session_key, &incoming.user_id)
+            };
+            match resolution {
+                Resolution::NothingPending => "No command is waiting for approval in this chat.",
+                Resolution::NotRequester => {
+                    "Only the user who asked for this command can approve or deny it."
+                }
+                Resolution::Resolved if deny => "Denied. The command will not run.",
+                // Nothing is sent first: a failed send must not leave a grant
+                // without the turn that uses or revokes it.
+                Resolution::Resolved => {
+                    return Ok(SlashCommandOutcome::ForwardToAgent {
+                        message: gateway_approval::APPROVED_RETRY_MESSAGE.to_string(),
+                    });
+                }
+            }
+        };
+        self.send_message_threaded(
+            &incoming.platform,
+            &incoming.chat_id,
+            reply,
+            None,
+            Self::reply_thread_id(incoming),
+        )
+        .await?;
+        Ok(SlashCommandOutcome::Handled)
     }
 
     fn resolve_skill_slash_command(&self, input: &str) -> Result<Option<String>, String> {
@@ -603,39 +661,8 @@ impl Gateway {
                     .await?;
                 Ok(true)
             }
-            GatewayCommandResult::ResolveCommandApproval {
-                choice,
-                resolve_all,
-            } => {
-                let count = hermes_tools::approval::resolve_gateway_approval(
-                    session_key,
-                    choice,
-                    resolve_all,
-                );
-                let reply = if count == 0 {
-                    "No pending command approval for this session.".to_string()
-                } else if choice == hermes_tools::approval::ApprovalChoice::Deny {
-                    if count == 1 {
-                        "Denied pending command. The blocked agent will resume with a denial."
-                            .to_string()
-                    } else {
-                        format!("Denied {count} pending commands.")
-                    }
-                } else if count == 1 {
-                    format!(
-                        "Approved pending command with `{}` scope. Resuming.",
-                        choice.as_str()
-                    )
-                } else {
-                    format!(
-                        "Approved {count} pending commands with `{}` scope.",
-                        choice.as_str()
-                    )
-                };
-                self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
-                    .await?;
-                Ok(true)
-            }
+            // Handled in `execute_slash_command`, which may forward a retry turn.
+            GatewayCommandResult::ResolveCommandApproval { .. } => Ok(false),
             GatewayCommandResult::SetHome { path, reply } => {
                 let target = std::path::Path::new(&path);
                 let response = if target.exists() && target.is_dir() {
