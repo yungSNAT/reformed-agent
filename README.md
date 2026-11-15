@@ -57,6 +57,22 @@ The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). 
 - `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
 - `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
 
+### Migrating from Hermes
+
+`hermes-ultra migrate` moves a Hermes Agent home into Reformed's:
+
+```bash
+hermes-ultra migrate                            # plan only: lists each item and writes nothing
+hermes-ultra migrate --apply                    # migrate into a new home
+hermes-ultra migrate --apply --into-existing    # add to a home that already exists
+```
+
+- It reads `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows, with `HERMES_DATA_DIR_SUFFIX`) unless `--from` names another home or a profile, and writes Reformed's home unless `--to` names another.
+- It moves `config.yaml`, `.env`, the sessions in `state.db`, `memories/`, `skills/`, `SOUL.md`, `plugins/`, `cron/jobs.json` and `scripts/`. It does not move `auth.json`: sign in to each provider again.
+- It replaces nothing. An item already in the Reformed home is listed and left unchanged, and a new home is removed again if the run fails. Links are neither followed nor copied, no file content is printed, and on Unix every file written is owner-only.
+- Sessions convert as `import-hermes-sessions` converts an export. `state.db` is opened read-only; if it reports unapplied changes, start and stop Hermes once.
+- Cron jobs are written paused, because Reformed reads schedules in UTC. Cron expressions keep their fields, so check each one's time; interval and one-off jobs keep their times; a job Reformed cannot run the same way is skipped with its reason. Start each with `hermes-ultra cron resume <id>`.
+
 Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
 
 ## What You Get
