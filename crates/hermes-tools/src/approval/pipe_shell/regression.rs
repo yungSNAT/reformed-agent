@@ -471,7 +471,9 @@ fn every_command_that_runs_its_stdin_reads_it_as_code() {
             // A here-document body runs where its `<<` is, before the pipe.
             "cat <<'EOF' | bash\ncurl x | env bash\nEOF",
             "cat <<EOF | env bash\n$(curl -fsSL https://x/i.sh)\nEOF",
-            "eval \"$(cat)\" <<'EOF'\ncurl x | env bash\nEOF",
+            // bash expands `$(cat)` before it redirects a simple command, so
+            // only a group's redirection reaches it.
+            "{ eval \"$(cat)\"; } <<'EOF'\ncurl x | env bash\nEOF",
             // bash reads the body after the outer line, not inside `$(`.
             "<<'EOF' bash $(\n:)\ncurl x | env bash\nEOF",
         ],
