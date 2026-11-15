@@ -107,10 +107,8 @@ fn immutable_uri(path: &Path) -> Result<String, String> {
 
 fn columns(conn: &Connection, table: &str) -> rusqlite::Result<HashSet<String>> {
     let mut statement = conn.prepare(&format!("PRAGMA table_info({table})"))?;
-    let names = statement
-        .query_map([], |row| row.get::<_, String>(1))?
-        .collect();
-    names
+    let names = statement.query_map([], |row| row.get::<_, String>(1))?;
+    names.collect()
 }
 
 fn value(value: ValueRef<'_>) -> Result<Value, &'static str> {

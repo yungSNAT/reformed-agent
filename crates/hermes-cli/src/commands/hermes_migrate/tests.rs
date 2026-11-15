@@ -26,7 +26,7 @@ fn tree(root: &Path) -> BTreeMap<PathBuf, Vec<u8>> {
     let mut files = BTreeMap::new();
     let mut pending = vec![root.to_path_buf()];
     while let Some(dir) = pending.pop() {
-        for entry in fs::read_dir(&dir).unwrap() {
+        for entry in fs::read_dir(dir).unwrap() {
             let path = entry.unwrap().path();
             let meta = fs::symlink_metadata(&path).unwrap();
             if meta.is_dir() {
@@ -77,16 +77,7 @@ fn state_db(path: &Path) {
     )
     .unwrap();
     let calls = r#"[{"id":"call_fixture","type":"function","function":{"name":"read_file","arguments":"{\"path\":\"fixture.txt\"}"}}]"#;
-    let rows: [(
-        &str,
-        &str,
-        Option<&str>,
-        Option<&str>,
-        Option<&str>,
-        Option<&str>,
-        f64,
-        i64,
-    ); 7] = [
+    let rows = [
         (
             FIRST,
             "user",
@@ -319,7 +310,7 @@ fn apply_moves_every_item_privately() {
         serde_json::from_slice(&fs::read(to.join("cron/d4e5f6.json")).unwrap()).unwrap();
     assert_eq!(job.script.as_deref(), Some("./check.sh"));
     assert!(!to.join("cron/CON.json").exists());
-    let leftovers: Vec<_> = fs::read_dir(&to)
+    let leftovers: Vec<_> = fs::read_dir(to.as_path())
         .unwrap()
         .map(|entry| entry.unwrap().file_name())
         .filter(|name| name.to_string_lossy().starts_with(".tmp"))
@@ -379,12 +370,10 @@ fn state_db_sessions_match_the_jsonl_import() {
         let mut statement = conn
             .prepare("SELECT id, created_at, updated_at FROM sessions ORDER BY id")
             .unwrap();
-        let rows = statement
+        let mapped = statement
             .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))
-            .unwrap()
-            .collect::<Result<_, _>>()
             .unwrap();
-        rows
+        mapped.collect::<Result<_, _>>().unwrap()
     };
     assert_eq!(rows(&to), rows(&imported));
 }
@@ -542,7 +531,7 @@ fn links_are_neither_copied_nor_written_through() {
     fs::write(&outside, SECRET).unwrap();
     symlink(&outside, from.join("skills/notes/leak.md")).unwrap();
     fs::remove_file(from.join("SOUL.md")).unwrap();
-    symlink(&outside, from.join("SOUL.md")).unwrap();
+    symlink(outside, from.join("SOUL.md")).unwrap();
     let to = root.path().join("reformed");
     fs::create_dir(&to).unwrap();
     let elsewhere = root.path().join("elsewhere");
@@ -567,7 +556,7 @@ fn links_are_neither_copied_nor_written_through() {
     );
     assert!(!to.join("skills/notes/leak.md").exists());
     assert!(!to.join("SOUL.md").exists());
-    assert_eq!(fs::read_dir(&elsewhere).unwrap().count(), 0);
+    assert_eq!(fs::read_dir(elsewhere).unwrap().count(), 0);
 }
 
 #[cfg(unix)]
@@ -592,7 +581,7 @@ fn a_failed_apply_removes_what_it_created() {
     })
     .unwrap_err();
 
-    fs::set_permissions(&locked, fs::Permissions::from_mode(0o600)).unwrap();
+    fs::set_permissions(locked, fs::Permissions::from_mode(0o600)).unwrap();
     assert!(
         error.to_string().contains("Migration write failed"),
         "{error}"

@@ -33,7 +33,7 @@ const UNSUPPORTED: [&str; 11] = [
 /// Every entry of `jobs.json`: `{"jobs": [...]}`, `{"jobs": {id: job}}` or a
 /// bare list, as Hermes reads it.
 pub(super) fn jobs(bytes: &[u8]) -> Result<Vec<Value>, &'static str> {
-    match serde_json::from_slice(bytes).map_err(|_| "not valid JSON")? {
+    match serde_json::from_slice::<Value>(bytes).map_err(|_| "not valid JSON")? {
         Value::Array(jobs) => Ok(jobs),
         Value::Object(mut data) => match data.remove("jobs") {
             None | Some(Value::Null) => Ok(Vec::new()),

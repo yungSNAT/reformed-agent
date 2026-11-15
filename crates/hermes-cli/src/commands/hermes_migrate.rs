@@ -133,7 +133,7 @@ pub fn migrate_hermes(request: &MigrateRequest<'_>) -> Result<MigrateReport, Age
         outcome => {
             writer.rollback();
             if !existing {
-                let _ = fs::remove_dir(&to);
+                let _ = fs::remove_dir(to.as_path());
             }
             let mut report = with_header(header, outcome?);
             report
@@ -581,7 +581,7 @@ fn import_sessions(
     fs::create_dir(&staged).map_err(write_error)?;
     let store = SessionPersistence::new(stage.path());
     let read = store.import_sessions(|import| {
-        let mut importer = SessionImporter::new(Some((&staged, import)));
+        let mut importer = SessionImporter::new(Some((staged.as_path(), import)));
         let orphans = state_db::read(conn, &mut importer)?;
         Ok((importer.summary, orphans))
     })?;
