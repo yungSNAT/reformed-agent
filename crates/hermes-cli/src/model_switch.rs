@@ -941,6 +941,9 @@ mod tests {
 
     #[tokio::test]
     async fn preferred_provider_falls_back_to_curated_when_models_dev_has_no_provider_data() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({
             "placeholder": {"models": {}}
         }));
@@ -960,6 +963,9 @@ mod tests {
 
     #[tokio::test]
     async fn openrouter_never_merges_models_dev_entries() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({
             "openrouter": {
                 "models": {
@@ -1055,6 +1061,9 @@ mod tests {
 
     #[tokio::test]
     async fn provider_catalog_entry_fixture_keeps_total_with_subset_preview() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let client = seeded_client(json!({
             "opencode-go": {
                 "models": {
@@ -1090,6 +1099,9 @@ mod tests {
     #[tokio::test]
     async fn provider_catalog_entries_uses_global_client_shape() {
         // Smoke-test the function shape with unknown providers only, avoiding network use.
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let entries = provider_catalog_entries(&["unknown-provider"]).await;
         assert!(entries.is_empty());
     }
@@ -1159,6 +1171,9 @@ mod tests {
 
     #[tokio::test]
     async fn config_catalog_entries_include_custom_provider_models() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let mut cfg = hermes_config::GatewayConfig::default();
         cfg.llm_providers.insert(
             "baidu-coding".to_string(),
@@ -1183,6 +1198,9 @@ mod tests {
 
     #[tokio::test]
     async fn provider_catalog_entries_do_not_truncate_model_picker_results() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
         let mut cfg = hermes_config::GatewayConfig::default();
         let models = (0..60)
             .map(|idx| format!("model-{idx:02}"))
