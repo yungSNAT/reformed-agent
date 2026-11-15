@@ -97,8 +97,9 @@ const LAUNCHERS: &[(&str, &str, &[&str])] = &[
 ];
 
 /// Whether `command` runs `source <(curl ...)`, `bash -x <(wget ...)` or
-/// `bash < <(curl ...)`: a shell, `source` or `.` given a process
-/// substitution that runs a fetch. Other arguments are file names, not code.
+/// `bash < <(curl ...)`: a command that may run shell code (see
+/// `Command::interpreter`) given a process substitution that runs a fetch.
+/// Other commands' arguments are file names, not code.
 pub(super) fn sources_remote_process_substitution(command: &str) -> bool {
     let Some(fetch_end) = first_fetch_end(command) else {
         return false;
@@ -203,9 +204,13 @@ struct Command {
     target: bool,
     /// That target is a here-string's text.
     here_string: bool,
-    /// The command word is a shell, `source` or `.`, which runs a script
-    /// file argument and may read its stdin as code.
+    /// The command may run a file argument or its stdin as shell code: a
+    /// shell, `source`, `.`, `su`, `env -S` naming a shell, or a command
+    /// word computed at run time. A launcher left as a shell (`sudo -s`)
+    /// counts at the command's end.
     interpreter: bool,
+    /// A `<(...)` in its words or redirections runs a fetch.
+    fetching_file: bool,
     /// The last here-string's text, and whether it holds an expansion.
     stdin: Option<(String, bool)>,
     /// Here-documents this command queued.
@@ -238,7 +243,23 @@ impl Scan {
             lists: vec![List::new(None, false, false)],
             here_documents: std::collections::VecDeque::new(),
         };
-        for token in lexer::tokens(text) {
+        let tokens = lexer::tokens(text);
+        walk.fetch_end = fetch_end.map(|fetch_end| {
+            // A fetch in a here-document body is read where its `<<` is,
+            // before a pipe on that line (`cat <<E | bash`).
+            tokens
+                .iter()
+                .fold(fetch_end, |fetch_end, token| match *token {
+                    Token::Body {
+                        start,
+                        end,
+                        operator,
+                        ..
+                    } if start < fetch_end && fetch_end <= end => operator.min(fetch_end),
+                    _ => fetch_end,
+                })
+        });
+        for token in tokens {
             walk.token(token);
         }
         while let Some(mut list) = walk.lists.pop() {
@@ -300,6 +321,7 @@ impl Walk<'_> {
                 start,
                 end,
                 computed,
+                ..
             } => {
                 if self.list().body_is_code {
                     let text = self.text;
@@ -319,8 +341,8 @@ impl Walk<'_> {
         self.finish(&mut child.command);
         let parent = self.list();
         parent.ran_fetch |= child.ran_fetch;
-        if child.frame == Some(Frame::ProcessIn) && child.ran_fetch && parent.command.interpreter {
-            self.scan.sources = true;
+        if child.frame == Some(Frame::ProcessIn) && child.ran_fetch {
+            parent.command.fetching_file = true;
         }
         if child.frame == Some(Frame::Subshell) {
             // A case pattern's `)` or a subshell: a command may follow.
@@ -422,6 +444,7 @@ impl Walk<'_> {
         let arith = list.arith;
         list.command.state = State::Arguments;
         if word.computed {
+            list.command.interpreter = !arith;
             if piped && !arith {
                 self.scan.pipes = true;
             }
@@ -441,7 +464,7 @@ impl Walk<'_> {
             return;
         }
         if name.is(PIPE_SHELL_NAMES) || name.is(PIPE_RUNNERS) {
-            list.command.interpreter = name.is(PIPE_SHELL_NAMES) || name.is(&["source", "."]);
+            list.command.interpreter = !name.is(&["eval"]);
             if name.is(&["eval"]) || name.is(PIPE_SHELL_NAMES) {
                 list.command.carrier = Some(Carrier::new(name.is(PIPE_SHELL_NAMES)));
             }
@@ -496,8 +519,12 @@ impl Walk<'_> {
                 name.is(PIPE_SHELL_NAMES) || name.is(&["su"])
             })
         };
-        if self.list().command.piped && (computed || text.contains('$') || names_sink()) {
-            self.scan.pipes = true;
+        if computed || text.contains('$') || names_sink() {
+            let command = &mut self.list().command;
+            command.interpreter = true;
+            if command.piped {
+                self.scan.pipes = true;
+            }
         }
     }
 
@@ -505,20 +532,23 @@ impl Walk<'_> {
     /// code given to a shell as stdin or as carrier arguments.
     fn finish(&mut self, command: &mut Command) {
         let command = std::mem::take(command);
-        // Its here-documents are the last queued, unless a newline inside
-        // the command read their bodies already (`bash <<E $(` newline `)`).
+        let shell_launcher = matches!(&command.state, State::Launcher(launcher) if launcher.shell);
+        if shell_launcher && command.piped {
+            self.scan.pipes = true;
+        }
+        let interpreter = command.interpreter || shell_launcher;
+        // Its here-documents are the last queued; a newline inside the
+        // command that read them earlier fails closed in the lexer.
         let queued = command.here_documents.min(self.here_documents.len());
         let from = self.here_documents.len() - queued;
         for document in self.here_documents.range_mut(from..) {
-            document.interpreter |= command.interpreter;
+            document.interpreter |= interpreter;
         }
-        if let State::Launcher(launcher) = &command.state {
-            if launcher.shell && command.piped {
-                self.scan.pipes = true;
-            }
+        if interpreter && command.fetching_file {
+            self.scan.sources = true;
         }
         let start = command.start.unwrap_or(0);
-        if let Some((code, computed)) = command.stdin.as_ref().filter(|_| command.interpreter) {
+        if let Some((code, computed)) = command.stdin.as_ref().filter(|_| interpreter) {
             self.code(code, start, command.end, *computed);
         }
         let Some(carrier) = command.carrier.filter(|c| !c.shell || c.started) else {
@@ -636,7 +666,11 @@ impl Carrier {
                 value.starts_with('-') && !value.starts_with("--") && value.contains('c');
             return;
         }
-        if self.options && (value == "--" || (self.shell && value.starts_with(['-', '+']))) {
+        if self.options && value == "--" {
+            self.options = false;
+            return;
+        }
+        if self.options && self.shell && value.starts_with(['-', '+']) {
             return;
         }
         self.options = false;

@@ -70,11 +70,13 @@ pub(super) enum Token {
     },
     /// The text of a here-document body, last in its frame. `computed`:
     /// the body is unquoted and holds an expansion or a backslash, so the
-    /// text a command reads differs from `start..end`.
+    /// text a command reads differs from `start..end`. `operator`: where
+    /// its `<<` is.
     Body {
         start: usize,
         end: usize,
         computed: bool,
+        operator: usize,
     },
     Close,
     Opaque,
@@ -91,6 +93,10 @@ struct HereDoc {
     delimiter: String,
     literal: bool,
     strip_tabs: bool,
+    /// Where its `<<` is.
+    operator: usize,
+    /// Frame depth of its `<<`.
+    depth: usize,
 }
 
 pub(super) fn tokens(src: &str) -> Vec<Token> {
@@ -123,8 +129,9 @@ struct Lexer<'a> {
     backticks: usize,
     tokens: Vec<Token>,
     pending: Vec<HereDoc>,
-    /// After `<<` (`Some(true)` for `<<-`): the next word is a delimiter.
-    delimiter: Option<bool>,
+    /// After `<<` (`true` for `<<-`) at the given offset: the next word is
+    /// a delimiter.
+    delimiter: Option<(bool, usize)>,
     stop: bool,
     /// The last operator was a pipe: a newline after it continues the
     /// pipeline (`curl x |` newline `bash`).
@@ -295,7 +302,7 @@ impl Lexer<'_> {
             .find(|(text, _)| self.starts_with(text))
             .map_or((1, Op::Redirect), |(text, op)| (text.len(), *op));
         if op == Op::HereDoc {
-            self.delimiter = Some(len == 3);
+            self.delimiter = Some((len == 3, at));
         }
         self.pos += len;
         self.after_pipe = false;
@@ -361,7 +368,7 @@ impl Lexer<'_> {
             return;
         }
         let value = String::from_utf8_lossy(&word.value).into_owned();
-        if let Some(strip_tabs) = self.delimiter.take() {
+        if let Some((strip_tabs, operator)) = self.delimiter.take() {
             if self.src[start..self.pos].contains(['$', '`']) {
                 // bash ends the body at the delimiter's text unexpanded,
                 // which `value` does not hold.
@@ -371,6 +378,8 @@ impl Lexer<'_> {
                 delimiter: value.clone(),
                 literal: word.quoted,
                 strip_tabs,
+                operator,
+                depth: self.depth,
             });
         }
         self.after_pipe = false;
@@ -566,6 +575,11 @@ impl Lexer<'_> {
 
     /// Bodies of the here-documents queued on the line just ended.
     fn here_documents(&mut self) {
+        if self.pending.iter().any(|doc| doc.depth != self.depth) {
+            // A newline inside `$(` after `<<` outside it: bash reads the
+            // body after the outer line instead.
+            self.opaque();
+        }
         let src = self.src;
         for doc in std::mem::take(&mut self.pending) {
             let body = self.pos;
@@ -609,6 +623,7 @@ impl Lexer<'_> {
                 start: body,
                 end: body_end,
                 computed,
+                operator: doc.operator,
             });
             self.tokens.push(Token::Close);
             self.pos = after;
