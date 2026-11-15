@@ -35,7 +35,7 @@
       "classification": "intentional_divergence",
       "classification_path": ".github/workflows/ci.yml",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "f4125af929535a53fa13b755496acce88b0ace31",
+      "local_blob": "26b6f8c53e32ea1b39428503c7c94e35ceadccf2",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": ".github/workflows/ci.yml",
@@ -140,7 +140,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "e290ad6ad1cca558716bb80ea39f2d0c59836fea",
+      "local_blob": "830291f7d517f4d27aa8af6519679b024c091ec6",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -2195,7 +2195,7 @@
       "classification": "intentional_divergence",
       "classification_path": "scripts/install.sh",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "7d80786ffd2313eb1d244e2e49a914f1d48ac43e",
+      "local_blob": "cbfc9eda580b8d1be508927043a727d8268d825c",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "scripts/install.sh",
@@ -19291,10 +19291,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-15T00:52:35.308797+00:00",
+  "generated_at_utc": "2026-11-15T02:30:26.510384+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "daea7331c74da21dc26df7e51e30dca667021a94",
+    "local_sha": "94b80e5c4fe8cab41bcc590c5254ff3540115d08",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796"
   },
