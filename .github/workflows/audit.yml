@@ -1,0 +1,62 @@
+name: Audit
+
+# Fails a change that brings in a dependency with a known advisory, and checks
+# the whole tree each day for advisories published since. Exceptions live in
+# .cargo/audit.toml, each with its reason. It runs on every change, not only
+# dependency changes: GitHub path filters skip a large diff's later files.
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+  schedule:
+    - cron: "41 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  cargo:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The audit reads Cargo.lock alone, so a manifest change without its
+      # lockfile update would go unaudited. The runner's stable cargo does this
+      # check without installing the pinned toolchain.
+      - name: Cargo.lock matches the manifests
+        run: RUSTUP_TOOLCHAIN=stable cargo metadata --locked --format-version 1 > /dev/null
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
+        with:
+          tool: cargo-audit@0.22.2
+      # Called directly, not as `cargo audit`, so rust-toolchain.toml does not
+      # make rustup install a toolchain this job never uses.
+      - name: cargo audit
+        run: cargo-audit audit --deny warnings
+
+  npm:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        dir: [ui-tui, website]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+      # npm ci refuses a package-lock.json out of step with package.json; the
+      # dry run installs nothing.
+      - name: package-lock.json matches package.json
+        working-directory: ${{ matrix.dir }}
+        run: npm ci --dry-run --ignore-scripts
+      - name: npm audit
+        working-directory: ${{ matrix.dir }}
+        run: npm audit --package-lock-only
