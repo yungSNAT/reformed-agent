@@ -441,19 +441,38 @@ fn an_unrepresentable_session_fails_the_plan_and_apply_writes_nothing() {
 }
 
 #[test]
-fn unapplied_wal_changes_without_shared_memory_are_refused() {
-    let root = tempfile::tempdir().unwrap();
-    let from = hermes_home(root.path());
-    fs::write(from.join("state.db-wal"), b"not empty").unwrap();
-    let to = root.path().join("reformed");
+fn unapplied_wal_changes_are_refused_and_the_hermes_home_left_as_it_was() {
+    for shared_memory in [false, true] {
+        let root = tempfile::tempdir().unwrap();
+        let from = hermes_home(root.path());
+        fs::write(from.join("state.db-wal"), b"not empty").unwrap();
+        if shared_memory {
+            fs::write(from.join("state.db-shm"), b"").unwrap();
+        }
+        let listing = || {
+            let mut entries: Vec<(String, u64)> = fs::read_dir(&from)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().to_string_lossy().into_owned();
+                    (name, entry.metadata().unwrap().len())
+                })
+                .collect();
+            entries.sort();
+            entries
+        };
+        let before = listing();
 
-    let report = run(&from, &to, false, false);
+        let report = run(&from, &root.path().join("reformed"), false, false);
 
-    assert!(report.failed);
-    assert!(report
-        .lines
-        .join("\n")
-        .contains("start and stop Hermes once"));
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        assert!(
+            text.contains("unapplied changes are in state.db-wal"),
+            "{text}"
+        );
+        assert_eq!(listing(), before, "shared memory: {shared_memory}");
+    }
 }
 
 #[test]
