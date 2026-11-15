@@ -393,6 +393,39 @@ mod tests {
     }
 
     #[test]
+    fn five_field_weekdays_are_numbered_as_in_standard_cron() {
+        use chrono::{Datelike, TimeZone, Weekday::*};
+        // The weekdays of the next 7 runs after Sunday 15 November 2026.
+        let days = |schedule: &str| {
+            let job = CronJob::new(schedule, "x");
+            let mut at = Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap();
+            let mut days = Vec::new();
+            for _ in 0..7 {
+                at = job
+                    .compute_next_run(at)
+                    .unwrap_or_else(|| panic!("{schedule} does not parse"));
+                days.push(at.weekday());
+            }
+            days.sort_by_key(|day| day.num_days_from_sunday());
+            days.dedup();
+            days
+        };
+        assert_eq!(days("0 9 * * 1"), [Mon]);
+        assert_eq!(days("0 9 * * 0"), [Sun]);
+        assert_eq!(days("0 9 * * 7"), [Sun]);
+        assert_eq!(days("15 10 * * 1-5"), [Mon, Tue, Wed, Thu, Fri]);
+        assert_eq!(days("0 9 * * 0,6"), [Sun, Sat]);
+        assert_eq!(days("0 9 * * 5-7"), [Sun, Fri, Sat]);
+        assert_eq!(days("0 9 * * */2"), [Sun, Tue, Thu, Sat]);
+        assert_eq!(days("0 9 * * 1-5/2"), [Mon, Wed, Fri]);
+        assert_eq!(days("0 9 * * MON-FRI"), [Mon, Tue, Wed, Thu, Fri]);
+        assert_eq!(days("0 9 * * sun,Wed"), [Sun, Wed]);
+        assert_eq!(days("0 9 * * *").len(), 7);
+        // Seconds-first forms are the cron crate's own and keep its numbers.
+        assert_eq!(days("0 0 9 * * 2"), [Mon]);
+    }
+
+    #[test]
     fn test_validate_valid() {
         let job = CronJob::new("0 9 * * *", "Say hello");
         assert!(job.validate().is_ok());
