@@ -1,25 +1,77 @@
 name: Release
 
+# A v* tag runs every job. A pull request that changes the release files runs a
+# dry run: it builds, stages and smokes every archive, but signs, attests and
+# publishes nothing. Builds restore no cargo cache, so nothing another workflow
+# cached can reach a release archive.
 on:
   push:
     tags:
       - "v*"
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+      - scripts/install.sh
+      - scripts/smoke-release-artifact.sh
+      - scripts/generate-homebrew-formula.sh
 
 permissions:
   contents: read
 
 jobs:
+  qualify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Read the workspace version
+        id: version
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"$/\1/p' Cargo.toml | head -n 1)"
+          test -n "${version}"
+          echo "version=v${version}" >> "${GITHUB_OUTPUT}"
+      - name: Qualify the tag
+        if: startsWith(github.ref, 'refs/tags/')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          if [ "${TAG}" != "${VERSION}" ]; then
+            echo "::error::Tag ${TAG} does not match the workspace version ${VERSION}."
+            exit 1
+          fi
+          git fetch --no-tags origin main
+          if ! git merge-base --is-ancestor "${GITHUB_SHA}" origin/main; then
+            echo "::error::${GITHUB_SHA} is not on main."
+            exit 1
+          fi
+          passed="$(gh api "repos/${GITHUB_REPOSITORY}/actions/workflows/ci.yml/runs?head_sha=${GITHUB_SHA}&branch=main&event=push&status=success" --jq '.total_count')"
+          if [ "${passed}" -lt 1 ]; then
+            echo "::error::CI has not passed on ${GITHUB_SHA}. Tag a commit after its CI run on main succeeds."
+            exit 1
+          fi
+
   security-release-gate:
+    needs: qualify
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Secret scan (tracked files)
         run: |
           python3 scripts/release_secret_scan.py \
@@ -43,7 +95,7 @@ jobs:
       - name: Upload security gate artifacts
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
-          name: release-security-artifacts
+          name: sbom-and-secret-scan
           path: |
             .sync-reports/release-secret-scan.json
             release-sbom.cdx.json
@@ -73,10 +125,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Install cross
         run: cargo install cross --locked --git https://github.com/cross-rs/cross --rev a9301e91f72bba3850460512685f6b16062015ff
       - name: Build release binary
@@ -114,12 +166,12 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: |
           rustup toolchain install
           rustup target add x86_64-apple-darwin
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
       - name: Build release binary
         run: cargo build --locked --release --target ${{ matrix.target }} -p hermes-cli --bin hermes-agent-ultra
       - name: Package artifact
@@ -133,15 +185,17 @@ jobs:
           name: release-${{ matrix.target }}
           path: ${{ matrix.artifact }}
 
-  sign-and-publish:
-    needs: [security-release-gate, cross-build, macos-build]
+  # Gathers every asset with its checksums. Nothing is signed or published here.
+  stage:
+    needs: [qualify, security-release-gate, cross-build, macos-build]
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-      id-token: write
+      contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Download release build artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
@@ -151,15 +205,128 @@ jobs:
       - name: Download security artifacts (SBOM)
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
         with:
-          name: release-security-artifacts
-          path: dist/security
+          name: sbom-and-secret-scan
+          path: security
       - name: Generate Homebrew formula
-        run: bash scripts/generate-homebrew-formula.sh "${GITHUB_REF_NAME}"
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: bash scripts/generate-homebrew-formula.sh "${VERSION}"
+      - name: Collect assets and checksums
+        run: |
+          count="$(find dist -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)"
+          if [ "${count}" -ne 6 ]; then
+            echo "::error::Expected 6 archives, found ${count}."
+            exit 1
+          fi
+          cp scripts/install.sh Formula/hermes-agent-ultra.rb security/release-sbom.cdx.json dist/
+          (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
+          cat dist/SHA256SUMS
+      - name: Upload staged assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: staged-release
+          path: dist/
+
+  # Installs each staged archive with the staged install.sh on its own platform.
+  smoke:
+    needs: [qualify, stage]
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Download staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staged-release
+          path: staged
+      - name: Smoke the staged release
+        env:
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: |
+          bash scripts/smoke-release-artifact.sh \
+            --version "${VERSION}" \
+            --asset-dir staged
+
+  # The archives install.sh does not choose: musl Linux and Windows.
+  smoke-direct:
+    needs: [qualify, stage]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            artifact: hermes-linux-x86_64-musl.tar.gz
+            binary: hermes
+          - runner: windows-latest
+            artifact: hermes-windows-x86_64.zip
+            binary: hermes.exe
+    runs-on: ${{ matrix.runner }}
+    env:
+      ARTIFACT: ${{ matrix.artifact }}
+      BINARY: ${{ matrix.binary }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - name: Download staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staged-release
+          path: staged
+      - name: Check the archive against SHA256SUMS
+        working-directory: staged
+        run: grep -F "  ${ARTIFACT}" SHA256SUMS | sha256sum -c -
+      - name: Unpack
+        working-directory: staged
+        run: |
+          mkdir unpacked
+          if [[ "${ARTIFACT}" == *.zip ]]; then
+            7z x -ounpacked "${ARTIFACT}"
+          else
+            tar -xzf "${ARTIFACT}" -C unpacked
+          fi
+      - name: Run the binary
+        env:
+          HERMES_HOME: ${{ runner.temp }}/hermes-home
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: |
+          bin="staged/unpacked/${BINARY}"
+          "${bin}" --version | tee version.txt
+          grep -F "${VERSION#v}" version.txt
+          "${bin}" tools list > tools.txt
+          grep -F skills_list tools.txt
+
+  # Signs and attests only assets every smoke job passed, then installs the
+  # signed set with the installer requiring the signature for this tag.
+  sign:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [qualify, stage, smoke, smoke-direct]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - name: Download staged assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: staged-release
+          path: dist
       - name: Install Cosign
         uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3.9.1
-      - name: Sign release artifacts (keyless)
+      - name: Sign release assets (keyless)
         run: |
-          shopt -s nullglob
+          cosign sign-blob --yes --bundle dist/SHA256SUMS.sigstore.json dist/SHA256SUMS
           for artifact in dist/*.tar.gz dist/*.zip; do
             cosign sign-blob \
               --yes \
@@ -167,28 +334,72 @@ jobs:
               --output-certificate "${artifact}.pem" \
               "${artifact}"
           done
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+      - name: Attest the SBOM to each archive
+        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        with:
+          subject-path: |
+            dist/*.tar.gz
+            dist/*.zip
+          sbom-path: dist/release-sbom.cdx.json
+      - name: Install the signed release, requiring its signature
+        env:
+          HERMES_REQUIRE_SIGNATURE: "true"
+          VERSION: ${{ needs.qualify.outputs.version }}
+        run: |
+          bash scripts/smoke-release-artifact.sh \
+            --version "${VERSION}" \
+            --asset-dir dist
+      - name: Upload signed assets
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: signed-release
+          path: dist/
+
+  publish:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: sign
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Check the tag still names the qualified commit
+        env:
+          TAG: ${{ github.ref_name }}
+        run: |
+          # An annotated tag lists its commit on the peeled ^{} line.
+          refs="$(git ls-remote "https://github.com/${GITHUB_REPOSITORY}" "refs/tags/${TAG}" "refs/tags/${TAG}^{}")"
+          tagged="$(printf '%s\n' "${refs}" | awk '$2 ~ /\^\{\}$/ {peeled = $1} NR == 1 {first = $1} END {print (peeled != "" ? peeled : first)}')"
+          if [ "${tagged}" != "${GITHUB_SHA}" ]; then
+            echo "::error::Tag ${TAG} now names ${tagged}, not ${GITHUB_SHA}."
+            exit 1
+          fi
+      - name: Download signed assets
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: signed-release
+          path: dist
       - name: Publish release assets
         uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
         with:
-          files: |
-            dist/*.tar.gz
-            dist/*.zip
-            dist/*.tar.gz.sig
-            dist/*.zip.sig
-            dist/*.tar.gz.pem
-            dist/*.zip.pem
-            dist/security/release-sbom.cdx.json
-            scripts/install.sh
-            Formula/hermes-agent-ultra.rb
+          fail_on_unmatched_files: true
+          files: dist/*
 
   release-smoke:
-    needs: sign-and-publish
+    needs: publish
     runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Smoke published release artifact
         run: |
           mkdir -p .sync-reports

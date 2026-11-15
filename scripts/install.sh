@@ -44,7 +44,10 @@ else
   INSTALL_DIR=""
   INSTALL_DIR_EXPLICIT=false
 fi
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+# The agent's own home; upstream Hermes keeps ~/.hermes.
+HERMES_HOME="${HERMES_HOME:-${HERMES_AGENT_ULTRA_HOME:-$HOME/.hermes-agent-ultra}}"
+HERMES_RELEASE_BASE_URL="${HERMES_RELEASE_BASE_URL:-}"
+HERMES_REQUIRE_SIGNATURE="${HERMES_REQUIRE_SIGNATURE:-false}"
 CANONICAL_BIN_NAME="${CANONICAL_BIN_NAME:-hermes-agent-ultra}"
 PRIMARY_BIN_NAME="${PRIMARY_BIN_NAME:-hermes-ultra}"
 LEGACY_BIN_NAME="${LEGACY_BIN_NAME:-hermes}"
@@ -83,7 +86,8 @@ Environment variables:
   REPO                   GitHub repo slug (default: yungSNAT/reformed-agent)
   HERMES_INSTALL_DIR     Destination bin directory (explicit override)
   INSTALL_DIR            Destination bin directory (legacy alias, overridden by HERMES_INSTALL_DIR)
-  HERMES_HOME            Hermes config dir for SOUL.md bootstrap (default: $HOME/.hermes)
+  HERMES_HOME            Hermes config dir for SOUL.md bootstrap (default: $HERMES_AGENT_ULTRA_HOME,
+                         else $HOME/.hermes-agent-ultra)
   CANONICAL_BIN_NAME     Installed binary name (default: hermes-agent-ultra)
   PRIMARY_BIN_NAME       Primary user-facing command symlink (default: hermes-ultra)
   INSTALL_LEGACY_ALIAS   Also install the legacy hermes alias (default: false)
@@ -92,6 +96,15 @@ Environment variables:
   RUN_SETUP_MODE         auto|always|never for setup flow (default: auto)
   HERMES_INSTALL_PROBE_TIMEOUT_SECONDS
                          Timeout for post-install doctor/auth/setup probes (default: 45; 0 disables)
+  HERMES_RELEASE_BASE_URL
+                         Folder URL holding the release assets (default: the GitHub release)
+  HERMES_REQUIRE_SIGNATURE
+                         Refuse to install unless cosign verifies SHA256SUMS (default: false;
+                         cosign is used whenever it is on PATH)
+
+Every downloaded archive must match the release's SHA256SUMS. When cosign is on
+PATH, SHA256SUMS must also carry a valid signature from this repository's
+release workflow.
 
 Defaults:
   - Linux root install:  /usr/local/bin (FHS-style command location)
@@ -177,11 +190,79 @@ need_cmd() {
 
 release_url() {
   local asset="$1"
-  if [[ "$VERSION" == "latest" ]]; then
+  if [[ -n "${HERMES_RELEASE_BASE_URL}" ]]; then
+    echo "${HERMES_RELEASE_BASE_URL%/}/${asset}"
+  elif [[ "$VERSION" == "latest" ]]; then
     echo "https://github.com/${REPO}/releases/latest/download/${asset}"
   else
     echo "https://github.com/${REPO}/releases/download/${VERSION}/${asset}"
   fi
+}
+
+sha256_of() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    echo "Missing required command: sha256sum or shasum" >&2
+    exit 1
+  fi
+}
+
+refuse_install() {
+  echo "Refusing to install: $*" >&2
+  exit 1
+}
+
+# Pins "latest" to the tag it redirects to now, so every download comes from
+# one release and the signature check can require that exact tag. Left as
+# "latest" when GitHub has no release, so a checkout can still build from
+# source.
+resolve_latest_tag() {
+  [[ "${VERSION}" == "latest" && -z "${HERMES_RELEASE_BASE_URL}" ]] || return 0
+  local url
+  url="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/${REPO}/releases/latest" 2>/dev/null)" || return 0
+  [[ "${url}" == */releases/tag/?* ]] && VERSION="${url##*/releases/tag/}"
+  return 0
+}
+
+regex_escape() {
+  printf '%s' "$1" | sed 's/[][\.*^$(){}+?|]/\\&/g'
+}
+
+# Checks the downloaded archive against the release's SHA256SUMS, and that file
+# against its cosign signature, before anything is extracted.
+verify_release_asset() {
+  local archive="$1" asset="$2" sums="${TMP_DIR}/SHA256SUMS"
+  curl -fsSL "$(release_url SHA256SUMS)" -o "${sums}" \
+    || refuse_install "could not download SHA256SUMS for ${asset}."
+  if command -v cosign >/dev/null 2>&1; then
+    [[ "${VERSION}" != "latest" ]] \
+      || refuse_install "could not resolve the latest release tag, so its signature cannot be checked; pass a version."
+    curl -fsSL "$(release_url SHA256SUMS.sigstore.json)" -o "${sums}.sigstore.json" \
+      || refuse_install "could not download the signature for SHA256SUMS."
+    if ! cosign verify-blob \
+      --bundle "${sums}.sigstore.json" \
+      --certificate-identity-regexp "^https://github\.com/$(regex_escape "${REPO}")/\.github/workflows/release\.yml@refs/tags/$(regex_escape "${VERSION}")\$" \
+      --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+      "${sums}" >"${TMP_DIR}/cosign.log" 2>&1; then
+      cat "${TMP_DIR}/cosign.log" >&2
+      refuse_install "SHA256SUMS is not signed by ${REPO}'s release workflow for ${VERSION}."
+    fi
+    echo "Verified the signature on SHA256SUMS."
+  elif truthy_env "${HERMES_REQUIRE_SIGNATURE}"; then
+    refuse_install "HERMES_REQUIRE_SIGNATURE is set but cosign is not on PATH."
+  else
+    echo "cosign not found; checking SHA256SUMS without its signature. Install cosign to verify it."
+  fi
+  local expected actual
+  expected="$(awk -v name="${asset}" '$2 == name || $2 == "*" name {print $1; exit}' "${sums}")"
+  [[ -n "${expected}" ]] || refuse_install "${asset} is not listed in SHA256SUMS."
+  actual="$(sha256_of "${archive}")"
+  [[ "${actual}" == "${expected}" ]] \
+    || refuse_install "${asset} does not match SHA256SUMS (expected ${expected}, got ${actual})."
+  echo "Verified ${asset} against SHA256SUMS."
 }
 
 detect_target() {
@@ -367,6 +448,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 SOURCE_BIN=""
 DOWNLOADED_ASSET=""
+resolve_latest_tag
 for asset in "${ASSET_CANDIDATES[@]}"; do
   URL="$(release_url "${asset}")"
   echo "Installing ${CANONICAL_BIN_NAME} from ${URL}"
@@ -377,6 +459,7 @@ for asset in "${ASSET_CANDIDATES[@]}"; do
 done
 
 if [[ -n "${DOWNLOADED_ASSET}" ]]; then
+  verify_release_asset "${TMP_DIR}/${RELEASE_BIN_BASENAME}.tar.gz" "${DOWNLOADED_ASSET}"
   tar -xzf "${TMP_DIR}/${RELEASE_BIN_BASENAME}.tar.gz" -C "${TMP_DIR}"
   for candidate in "${CANONICAL_BIN_NAME}" "${PRIMARY_BIN_NAME}" "${RELEASE_BIN_BASENAME}" "${LEGACY_BIN_NAME}"; do
     if [[ -f "${TMP_DIR}/${candidate}" ]]; then
@@ -387,6 +470,9 @@ if [[ -n "${DOWNLOADED_ASSET}" ]]; then
 fi
 
 if [[ -z "${SOURCE_BIN}" ]]; then
+  if truthy_env "${HERMES_REQUIRE_SIGNATURE}"; then
+    refuse_install "HERMES_REQUIRE_SIGNATURE is set but there is no signed release archive for ${TARGET} in ${VERSION}, and a source build carries no signature."
+  fi
   SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   SOURCE_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
   if [[ -f "${SOURCE_ROOT}/Cargo.toml" ]] && command -v cargo >/dev/null 2>&1; then

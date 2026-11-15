@@ -124,6 +124,11 @@ install path with `INSTALL_DIR=/usr/local/bin`, and pass `--setup` to run the
 setup wizard after installing. Ultra's one-line `curl | bash` install needs a
 published release, so it does not work for this fork yet.
 
+Before it unpacks a release asset, the installer checks it against the
+release's `SHA256SUMS` and, when `cosign` is on `PATH`, checks that file's
+signature from this repository's release workflow for that tag. Set
+`HERMES_REQUIRE_SIGNATURE=true` to refuse any install it cannot verify that way.
+
 ## Quick Start
 
 Need a shorter path? See [README_QUICKSTART.md](./README_QUICKSTART.md).

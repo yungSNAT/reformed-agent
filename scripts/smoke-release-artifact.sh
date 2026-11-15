@@ -7,17 +7,21 @@ KEEP_TMP="${KEEP_TMP:-false}"
 RUN_SETUP_HELP="${RUN_SETUP_HELP:-true}"
 HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS="${HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS:-30}"
 OUTPUT_JSON="${OUTPUT_JSON:-}"
+ASSET_DIR="${ASSET_DIR:-}"
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/smoke-release-artifact.sh [--version TAG] [--repo OWNER/REPO] [--output-json PATH] [--keep-tmp]
+Usage: scripts/smoke-release-artifact.sh [--version TAG] [--repo OWNER/REPO] [--output-json PATH] [--asset-dir DIR] [--keep-tmp]
 
 Install Hermes Agent Ultra from published GitHub release artifacts into a
 throwaway directory, then verify the released binary surfaces without touching
 user/global installs.
 
 Checks:
-  - downloads the release install.sh from GitHub Releases, not the local tree
+  - downloads the release install.sh from GitHub Releases, not the local tree,
+    or from --asset-dir, a folder of staged release assets, before publication
+  - the installer checks the archive against SHA256SUMS (and its signature
+    when HERMES_REQUIRE_SIGNATURE=true)
   - fails if the installer falls back to building from source
   - installs hermes-agent-ultra and hermes-ultra into a temp bin directory
   - leaves an existing hermes command untouched unless legacy alias is opted in
@@ -44,6 +48,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --output-json)
       OUTPUT_JSON="${2:?--output-json requires a path}"
+      shift 2
+      ;;
+    --asset-dir)
+      ASSET_DIR="${2:?--asset-dir requires a folder}"
       shift 2
       ;;
     --keep-tmp)
@@ -172,7 +180,15 @@ echo upstream-hermes-sentinel
 SENTINEL
 chmod +x "${BIN_DIR}/hermes"
 
-INSTALLER_URL="https://github.com/${REPO}/releases/download/${VERSION}/install.sh"
+if [[ -n "${ASSET_DIR}" ]]; then
+  # Staged assets, before any release exists: the installer reads them as file:// URLs.
+  ASSET_BASE_URL="file://$(cd "${ASSET_DIR}" && pwd)"
+  export HERMES_RELEASE_BASE_URL="${ASSET_BASE_URL}"
+  INSTALLER_URL="${ASSET_BASE_URL}/install.sh"
+else
+  ASSET_BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
+  INSTALLER_URL="https://github.com/${REPO}/releases/download/${VERSION}/install.sh"
+fi
 echo "[release-smoke] downloading installer: ${INSTALLER_URL}"
 curl -fsSL "${INSTALLER_URL}" -o "${INSTALLER}"
 chmod +x "${INSTALLER}"
@@ -184,7 +200,11 @@ HERMES_INSTALL_PROBE_TIMEOUT_SECONDS=15 \
 "${INSTALLER}" "${VERSION}" --dir "${BIN_DIR}" --hermes-home "${HERMES_HOME_SMOKE}" --skip-setup \
   >"${INSTALL_LOG}" 2>&1
 
-assert_contains "${INSTALL_LOG}" "Installing hermes-agent-ultra from https://github.com/${REPO}/releases/download/${VERSION}/"
+assert_contains "${INSTALL_LOG}" "Installing hermes-agent-ultra from ${ASSET_BASE_URL}/"
+assert_contains "${INSTALL_LOG}" "against SHA256SUMS."
+if [[ "${HERMES_REQUIRE_SIGNATURE:-false}" == "true" ]]; then
+  assert_contains "${INSTALL_LOG}" "Verified the signature on SHA256SUMS."
+fi
 assert_contains "${INSTALL_LOG}" "Legacy hermes alias not installed by default"
 assert_contains "${INSTALL_LOG}" "Installed to ${BIN_DIR}/hermes-agent-ultra"
 assert_not_contains "${INSTALL_LOG}" "building from source"
