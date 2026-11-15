@@ -397,19 +397,9 @@ async fn handle_ops_eval_command(
         .copied()
         .unwrap_or("status")
         .to_ascii_lowercase();
-    let Some(repo_root) = discover_repo_root_for_about() else {
-        emit_command_output(
-            app,
-            "Eval controls are unavailable outside source checkout.",
-        );
-        return Ok(CommandResult::Handled);
-    };
-    let report_dir = repo_root.join(".sync-reports");
     match sub.as_str() {
         "status" => {
-            let latest = latest_json_report(&report_dir, "session-eval-harness-")
-                .or_else(|| latest_json_report(&report_dir, "eval-trend-gate-"));
-            if let Some(path) = latest {
+            if let Some(path) = latest_eval_report() {
                 let summary = summarize_gate_report(&path, "eval")
                     .unwrap_or_else(|| format!("latest eval report: {}", path.display()));
                 emit_command_output(
@@ -428,19 +418,16 @@ async fn handle_ops_eval_command(
         }
         "run" => {
             let (report, path) = run_session_eval_harness_native(
-                &repo_root,
+                &session_eval_report_dir(),
                 &hermes_config::hermes_home().join("sessions"),
                 25,
-                None,
             )?;
             let out = format_json_report_with_path(&report, &path)?;
             emit_command_output(app, out);
             Ok(CommandResult::Handled)
         }
         "latest" => {
-            let Some(path) = latest_json_report(&report_dir, "session-eval-harness-")
-                .or_else(|| latest_json_report(&report_dir, "eval-trend-gate-"))
-            else {
+            let Some(path) = latest_eval_report() else {
                 emit_command_output(app, "No eval reports found.");
                 return Ok(CommandResult::Handled);
             };
@@ -971,15 +958,9 @@ async fn handle_ops_cockpit_command(
     )
     .await?;
     let route_health = summarize_route_health_state(&route_health_state_path());
-    let eval_summary = if let Some(repo_root) = discover_repo_root_for_about() {
-        let report_dir = repo_root.join(".sync-reports");
-        latest_json_report(&report_dir, "session-eval-harness-")
-            .or_else(|| latest_json_report(&report_dir, "eval-trend-gate-"))
-            .and_then(|p| summarize_gate_report(&p, "eval"))
-            .unwrap_or_else(|| "eval=unknown".to_string())
-    } else {
-        "eval=unavailable".to_string()
-    };
+    let eval_summary = latest_eval_report()
+        .and_then(|p| summarize_gate_report(&p, "eval"))
+        .unwrap_or_else(|| "eval=unknown".to_string());
     let snapshot_count =
         enumerate_saved_sessions(&hermes_config::hermes_home().join("sessions")).len();
     let mut out = String::new();
