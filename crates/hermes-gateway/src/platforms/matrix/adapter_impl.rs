@@ -70,7 +70,7 @@ impl PlatformAdapter for MatrixAdapter {
         image_url: &str,
         caption: Option<&str>,
     ) -> Result<(), GatewayError> {
-        let downloaded = download_media_url(&self.client, image_url).await;
+        let downloaded = download_media_url(&self.base, image_url).await;
 
         let (file_bytes, content_type) = match downloaded {
             Ok(result) => result,

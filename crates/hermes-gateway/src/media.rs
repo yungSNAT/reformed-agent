@@ -386,6 +386,17 @@ pub fn validate_media_delivery_path(path: &str) -> Option<PathBuf> {
 // MediaCache
 // ---------------------------------------------------------------------------
 
+/// Refuses a media download URL that fails the shared `url_safety` check.
+pub(crate) fn check_media_url(url: &str) -> Result<(), String> {
+    if is_safe_url(url) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Blocked: '{url}' is invalid, could not be resolved, or targets a private or internal address"
+        ))
+    }
+}
+
 /// Follows a redirect only to a URL that passes the same check as the first
 /// URL, so a public host cannot bounce a download onto an internal one, and
 /// within reqwest's default limit.
@@ -393,7 +404,7 @@ pub fn validate_media_delivery_path(path: &str) -> Option<PathBuf> {
 /// shortcut: the check resolves the host on the runtime thread, as the check
 /// of the first URL does, and the client resolves it again when it connects,
 /// so a DNS answer that changes in between (rebinding) is not caught.
-fn checked_redirects() -> reqwest::redirect::Policy {
+pub(crate) fn checked_redirects() -> reqwest::redirect::Policy {
     reqwest::redirect::Policy::custom(|attempt| {
         if is_safe_url(attempt.url().as_str()) {
             reqwest::redirect::Policy::default().redirect(attempt)
@@ -620,11 +631,7 @@ impl MediaCache {
         subdir: &str,
         file_name: &str,
     ) -> Result<PathBuf, GatewayError> {
-        if !is_safe_url(url) {
-            return Err(GatewayError::ConnectionFailed(format!(
-                "Blocked: '{url}' is invalid, could not be resolved, or targets a private or internal address"
-            )));
-        }
+        check_media_url(url).map_err(GatewayError::ConnectionFailed)?;
 
         let dest_dir = self.cache_dir.join(subdir);
         fs::create_dir_all(&dest_dir).await.map_err(|e| {
