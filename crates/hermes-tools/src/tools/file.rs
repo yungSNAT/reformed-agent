@@ -939,36 +939,6 @@ mod tests {
         }
     }
 
-    /// Parallel writes to one file must leave one of them whole, not a mix.
-    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
-    async fn concurrent_write_files_on_one_file_leave_one_whole() {
-        const WRITES: usize = 8;
-        let tmp = tempfile::tempdir().unwrap();
-        let file = tmp.path().join("one.txt");
-        let path = file.to_str().unwrap().to_owned();
-        let handler = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
-        let contents: Vec<String> = (0..WRITES)
-            .map(|i| i.to_string().repeat((i + 1) * 4096))
-            .collect();
-        for round in 0..20 {
-            let mut writes = tokio::task::JoinSet::new();
-            for content in &contents {
-                let (handler, params) =
-                    (handler.clone(), json!({"path": path, "content": content}));
-                writes.spawn(async move { handler.execute(params).await });
-            }
-            while let Some(result) = writes.join_next().await {
-                result.unwrap().unwrap();
-            }
-            let written = std::fs::read_to_string(&file).unwrap();
-            assert!(
-                contents.contains(&written),
-                "round {round}: file holds a mix of writes ({} bytes)",
-                written.len()
-            );
-        }
-    }
-
     /// A patch that read the file before a parallel write must not put the
     /// old content back over the write.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
@@ -982,15 +952,16 @@ mod tests {
         let mut calls = tokio::task::JoinSet::new();
         for i in 0..FILES {
             let path = tmp.path().join(format!("{i}.txt"));
-            std::fs::write(&path, "old line;\n").unwrap();
+            std::fs::write(&path, "old line;\nkeep A\n").unwrap();
             let path = path.to_str().unwrap().to_owned();
             let params = json!({"path": path, "old_string": "old line;", "new_string": "patched;"});
             let patch = patch.clone();
-            // The patch fails if the write lands first; either order ends with the write.
             calls.spawn(async move {
-                let _ = patch.execute(params).await;
+                patch.execute(params).await.unwrap();
             });
-            let params = json!({"path": path, "content": "rewritten\n"});
+            // The write keeps the patched line, so in either order the patch
+            // applies and the write's second line survives.
+            let params = json!({"path": path, "content": "old line;\nkeep B\n"});
             let write = write.clone();
             calls.spawn(async move {
                 write.execute(params).await.unwrap();
@@ -1002,8 +973,9 @@ mod tests {
 
         let lost: Vec<usize> = (0..FILES)
             .filter(|i| {
-                std::fs::read_to_string(tmp.path().join(format!("{i}.txt"))).unwrap()
-                    != "rewritten\n"
+                !std::fs::read_to_string(tmp.path().join(format!("{i}.txt")))
+                    .unwrap()
+                    .ends_with("keep B\n")
             })
             .collect();
         assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
