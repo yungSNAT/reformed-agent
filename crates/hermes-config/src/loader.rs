@@ -247,50 +247,70 @@ pub fn atomic_yaml_write(
     atomic_write_bytes(path, yaml.as_bytes())
 }
 
+/// Indents each block sequence two spaces under the key that owns it, the
+/// style of the Python setup helpers; serde_yaml writes it at the key's column.
+/// Block scalar content moves with its key and is never read as structure.
 fn normalize_yaml_sequence_indent(yaml: &str) -> String {
     let mut out = String::with_capacity(yaml.len());
-    let mut previous_mapping_indent: Option<usize> = None;
-    let mut active_sequence_shift: Option<(usize, usize, usize)> = None; // parent, original, shift
+    // (dash column as serde_yaml wrote it, spaces added to that sequence's lines)
+    let mut shifts: Vec<(usize, usize)> = Vec::new();
+    // Column of a key whose value starts on the next line.
+    let mut open_key: Option<usize> = None;
+    // Indent of the line that opened the block scalar being read.
+    let mut block_scalar: Option<usize> = None;
     for line in yaml.lines() {
         let trimmed = line.trim_start();
-        let indent = line.len().saturating_sub(trimmed.len());
-        let mut emitted = false;
-        if let Some((parent_indent, original_indent, shift)) = active_sequence_shift {
-            if trimmed.starts_with("- ") && indent == original_indent {
-                out.push_str(&" ".repeat(shift));
-                out.push_str(line);
-                emitted = true;
-            } else if !trimmed.is_empty() && indent <= parent_indent {
-                active_sequence_shift = None;
-            } else if indent > original_indent {
-                out.push_str(&" ".repeat(shift));
-                out.push_str(line);
-                emitted = true;
+        let indent = line.len() - trimmed.len();
+        let in_block = block_scalar.is_some_and(|opener| trimmed.is_empty() || indent > opener);
+        if !in_block && !trimmed.is_empty() {
+            block_scalar = None;
+            let item = trimmed == "-" || trimmed.starts_with("- ");
+            while shifts
+                .last()
+                .is_some_and(|&(dash, _)| indent < dash || (indent == dash && !item))
+            {
+                shifts.pop();
+            }
+            if item && open_key == Some(indent) {
+                let base = shifts.last().map_or(0, |&(_, shift)| shift);
+                shifts.push((indent, base + 2));
+            }
+            open_key = trimmed
+                .ends_with(':')
+                .then(|| indent + dash_prefix_width(trimmed));
+            if opens_block_scalar(trimmed) {
+                block_scalar = Some(indent);
             }
         }
-        if trimmed.starts_with("- ") {
-            if let Some(parent_indent) = previous_mapping_indent {
-                if indent <= parent_indent {
-                    let target_indent = parent_indent + 2;
-                    let shift = target_indent.saturating_sub(indent);
-                    out.push_str(&" ".repeat(target_indent));
-                    out.push_str(trimmed);
-                    active_sequence_shift = Some((parent_indent, indent, shift));
-                    emitted = true;
-                }
-            }
+        if !trimmed.is_empty() {
+            out.push_str(&" ".repeat(shifts.last().map_or(0, |&(_, shift)| shift)));
         }
-        if !emitted {
-            out.push_str(line);
-        }
+        out.push_str(line);
         out.push('\n');
-        if !trimmed.is_empty() && trimmed.ends_with(':') && !trimmed.starts_with("- ") {
-            previous_mapping_indent = Some(indent);
-        } else if !trimmed.is_empty() && !trimmed.starts_with('#') {
-            previous_mapping_indent = None;
-        }
     }
     out
+}
+
+/// Width of the `- ` markers that open a line, so `- - key:` puts its key at 4.
+fn dash_prefix_width(trimmed: &str) -> usize {
+    let mut rest = trimmed;
+    let mut width = 0;
+    while let Some(tail) = rest.strip_prefix("- ") {
+        rest = tail;
+        width += 2;
+    }
+    width
+}
+
+/// Whether a line ends in a block scalar header such as `key: |` or `- >-`.
+fn opens_block_scalar(trimmed: &str) -> bool {
+    let Some((head, header)) = trimmed.rsplit_once(' ') else {
+        return false;
+    };
+    let mut chars = header.chars();
+    (head.ends_with(':') || head.ends_with('-'))
+        && matches!(chars.next(), Some('|' | '>'))
+        && chars.all(|c| c.is_ascii_digit() || c == '+' || c == '-')
 }
 
 // ---------------------------------------------------------------------------
