@@ -15,7 +15,9 @@
 //!
 //! Out of scope: other downloaders and interpreters, a fetch named at run
 //! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
-//! the bare-sink regex, zsh-only syntax other than `=cmd`, and PowerShell.
+//! the bare-sink regex, a fetch written to a file and run later, input
+//! passed on a descriptor other than stdin (`coproc`, `<&3`), zsh-only
+//! syntax other than `=cmd`, and PowerShell.
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
