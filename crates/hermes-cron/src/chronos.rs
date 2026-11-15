@@ -673,22 +673,33 @@ cron:
         claims
     }
 
+    /// `iss` must name the configured portal URL. Upstream compares it as
+    /// written, so `iss` may repeat the URL's trailing slash or leave it off.
     #[tokio::test]
     async fn fire_verifier_checks_the_issuer_against_the_portal_url() {
-        let (jwks, sign) = es256_fixture();
-        let config = fire_config("https://portal.example/", jwks);
+        for portal_url in ["https://portal.example/", "https://nas.example"] {
+            let (jwks, sign) = es256_fixture();
+            let config = fire_config(portal_url, jwks);
+            let base = portal_url.trim_end_matches('/');
 
-        let claims =
-            verify_nas_fire_token(&sign(fire_claims(Some("https://portal.example"))), &config)
-                .await
-                .expect("a token from the portal is accepted");
-        assert_eq!(claims.iss.as_deref(), Some("https://portal.example"));
+            for iss in [base.to_string(), format!("{base}/")] {
+                let claims = verify_nas_fire_token(&sign(fire_claims(Some(&iss))), &config)
+                    .await
+                    .unwrap_or_else(|err| panic!("{iss} for {portal_url}: {err}"));
+                assert_eq!(claims.iss.as_deref(), Some(iss.as_str()));
+            }
 
-        for iss in [Some("https://other.example"), None] {
-            let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
-                .await
-                .expect_err("a token without the portal's issuer is refused");
-            assert!(err.to_string().contains("Chronos token rejected"), "{err}");
+            for iss in [
+                Some("https://other.example"),
+                Some(&*format!("{base}/x")),
+                Some(&*format!("{base}.other.example")),
+                None,
+            ] {
+                let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
+                    .await
+                    .expect_err("a token without the portal's issuer is refused");
+                assert!(err.to_string().contains("Chronos token rejected"), "{err}");
+            }
         }
     }
 
@@ -697,19 +708,22 @@ cron:
     /// token is accepted, whatever its issuer.
     #[tokio::test]
     async fn fire_verifier_refuses_every_token_without_a_portal_url() {
-        let (jwks, sign) = es256_fixture();
-        let config = fire_config("  ", jwks);
-        assert!(!config.can_verify_fire());
+        for portal_url in ["", "  ", "/"] {
+            let (jwks, sign) = es256_fixture();
+            let config = fire_config(portal_url, jwks);
+            assert!(!config.can_verify_fire());
 
-        for iss in [
-            Some("https://portal.example"),
-            Some("https://any.example"),
-            None,
-        ] {
-            let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
-                .await
-                .expect_err("no issuer to check against");
-            assert!(err.to_string().contains("not configured"), "{err}");
+            for iss in [
+                Some("https://portal.example"),
+                Some("https://any.example"),
+                Some(""),
+                None,
+            ] {
+                let err = verify_nas_fire_token(&sign(fire_claims(iss)), &config)
+                    .await
+                    .expect_err("no issuer to check against");
+                assert!(err.to_string().contains("not configured"), "{err}");
+            }
         }
     }
 
