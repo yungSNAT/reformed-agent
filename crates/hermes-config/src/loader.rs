@@ -302,10 +302,15 @@ fn dash_prefix_width(trimmed: &str) -> usize {
     width
 }
 
-/// Whether a line ends in a block scalar header such as `key: |` or `- >-`.
+/// Whether a line ends in a block scalar header such as `key: |`, `- >-` or
+/// `key: !tag |`.
 fn opens_block_scalar(trimmed: &str) -> bool {
     let Some((head, header)) = trimmed.rsplit_once(' ') else {
         return false;
+    };
+    let head = match head.rsplit_once(' ') {
+        Some((before, tag)) if tag.starts_with('!') => before,
+        _ => head,
     };
     let mut chars = header.chars();
     (head.ends_with(':') || head.ends_with('-'))
