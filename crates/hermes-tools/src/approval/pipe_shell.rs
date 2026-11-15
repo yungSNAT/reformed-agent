@@ -285,25 +285,36 @@ fn names_one_of(word: &str, names: &[&str]) -> bool {
 }
 
 /// The first `curl`/`wget` end, in bytes of `command`, also when quoting or
-/// escapes split the word (`c'url'`, `w\get`). The raw text counts too:
-/// removing backslashes joins `C:\x\curl.exe` into `C:xcurl.exe`.
+/// escapes split the word (`c'url'`, `w\get`). Quotes are removed with and
+/// without backslashes, as removing them joins `C:\x\curl.exe` into
+/// `C:xcurl.exe`. A match followed by `/` or `\` names a folder, not the tool.
 fn first_fetch_end(command: &str) -> Option<usize> {
-    let raw = FETCH.find(command).map(|found| found.end());
-    let mut unquoted = String::with_capacity(command.len());
-    // (end in `unquoted`, end in `command`) for each kept character.
+    let quotes = |c: char| matches!(c, '\'' | '"');
+    let quotes_and_escapes = |c: char| matches!(c, '\'' | '"' | '\\');
+    fetch_end_without(command, quotes)
+        .into_iter()
+        .chain(fetch_end_without(command, quotes_and_escapes))
+        .min()
+}
+
+/// The first `curl`/`wget` end in `command` with the `dropped` characters
+/// removed, mapped back to bytes of `command`.
+fn fetch_end_without(command: &str, dropped: impl Fn(char) -> bool) -> Option<usize> {
+    let mut kept = String::with_capacity(command.len());
+    // (end in `kept`, end in `command`) for each kept character.
     let mut ends = Vec::with_capacity(command.len());
     for (at, c) in command.char_indices() {
-        if !matches!(c, '\'' | '"' | '\\') {
-            unquoted.push(c);
-            ends.push((unquoted.len(), at + c.len_utf8()));
+        if !dropped(c) {
+            kept.push(c);
+            ends.push((kept.len(), at + c.len_utf8()));
         }
     }
-    let normalised = FETCH.find(&unquoted).and_then(|found| {
-        ends.iter()
-            .find(|(kept, _)| *kept == found.end())
-            .map(|(_, original)| *original)
-    });
-    raw.into_iter().chain(normalised).min()
+    let found = FETCH
+        .find_iter(&kept)
+        .find(|found| !kept[found.end()..].starts_with(['/', '\\']))?;
+    ends.iter()
+        .find(|(kept_end, _)| *kept_end == found.end())
+        .map(|(_, original)| *original)
 }
 
 /// `command -v bash` and `sudo -l bash` name a shell without running it. The
