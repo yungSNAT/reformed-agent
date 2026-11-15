@@ -276,13 +276,18 @@ impl CronJob {
 
     /// Normalize a cron expression to 7-field format.
     ///
-    /// - 5 fields: `min hour dom month dow` -> `0 min hour dom month dow *`
+    /// - 5 fields: `min hour dom month dow` -> `0 min hour dom month dow *`,
+    ///   with standard cron's weekday numbers (0 to 7 from Sunday) written as
+    ///   names, as the crate numbers them 1 to 7 from Sunday
     /// - 6 fields: `sec min hour dom month dow` -> `sec min hour dom month dow *`
     /// - 7 fields: already correct, return as-is
     fn normalize_cron_expr(expr: &str) -> String {
         let parts: Vec<&str> = expr.split_whitespace().collect();
         match parts.len() {
-            5 => format!("0 {} *", expr.trim()),
+            5 => match standard_weekdays(parts[4]) {
+                Some(days) => format!("0 {} {days} *", parts[..4].join(" ")),
+                None => format!("0 {} *", expr.trim()),
+            },
             6 => format!("{} *", expr.trim()),
             7 => expr.trim().to_string(),
             _ => expr.trim().to_string(),
@@ -324,6 +329,50 @@ impl CronJob {
     pub fn mark_failed(&mut self) {
         self.status = JobStatus::Failed;
     }
+}
+
+/// A standard cron weekday field (`1-5`, `0,6`, `5-7`, `*/2`, `MON-FRI`) as
+/// the `cron` crate's comma list of day names, or `None` to pass it through:
+/// `*` and `?`, and anything this does not read (`L`, `#`), which the crate
+/// then accepts or rejects itself.
+fn standard_weekdays(field: &str) -> Option<String> {
+    const NAMES: [&str; 7] = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+    // 0 to 7, where 7 is Sunday again, so `5-7` is Friday to Sunday.
+    let day = |text: &str| match text.parse::<usize>() {
+        Ok(number) => (number <= 7).then_some(number),
+        Err(_) => NAMES
+            .iter()
+            .position(|name| name.eq_ignore_ascii_case(text)),
+    };
+    if matches!(field, "*" | "?") {
+        return None;
+    }
+    let mut days = [false; 7];
+    for item in field.split(',') {
+        let (range, step) = match item.split_once('/') {
+            Some((range, step)) => (range, step.parse::<usize>().ok().filter(|s| *s > 0)?),
+            None => (item, 1),
+        };
+        let (first, last) = match range.split_once('-') {
+            _ if range == "*" => (0, 6),
+            Some((first, last)) => (day(first)?, day(last)?),
+            // `1/2` runs from 1 to the end of the week.
+            None if step > 1 => (day(range)?, 6),
+            None => (day(range)?, day(range)?),
+        };
+        if first > last {
+            return None;
+        }
+        for number in (first..=last).step_by(step) {
+            days[number % 7] = true;
+        }
+    }
+    let names: Vec<&str> = NAMES
+        .iter()
+        .zip(days)
+        .filter_map(|(name, on)| on.then_some(*name))
+        .collect();
+    Some(names.join(","))
 }
 
 /// Normalize an optional per-job working directory.
