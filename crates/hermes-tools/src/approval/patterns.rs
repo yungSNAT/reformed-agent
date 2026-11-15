@@ -127,7 +127,8 @@ static CONTAINER_BACKENDS: &[&str] = &["docker", "singularity", "modal", "dayton
 
 enum RuleMatcher {
     Regex(Regex),
-    /// A check a regex cannot express, such as one on quote-masked text.
+    /// A check a regex cannot express, such as a shell lexer. It reads the
+    /// raw command: collapsing newlines would change what the shell runs.
     Function(fn(&str) -> bool),
 }
 
@@ -146,10 +147,12 @@ impl CommandPatternRule {
         }
     }
 
-    fn is_match(&self, command: &str) -> bool {
+    /// Regex rules match `collapsed` (newlines as spaces); function rules
+    /// read `raw`.
+    fn is_match(&self, raw: &str, collapsed: &str) -> bool {
         match &self.matcher {
-            RuleMatcher::Regex(regex) => regex.is_match(command),
-            RuleMatcher::Function(matches) => matches(command),
+            RuleMatcher::Regex(regex) => regex.is_match(collapsed),
+            RuleMatcher::Function(matches) => matches(raw),
         }
     }
 }

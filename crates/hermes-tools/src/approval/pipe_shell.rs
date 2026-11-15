@@ -1,30 +1,42 @@
 //! Remote content piped into a shell, or sourced through process
 //! substitution (upstream hermes-agent#87362).
 //!
-//! After the first `curl`/`wget`, a sink is tried only at each later pipe or
-//! `>(`, so the scan stays linear. Two sinks run:
+//! The check is a tripwire for the `curl ... | sh` idiom and its syntactic
+//! variants under bash's grammar, not a sandbox. The fetch is `curl` or
+//! `wget` named literally (quoting, escapes and a Windows path allowed).
+//! After it, a pipe, `|&` or `>(` feeds a sink, and the command is flagged
+//! when that sink, or anything run inside it (a compound command, a
+//! substitution in its words, a here-document), is a shell, `eval`,
+//! `source`, `su`, `sudo -s` or a command word computed at run time. Code a
+//! shell is given (`eval` arguments, a shell's `-c` arguments, a here-string
+//! or here-document for a shell, `source` or `.`) is scanned as a command
+//! too, and code not known until run time fails closed after a fetch.
+//! Lookups (`command -v bash`, `sudo -l bash`) run nothing.
 //!
-//! - the bare sink, a shell name right after `|` (optionally path-qualified),
-//!   on the raw text, so a quoted payload handed to `ssh`, `su -c` or
-//!   `xargs bash -c` stays flagged;
-//! - the widened sink, where the shell may sit behind launcher words
-//!   (`sudo -u root -E`, `env -i A=1`, `timeout 60`, `busybox`), be
-//!   path-qualified (`/bin/sh`, `C:\msys64\usr\bin\bash.exe`), quoted,
-//!   `.exe`-suffixed or followed by a redirect. It runs on quote-masked text,
-//!   so prose that merely mentions such a pipe stays quiet, except the
-//!   arguments of a shell carrier such as `eval`, which are code.
+//! Out of scope: other downloaders and interpreters, a fetch named at run
+//! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
+//! the bare-sink regex, a fetch written to a file and run later, input
+//! passed on a descriptor other than stdin (`coproc`, `<&3`), zsh-only
+//! syntax other than `=cmd`, and PowerShell.
 //!
-//! Command words are compared with their quoting removed, so `c'url'`,
-//! `b'a'sh` and `e\val` count. Launcher arguments parse without backtracking:
-//! a flag that takes a value consumes it, so `sudo -u bash cat` reads `bash`
-//! as the user, not the shell.
+//! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
+//! Where bash versions differ or the lexer does not model a construct, the
+//! check fails closed. Launcher arguments parse without backtracking: a flag
+//! that takes a value consumes it, so `sudo -u bash cat` reads `bash` as the
+//! user, not the shell.
+
+mod lexer;
+#[cfg(test)]
+mod regression;
 
 use std::sync::LazyLock;
 
+use lexer::{Frame, Op, Token, Word};
 use regex::Regex;
 
 /// The first `curl`/`wget` and, after it, a bare or slash-prefixed shell right
-/// after a pipe.
+/// after a pipe. Run on the raw text, so a quoted payload handed to `ssh`,
+/// `su -c` or `xargs bash -c` stays flagged.
 static BARE_SINK: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"(?is)\b(?:curl|wget)\b.*\|\s*(?:[/\w]*/)?(?:bash|sh|zsh|ksh|dash)(?:\s|$|-c)")
         .unwrap()
@@ -32,23 +44,18 @@ static BARE_SINK: LazyLock<Regex> = LazyLock::new(|| {
 
 static FETCH: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"(?i)\b(?:curl|wget)\b").unwrap());
 
-static SOURCE_REMOTE: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"(?i)(?:^|[\s;&|(`'"])(?:source|\.)\s+<\s*\(\s*(?:curl|wget)\b"#).unwrap()
-});
-
-/// Words that start a compound command or negate one; the next word is a
-/// command too.
-const COMPOUND_WORDS: &[&str] = &[
-    "if", "then", "do", "else", "elif", "while", "until", "!", "{",
-];
-
 /// Shells that read a script on stdin.
 const PIPE_SHELL_NAMES: &[&str] = &[
     "bash", "sh", "zsh", "ksh", "dash", "fish", "csh", "tcsh", "ash",
 ];
 
-/// Commands that hand a quoted argument to a shell to execute.
-const SHELL_CARRIERS: &[&str] = &["eval", "sh", "bash", "zsh", "ksh", "dash", "source", "."];
+/// Other commands that run their stdin as shell code.
+const PIPE_RUNNERS: &[&str] = &["eval", "source", ".", "su"];
+
+const FETCH_NAMES: &[&str] = &["curl", "wget"];
+
+/// Carrier code nested deeper than this fails closed.
+const MAX_CARRIER_DEPTH: usize = 4;
 
 /// Launchers that run their trailing words as a command, with the short and
 /// long options that take a separate value word. Per-launcher rows let `-p`
@@ -91,10 +98,15 @@ const LAUNCHERS: &[(&str, &str, &[&str])] = &[
     ),
 ];
 
-/// Whether `command` runs `source <(curl ...)` or `. <(wget ...)`. Checked on
-/// quote-masked text, so a commit message that mentions one stays quiet.
+/// Whether `command` runs `source <(curl ...)`, `bash -x <(wget ...)` or
+/// `bash < <(curl ...)`: a command that may run shell code (see
+/// `Command::interpreter`) given a process substitution that runs a fetch.
+/// Other commands' arguments are file names, not code.
 pub(super) fn sources_remote_process_substitution(command: &str) -> bool {
-    SOURCE_REMOTE.is_match(&carrier_view(command))
+    let Some(fetch_end) = first_fetch_end(command) else {
+        return false;
+    };
+    Scan::run(command, Some(fetch_end), 0).sources
 }
 
 /// Whether `command` pipes `curl`/`wget` output into a shell.
@@ -105,189 +117,698 @@ pub(super) fn pipes_remote_content_to_shell(command: &str) -> bool {
     if BARE_SINK.is_match(command) {
         return true;
     }
-    let text = carrier_view(command);
-    let bytes = text.as_bytes();
-    let mut pos = fetch_end;
-    while let Some(offset) = bytes[pos..].iter().position(|&b| matches!(b, b'|' | b'>')) {
-        let at = pos + offset;
-        pos = at + 1;
-        let operand = match bytes[at] {
-            // A single `|` or `|&`; `||` is an or-list, not a pipe.
-            b'|' if bytes.get(at + 1) == Some(&b'|') || (at > 0 && bytes[at - 1] == b'|') => {
-                continue
-            }
-            b'|' if bytes.get(at + 1) == Some(&b'&') => at + 2,
-            b'|' => at + 1,
-            _ if bytes.get(at + 1) == Some(&b'(') => at + 2,
-            _ => continue,
+    let scan = Scan::run(command, Some(fetch_end), 0);
+    scan.pipes || scan.opaque
+}
+
+/// What one scan found.
+#[derive(Default)]
+struct Scan {
+    pipes: bool,
+    sources: bool,
+    /// A construct the lexer does not model, or nesting past a limit.
+    opaque: bool,
+    /// A command in it names `curl`/`wget`.
+    ran_fetch: bool,
+}
+
+/// A command list being walked: the top level or one frame.
+struct List {
+    frame: Option<Frame>,
+    arith: bool,
+    /// The frame reads the stdin of a sink fed after the fetch.
+    inherited: bool,
+    /// The compound depth of the pipe that feeds the current pipeline
+    /// element, while one does.
+    region: Option<usize>,
+    /// One entry per open compound command: whether a command in it may
+    /// run its stdin as code.
+    compounds: Vec<bool>,
+    /// A command in this list, or in a frame inside it, may run its stdin
+    /// as code.
+    sink_seen: bool,
+    /// A command word in this frame or a nested one names `curl`/`wget`.
+    ran_fetch: bool,
+    /// A here-document frame whose body a shell, `source` or `.` reads as
+    /// code.
+    body_is_code: bool,
+    command: Command,
+}
+
+impl List {
+    fn new(frame: Option<Frame>, arith: bool, inherited: bool) -> Self {
+        Self {
+            frame,
+            arith,
+            inherited,
+            region: None,
+            compounds: Vec::new(),
+            sink_seen: false,
+            ran_fetch: false,
+            body_is_code: false,
+            command: Command::default(),
+        }
+    }
+
+    fn piped(&self) -> bool {
+        self.inherited || self.region.is_some()
+    }
+
+    /// Notes a command that may run its stdin as code.
+    fn saw_sink(&mut self) {
+        self.sink_seen = true;
+        if let Some(open) = self.compounds.last_mut() {
+            *open = true;
+        }
+    }
+
+    /// Notes where the simple command starts and whether it is piped.
+    fn begin(&mut self, at: usize) {
+        if self.command.start.is_none() {
+            self.command.start = Some(at);
+            self.command.piped = self.piped();
+        }
+    }
+}
+
+#[derive(Default)]
+enum State {
+    /// Before the command word: reserved words, assignments, launchers.
+    #[default]
+    Start,
+    Launcher(Launcher),
+    /// After the command word, or in a lookup.
+    Arguments,
+}
+
+struct Launcher {
+    name: &'static str,
+    short: &'static str,
+    long: &'static [&'static str],
+    value_next: bool,
+    /// `sudo -s`, `sudo -i` or `doas -s`: a shell when no command follows.
+    shell: bool,
+    /// After `env -S`: the next word is the command line env splits.
+    split: bool,
+    /// `env -S<text>` or `env --split-string=<text>`.
+    split_text: Option<String>,
+}
+
+/// The simple command being read.
+#[derive(Default)]
+struct Command {
+    state: State,
+    /// The next word is a redirection's target or a here-document delimiter.
+    target: bool,
+    /// That target is a here-string's text.
+    here_string: bool,
+    /// The command may run a file argument or its stdin as shell code: a
+    /// shell, `eval` (`eval "$(cat)"`), `source`, `.`, `su`, `env -S`
+    /// naming a shell, or a command word computed at run time. A launcher
+    /// left as a shell (`sudo -s`), a lone `exec` and the end of a compound
+    /// command holding one count at the command's end.
+    interpreter: bool,
+    /// A `<(...)` in its words or redirections runs a fetch.
+    fetching_file: bool,
+    /// It starts at the end of a compound command (`done`, `}`, `fi`,
+    /// `esac`, a subshell's `)`) holding a command that may run its stdin
+    /// as code, so its redirections give that command code.
+    after_compound: bool,
+    /// The last here-string's text, and whether it holds an expansion.
+    stdin: Option<(String, bool)>,
+    /// Here-documents this command queued.
+    here_documents: usize,
+    /// Piped when its first word was read.
+    piped: bool,
+    start: Option<usize>,
+    end: usize,
+    carrier: Option<Carrier>,
+}
+
+/// `eval` or a shell's `-c`: arguments that are code.
+struct Carrier {
+    shell: bool,
+    /// For a shell, `-c` has been seen.
+    started: bool,
+    /// Leading option words of the code are still being skipped.
+    options: bool,
+    code: String,
+    computed: bool,
+}
+
+impl Scan {
+    fn run(text: &str, fetch_end: Option<usize>, depth: usize) -> Self {
+        let mut walk = Walk {
+            text,
+            fetch_end,
+            depth,
+            scan: Scan::default(),
+            lists: vec![List::new(None, false, false)],
+            here_documents: std::collections::VecDeque::new(),
         };
-        // The words after a pipe in code are a command, quoted or not: read
-        // them from the raw text.
-        let operand = skip_whitespace(command, operand);
-        if !names_a_shell_without_running_it(command, operand) && widened_sink(command, operand) {
-            return true;
+        let tokens = lexer::tokens(text);
+        walk.fetch_end = fetch_end.map(|fetch_end| {
+            // A fetch in a here-document body is read where its `<<` is,
+            // before a pipe on that line (`cat <<E | bash`).
+            tokens
+                .iter()
+                .fold(fetch_end, |fetch_end, token| match *token {
+                    Token::Body {
+                        start,
+                        end,
+                        operator,
+                        ..
+                    } if start < fetch_end && fetch_end <= end => operator.min(fetch_end),
+                    _ => fetch_end,
+                })
+        });
+        for token in tokens {
+            walk.token(token);
         }
+        while walk.lists.len() > 1 {
+            walk.close();
+        }
+        let _ = walk.end_command();
+        walk.scan.ran_fetch = walk.list().ran_fetch;
+        walk.scan
     }
-    false
 }
 
-fn widened_sink(text: &str, mut pos: usize) -> bool {
-    while let Some(next) = launcher(text, pos) {
-        pos = next;
-    }
-    shell_word(text, pos)
+struct Walk<'a> {
+    text: &'a str,
+    fetch_end: Option<usize>,
+    depth: usize,
+    scan: Scan,
+    lists: Vec<List>,
+    /// Here-documents whose bodies have not been read yet.
+    here_documents: std::collections::VecDeque<HereDocument>,
 }
 
-/// The end of one launcher word with its arguments and trailing whitespace.
-fn launcher(text: &str, pos: usize) -> Option<usize> {
-    let word_end = pos + shell_word_len(&text[pos..]);
-    let word = &text[pos..word_end];
-    LAUNCHERS.iter().find_map(|(name, short, long)| {
-        if !names_one_of(word, &[*name]) {
-            return None;
+/// A queued here-document.
+#[derive(Default)]
+struct HereDocument {
+    /// Its command is piped.
+    piped: bool,
+    /// Its command is a shell, `source` or `.`, which reads it as code.
+    interpreter: bool,
+}
+
+impl Walk<'_> {
+    fn list(&mut self) -> &mut List {
+        self.lists.last_mut().expect("the top list stays")
+    }
+
+    fn after_fetch(&self, at: usize) -> bool {
+        self.fetch_end.is_some_and(|end| end <= at)
+    }
+
+    fn token(&mut self, token: Token) {
+        match token {
+            Token::Word(word) => self.word(word),
+            Token::Op { op, at } => self.op(op, at),
+            Token::Open { frame, arith, at } => {
+                let mut body_is_code = false;
+                let inherited = match frame {
+                    Frame::HereDoc => {
+                        let document = self.here_documents.pop_front().unwrap_or_default();
+                        body_is_code = document.interpreter;
+                        document.piped
+                    }
+                    Frame::ProcessOut => self.list().piped() || self.after_fetch(at),
+                    _ => self.list().piped(),
+                };
+                self.list().begin(at);
+                let mut list = List::new(Some(frame), arith, inherited);
+                list.body_is_code = body_is_code;
+                self.lists.push(list);
+            }
+            Token::Body {
+                start,
+                end,
+                computed,
+                ..
+            } => {
+                if self.list().body_is_code {
+                    let text = self.text;
+                    self.code(&text[start..end], start, end, computed);
+                }
+            }
+            Token::Close => self.close(),
+            Token::Opaque => self.scan.opaque = true,
         }
-        let mut end = word_end;
-        loop {
-            let arg = skip_whitespace(text, end);
-            match (arg > end).then(|| launcher_argument(text, arg, short, long)) {
-                Some(Some(arg_end)) => end = arg_end,
-                _ => break,
+    }
+
+    fn close(&mut self) {
+        if self.lists.len() < 2 {
+            return;
+        }
+        // Finished whilst its frame is open, so code it runs reports a
+        // fetch to the frame.
+        let sink = self.end_command();
+        let mut child = self.lists.pop().expect("checked above");
+        if sink {
+            child.saw_sink();
+        }
+        let parent = self.list();
+        parent.ran_fetch |= child.ran_fetch;
+        if child.frame == Some(Frame::ProcessIn) && child.ran_fetch {
+            parent.command.fetching_file = true;
+        }
+        if child.sink_seen {
+            // A substitution's commands share the stdin of the compound
+            // command around them.
+            parent.saw_sink();
+            parent.command.after_compound |= child.frame == Some(Frame::Subshell);
+        }
+        if child.frame == Some(Frame::Subshell) {
+            // A case pattern's `)` or a subshell: a command may follow.
+            self.list().command.state = State::Start;
+        }
+    }
+
+    fn op(&mut self, op: Op, at: usize) {
+        match op {
+            Op::Redirect => self.list().command.target = true,
+            Op::HereString => {
+                let command = &mut self.list().command;
+                command.target = true;
+                command.here_string = true;
+            }
+            Op::HereDoc => {
+                let list = self.list();
+                let document = HereDocument {
+                    piped: list.piped(),
+                    interpreter: list.command.interpreter,
+                };
+                list.command.target = true;
+                list.command.here_documents += 1;
+                self.here_documents.push_back(document);
+            }
+            Op::Pipe | Op::Terminator => {
+                let sink = self.end_command();
+                let after_fetch = self.after_fetch(at);
+                let list = self.list();
+                if sink {
+                    list.saw_sink();
+                }
+                let depth = list.compounds.len();
+                if op == Op::Pipe && after_fetch {
+                    list.region = Some(list.region.map_or(depth, |r| r.min(depth)));
+                } else if op == Op::Terminator && list.region == Some(depth) {
+                    list.region = None;
+                }
             }
         }
-        let after = skip_whitespace(text, end);
-        (after > end).then_some(after)
-    })
+    }
+
+    fn word(&mut self, word: Word) {
+        let list = self.list();
+        list.begin(word.start);
+        let command = &mut list.command;
+        command.end = word.end;
+        if std::mem::take(&mut command.target) {
+            if std::mem::take(&mut command.here_string) {
+                command.stdin = Some((word.value, word.computed));
+            }
+            return;
+        }
+        match std::mem::take(&mut command.state) {
+            State::Start => self.command_word(&word),
+            State::Launcher(launcher) => self.launcher_word(launcher, &word),
+            State::Arguments => {
+                self.list().command.state = State::Arguments;
+                if let Some(carrier) = &mut self.list().command.carrier {
+                    carrier.add(&word);
+                }
+            }
+        }
+    }
+
+    /// A word in command position.
+    fn command_word(&mut self, word: &Word) {
+        let text = self.text;
+        let raw = &text[word.start..word.end];
+        let joined = raw.replace("\\\n", "");
+        let list = self.list();
+        let piped = list.piped();
+        let reserved = if word.quoted { "" } else { joined.as_str() };
+        match reserved {
+            "{" | "if" | "while" | "until" | "then" | "do" | "else" | "elif" | "!" | "coproc" => {
+                if matches!(reserved, "{" | "if" | "while" | "until") {
+                    list.compounds.push(false);
+                }
+                return;
+            }
+            "for" | "select" | "case" => {
+                list.compounds.push(false);
+                list.command.state = State::Arguments;
+                if reserved == "case" && list.frame.is_some() {
+                    // Its patterns' `)` would close this frame early.
+                    self.scan.opaque = true;
+                }
+                return;
+            }
+            "}" | "fi" | "done" | "esac" => {
+                let sink = list.compounds.pop().unwrap_or(false);
+                if let Some(open) = list.compounds.last_mut() {
+                    *open |= sink;
+                }
+                list.command.after_compound = sink;
+                let depth = list.compounds.len();
+                if list.region.is_some_and(|r| r > depth) {
+                    list.region = None;
+                }
+                return;
+            }
+            _ => {}
+        }
+        if is_assignment(&joined) {
+            return;
+        }
+        let arith = list.arith;
+        list.command.state = State::Arguments;
+        if word.computed {
+            list.command.interpreter = !arith;
+            if piped && !arith {
+                self.scan.pipes = true;
+            }
+            return;
+        }
+        let name = CommandName::new(raw, &word.value);
+        if let Some(&(launcher, short, long)) = LAUNCHERS.iter().find(|(l, _, _)| name.is(&[*l])) {
+            list.command.state = State::Launcher(Launcher {
+                name: launcher,
+                short,
+                long,
+                value_next: false,
+                shell: false,
+                split: false,
+                split_text: None,
+            });
+            return;
+        }
+        if name.is(PIPE_SHELL_NAMES) || name.is(PIPE_RUNNERS) {
+            list.command.interpreter = true;
+            if name.is(&["eval"]) || name.is(PIPE_SHELL_NAMES) {
+                list.command.carrier = Some(Carrier::new(name.is(PIPE_SHELL_NAMES)));
+            }
+            if piped {
+                self.scan.pipes = true;
+            }
+        } else if name.is(FETCH_NAMES) {
+            list.ran_fetch = true;
+        }
+    }
+
+    /// A word after a launcher: an option, its value, an assignment or a
+    /// duration, or else the command word.
+    fn launcher_word(&mut self, mut launcher: Launcher, word: &Word) {
+        let value = word.value.as_str();
+        if std::mem::take(&mut launcher.split) {
+            self.split_string(value, word.computed);
+            self.list().command.state = State::Arguments;
+            return;
+        }
+        let next = if std::mem::take(&mut launcher.value_next)
+            || is_assignment(value)
+            || is_duration(value)
+        {
+            Some(launcher)
+        } else if let Some(flag) = value
+            .strip_prefix('-')
+            .filter(|f| !f.is_empty() && !word.computed)
+        {
+            launcher.option(flag)
+        } else {
+            self.command_word(word);
+            return;
+        };
+        let next = next.map(|mut launcher| {
+            if let Some(text) = launcher.split_text.take() {
+                self.split_string(&text, false);
+            }
+            launcher
+        });
+        self.list().command.state = next.map_or(State::Arguments, State::Launcher);
+    }
+
+    /// `env -S` text, which env splits into a command and its arguments: in
+    /// a piped position, any word in it that names a shell or `su`, or text
+    /// computed at run time (env expands `${NAME}` itself), is a sink. env
+    /// runs programs, not builtins.
+    fn split_string(&mut self, text: &str, computed: bool) {
+        let names_sink = || {
+            text.split_whitespace().any(|word| {
+                let name = CommandName::new(word, word);
+                name.is(PIPE_SHELL_NAMES) || name.is(&["su"])
+            })
+        };
+        if computed || text.contains('$') || names_sink() {
+            let command = &mut self.list().command;
+            command.interpreter = true;
+            if command.piped {
+                self.scan.pipes = true;
+            }
+        }
+    }
+
+    /// Ends the simple command: a launcher left without a command, then
+    /// code given to a shell as stdin or as carrier arguments. Returns
+    /// whether the command may run its stdin as code.
+    fn end_command(&mut self) -> bool {
+        let command = std::mem::take(&mut self.list().command);
+        let shell_launcher = matches!(&command.state, State::Launcher(launcher) if launcher.shell);
+        if shell_launcher && command.piped {
+            self.scan.pipes = true;
+        }
+        // `exec` with no command gives its redirections to every later
+        // command, as a compound command's do to the commands in it.
+        let exec_alone =
+            matches!(&command.state, State::Launcher(launcher) if launcher.name == "exec");
+        let interpreter =
+            command.interpreter || shell_launcher || exec_alone || command.after_compound;
+        // Its here-documents are the last queued; a newline inside the
+        // command that read them earlier fails closed in the lexer.
+        let queued = command.here_documents.min(self.here_documents.len());
+        let from = self.here_documents.len() - queued;
+        for document in self.here_documents.range_mut(from..) {
+            document.interpreter |= interpreter;
+        }
+        if interpreter && command.fetching_file {
+            self.scan.sources = true;
+        }
+        let start = command.start.unwrap_or(0);
+        if let Some((code, computed)) = command.stdin.as_ref().filter(|_| interpreter) {
+            self.code(code, start, command.end, *computed);
+        }
+        if let Some(carrier) = command
+            .carrier
+            .filter(|c| (!c.shell || c.started) && !command.piped)
+        {
+            self.code(&carrier.code, start, command.end, carrier.computed);
+        }
+        interpreter
+    }
+
+    /// Code a shell runs from `start` to `end` of the text: carrier
+    /// arguments, a here-string or a here-document body. Code holding an
+    /// expansion is not known until run time and flags when a fetch starts
+    /// before `end`; static code is scanned as a command.
+    fn code(&mut self, code: &str, start: usize, end: usize, computed: bool) {
+        if computed {
+            if self.fetch_end.is_some_and(|fetch_end| fetch_end <= end) {
+                self.scan.pipes = true;
+            }
+            return;
+        }
+        if self.depth >= MAX_CARRIER_DEPTH {
+            self.scan.opaque = true;
+            return;
+        }
+        let fetch_end = if self.after_fetch(start) {
+            Some(0)
+        } else {
+            first_fetch_end(code)
+        };
+        let inner = Scan::run(code, fetch_end, self.depth + 1);
+        self.scan.pipes |= inner.pipes;
+        self.scan.sources |= inner.sources;
+        self.scan.opaque |= inner.opaque;
+        self.list().ran_fetch |= inner.ran_fetch;
+    }
 }
 
-/// The end of a launcher argument at `pos`: a flag with its value word, a
-/// bare flag, a `VAR=value` assignment or a duration.
-fn launcher_argument(text: &str, pos: usize, short: &str, long: &[&str]) -> Option<usize> {
-    let rest = &text[pos..];
-    let Some(flag) = rest.strip_prefix('-') else {
-        return assignment_or_duration_end(text, pos);
-    };
-    // Option letters are case-sensitive: `-p` and `-P` differ.
-    let valued_short = || {
-        let cluster = flag
-            .find(|c: char| !is_word(c) || short.contains(c) || c.is_ascii_digit())
+impl Launcher {
+    /// The state after option `-<flag>`, or `None` when the option makes the
+    /// launcher a lookup (`command -v`, `sudo -l`) that runs nothing.
+    fn option(mut self, flag: &str) -> Option<Self> {
+        if let Some(long) = flag.strip_prefix('-') {
+            let (name, value) = long.split_once('=').unwrap_or((long, ""));
+            let name = name.to_ascii_lowercase();
+            if self.name == "sudo" {
+                if name == "list" {
+                    return None;
+                }
+                self.shell |= matches!(name.as_str(), "shell" | "login");
+            }
+            if self.name == "env" && name == "split-string" {
+                match long.split_once('=') {
+                    Some((_, text)) => self.split_text = Some(text.to_string()),
+                    None => self.split = true,
+                }
+                return Some(self);
+            }
+            self.value_next =
+                value.is_empty() && !long.contains('=') && self.long.contains(&name.as_str());
+            return Some(self);
+        }
+        if self.name == "command" {
+            let lookup = flag.chars().all(|c| "pvV".contains(c)) && flag.contains(['v', 'V']);
+            return (!lookup).then_some(self);
+        }
+        // The bare letters run up to the first valued letter, digit or
+        // non-word character; a valued letter at the end takes the next word.
+        let letters = flag
+            .find(|c: char| {
+                !(c.is_alphanumeric() || c == '_') || c.is_ascii_digit() || self.short.contains(c)
+            })
             .unwrap_or(flag.len());
-        let letter = flag[cluster..]
+        let bare = &flag[..letters];
+        match self.name {
+            "sudo" if bare.contains(['l', 'L']) => return None,
+            "sudo" => self.shell |= bare.contains(['s', 'i']),
+            "doas" => self.shell |= bare.contains('s'),
+            "env" => {
+                if let Some(at) = bare.find('S') {
+                    let text = &flag[at + 1..];
+                    if text.is_empty() {
+                        self.split = true;
+                    } else {
+                        self.split_text = Some(text.to_string());
+                    }
+                    return Some(self);
+                }
+            }
+            _ => {}
+        }
+        let valued = flag[letters..]
             .chars()
             .next()
-            .filter(|c| short.contains(*c))?;
-        value_word_end(text, pos + 1 + cluster + letter.len_utf8())
-    };
-    let valued_long = || {
-        let option = flag.strip_prefix('-')?;
-        long.iter().find_map(|name| {
-            let len = strip_prefix_ignore_case(option, name)?;
-            value_word_end(text, pos + 2 + len)
-        })
-    };
-    let bare = || Some(pos + 1 + word_len(flag)).filter(|end| *end > pos + 1);
-    valued_short().or_else(valued_long).or_else(bare)
+            .filter(|c| self.short.contains(*c));
+        self.value_next = valued.is_some_and(|c| letters + c.len_utf8() == flag.len());
+        Some(self)
+    }
 }
 
-fn assignment_or_duration_end(text: &str, pos: usize) -> Option<usize> {
-    assignment_end(text, pos).or_else(|| duration_end(text, pos))
+impl Carrier {
+    fn new(shell: bool) -> Self {
+        Self {
+            shell,
+            started: !shell,
+            options: true,
+            code: String::new(),
+            computed: false,
+        }
+    }
+
+    fn add(&mut self, word: &Word) {
+        let value = word.value.as_str();
+        if !self.started {
+            self.started =
+                value.starts_with('-') && !value.starts_with("--") && value.contains('c');
+            return;
+        }
+        if self.options && value == "--" {
+            self.options = false;
+            return;
+        }
+        if self.options && self.shell && value.starts_with(['-', '+']) {
+            return;
+        }
+        self.options = false;
+        self.computed |= word.computed;
+        if !self.code.is_empty() {
+            self.code.push(' ');
+        }
+        self.code.push_str(value);
+    }
 }
 
-/// The end of a `NAME=value` word at `pos`.
-fn assignment_end(text: &str, pos: usize) -> Option<usize> {
-    let rest = &text[pos..];
-    let name_len = rest.find(|c: char| !is_word(c)).unwrap_or(rest.len());
-    (name_len > 0 && rest[name_len..].starts_with('='))
-        .then(|| pos + name_len + 1 + word_len(&rest[name_len + 1..]))
+/// A command word's name, compared without quoting (`b'a'sh`, `e\val`,
+/// `$'bash'`), line continuations, a zsh `=` prefix, directory (`/bin/sh`,
+/// `C:\x\bash.exe`), `.exe` suffix or ASCII case. `value` is the lexer's
+/// reading of the word; `raw` keeps the backslashes of a Windows path.
+struct CommandName([String; 3]);
+
+impl CommandName {
+    fn new(raw: &str, value: &str) -> Self {
+        let joined = raw.replace("\\\n", "");
+        let unquoted: String = joined
+            .chars()
+            .filter(|c| !matches!(c, '\'' | '"'))
+            .collect();
+        let unquoted = unquoted.strip_prefix('=').unwrap_or(&unquoted);
+        let unescaped: String = unquoted.chars().filter(|&c| c != '\\').collect();
+        let base = |text: &str, separators: &[char]| {
+            let base = text
+                .rsplit(separators)
+                .next()
+                .unwrap_or(text)
+                .to_ascii_lowercase();
+            match base.strip_suffix(".exe") {
+                Some(stem) => stem.to_string(),
+                None => base,
+            }
+        };
+        let value = value.strip_prefix('=').unwrap_or(value);
+        Self([
+            base(unquoted, &['/', '\\']),
+            base(&unescaped, &['/']),
+            base(value, &['/']),
+        ])
+    }
+
+    fn is(&self, names: &[&str]) -> bool {
+        self.0
+            .iter()
+            .any(|base| !base.is_empty() && names.contains(&base.as_str()))
+    }
+}
+
+/// `NAME=value` or `NAME+=value`.
+fn is_assignment(word: &str) -> bool {
+    let name = word
+        .find(|c: char| !(c.is_ascii_alphanumeric() || c == '_'))
+        .unwrap_or(word.len());
+    name > 0
+        && !word.as_bytes()[0].is_ascii_digit()
+        && (word[name..].starts_with('=') || word[name..].starts_with("+="))
 }
 
 /// `infinity`, `60`, `1.5`, `1e3` or `.5`, optionally suffixed `s`, `m`, `h`
-/// or `d`, followed by whitespace.
-fn duration_end(text: &str, pos: usize) -> Option<usize> {
-    let rest = &text[pos..];
-    let digits = |s: &str| s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
-    let number = if strip_prefix_ignore_case(rest, "infinity").is_some() {
-        8
-    } else {
-        let mut len = digits(rest);
-        if len == 0 {
-            len = rest.strip_prefix('.').map_or(0, |r| match digits(r) {
-                0 => 0,
-                n => n + 1,
-            });
-            if len == 0 {
-                return None;
-            }
-        } else {
-            if let Some(n) = rest[len..].strip_prefix('.').map(digits).filter(|n| *n > 0) {
-                len += 1 + n;
-            }
-            if let Some(n) = rest[len..]
-                .strip_prefix(['e', 'E'])
-                .map(digits)
-                .filter(|n| *n > 0)
-            {
-                len += 1 + n;
-            }
-        }
-        len
-    };
-    let end = pos + number;
-    let followed_by_space = |at: usize| text[at..].starts_with(char::is_whitespace);
-    match text[end..].chars().next() {
-        Some(c) if "smhdSMHD".contains(c) && followed_by_space(end + 1) => Some(end + 1),
-        _ if followed_by_space(end) => Some(end),
-        _ => None,
+/// or `d`.
+fn is_duration(word: &str) -> bool {
+    let number = word
+        .strip_suffix(['s', 'm', 'h', 'd', 'S', 'M', 'H', 'D'])
+        .unwrap_or(word);
+    if number.eq_ignore_ascii_case("infinity") {
+        return true;
     }
-}
-
-/// Whitespace, then a non-empty value word; the value word's end.
-fn value_word_end(text: &str, pos: usize) -> Option<usize> {
-    let value = skip_whitespace(text, pos);
-    let len = word_len(&text[value..]);
-    (value > pos && len > 0).then_some(value + len)
-}
-
-/// Whether the word at `pos` names a shell (`bash`, `"/usr/bin/fish"`,
-/// `b'a'sh`, `C:\msys64\usr\bin\bash.exe`).
-fn shell_word(text: &str, pos: usize) -> bool {
-    names_one_of(
-        &text[pos..pos + shell_word_len(&text[pos..])],
-        PIPE_SHELL_NAMES,
-    )
-}
-
-/// Whether shell word `word` names one of `names`, ignoring ASCII case, once
-/// its quoting (`b'a'sh`, `e\val`), directory (`/bin/sh`, `C:\x\bash.exe`)
-/// and `.exe` suffix are removed.
-fn names_one_of(word: &str, names: &[&str]) -> bool {
-    let unquoted: String = word.chars().filter(|c| !matches!(c, '\'' | '"')).collect();
-    let unescaped: String = unquoted.chars().filter(|&c| c != '\\').collect();
-    for base in [
-        unquoted.rsplit(['/', '\\']).next(),
-        unescaped.rsplit('/').next(),
-    ]
-    .into_iter()
-    .flatten()
-    {
-        let base = base
-            .len()
-            .checked_sub(4)
-            .filter(|&at| {
-                base.get(at..)
-                    .is_some_and(|ext| ext.eq_ignore_ascii_case(".exe"))
-            })
-            .map_or(base, |at| &base[..at]);
-        if !base.is_empty() && names.iter().any(|name| name.eq_ignore_ascii_case(base)) {
-            return true;
-        }
-    }
-    false
+    let (mantissa, exponent) = number.split_once(['e', 'E']).unwrap_or((number, "1"));
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = |s: &str| s.chars().all(|c| c.is_ascii_digit());
+    !exponent.is_empty()
+        && digits(exponent)
+        && digits(whole)
+        && digits(fraction)
+        && !(whole.is_empty() && fraction.is_empty())
 }
 
 /// The first `curl`/`wget` end, in bytes of `command`, also when quoting or
-/// escapes split the word (`c'url'`, `w\get`). Quotes are removed with and
-/// without backslashes, as removing them joins `C:\x\curl.exe` into
-/// `C:xcurl.exe`. A match followed by `/` or `\` names a folder, not the tool.
+/// escapes split the word (`c'url'`, `w\get`, `cu\` newline `rl`). Quotes are
+/// removed with and without backslashes, as removing them joins
+/// `C:\x\curl.exe` into `C:xcurl.exe`. A match followed by `/` or `\` names a
+/// folder, not the tool.
 fn first_fetch_end(command: &str) -> Option<usize> {
     let quotes = |c: char| matches!(c, '\'' | '"');
     let quotes_and_escapes = |c: char| matches!(c, '\'' | '"' | '\\');
@@ -297,13 +818,18 @@ fn first_fetch_end(command: &str) -> Option<usize> {
         .min()
 }
 
-/// The first `curl`/`wget` end in `command` with the `dropped` characters
-/// removed, mapped back to bytes of `command`.
+/// The first `curl`/`wget` end in `command` with the `dropped` characters and
+/// line continuations removed, mapped back to bytes of `command`.
 fn fetch_end_without(command: &str, dropped: impl Fn(char) -> bool) -> Option<usize> {
     let mut kept = String::with_capacity(command.len());
     // (end in `kept`, end in `command`) for each kept character.
     let mut ends = Vec::with_capacity(command.len());
-    for (at, c) in command.char_indices() {
+    let mut chars = command.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        if c == '\\' && chars.peek().is_some_and(|(_, next)| *next == '\n') {
+            chars.next();
+            continue;
+        }
         if !dropped(c) {
             kept.push(c);
             ends.push((kept.len(), at + c.len_utf8()));
@@ -315,226 +841,6 @@ fn fetch_end_without(command: &str, dropped: impl Fn(char) -> bool) -> Option<us
     ends.iter()
         .find(|(kept_end, _)| *kept_end == found.end())
         .map(|(_, original)| *original)
-}
-
-/// `command -v bash` and `sudo -l bash` name a shell without running it. The
-/// `l` must be a bare flag: in `sudo -pl bash` it is the value of `-p`.
-fn names_a_shell_without_running_it(text: &str, pos: usize) -> bool {
-    let start = path_prefix_end(text, pos);
-    let rest = &text[start..];
-    let flag_after = |name: &str| {
-        let len = strip_prefix_ignore_case(rest, name)?;
-        let after = &rest[len..];
-        let flag = after.trim_start();
-        (flag.len() < after.len()).then_some(flag)
-    };
-    let ends_at_boundary = |s: &str| s.chars().next().is_none_or(|c| !is_word(c));
-    if let Some(flag) = flag_after("command").and_then(|f| f.strip_prefix('-')) {
-        let letters = flag
-            .find(|c: char| !c.is_ascii_alphabetic())
-            .unwrap_or(flag.len());
-        return flag[..letters].ends_with(['v', 'V']) && ends_at_boundary(&flag[letters..]);
-    }
-    if let Some(flag) = flag_after("sudo") {
-        if let Some(rest) = strip_prefix_ignore_case(flag, "--list").map(|n| &flag[n..]) {
-            return ends_at_boundary(rest);
-        }
-        if let Some(cluster) = flag.strip_prefix('-') {
-            let len = cluster
-                .find(|c: char| !is_word(c) || c.is_ascii_digit() || "ugUCDhpRrtT".contains(c))
-                .unwrap_or(cluster.len());
-            return cluster[..len].ends_with(['l', 'L']) && ends_at_boundary(&cluster[len..]);
-        }
-    }
-    false
-}
-
-/// Skip a drive letter and directory components (`C:\x\`, `/usr/bin/`, `./`).
-fn path_prefix_end(text: &str, pos: usize) -> usize {
-    let mut end = pos;
-    let bytes = text.as_bytes();
-    if bytes.get(end).is_some_and(u8::is_ascii_alphabetic) && bytes.get(end + 1) == Some(&b':') {
-        end += 2;
-    }
-    loop {
-        let rest = &text[end..];
-        let component = rest
-            .find(|c: char| !(is_word(c) || matches!(c, '.' | '~' | '-')))
-            .unwrap_or(rest.len());
-        if !rest[component..].starts_with(['/', '\\']) {
-            return end;
-        }
-        end += component + 1;
-    }
-}
-
-/// `command` quote-masked, except the command segment of each shell carrier
-/// (`eval`, `source`, `sh` ...), restored from the raw text up to the next
-/// separator: a carrier's quoted arguments are code, other quoted text is
-/// prose. Masking keeps byte offsets, so positions agree with `command`.
-fn carrier_view(command: &str) -> String {
-    let masked = mask_quoted(command);
-    let mut view = masked.clone();
-    let starts = masked
-        .match_indices([';', '&', '|', '(', '`', '\n'])
-        .map(|(i, _)| i + 1);
-    for start in std::iter::once(0).chain(starts) {
-        let word = command_word_start(command, start);
-        let word_end = word + shell_word_len(&command[word..]);
-        if !names_one_of(&command[word..word_end], SHELL_CARRIERS) {
-            continue;
-        }
-        let end = masked[word..]
-            .find([';', '&', '|', '\n', ')', '`'])
-            .map_or(masked.len(), |len| word + len);
-        view.replace_range(word..end, &command[word..end]);
-    }
-    view
-}
-
-/// The command word of the simple command starting at `start`, after
-/// compound-command words (`if`, `then`, `!`, `{` ...), launcher words
-/// (`command`, `builtin`, `time`, `sudo` ...) and `NAME=value` assignments.
-fn command_word_start(command: &str, start: usize) -> usize {
-    let mut pos = skip_whitespace(command, start);
-    loop {
-        let word_end = pos + shell_word_len(&command[pos..]);
-        let next = skip_whitespace(command, word_end);
-        if next > word_end && COMPOUND_WORDS.contains(&&command[pos..word_end]) {
-            pos = next;
-        } else if let Some(after) = launcher(command, pos) {
-            pos = after;
-        } else {
-            match assignment_end(command, pos).map(|end| (end, skip_whitespace(command, end))) {
-                Some((end, after)) if after > end => pos = after,
-                _ => return pos,
-            }
-        }
-    }
-}
-
-/// The byte length of the shell word at the start of `s`: up to unquoted
-/// whitespace or one of `;&|()<>`. A quote left open ends the word where it
-/// opened: inside a carrier's argument (`eval "curl x | bash"`) it is the
-/// argument's closing quote.
-fn shell_word_len(s: &str) -> usize {
-    let mut quote: Option<(char, usize)> = None;
-    let mut escaped = false;
-    for (i, c) in s.char_indices() {
-        if escaped {
-            escaped = false;
-            continue;
-        }
-        match quote {
-            Some(('\'', _)) if c == '\'' => quote = None,
-            Some(('\'', _)) => {}
-            _ if c == '\\' => escaped = true,
-            Some(_) if c == '"' => quote = None,
-            Some(_) => {}
-            None if c == '\'' || c == '"' => quote = Some((c, i)),
-            None if c.is_whitespace() || ";&|()<>".contains(c) => return i,
-            None => {}
-        }
-    }
-    quote.map_or(s.len(), |(_, opened)| opened)
-}
-
-/// Blank the content of quoted strings, keeping the byte length. Quote
-/// characters stay, and `$(...)` and backtick spans inside double quotes stay
-/// raw because the shell runs them. An unclosed quote masks to the end.
-///
-/// shortcut: spans are matched naively (a `)` inside a quoted string within
-/// `$(...)` ends the span early); a shell lexer would be exact.
-fn mask_quoted(command: &str) -> String {
-    #[derive(Clone, Copy)]
-    enum State {
-        Plain,
-        Single,
-        Double,
-        DoubleRaw { depth: usize },
-        DoubleBacktick,
-    }
-    let blank = |out: &mut String, c: char| out.extend(std::iter::repeat_n(' ', c.len_utf8()));
-    let mut out = String::with_capacity(command.len());
-    let mut state = State::Plain;
-    let mut chars = command.chars().peekable();
-    while let Some(c) = chars.next() {
-        match state {
-            State::Plain => {
-                out.push(c);
-                match c {
-                    '\\' => out.extend(chars.next()),
-                    '\'' => state = State::Single,
-                    '"' => state = State::Double,
-                    _ => {}
-                }
-            }
-            State::Single if c == '\'' => {
-                out.push(c);
-                state = State::Plain;
-            }
-            State::Single => blank(&mut out, c),
-            State::Double => match c {
-                '"' => {
-                    out.push(c);
-                    state = State::Plain;
-                }
-                '\\' => {
-                    blank(&mut out, c);
-                    if let Some(next) = chars.next() {
-                        blank(&mut out, next);
-                    }
-                }
-                '$' if chars.peek() == Some(&'(') => {
-                    out.push(c);
-                    out.extend(chars.next());
-                    state = State::DoubleRaw { depth: 1 };
-                }
-                '`' => {
-                    out.push(c);
-                    state = State::DoubleBacktick;
-                }
-                _ => blank(&mut out, c),
-            },
-            State::DoubleRaw { depth } => {
-                out.push(c);
-                state = match c {
-                    '(' => State::DoubleRaw { depth: depth + 1 },
-                    ')' if depth == 1 => State::Double,
-                    ')' => State::DoubleRaw { depth: depth - 1 },
-                    _ => State::DoubleRaw { depth },
-                };
-            }
-            State::DoubleBacktick => {
-                out.push(c);
-                if c == '`' {
-                    state = State::Double;
-                }
-            }
-        }
-    }
-    out
-}
-
-fn is_word(c: char) -> bool {
-    c.is_alphanumeric() || c == '_'
-}
-
-/// Length of the leading run that is not whitespace or `|;&<>`.
-fn word_len(s: &str) -> usize {
-    s.find(|c: char| c.is_whitespace() || "|;&<>".contains(c))
-        .unwrap_or(s.len())
-}
-
-fn skip_whitespace(text: &str, pos: usize) -> usize {
-    text.len() - text[pos..].trim_start().len()
-}
-
-/// The byte length of `prefix` when `s` starts with it, ignoring ASCII case.
-fn strip_prefix_ignore_case(s: &str, prefix: &str) -> Option<usize> {
-    s.get(..prefix.len())
-        .filter(|head| head.eq_ignore_ascii_case(prefix))
-        .map(|_| prefix.len())
 }
 
 #[cfg(test)]
