@@ -378,10 +378,14 @@ pub async fn verify_nas_fire_token(
     validation.set_audience(&[config.expected_audience.as_str()]);
     validation.required_spec_claims.insert("aud".to_string());
     validation.required_spec_claims.insert("exp".to_string());
-    // `iss` is the portal URL with or without one trailing slash, so it may
-    // match portal_url as written, which is what upstream compares.
+    // `iss` is portal_url as written, which is what upstream compares, or the
+    // portal URL with one trailing slash or none.
     let portal = config.portal_url.trim_end_matches('/');
-    validation.set_issuer(&[portal.to_string(), format!("{portal}/")]);
+    validation.set_issuer(&[
+        config.portal_url.clone(),
+        portal.to_string(),
+        format!("{portal}/"),
+    ]);
     validation.required_spec_claims.insert("iss".to_string());
 
     let data = decode::<ChronosFireClaims>(token, &key, &validation)
