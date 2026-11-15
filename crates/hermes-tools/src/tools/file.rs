@@ -943,7 +943,7 @@ mod tests {
     /// old content back over the write.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
     async fn write_file_racing_a_patch_is_not_lost() {
-        const FILES: usize = 48;
+        const FILES: usize = 192;
         let tmp = tempfile::tempdir().unwrap();
         let write = Arc::new(WriteFileHandler::new(Arc::new(DiskBackend)));
         let patch = Arc::new(PatchHandler::new(Arc::new(
@@ -979,5 +979,23 @@ mod tests {
             })
             .collect();
         assert!(lost.is_empty(), "writes lost to a parallel patch: {lost:?}");
+    }
+
+    /// A file created through a symlinked folder keeps the lock it had before
+    /// it existed, so a call that names it by its real path takes turns with it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn a_new_file_keeps_its_lock_once_created() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        std::os::unix::fs::symlink(&real, tmp.path().join("link")).unwrap();
+        let before = file_edit_lock(&tmp.path().join("link").join("new.txt")).await;
+        std::fs::write(real.join("new.txt"), "x").unwrap();
+        let after = file_edit_lock(&real.join("new.txt")).await;
+        assert!(
+            Arc::ptr_eq(&before, &after),
+            "creating the file changed its lock"
+        );
     }
 }
