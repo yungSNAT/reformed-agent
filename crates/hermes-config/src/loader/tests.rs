@@ -348,6 +348,33 @@ grid:
     );
 }
 
+/// A tagged multi-line string keeps its text: its block content must not be
+/// read as a key and a sequence.
+#[test]
+fn atomic_yaml_write_keeps_tagged_block_scalars_in_sequence_items() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let value: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+custom_providers:
+  - name: provider-a
+    note: !note |
+      key:
+      - not a sequence
+"#,
+    )
+    .unwrap();
+
+    atomic_yaml_write(&path, &value, None).unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let reread: serde_yaml::Value =
+        serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    assert_eq!(reread, value, "{text}");
+}
+
 #[test]
 fn save_config_yaml_preserves_utf8_personality_and_prompt() {
     use tempfile::tempdir;
