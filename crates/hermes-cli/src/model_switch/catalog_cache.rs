@@ -43,12 +43,27 @@ fn provider_catalog_cache_dir() -> PathBuf {
         .join("provider-model-catalog")
 }
 
-fn provider_catalog_cache_path(provider: &str) -> PathBuf {
-    provider_catalog_cache_dir().join(format!("{}.json", provider.trim().to_ascii_lowercase()))
+/// The cache file stem for a provider, or `None` when the name could name a
+/// file outside the cache folder. Names come from `/model refresh`,
+/// `/model harness` and configured provider keys.
+fn provider_catalog_cache_stem(provider: &str) -> Option<String> {
+    let stem = provider.trim().to_ascii_lowercase();
+    let plain = !stem.is_empty()
+        && !stem.starts_with('.')
+        && stem
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
+    plain.then_some(stem)
 }
 
-fn provider_catalog_signature_path(provider: &str) -> PathBuf {
-    provider_catalog_cache_dir().join(format!("{}.sig.json", provider.trim().to_ascii_lowercase()))
+fn provider_catalog_cache_path(provider: &str) -> Option<PathBuf> {
+    let stem = provider_catalog_cache_stem(provider)?;
+    Some(provider_catalog_cache_dir().join(format!("{stem}.json")))
+}
+
+fn provider_catalog_signature_path(provider: &str) -> Option<PathBuf> {
+    let stem = provider_catalog_cache_stem(provider)?;
+    Some(provider_catalog_cache_dir().join(format!("{stem}.sig.json")))
 }
 
 fn parse_hex_key(raw: &str) -> Option<Vec<u8>> {
@@ -126,8 +141,8 @@ fn verify_cache_payload(bytes: &[u8], signature: &ProviderCatalogCacheSignature)
 }
 
 fn provider_catalog_cache_status(provider: &str) -> Option<CatalogCacheStatus> {
-    let path = provider_catalog_cache_path(provider);
-    let sig_path = provider_catalog_signature_path(provider);
+    let path = provider_catalog_cache_path(provider)?;
+    let sig_path = provider_catalog_signature_path(provider)?;
     let payload_bytes = std::fs::read(path).ok()?;
     let payload: ProviderCatalogCacheRecord = serde_json::from_slice(&payload_bytes).ok()?;
     let sig_raw = std::fs::read_to_string(sig_path).ok()?;
@@ -145,10 +160,11 @@ pub fn cached_provider_catalog_status(provider: &str) -> Option<CatalogCacheStat
 }
 
 pub fn clear_provider_catalog_cache(provider: &str) -> Result<bool, AgentError> {
+    let invalid = || AgentError::Config(format!("Invalid provider name: {provider:?}"));
     let mut removed = false;
     for path in [
-        provider_catalog_cache_path(provider),
-        provider_catalog_signature_path(provider),
+        provider_catalog_cache_path(provider).ok_or_else(invalid)?,
+        provider_catalog_signature_path(provider).ok_or_else(invalid)?,
     ] {
         match std::fs::remove_file(&path) {
             Ok(()) => removed = true,
@@ -176,7 +192,7 @@ fn load_provider_catalog_cache(provider: &str) -> Option<Vec<String>> {
             return None;
         }
     }
-    let path = provider_catalog_cache_path(provider);
+    let path = provider_catalog_cache_path(provider)?;
     let payload_raw = std::fs::read_to_string(path).ok()?;
     let payload: ProviderCatalogCacheRecord = serde_json::from_str(&payload_raw).ok()?;
     if payload.version != PROVIDER_CATALOG_CACHE_VERSION {
@@ -190,6 +206,12 @@ fn load_provider_catalog_cache(provider: &str) -> Option<Vec<String>> {
 }
 
 fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
+    let (Some(cache_path), Some(sig_path)) = (
+        provider_catalog_cache_path(provider),
+        provider_catalog_signature_path(provider),
+    ) else {
+        return;
+    };
     let record = ProviderCatalogCacheRecord {
         version: PROVIDER_CATALOG_CACHE_VERSION,
         provider: provider.trim().to_ascii_lowercase(),
@@ -205,8 +227,6 @@ fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
     let Ok(sig_bytes) = serde_json::to_vec_pretty(&signature) else {
         return;
     };
-    let cache_path = provider_catalog_cache_path(provider);
-    let sig_path = provider_catalog_signature_path(provider);
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }

@@ -1111,7 +1111,7 @@ mod tests {
 
         assert_eq!(out, vec!["default".to_string()]);
         assert!(
-            !provider_catalog_cache_path("moa").exists(),
+            !provider_catalog_cache_path("moa").unwrap().exists(),
             "virtual provider catalog should not be persisted to dynamic cache"
         );
     }
@@ -1275,8 +1275,8 @@ mod tests {
 
         assert!(clear_provider_catalog_cache("openai").expect("clear cache"));
         assert!(cached_provider_catalog_status("openai").is_none());
-        assert!(!provider_catalog_cache_path("openai").exists());
-        assert!(!provider_catalog_signature_path("openai").exists());
+        assert!(!provider_catalog_cache_path("openai").unwrap().exists());
+        assert!(!provider_catalog_signature_path("openai").unwrap().exists());
         assert!(!clear_provider_catalog_cache("openai").expect("idempotent clear"));
     }
 
@@ -1288,7 +1288,7 @@ mod tests {
 
         let models = vec!["gpt-4o".to_string()];
         persist_provider_catalog_cache("openai", &models);
-        let path = provider_catalog_cache_path("openai");
+        let path = provider_catalog_cache_path("openai").unwrap();
         let mut raw = std::fs::read_to_string(&path).expect("read cache");
         raw = raw.replace("gpt-4o", "gpt-4o-tampered");
         std::fs::write(&path, raw).expect("write tampered cache");
