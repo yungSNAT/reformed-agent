@@ -112,7 +112,7 @@ impl ChronosConfig {
     /// needs it as much as the audience and the keys.
     pub fn can_verify_fire(&self) -> bool {
         self.provider_enabled()
-            && !self.portal_url.trim().is_empty()
+            && !self.portal_url.trim().trim_end_matches('/').is_empty()
             && !self.expected_audience.trim().is_empty()
             && !self.nas_jwks_url.trim().is_empty()
     }
@@ -378,7 +378,10 @@ pub async fn verify_nas_fire_token(
     validation.set_audience(&[config.expected_audience.as_str()]);
     validation.required_spec_claims.insert("aud".to_string());
     validation.required_spec_claims.insert("exp".to_string());
-    validation.set_issuer(&[config.portal_url.trim_end_matches('/')]);
+    // `iss` is the portal URL with or without one trailing slash, so it may
+    // match portal_url as written, which is what upstream compares.
+    let portal = config.portal_url.trim_end_matches('/');
+    validation.set_issuer(&[portal.to_string(), format!("{portal}/")]);
     validation.required_spec_claims.insert("iss".to_string());
 
     let data = decode::<ChronosFireClaims>(token, &key, &validation)
