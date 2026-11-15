@@ -677,15 +677,20 @@ cron:
     }
 
     /// `iss` must name the configured portal URL. Upstream compares it as
-    /// written, so `iss` may repeat the URL's trailing slash or leave it off.
+    /// written, so `iss` may be the URL exactly as configured, or the URL with
+    /// one trailing slash or none.
     #[tokio::test]
     async fn fire_verifier_checks_the_issuer_against_the_portal_url() {
-        for portal_url in ["https://portal.example/", "https://nas.example"] {
+        for portal_url in [
+            "https://portal.example/",
+            "https://nas.example",
+            "https://nas.example//",
+        ] {
             let (jwks, sign) = es256_fixture();
             let config = fire_config(portal_url, jwks);
             let base = portal_url.trim_end_matches('/');
 
-            for iss in [base.to_string(), format!("{base}/")] {
+            for iss in [base.to_string(), format!("{base}/"), portal_url.to_string()] {
                 let claims = verify_nas_fire_token(&sign(fire_claims(Some(&iss))), &config)
                     .await
                     .unwrap_or_else(|err| panic!("{iss} for {portal_url}: {err}"));
