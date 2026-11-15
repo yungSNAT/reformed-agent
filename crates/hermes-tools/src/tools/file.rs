@@ -6,8 +6,9 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, TerminalBackend, ToolError, ToolHandler, ToolSchema};
 
+use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 use crate::credential_guard::CredentialGuard;
 
@@ -187,6 +188,21 @@ pub fn resolve_tool_path(
     clean_path(base.join(expanded))
 }
 
+/// The lock `write_file`, `patch` and `hash_edit` hold on a file, shared by
+/// every path that resolves to it. Tool calls in one batch run in parallel, and
+/// an edit reads, changes and writes the whole file, so calls on one file take
+/// turns. Locks no call holds are dropped as others are handed out.
+pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
+    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
+        LazyLock::new(Mutex::default);
+    let file = tokio::fs::canonicalize(path)
+        .await
+        .unwrap_or_else(|_| path.to_path_buf());
+    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
+    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
+    Arc::clone(locks.entry(file).or_default())
+}
+
 pub fn content_looks_like_internal_read_status(content: &str) -> bool {
     if !content.contains(READ_DEDUP_STATUS_MESSAGE) {
         return false;
@@ -312,6 +328,8 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
+        let edit_lock = file_edit_lock(Path::new(path)).await;
+        let _turn = edit_lock.lock().await;
         self.backend
             .write_file(path, content)
             .await

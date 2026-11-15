@@ -12,14 +12,14 @@ use sha2::{Digest, Sha256};
 
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 
-use std::collections::{BTreeSet, HashMap};
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::Arc;
 use std::time::Duration;
 
 use crate::credential_guard::CredentialGuard;
-use crate::tools::file::content_looks_like_internal_read_status;
+use crate::tools::file::{content_looks_like_internal_read_status, file_edit_lock};
 
 const MAX_RESOURCE_CHARS: usize = 200_000;
 const MAX_SEARCH_RESULTS: usize = 200;
@@ -455,7 +455,7 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
     }
     // Tool calls in one batch run in parallel; an edit reads, changes and
     // writes the whole file, so edits to one file take turns.
-    let edit_lock = hash_edit_lock(&path).await;
+    let edit_lock = file_edit_lock(&path).await;
     let _turn = edit_lock.lock().await;
     let content = tokio::fs::read_to_string(&path)
         .await
@@ -495,19 +495,6 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
         "bytes_delta": edit.content.len() as i64 - content.len() as i64
     })
     .to_string())
-}
-
-/// The lock `hash_edit` holds on a file, shared by every path that resolves
-/// to it. Locks no edit holds are dropped as others are handed out.
-async fn hash_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
-        LazyLock::new(Mutex::default);
-    let file = tokio::fs::canonicalize(path)
-        .await
-        .unwrap_or_else(|_| path.to_path_buf());
-    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
-    Arc::clone(locks.entry(file).or_default())
 }
 
 struct EditResult {

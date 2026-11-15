@@ -5,7 +5,7 @@ use regex::Regex;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 
-use crate::tools::file::{PatchBackend, SearchBackend};
+use crate::tools::file::{file_edit_lock, PatchBackend, SearchBackend};
 use hermes_core::ToolError;
 
 // ---------------------------------------------------------------------------
@@ -461,6 +461,8 @@ impl PatchBackend for LocalPatchBackend {
         hermes_config::tool_guard::check_write(std::path::Path::new(path))
             .await
             .map_err(ToolError::ExecutionFailed)?;
+        let edit_lock = file_edit_lock(std::path::Path::new(path)).await;
+        let _turn = edit_lock.lock().await;
         let content = tokio::fs::read_to_string(path)
             .await
             .map_err(|e| ToolError::ExecutionFailed(format!("Failed to read '{}': {}", path, e)))?;
