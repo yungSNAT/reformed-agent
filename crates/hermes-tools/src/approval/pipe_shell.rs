@@ -285,8 +285,10 @@ fn names_one_of(word: &str, names: &[&str]) -> bool {
 }
 
 /// The first `curl`/`wget` end, in bytes of `command`, also when quoting or
-/// escapes split the word (`c'url'`, `w\get`).
+/// escapes split the word (`c'url'`, `w\get`). The raw text counts too:
+/// removing backslashes joins `C:\x\curl.exe` into `C:xcurl.exe`.
 fn first_fetch_end(command: &str) -> Option<usize> {
+    let raw = FETCH.find(command).map(|found| found.end());
     let mut unquoted = String::with_capacity(command.len());
     // (end in `unquoted`, end in `command`) for each kept character.
     let mut ends = Vec::with_capacity(command.len());
@@ -296,10 +298,12 @@ fn first_fetch_end(command: &str) -> Option<usize> {
             ends.push((unquoted.len(), at + c.len_utf8()));
         }
     }
-    let end = FETCH.find(&unquoted)?.end();
-    ends.iter()
-        .find(|(kept, _)| *kept == end)
-        .map(|(_, original)| *original)
+    let normalised = FETCH.find(&unquoted).and_then(|found| {
+        ends.iter()
+            .find(|(kept, _)| *kept == found.end())
+            .map(|(_, original)| *original)
+    });
+    raw.into_iter().chain(normalised).min()
 }
 
 /// `command -v bash` and `sudo -l bash` name a shell without running it. The
