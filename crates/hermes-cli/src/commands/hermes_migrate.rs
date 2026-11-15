@@ -466,6 +466,7 @@ impl<'a> Run<'a> {
                     ));
                 }
             }
+            Err(AgentError::Config(reason)) => self.problem(format!("state.db: {reason}")),
             Err(error) => self.problem(format!("state.db: {error}")),
         }
         Ok(())

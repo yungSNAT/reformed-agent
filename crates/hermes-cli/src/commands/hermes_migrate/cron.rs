@@ -119,11 +119,7 @@ pub(super) fn convert(
                 .and_then(Value::as_u64)
                 .filter(|minutes| *minutes > 0)
                 .ok_or("its interval has no minutes")?;
-            let expression = interval(
-                minutes,
-                anchor(fields)
-                    .ok_or("its interval has no next, last or creation time to keep its timing")?,
-            )?;
+            let expression = interval(minutes, anchor(fields))?;
             let note = format!("every {minutes} minutes, as {expression} in UTC");
             (expression, note, false)
         }
@@ -265,7 +261,17 @@ fn anchor(fields: &Map<String, Value>) -> Option<DateTime<Utc>> {
 
 /// An interval that divides the hour or the day, as a UTC expression firing
 /// at the same instants as from `at`.
-fn interval(minutes: u64, at: DateTime<Utc>) -> Result<String, String> {
+fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
+    let hourly = minutes < 60 && 60 % minutes == 0;
+    if !hourly && (minutes % 60 != 0 || 1440 % minutes != 0) {
+        return Err(format!(
+            "it runs every {minutes} minutes, which does not divide an hour or a day"
+        ));
+    }
+    if minutes == 1 {
+        return Ok("* * * * *".into());
+    }
+    let at = at.ok_or("its interval has no next, last or creation time to keep its timing")?;
     let list = |start: u64, step: u64, span: u64| {
         (0..span / step)
             .map(|k| (start % step + k * step).to_string())
@@ -273,17 +279,13 @@ fn interval(minutes: u64, at: DateTime<Utc>) -> Result<String, String> {
             .join(",")
     };
     let (minute, hour) = (u64::from(at.minute()), u64::from(at.hour()));
-    match minutes {
-        1 => Ok("* * * * *".into()),
-        m if m < 60 && 60 % m == 0 => Ok(format!("{} * * * *", list(minute, m, 60))),
-        60 => Ok(format!("{minute} * * * *")),
-        m if m % 60 == 0 && 1440 % m == 0 => {
-            Ok(format!("{minute} {} * * *", list(hour, m / 60, 24)))
-        }
-        m => Err(format!(
-            "it runs every {m} minutes, which does not divide an hour or a day"
-        )),
-    }
+    Ok(if hourly {
+        format!("{} * * * *", list(minute, minutes, 60))
+    } else if minutes == 60 {
+        format!("{minute} * * * *")
+    } else {
+        format!("{minute} {} * * *", list(hour, minutes / 60, 24))
+    })
 }
 
 fn deliver(fields: &Map<String, Value>) -> Result<Option<DeliverConfig>, String> {
