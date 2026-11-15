@@ -44,8 +44,9 @@ fn provider_catalog_cache_dir() -> PathBuf {
 }
 
 /// The cache file stem for a provider, or `None` when the name could name a
-/// file outside the cache folder. Names come from `/model refresh`,
-/// `/model harness` and configured provider keys.
+/// file outside the cache folder or a Windows device (`con`, `nul.x`,
+/// `com1`). Names come from `/model refresh`, `/model harness` and configured
+/// provider keys; a name with no stem has no cache.
 fn provider_catalog_cache_stem(provider: &str) -> Option<String> {
     let stem = provider.trim().to_ascii_lowercase();
     let plain = !stem.is_empty()
@@ -53,7 +54,12 @@ fn provider_catalog_cache_stem(provider: &str) -> Option<String> {
         && stem
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.'));
-    plain.then_some(stem)
+    let base = stem.split('.').next().unwrap_or_default();
+    let device = matches!(base, "con" | "prn" | "aux" | "nul")
+        || (base.len() == 4
+            && (base.starts_with("com") || base.starts_with("lpt"))
+            && base.as_bytes()[3].is_ascii_digit());
+    (plain && !device).then_some(stem)
 }
 
 fn provider_catalog_cache_path(provider: &str) -> Option<PathBuf> {
@@ -160,12 +166,14 @@ pub fn cached_provider_catalog_status(provider: &str) -> Option<CatalogCacheStat
 }
 
 pub fn clear_provider_catalog_cache(provider: &str) -> Result<bool, AgentError> {
-    let invalid = || AgentError::Config(format!("Invalid provider name: {provider:?}"));
+    let (Some(cache_path), Some(sig_path)) = (
+        provider_catalog_cache_path(provider),
+        provider_catalog_signature_path(provider),
+    ) else {
+        return Ok(false);
+    };
     let mut removed = false;
-    for path in [
-        provider_catalog_cache_path(provider).ok_or_else(invalid)?,
-        provider_catalog_signature_path(provider).ok_or_else(invalid)?,
-    ] {
+    for path in [cache_path, sig_path] {
         match std::fs::remove_file(&path) {
             Ok(()) => removed = true,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}

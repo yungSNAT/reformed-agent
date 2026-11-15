@@ -1302,7 +1302,7 @@ mod tests {
     }
 
     /// `/model refresh <provider>` clears the cache for a typed name, so a
-    /// name that is not a plain file stem must not reach a path.
+    /// name that is not a plain file stem has no cache to read, write or clear.
     #[test]
     fn provider_catalog_cache_rejects_names_that_leave_the_cache_folder() {
         let _guard = env_guard();
@@ -1324,15 +1324,38 @@ mod tests {
             "",
             "  ",
             "c:victim",
+            "con",
+            "NUL",
+            "aux.x",
+            "com1",
+            "lpt9",
         ] {
             assert!(
-                clear_provider_catalog_cache(name).is_err(),
-                "clearing {name:?} should be refused"
+                matches!(clear_provider_catalog_cache(name), Ok(false)),
+                "clearing {name:?} should touch nothing"
             );
+            persist_provider_catalog_cache(name, &["m".to_string()]);
         }
         for file in ["victim.json", "victim.sig.json"] {
-            assert!(tmp.path().join(file).exists(), "{file} was deleted");
+            assert_eq!(
+                std::fs::read_to_string(tmp.path().join(file))
+                    .ok()
+                    .as_deref(),
+                Some("{}"),
+                "{file} was changed"
+            );
         }
+        let cache = tmp.path().join("cache");
+        let written: Vec<_> = std::fs::read_dir(cache.join("provider-model-catalog"))
+            .expect("cache folder")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(written.len(), 2, "persist wrote {written:?}");
+        assert!(
+            provider_catalog_cache_path("com1").is_none()
+                && provider_catalog_cache_path("comx").is_some(),
+            "only device names are refused"
+        );
         assert!(
             cached_provider_catalog_status("../provider-model-catalog/openai").is_none(),
             "a traversal name must not read the cache"
