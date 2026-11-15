@@ -23,6 +23,9 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+#[cfg(test)]
+mod regression;
+
 /// The first `curl`/`wget` and, after it, a bare or slash-prefixed shell right
 /// after a pipe.
 static BARE_SINK: LazyLock<Regex> = LazyLock::new(|| {
