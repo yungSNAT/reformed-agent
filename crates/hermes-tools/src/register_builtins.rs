@@ -1145,6 +1145,32 @@ pub(crate) mod tests {
         }
     }
 
+    /// The model gets no env_passthrough tool: its `read` returned any
+    /// variable, provider keys included, and its `register` let a key through
+    /// the sanitiser to execute_code and the terminal. Passthrough stays a
+    /// setting (`terminal.env_passthrough`) and an internal call for skills.
+    #[test]
+    fn no_builtin_tool_or_toolset_offers_env_passthrough() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let hermes_home = tempfile::tempdir().expect("temp hermes home");
+        let _hermes_home =
+            EnvGuard::set("HERMES_HOME", hermes_home.path().to_string_lossy().as_ref());
+        let names = registered_all_names_with_data_dir(hermes_home.path().to_path_buf());
+        assert!(!names.iter().any(|name| name == "env_passthrough"));
+
+        let toolsets = crate::toolset::ToolsetManager::new(Arc::new(ToolRegistry::new()));
+        for toolset in ["system", "hermes-cli", "hermes-cron"] {
+            let tools = toolsets
+                .resolve_toolset_unfiltered(toolset)
+                .expect("toolset");
+            assert!(
+                !tools.iter().any(|tool| tool == "env_passthrough"),
+                "{toolset} offers env_passthrough"
+            );
+        }
+    }
+
     #[test]
     fn data_dir_defaults_to_the_own_home_not_upstreams() {
         let _global_env = hermes_config::managed_gateway::test_lock::lock();
