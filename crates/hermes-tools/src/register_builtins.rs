@@ -1078,22 +1078,21 @@ pub(crate) mod tests {
         let _ssh_user = EnvGuard::remove("TERMINAL_SSH_USER");
         let names = registered_names();
 
+        // patch, search_files and execute_code act on this machine directly,
+        // so a backend that is not local hides them too.
         for hidden in [
             "terminal",
             "process",
             "process_registry",
             "read_file",
             "write_file",
+            "patch",
+            "search_files",
+            "execute_code",
         ] {
             assert!(
                 !names.contains(&hidden.to_string()),
                 "invalid backend should hide {hidden}"
-            );
-        }
-        for independent in ["patch", "search_files", "execute_code"] {
-            assert!(
-                names.contains(&independent.to_string()),
-                "invalid backend should keep independent tool {independent}"
             );
         }
         assert!(
@@ -1148,6 +1147,59 @@ pub(crate) mod tests {
             names.contains(&"ops_snapshot".to_string()),
             "invalid backend should keep read-only ops snapshots"
         );
+    }
+
+    /// With a terminal backend other than local, the tools that act on this
+    /// machine directly are hidden and refuse a call by name, whose dispatch
+    /// does not check availability: the user chose that backend for isolation.
+    #[test]
+    fn host_tools_refuse_when_the_terminal_backend_is_not_local() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let file = home.path().join("host.txt");
+        std::fs::write(&file, "host text").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        for backend in ["docker", "modal", "vercel_sandbox"] {
+            let _terminal_env = EnvGuard::set("TERMINAL_ENV", backend);
+            let registry = ToolRegistry::new();
+            register_builtin_tools(
+                &registry,
+                Arc::new(MockTerminalBackend),
+                Arc::new(MockSkillProvider),
+            );
+            for tool in ["patch", "search_files", "execute_code"] {
+                assert!(!registry.is_available(tool), "{backend}: {tool} offered");
+            }
+            let calls = [
+                (
+                    "patch",
+                    serde_json::json!({
+                        "path": file.to_string_lossy(),
+                        "old_string": "host",
+                        "new_string": "changed",
+                    }),
+                ),
+                (
+                    "search_files",
+                    serde_json::json!({ "pattern": "host", "path": home.path().to_string_lossy() }),
+                ),
+                (
+                    "execute_code",
+                    serde_json::json!({ "code": "print(1)", "language": "python" }),
+                ),
+            ];
+            for (tool, params) in calls {
+                let out = runtime.block_on(registry.dispatch_async(tool, params));
+                assert!(
+                    out.contains("terminal backend") && !out.contains("host text"),
+                    "{backend}: {tool} ran on the host: {out}"
+                );
+            }
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "host text");
+        }
     }
 
     #[test]

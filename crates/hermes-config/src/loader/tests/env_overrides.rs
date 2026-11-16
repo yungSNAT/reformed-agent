@@ -476,3 +476,27 @@ fn load_config_ignore_user_config_uses_defaults_when_files_exist() {
         std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
     }
 }
+
+/// A backend name this build does not know, given through TERMINAL_ENV or
+/// TERMINAL_BACKEND, stops loading: the configured backend would otherwise
+/// stay local, so the user's chosen isolation would run on this machine.
+#[test]
+fn an_unknown_terminal_backend_in_the_environment_stops_loading() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for key in ["TERMINAL_ENV", "TERMINAL_BACKEND"] {
+        clear_terminal_env_bridge_vars();
+        let dir = tempfile::tempdir().unwrap();
+        set_test_env("HERMES_HOME", dir.path());
+        set_test_env(key, "vercel_sandbox");
+        let result = load_config(Some(dir.path().to_string_lossy().as_ref()));
+        remove_test_env(key);
+        remove_test_env("HERMES_HOME");
+        // The loaded config is not printed: it can hold keys from the
+        // environment.
+        let Err(err) = result else {
+            panic!("{key}: an unknown backend loaded as local");
+        };
+        let err = err.to_string();
+        assert!(err.contains("`vercel_sandbox`"), "{key}: {err}");
+    }
+}
