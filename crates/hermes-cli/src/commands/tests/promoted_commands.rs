@@ -96,6 +96,7 @@
             config: Arc::new(GatewayConfig::default()),
             tool_registry: Arc::new(hermes_tools::ToolRegistry::new()),
             interrupts,
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
         };
         let session = hermes_acp::SessionState::new(session_id, ".".to_string());
 
@@ -185,6 +186,7 @@
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
         };
         let file_schema = hermes_core::tool_schema(
             "read_file",
@@ -249,6 +251,7 @@
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
         };
         let schema = hermes_core::tool_schema(
             "mcp_srv_ping",
@@ -665,15 +668,17 @@
 
     #[test]
     fn test_acp_stream_callbacks_route_reasoning_and_message_deltas() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let callbacks = acp_stream_callbacks("session-1", events.clone());
+        let sink = Arc::new(hermes_acp::EventSink::default());
+        let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callbacks = acp_stream_callbacks("session-1", sink.clone(), streamed.clone());
 
         callbacks.on_thinking.as_ref().unwrap()("actual reasoning");
         callbacks.on_stream_delta.as_ref().unwrap()("streamed answer");
         callbacks.on_thinking.as_ref().unwrap()("   ");
         callbacks.on_stream_delta.as_ref().unwrap()("");
 
-        let events = events.lock().unwrap();
+        assert!(streamed.load(std::sync::atomic::Ordering::Acquire));
+        let events = sink.drain_all();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, hermes_acp::AcpEventKind::AgentThoughtChunk);
         assert_eq!(

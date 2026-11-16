@@ -42,6 +42,9 @@ pub struct PromptExecutionOutput {
     pub usage: Option<Usage>,
     pub total_turns: Option<u32>,
     pub events: Vec<AcpEvent>,
+    /// The executor already pushed the reply's text to the event sink as
+    /// it streamed, so the handler must not send it again.
+    pub streamed_text: bool,
 }
 
 /// Pluggable ACP prompt executor.
@@ -57,6 +60,9 @@ pub trait AcpPromptExecutor: Send + Sync {
     fn steer_prompt(&self, _session: &SessionState, _guidance: &str) -> Result<bool, String> {
         Ok(false)
     }
+
+    /// Interrupt the session's running prompt, if any (`session/cancel`).
+    fn cancel_prompt(&self, _session: &SessionState) {}
 }
 
 const MAX_ACP_RESOURCE_BYTES: usize = 512 * 1024;

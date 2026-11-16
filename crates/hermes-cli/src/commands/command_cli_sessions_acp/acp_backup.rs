@@ -208,6 +208,8 @@ struct CliAcpPromptExecutor {
     config: Arc<hermes_config::GatewayConfig>,
     tool_registry: Arc<hermes_tools::ToolRegistry>,
     interrupts: Arc<Mutex<HashMap<String, hermes_agent::InterruptController>>>,
+    /// The server's sink: streamed text and reasoning go out as they arrive.
+    event_sink: Arc<hermes_acp::EventSink>,
 }
 
 impl CliAcpPromptExecutor {
@@ -220,36 +222,35 @@ impl CliAcpPromptExecutor {
     }
 }
 
+/// Push reasoning and reply text to the server's sink as they stream, and
+/// set `streamed` once any reply text has gone out.
 fn acp_stream_callbacks(
     session_id: &str,
-    callback_events: Arc<Mutex<Vec<hermes_acp::AcpEvent>>>,
+    event_sink: Arc<hermes_acp::EventSink>,
+    streamed: Arc<std::sync::atomic::AtomicBool>,
 ) -> hermes_agent::AgentCallbacks {
-    let thought_events = callback_events.clone();
+    let thought_sink = event_sink.clone();
     let thought_session_id = session_id.to_string();
-    let stream_events = callback_events;
     let stream_session_id = session_id.to_string();
     hermes_agent::AgentCallbacks {
         on_thinking: Some(Box::new(move |thinking: &str| {
             if thinking.trim().is_empty() {
                 return;
             }
-            if let Ok(mut events) = thought_events.lock() {
-                events.push(hermes_acp::AcpEvent::agent_thought_chunk(
-                    &thought_session_id,
-                    thinking,
-                ));
-            }
+            thought_sink.push(hermes_acp::AcpEvent::agent_thought_chunk(
+                &thought_session_id,
+                thinking,
+            ));
         })),
         on_stream_delta: Some(Box::new(move |delta: &str| {
             if delta.is_empty() {
                 return;
             }
-            if let Ok(mut events) = stream_events.lock() {
-                events.push(hermes_acp::AcpEvent::message_delta(
-                    &stream_session_id,
-                    delta,
-                ));
-            }
+            event_sink.push(hermes_acp::AcpEvent::message_delta(
+                &stream_session_id,
+                delta,
+            ));
+            streamed.store(true, std::sync::atomic::Ordering::Release);
         })),
         ..hermes_agent::AgentCallbacks::default()
     }
@@ -278,9 +279,12 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         if let Ok(mut active) = self.interrupts.lock() {
             active.insert(session.session_id.clone(), interrupt.clone());
         }
-        let callback_events: Arc<Mutex<Vec<hermes_acp::AcpEvent>>> =
-            Arc::new(Mutex::new(Vec::new()));
-        let callbacks = acp_stream_callbacks(&session.session_id, callback_events.clone());
+        let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callbacks = acp_stream_callbacks(
+            &session.session_id,
+            self.event_sink.clone(),
+            streamed.clone(),
+        );
         let agent = hermes_agent::attach_discovered_memory(
             hermes_agent::AgentLoop::with_interrupt(agent_config, agent_tools, provider, interrupt)
                 .with_callbacks(callbacks),
@@ -301,20 +305,14 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             .unwrap_or_default();
 
         let usage = result.usage.as_ref().map(acp_usage_from_agent_usage);
-        let mut events = callback_events
-            .lock()
-            .map(|mut events| std::mem::take(&mut *events))
-            .unwrap_or_default();
-        events.extend(acp_events_from_agent_messages(
-            &session.session_id,
-            &result.messages,
-        ));
+        let events = acp_events_from_agent_messages(&session.session_id, &result.messages);
 
         Ok(hermes_acp::PromptExecutionOutput {
             response_text,
             usage,
             total_turns: Some(result.total_turns),
             events,
+            streamed_text: streamed.load(std::sync::atomic::Ordering::Acquire),
         })
     }
 
@@ -334,6 +332,17 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    fn cancel_prompt(&self, session: &hermes_acp::SessionState) {
+        let controller = self
+            .interrupts
+            .lock()
+            .ok()
+            .and_then(|active| active.get(&session.session_id).cloned());
+        if let Some(controller) = controller {
+            controller.interrupt(None);
         }
     }
 }
@@ -429,14 +438,15 @@ pub async fn handle_cli_acp(
                 tool_registry.clone(),
             )));
 
+            let event_sink = Arc::new(hermes_acp::EventSink::default());
             let prompt_executor = Arc::new(CliAcpPromptExecutor {
                 config: Arc::new(config.clone()),
                 tool_registry: tool_registry.clone(),
                 interrupts: Arc::new(Mutex::new(HashMap::new())),
+                event_sink: event_sink.clone(),
             });
 
             let session_manager = Arc::new(hermes_acp::SessionManager::new());
-            let event_sink = Arc::new(hermes_acp::EventSink::default());
             let permission_store = Arc::new(hermes_acp::PermissionStore::new());
             let handler = Arc::new(
                 hermes_acp::HermesAcpHandler::new(

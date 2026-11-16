@@ -221,6 +221,9 @@ impl AcpHandler for HermesAcpHandler {
                             session_id,
                             latest_user_prompt_text(&state.history),
                         );
+                        if let Some(executor) = &self.prompt_executor {
+                            executor.cancel_prompt(&state);
+                        }
                     }
                 }
                 self.session_manager
@@ -344,7 +347,17 @@ impl AcpHandler for HermesAcpHandler {
                     }
                 };
 
-                while let Some(queued_prompt) = self.session_manager.pop_queued_prompt(session_id) {
+                // A cancelled turn leaves queued prompts for the next turn.
+                let cancelled = || {
+                    self.session_manager
+                        .get_session(session_id)
+                        .is_some_and(|s| s.phase == SessionPhase::Cancelled)
+                };
+                while !cancelled() {
+                    let Some(queued_prompt) = self.session_manager.pop_queued_prompt(session_id)
+                    else {
+                        break;
+                    };
                     let queued_usage = match self
                         .execute_prompt_turn(
                             session_id,
@@ -364,14 +377,16 @@ impl AcpHandler for HermesAcpHandler {
                     usage = merge_usage(usage, queued_usage);
                 }
 
+                let stop_reason = if cancelled() {
+                    StopReason::Cancelled
+                } else {
+                    StopReason::EndTurn
+                };
                 self.session_manager
                     .set_phase(session_id, SessionPhase::Idle);
                 self.emit_usage_update(session_id);
 
-                AcpResponse::success(
-                    request.id,
-                    prompt_response_value(StopReason::EndTurn, usage),
-                )
+                AcpResponse::success(request.id, prompt_response_value(stop_reason, usage))
             }
 
             // -- Session configuration --------------------------------------
