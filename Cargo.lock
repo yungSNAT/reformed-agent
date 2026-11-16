@@ -2036,6 +2036,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermes-parity-tools"
+version = "0.22.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "regex",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hermes-protocol-parity-tests"
 version = "0.22.0"
 dependencies = [

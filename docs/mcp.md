@@ -45,7 +45,7 @@ Validation rules:
 - If both `url` and `command` are present, HTTP wins and the CLI prints a warning.
 - `supports_parallel_tool_calls` is preserved and displayed by `mcp list` and `mcp test`.
 - `keepalive_interval` is optional for HTTP/SSE servers. It defaults to 180 seconds and is floored at 5 seconds; set it below a server's idle session TTL when that server expires sessions aggressively.
-- `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file.
+- `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file. A redirect to another origin is not followed, so the headers go only to the server named.
 
 ### Hosted tool catalogue
 
