@@ -48,7 +48,7 @@ async fn a_character_split_across_network_chunks_streams_intact() {
         let _ = socket.read(&mut request).await;
         let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"caf\u{e9}\"}}]}\n\ndata: [DONE]\n\n";
         let bytes = body.as_bytes();
-        // End the first HTTP chunk inside the 2-byte \u{e9}.
+        // End the first HTTP chunk inside the 2-byte é.
         let split = bytes.iter().position(|b| *b == 0xC3).unwrap() + 1;
         socket
             .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n")
