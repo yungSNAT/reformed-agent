@@ -418,6 +418,10 @@ pub struct McpServerEntry {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Headers sent with every request to a `url` server, such as a hosted
+    /// catalogue's API key header; `${VAR}` references are expanded on load.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub headers: std::collections::BTreeMap<String, String>,
     /// Whether this MCP server supports parallel tool calls safely.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,

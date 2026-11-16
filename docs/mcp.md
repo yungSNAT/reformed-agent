@@ -45,12 +45,27 @@ Validation rules:
 - If both `url` and `command` are present, HTTP wins and the CLI prints a warning.
 - `supports_parallel_tool_calls` is preserved and displayed by `mcp list` and `mcp test`.
 - `keepalive_interval` is optional for HTTP/SSE servers. It defaults to 180 seconds and is floored at 5 seconds; set it below a server's idle session TTL when that server expires sessions aggressively.
+- `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file.
+
+### Hosted tool catalogue
+
+A hosted catalogue such as [Composio Connect](https://docs.composio.dev/docs/composio-connect) exposes its app integrations (1,500+ apps, by its own count) through one Streamable HTTP MCP server. Add it to `config.yaml` with its key in an environment variable:
+
+```yaml
+mcp_servers:
+  - name: composio
+    url: "https://connect.composio.dev/mcp"
+    headers:
+      x-consumer-api-key: "${COMPOSIO_CONSUMER_KEY}"
+```
+
+Set `COMPOSIO_CONSUMER_KEY` to the consumer key from Composio's dashboard (an account with Composio is needed). Its search, schema, execute and connection tools then appear as MCP tools, and the first use of an app returns an OAuth link to approve in a browser. The same shape works for any catalogue that takes an API key header. `hermes_cli`'s `hosted_catalogue_preset_reaches_a_streamable_http_server` test runs this preset against a local Streamable HTTP server.
 
 ## Runtime Behavior
 
 `crates/hermes-mcp` provides:
 
-- stdio and HTTP/SSE transports.
+- stdio and Streamable HTTP transports (servers whose `<url>/sse` answers are spoken to as the older HTTP+SSE kind).
 - `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, and `prompts/get` client methods.
 - Parallel connection/discovery reporting through `McpManager::connect_all_parallel`.
 - Server-initiated sampling through `sampling/createMessage` with per-client policy, callback wiring, rate limits, token caps, model allowlists, tool-loop limits, and audit counters.

@@ -228,6 +228,10 @@ pub struct McpServerConfig {
     /// URL for remote (HTTP/SSE) MCP servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Headers sent with every request to a remote server, such as an API
+    /// key header. Values are secrets: `Debug` shows only the names.
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub headers: HashMap<String, String>,
     /// Whether this server supports concurrent tool calls from one session.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
@@ -253,6 +257,7 @@ impl std::fmt::Debug for McpServerConfig {
             .field("args", &self.args)
             .field("env", &self.env)
             .field("url", &self.url)
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field(
                 "supports_parallel_tool_calls",
                 &self.supports_parallel_tool_calls,
@@ -277,6 +282,7 @@ impl PartialEq for McpServerConfig {
             && self.args == other.args
             && self.env == other.env
             && self.url == other.url
+            && self.headers == other.headers
             && self.supports_parallel_tool_calls == other.supports_parallel_tool_calls
             && self.keepalive_interval == other.keepalive_interval
             && self.sampling == other.sampling
@@ -292,6 +298,7 @@ impl McpServerConfig {
             args,
             env: HashMap::new(),
             url: None,
+            headers: HashMap::new(),
             supports_parallel_tool_calls: false,
             keepalive_interval: None,
             sampling: None,
@@ -307,6 +314,7 @@ impl McpServerConfig {
             args: Vec::new(),
             env: HashMap::new(),
             url: Some(url.into()),
+            headers: HashMap::new(),
             supports_parallel_tool_calls: false,
             keepalive_interval: None,
             sampling: None,

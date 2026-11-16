@@ -9,7 +9,7 @@
 //! - Connection lifecycle (start, send, receive, close)
 //! - Error handling and connection lifecycle
 
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -809,30 +809,38 @@ impl McpTransport for HttpTransport {
 // HttpSseTransport
 // ---------------------------------------------------------------------------
 
-/// Transport that sends JSON-RPC requests via HTTP POST and receives
-/// responses through a Server-Sent Events (SSE) stream.
+/// Transport for remote MCP servers over HTTP.
 ///
-/// This is the standard transport for remote MCP servers that support
-/// the SSE protocol. The flow is:
-/// 1. Connect to the SSE endpoint to start receiving events
-/// 2. Send JSON-RPC requests via HTTP POST to the message endpoint
-/// 3. Receive JSON-RPC responses as SSE `message` events
+/// It speaks Streamable HTTP, the transport the MCP specification defines
+/// since 2025-03-26: each JSON-RPC message is POSTed to the server's URL with
+/// `Accept: application/json, text/event-stream`; the reply is a JSON body,
+/// an SSE stream of messages or `202 Accepted` for a notification; and the
+/// `Mcp-Session-Id` the server assigns at `initialize` goes back on every
+/// later request.
 ///
-/// Falls back to reading the HTTP response body directly when the server
-/// does not use SSE for the response.
+/// A server whose `<url>/sse` answers at start is treated as the older
+/// HTTP+SSE kind this transport spoke before: messages are POSTed to the
+/// endpoint its `mcp-message-endpoint` header names, else `<url>/message`.
 pub struct HttpSseTransport {
     /// The base URL of the MCP server.
     url: String,
     /// Optional bearer token for authentication.
     auth_token: Option<String>,
+    /// Extra headers sent with every request, such as a hosted server's API
+    /// key header.
+    headers: Vec<(String, String)>,
     /// HTTP client.
     client: reqwest::Client,
     /// Whether the transport has been started.
     started: bool,
-    /// Pending response from the last POST (non-SSE fallback).
-    pending_response: Option<Value>,
-    /// The message endpoint URL discovered from the SSE stream, or default.
+    /// Messages from the last POST not yet received, oldest first.
+    pending: VecDeque<Value>,
+    /// Whether `<url>/sse` answered at start (the older HTTP+SSE kind).
+    legacy_sse: bool,
+    /// The message endpoint the older kind's SSE response named.
     message_endpoint: Option<String>,
+    /// The session id a Streamable HTTP server assigned.
+    session_id: Option<String>,
     /// Read timeout used for SSE and POST responses.
     sse_read_timeout: Duration,
     /// Connect timeout used for initial SSE handshake.
@@ -840,18 +848,27 @@ pub struct HttpSseTransport {
 }
 
 impl HttpSseTransport {
-    /// Create a new HTTP+SSE transport for the given URL.
+    /// Create a new HTTP transport for the given URL.
     pub fn new(url: &str, auth_token: Option<String>) -> Self {
         Self {
             url: url.to_string(),
             auth_token,
+            headers: Vec::new(),
             client: reqwest::Client::new(),
             started: false,
-            pending_response: None,
+            pending: VecDeque::new(),
+            legacy_sse: false,
             message_endpoint: None,
+            session_id: None,
             sse_read_timeout: mcp_sse_read_timeout(),
             connect_timeout: mcp_sse_connect_timeout(),
         }
+    }
+
+    /// Send these headers with every request.
+    pub fn with_headers(mut self, headers: impl IntoIterator<Item = (String, String)>) -> Self {
+        self.headers = headers.into_iter().collect();
+        self
     }
 
     /// Build the full URL for an MCP endpoint.
@@ -865,24 +882,64 @@ impl HttpSseTransport {
 
     /// The URL used for POSTing JSON-RPC messages.
     fn post_url(&self) -> String {
-        if let Some(ref ep) = self.message_endpoint {
-            ep.clone()
-        } else {
-            self.endpoint_url("/message")
+        match (&self.message_endpoint, self.legacy_sse) {
+            (Some(ep), _) => ep.clone(),
+            (None, true) => self.endpoint_url("/message"),
+            (None, false) => self.url.clone(),
         }
+    }
+
+    /// Add the authentication, configured and session headers.
+    fn with_auth(&self, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+        for (name, value) in &self.headers {
+            builder = builder.header(name.as_str(), value.as_str());
+        }
+        if let Some(ref token) = self.auth_token {
+            builder = builder.header("Authorization", format!("Bearer {}", token));
+        }
+        if let Some(ref session_id) = self.session_id {
+            builder = builder.header("Mcp-Session-Id", session_id.as_str());
+        }
+        builder
     }
 
     /// Build a request with optional authentication.
     fn build_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         let mut builder = self.client.request(method, url);
         builder = builder.header("Content-Type", "application/json");
+        builder = builder.header("Accept", "application/json, text/event-stream");
         builder = builder.header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION_HEADER_VALUE);
         builder = builder.timeout(self.sse_read_timeout);
-        if let Some(ref token) = self.auth_token {
-            builder = builder.header("Authorization", format!("Bearer {}", token));
-        }
-        builder
+        self.with_auth(builder)
     }
+}
+
+/// The JSON-RPC messages in a POST reply: each SSE event's data, or the JSON
+/// body (an object, or an array of them).
+fn http_reply_messages(body: &str, is_sse: bool) -> Result<Vec<Value>, McpError> {
+    let invalid = |e: serde_json::Error| McpError::Protocol {
+        code: -32700,
+        message: format!("Invalid JSON response: {}", e),
+    };
+    if !is_sse {
+        return Ok(match serde_json::from_str(body).map_err(invalid)? {
+            Value::Array(items) => items,
+            value => vec![value],
+        });
+    }
+    let mut messages = Vec::new();
+    let mut data: Vec<&str> = Vec::new();
+    for line in body.lines().chain(std::iter::once("")) {
+        if line.is_empty() {
+            if !data.is_empty() {
+                messages.push(serde_json::from_str(&data.join("\n")).map_err(invalid)?);
+                data.clear();
+            }
+        } else if let Some(value) = line.strip_prefix("data:") {
+            data.push(value.strip_prefix(' ').unwrap_or(value));
+        }
+    }
+    Ok(messages)
 }
 
 #[async_trait]
@@ -894,17 +951,16 @@ impl McpTransport for HttpSseTransport {
             ));
         }
 
-        // Try to connect to the SSE endpoint first for streaming support.
-        // If it fails, fall back to the base URL health check.
+        // An older HTTP+SSE server answers on `<url>/sse`; a Streamable HTTP
+        // server need not answer a GET at all, so only reachability counts.
         let sse_url = self.endpoint_url("/sse");
-        let mut sse_builder = self.client.get(&sse_url);
-        sse_builder = sse_builder.timeout(self.connect_timeout);
-        if let Some(ref token) = self.auth_token {
-            sse_builder = sse_builder.header("Authorization", format!("Bearer {}", token));
-        }
+        let sse_builder = self
+            .with_auth(self.client.get(&sse_url))
+            .timeout(self.connect_timeout);
 
         match sse_builder.send().await {
             Ok(resp) if resp.status().is_success() => {
+                self.legacy_sse = true;
                 if let Some(ep) = resp
                     .headers()
                     .get("mcp-message-endpoint")
@@ -917,15 +973,18 @@ impl McpTransport for HttpSseTransport {
                 info!("MCP HTTP+SSE transport connected to: {}", self.url);
             }
             _ => {
-                // SSE endpoint not available — verify the base URL is reachable.
                 let base_url = &self.url;
-                self.client.get(base_url).send().await.map_err(|e| {
-                    McpError::ConnectionError(format!(
-                        "Failed to connect to MCP server at {}: {}",
-                        self.url, e
-                    ))
-                })?;
-                info!("MCP HTTP+SSE transport connected (no SSE) to: {}", self.url);
+                self.with_auth(self.client.get(base_url))
+                    .timeout(self.connect_timeout)
+                    .send()
+                    .await
+                    .map_err(|e| {
+                        McpError::ConnectionError(format!(
+                            "Failed to connect to MCP server at {}: {}",
+                            self.url, e
+                        ))
+                    })?;
+                info!("MCP Streamable HTTP transport connected to: {}", self.url);
             }
         }
 
@@ -950,6 +1009,18 @@ impl McpTransport for HttpSseTransport {
                 .unwrap_or_else(|_| "unknown error".to_string());
             return Err(classify_http_status_error(status, &body));
         }
+        if let Some(session_id) = response
+            .headers()
+            .get("mcp-session-id")
+            .and_then(|v| v.to_str().ok())
+        {
+            self.session_id = Some(session_id.to_string());
+        }
+        let is_sse = response
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/event-stream"));
 
         let body = response
             .bytes()
@@ -961,31 +1032,18 @@ impl McpTransport for HttpSseTransport {
             code: -32700,
             message: format!("Invalid UTF-8 in response: {}", e),
         })?;
-
-        // Parse response — may be SSE or plain JSON.
-        let json_body = if body.contains("data: ") {
-            // SSE-formatted response: extract the last `data:` line.
-            body.lines()
-                .filter_map(|line| line.strip_prefix("data: "))
-                .next_back()
-                .unwrap_or(&body)
-                .to_string()
-        } else {
-            body
-        };
-
-        let value: Value =
-            serde_json::from_slice(json_body.as_bytes()).map_err(|e| McpError::Protocol {
-                code: -32700,
-                message: format!("Invalid JSON response: {}", e),
-            })?;
-
-        self.pending_response = Some(value);
+        if body.trim().is_empty() {
+            // 202 Accepted for a notification or a response: nothing to read.
+            return Ok(());
+        }
+        // An older server may send SSE framing without the content type.
+        let is_sse = is_sse || body.lines().any(|line| line.starts_with("data:"));
+        self.pending.extend(http_reply_messages(&body, is_sse)?);
         Ok(())
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        match self.pending_response.take() {
+        match self.pending.pop_front() {
             Some(value) => Ok(value),
             None => Err(McpError::ConnectionError(
                 "No pending response. Call send() first.".to_string(),
@@ -994,10 +1052,12 @@ impl McpTransport for HttpSseTransport {
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
-        info!("Closing MCP HTTP+SSE transport");
+        info!("Closing MCP HTTP transport");
         self.started = false;
-        self.pending_response = None;
+        self.pending.clear();
+        self.legacy_sse = false;
         self.message_endpoint = None;
+        self.session_id = None;
         Ok(())
     }
 }
@@ -1123,6 +1183,50 @@ mod tests {
                 .get("MCP-Protocol-Version")
                 .and_then(|v| v.to_str().ok()),
             Some(MCP_PROTOCOL_VERSION_HEADER_VALUE)
+        );
+    }
+
+    #[test]
+    fn http_reply_messages_reads_every_sse_event() {
+        let body = "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n: comment\ndata: {\"jsonrpc\":\"2.0\",\ndata: \"id\":3,\"result\":{}}\n";
+        let messages = http_reply_messages(body, true).expect("sse body");
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0]["method"], "notifications/progress");
+        assert_eq!(messages[1]["id"], 3);
+    }
+
+    #[test]
+    fn http_reply_messages_reads_a_json_object_or_batch() {
+        let one = http_reply_messages("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}", false)
+            .expect("object");
+        assert_eq!(one.len(), 1);
+        let batch = http_reply_messages("[{\"id\":1},{\"id\":2}]", false).expect("batch");
+        assert_eq!(batch.len(), 2);
+        assert!(http_reply_messages("not json", false).is_err());
+    }
+
+    #[test]
+    fn streamable_http_posts_to_the_url_with_headers_and_session() {
+        let mut transport = HttpSseTransport::new("https://catalogue.example/mcp", None)
+            .with_headers([("x-consumer-api-key".to_string(), "k".to_string())]);
+        assert_eq!(transport.post_url(), "https://catalogue.example/mcp");
+        transport.session_id = Some("s-1".to_string());
+        let req = transport
+            .build_request(reqwest::Method::POST, &transport.post_url())
+            .build()
+            .expect("build request");
+        let header = |name: &str| req.headers().get(name).and_then(|v| v.to_str().ok());
+        assert_eq!(header("x-consumer-api-key"), Some("k"));
+        assert_eq!(header("mcp-session-id"), Some("s-1"));
+        assert_eq!(
+            header("accept"),
+            Some("application/json, text/event-stream")
+        );
+
+        transport.legacy_sse = true;
+        assert_eq!(
+            transport.post_url(),
+            "https://catalogue.example/mcp/message"
         );
     }
 
