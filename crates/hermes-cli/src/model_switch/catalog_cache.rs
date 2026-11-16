@@ -238,16 +238,20 @@ fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let tmp_payload = cache_path.with_extension("json.tmp");
-    let tmp_sig = sig_path.with_extension("sig.json.tmp");
-    if let Ok(mut file) = std::fs::File::create(&tmp_payload) {
-        let _ = file.write_all(&payload_bytes);
-        let _ = file.flush();
-        let _ = std::fs::rename(&tmp_payload, &cache_path);
-    }
-    if let Ok(mut file) = std::fs::File::create(&tmp_sig) {
-        let _ = file.write_all(&sig_bytes);
-        let _ = file.flush();
-        let _ = std::fs::rename(&tmp_sig, &sig_path);
+    write_by_rename(&cache_path, &payload_bytes);
+    write_by_rename(&sig_path, &sig_bytes);
+}
+
+/// Writes `bytes` to a new, randomly named file beside `path`, then renames
+/// it over `path`, so no link planted in the cache folder is written through.
+fn write_by_rename(path: &std::path::Path, bytes: &[u8]) {
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let Ok(mut file) = tempfile::NamedTempFile::new_in(dir) else {
+        return;
+    };
+    if file.write_all(bytes).and_then(|()| file.flush()).is_ok() {
+        let _ = file.persist(path);
     }
 }
