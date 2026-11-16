@@ -27,7 +27,7 @@ This runbook maps each GPAR ticket to executable artifacts and checks.
   - `docs/parity/upstream-missing-queue.json`
   - `docs/parity/upstream-missing-queue.md`
 - `#27 GPAR-08` intentional-divergence burn-down
-  - `scripts/validate-intentional-divergence.py`
+  - `validate-intentional-divergence` (`crates/hermes-parity-tools`)
   - `docs/parity/divergence-validation.json`
 - `#28 GPAR-09` final parity proof gate + release checklist
   - `scripts/generate-global-parity-proof.py`
