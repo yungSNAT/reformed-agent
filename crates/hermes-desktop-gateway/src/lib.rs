@@ -203,14 +203,29 @@ fn reply_to(text: &str) -> Option<Value> {
     }
 }
 
-/// Notifications (no id) and responses to our own requests (no method) get no reply.
+/// Notifications (a method, no id) and responses to our own requests (an id with a result or
+/// an error) get no reply; anything else that is not a request gets -32600.
 fn reply_to_one(frame: &Value) -> Option<Value> {
-    let Some(request) = frame.as_object() else {
-        return Some(rpc_error(Value::Null, -32600, "invalid request".into()));
+    let invalid = |id: Option<&Value>| {
+        let id = id.cloned().unwrap_or(Value::Null);
+        Some(rpc_error(id, -32600, "invalid request".into()))
     };
-    let id = request.get("id")?.clone();
-    let method = request.get("method")?.as_str()?;
-    Some(rpc_error(id, -32601, format!("method not found: {method}")))
+    let Some(request) = frame.as_object() else {
+        return invalid(None);
+    };
+    let id = request.get("id");
+    match request.get("method") {
+        Some(Value::String(method)) => {
+            id.map(|id| rpc_error(id.clone(), -32601, format!("method not found: {method}")))
+        }
+        Some(_) => invalid(id),
+        None if id.is_some()
+            && (request.contains_key("result") || request.contains_key("error")) =>
+        {
+            None
+        }
+        None => invalid(id),
+    }
 }
 
 #[cfg(test)]
