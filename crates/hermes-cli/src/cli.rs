@@ -206,6 +206,10 @@ pub enum CliCommand {
     /// skills, SOUL.md, plugins, cron jobs and scripts. A dry run unless --apply.
     Migrate(MigrateArgs),
 
+    /// Import another coding agent's setup: Claude Code's CLAUDE.md as memory
+    /// entries, its MCP servers and its skills. A plan unless --apply.
+    ImportAgent(ImportAgentArgs),
+
     /// Show version information.
     Version,
 
@@ -1021,6 +1025,19 @@ pub struct MigrateArgs {
     /// Add to a Reformed home that already exists, leaving everything in it unchanged.
     #[arg(long)]
     pub into_existing: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct ImportAgentArgs {
+    /// The agent to import from.
+    #[arg(value_enum)]
+    pub agent: crate::agent_import::SourceAgent,
+    /// The agent's folder [default: ~/.claude for Claude Code].
+    #[arg(long)]
+    pub source: Option<std::path::PathBuf>,
+    /// Write the import; without it the command only prints the plan.
+    #[arg(long)]
+    pub apply: bool,
 }
 
 #[derive(Debug, Clone, Args)]
