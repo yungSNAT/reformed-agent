@@ -7,10 +7,38 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hermes_core::{SkillProvider, TerminalBackend, ToolHandler};
+use async_trait::async_trait;
+use hermes_core::{SkillProvider, TerminalBackend, ToolError, ToolHandler, ToolSchema};
+use serde_json::Value;
 
+use crate::terminal_requirements::non_local_terminal_backend;
 use crate::tools::browser::SharedBrowser;
 use crate::ToolRegistry;
+
+/// A tool that acts on this machine directly rather than through the
+/// terminal backend. It runs only while that backend is local: with any
+/// other, the user chose it for isolation, so the tool is hidden and also
+/// refuses a call by name (dispatch does not check availability).
+struct HostOnly(Arc<dyn ToolHandler>);
+
+#[async_trait]
+impl ToolHandler for HostOnly {
+    async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        if let Some(backend) = non_local_terminal_backend() {
+            return Err(ToolError::ExecutionFailed(format!(
+                "`{}` works on this machine directly, so it is off whilst the terminal backend \
+                 is `{backend}`; use the terminal, read_file and write_file tools, which run in \
+                 that backend.",
+                self.0.schema().name
+            )));
+        }
+        self.0.execute(params).await
+    }
+
+    fn schema(&self) -> ToolSchema {
+        self.0.schema()
+    }
+}
 
 /// Register all built-in tool handlers into the given registry.
 ///
@@ -124,6 +152,8 @@ fn register_builtin_tools_with_data_dir(
 
     let terminal_requirements_check: Arc<dyn Fn() -> bool + Send + Sync> =
         Arc::new(crate::terminal_requirements::check_terminal_requirements);
+    let host_only_check: Arc<dyn Fn() -> bool + Send + Sync> =
+        Arc::new(|| non_local_terminal_backend().is_none());
 
     // -- Web tools -----------------------------------------------------------
     reg(
@@ -197,23 +227,27 @@ fn register_builtin_tools_with_data_dir(
         vec![],
         terminal_requirements_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "file",
-        Arc::new(crate::tools::file::PatchHandler::new(Arc::new(
-            crate::backends::file::LocalPatchBackend::new(),
-        ))),
+        Arc::new(HostOnly(Arc::new(crate::tools::file::PatchHandler::new(
+            Arc::new(crate::backends::file::LocalPatchBackend::new()),
+        )))),
         "🩹",
         vec![],
+        host_only_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "file",
-        Arc::new(crate::tools::file::SearchFilesHandler::new(Arc::new(
-            crate::backends::file::LocalSearchBackend::new(),
+        Arc::new(HostOnly(Arc::new(
+            crate::tools::file::SearchFilesHandler::new(Arc::new(
+                crate::backends::file::LocalSearchBackend::new(),
+            )),
         ))),
         "🔎",
         vec![],
+        host_only_check.clone(),
     );
 
     // -- Project/workspace tools ----------------------------------------------
@@ -447,14 +481,17 @@ fn register_builtin_tools_with_data_dir(
     );
 
     // -- Code execution ------------------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "code_execution",
-        Arc::new(crate::tools::code_execution::ExecuteCodeHandler::new(
-            Arc::new(crate::backends::code_execution::LocalCodeExecutionBackend::default()),
-        )),
+        Arc::new(HostOnly(Arc::new(
+            crate::tools::code_execution::ExecuteCodeHandler::new(Arc::new(
+                crate::backends::code_execution::LocalCodeExecutionBackend::default(),
+            )),
+        ))),
         "🖥️",
         vec![],
+        host_only_check,
     );
 
     // -- Delegation ----------------------------------------------------------

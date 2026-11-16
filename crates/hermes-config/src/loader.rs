@@ -666,6 +666,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     bridge_vertex_config_to_env(&config.vertex);
 
     // Layer 3: environment variables (highest priority)
+    check_terminal_backend_env()?;
     apply_env_overrides(&mut config);
     normalize_platform_aliases(&mut config);
     normalize_provider_secrets(&mut config);
