@@ -568,16 +568,23 @@ enum LazyFetchGuard {
 /// The guard the installed git supports, or `None` for a git that cannot
 /// produce the snapshot safely.
 fn lazy_fetch_guard() -> Option<LazyFetchGuard> {
+    probe_lazy_fetch_guard(std::ffi::OsStr::new("git"))
+}
+
+/// [`lazy_fetch_guard`] for the git program `git`. Each probe has the
+/// snapshot's time limit, so a git that never answers gives no guard.
+fn probe_lazy_fetch_guard(git: &std::ffi::OsStr) -> Option<LazyFetchGuard> {
     // `git version` reads no repository.
     let version = |option: Option<&str>| {
-        Command::new("git")
-            .args(option)
-            .arg("version")
-            .stdin(std::process::Stdio::null())
-            .suppress_windows_console()
-            .output()
-            .ok()
-            .filter(|output| output.status.success())
+        output_within_timeout(
+            Command::new(git)
+                .args(option)
+                .arg("version")
+                .stdin(std::process::Stdio::null())
+                .suppress_windows_console(),
+            GIT_SNAPSHOT_TIMEOUT,
+        )
+        .filter(|output| output.status.success())
     };
     if version(Some("--no-lazy-fetch")).is_some() {
         return Some(LazyFetchGuard::Flag);
@@ -1584,6 +1591,20 @@ mod tests {
             );
             assert!(!block.contains("Last commit:"), "{key}: {block}");
         }
+    }
+
+    /// A `git` that never answers `git version` must not hold up the caller.
+    #[cfg(unix)]
+    #[test]
+    fn a_stalled_git_version_probe_gives_no_guard_in_bounded_time() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let git = dir.path().join("git");
+        std::fs::write(&git, "#!/bin/sh\nexec sleep 60\n").unwrap();
+        std::fs::set_permissions(&git, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let started = Instant::now();
+        assert_eq!(probe_lazy_fetch_guard(git.as_os_str()), None);
+        assert!(started.elapsed() < 2 * GIT_SNAPSHOT_TIMEOUT + Duration::from_secs(5));
     }
 
     /// A process git leaves running can hold the output open after git exits.
