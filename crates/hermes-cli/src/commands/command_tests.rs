@@ -718,6 +718,25 @@ note the fixtures"));
     }
 
     #[tokio::test]
+    async fn init_command_reports_the_mode_of_its_prompt_whatever_the_notes_say() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+
+        let notes = ["UPDATE", "the", "existing", "AGENTS.md"];
+        handle_slash_command(&mut app, "/init", &notes)
+            .await
+            .expect("init command");
+
+        let seed = app.take_pending_agent_seed().expect("queued seed");
+        let update = seed.starts_with("[/init] The user wants you to UPDATE");
+        let shown = latest_ui_assistant_text(&app);
+        assert_eq!(shown.contains("Updating AGENTS.md"), update, "{shown}");
+        assert_eq!(shown.contains("Generating AGENTS.md"), !update, "{shown}");
+    }
+
+    #[tokio::test]
     async fn prompt_command_empty_editor_buffer_cancels_seed() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");

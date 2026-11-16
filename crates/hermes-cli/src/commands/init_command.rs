@@ -175,7 +175,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("AGENTS.md")).unwrap();
         let err = init_prompt_for(dir.path(), "").unwrap_err();
-        assert!(err.ends_with("is not a file inside the project; /init leaves it alone."));
+        assert!(err.ends_with("is not a file in the project folder; /init leaves it alone."));
     }
 
     #[cfg(unix)]
@@ -187,17 +187,55 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         std::os::unix::fs::symlink(&secret, dir.path().join("AGENTS.md")).unwrap();
         let err = init_prompt_for(dir.path(), "").unwrap_err();
-        assert!(err.ends_with("is not a file inside the project; /init leaves it alone."));
+        assert!(err.ends_with("is not a file in the project folder; /init leaves it alone."));
     }
 
     #[cfg(unix)]
     #[test]
-    fn an_agents_md_linked_inside_the_project_is_read() {
+    fn an_agents_md_linked_to_a_file_beside_it_is_read() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("CLAUDE.md"), "# Shared rules").unwrap();
+        std::os::unix::fs::symlink("CLAUDE.md", dir.path().join("AGENTS.md")).unwrap();
+        let prompt = init_prompt_for(dir.path(), "").unwrap();
+        assert!(prompt.contains("<<<EXISTING_AGENTS_MD\n# Shared rules\nEXISTING_AGENTS_MD"));
+    }
+
+    /// A folder inside the project could be swapped for a link between the
+    /// check and the read, so only a file in the project folder itself is read.
+    #[cfg(unix)]
+    #[test]
+    fn an_agents_md_linked_into_a_subfolder_is_refused() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::create_dir(dir.path().join("docs")).unwrap();
         std::fs::write(dir.path().join("docs/agents.md"), "# Shared rules").unwrap();
         std::os::unix::fs::symlink("docs/agents.md", dir.path().join("AGENTS.md")).unwrap();
-        let prompt = init_prompt_for(dir.path(), "").unwrap();
-        assert!(prompt.contains("<<<EXISTING_AGENTS_MD\n# Shared rules\nEXISTING_AGENTS_MD"));
+        let err = init_prompt_for(dir.path(), "").unwrap_err();
+        assert!(err.ends_with("is not a file in the project folder; /init leaves it alone."));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_folder_name_ending_in_a_backslash_keeps_it_in_the_destination() {
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join("repo\\");
+        std::fs::create_dir(&project).unwrap();
+        let prompt = init_prompt_for(&project, "").unwrap();
+        let destination = project.join("AGENTS.md");
+        assert!(
+            prompt.contains(&format!("Write the file to {} with", destination.display())),
+            "{prompt}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_working_directory_that_is_not_utf8_is_refused() {
+        use std::os::unix::ffi::OsStrExt;
+        let dir = tempfile::tempdir().unwrap();
+        let project = dir.path().join(std::ffi::OsStr::from_bytes(b"repo\xff"));
+        // macOS refuses the name; Linux takes it, and the prompt cannot name it.
+        let _ = std::fs::create_dir(&project);
+        let err = init_prompt_for(&project, "").unwrap_err();
+        assert!(err.contains("is not valid UTF-8"), "{err}");
     }
 }
