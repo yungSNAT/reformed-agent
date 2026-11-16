@@ -171,13 +171,40 @@ async fn loopback_names_for_the_bound_port_are_accepted() {
 }
 
 #[tokio::test]
-async fn a_foreign_origin_is_refused() {
+async fn a_foreign_web_origin_is_refused() {
     let addr = start().await;
-    let mut request = ws_request(addr, &format!("?token={TOKEN}"));
-    request
-        .headers_mut()
-        .insert("origin", "https://attacker.example".parse().unwrap());
-    assert_eq!(refused_status(request).await, 403);
+    for origin in [
+        "https://attacker.example".to_string(),
+        format!("http://localhost:{}", addr.port().wrapping_add(1)),
+        format!("http://attacker.example:{}", addr.port()),
+        "http://[::1".to_string(),
+    ] {
+        let mut request = ws_request(addr, &format!("?token={TOKEN}"));
+        request
+            .headers_mut()
+            .insert("origin", origin.parse().unwrap());
+        assert_eq!(refused_status(request).await, 403, "{origin}");
+    }
+}
+
+/// The packaged desktop's renderer is not a web page: Chromium sends `file://`, `null` or
+/// the app's own scheme. The token is the boundary there, as upstream's server treats it.
+#[tokio::test]
+async fn the_packaged_app_origin_may_connect() {
+    let addr = start().await;
+    for origin in ["file://", "null", "app://hermes"] {
+        let mut request = ws_request(addr, &format!("?token={TOKEN}"));
+        request
+            .headers_mut()
+            .insert("origin", origin.parse().unwrap());
+        let (mut socket, _) = tokio_tungstenite::connect_async(request)
+            .await
+            .unwrap_or_else(|e| panic!("{origin}: {e}"));
+        assert_eq!(
+            next_json(&mut socket).await["params"]["type"],
+            "gateway.ready"
+        );
+    }
 }
 
 #[tokio::test]
