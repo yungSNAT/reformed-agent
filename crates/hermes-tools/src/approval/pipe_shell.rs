@@ -639,7 +639,7 @@ impl Walk<'_> {
     fn save(&mut self, word: &Word, output: bool) {
         if output {
             let name = self.static_name(word);
-            self.output_name(name);
+            self.output_name(name, &word.value);
             return;
         }
         let value = word.value.as_str();
@@ -700,17 +700,19 @@ impl Walk<'_> {
                 .static_name(word)
                 .map(|_| file_name(attached))
                 .filter(|name| !name.is_empty());
-            self.output_name(name);
+            self.output_name(name, attached);
         }
     }
 
-    /// Notes a fetch's output option naming `name`, where `-` is stdout.
-    fn output_name(&mut self, name: Option<&str>) {
+    /// Notes a fetch's output option naming `path`, whose file name is
+    /// `name` (`None` when computed). `-` and the stdout device paths are
+    /// stdout; a computed path may be either.
+    fn output_name(&mut self, name: Option<&str>, path: &str) {
+        const STDOUT: [&str; 4] = ["-", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"];
         let command = &mut self.list().command;
         command.output_given = true;
-        if name == Some("-") {
-            command.output_stdout = true;
-        } else {
+        command.output_stdout |= name.is_none() || STDOUT.contains(&path);
+        if name.is_none() || !STDOUT.contains(&path) {
             self.saved_name(name);
         }
     }
