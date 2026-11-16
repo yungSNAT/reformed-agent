@@ -307,6 +307,10 @@ struct Command {
     remote_name: bool,
     /// The last path segments of the fetch's URLs; `None` when computed.
     urls: Vec<Option<String>>,
+    /// Its stdout redirections' file names; `None` when computed.
+    stdout: Vec<Option<String>>,
+    /// `-s`: the shell reads its script from stdin, so it has no script operand.
+    no_script: bool,
     /// A shell without `-c`, `source` or `.`: its first operand may be a script.
     runs_file: bool,
     /// After `--`: every later argument is an operand, not an option.
@@ -347,6 +351,8 @@ struct Carrier {
     started: bool,
     /// Leading option words of the code are still being skipped.
     options: bool,
+    /// A shell's code word has been read; later words are `$0` and on.
+    taken: bool,
     code: String,
     computed: bool,
 }
@@ -542,7 +548,11 @@ impl Walk<'_> {
         if std::mem::take(&mut command.target) {
             match std::mem::take(&mut command.redirect) {
                 Redirect::Stdin { dup } => command.reads_descriptor |= names_descriptor(&word, dup),
-                Redirect::Stdout if command.fetch => self.save(&word, true),
+                // Kept until the end: `>i.sh curl ...` names the fetch later.
+                Redirect::Stdout => {
+                    let name = self.static_name(&word).map(str::to_string);
+                    self.list().command.stdout.push(name);
+                }
                 _ => {}
             }
             let command = &mut self.list().command;
@@ -565,6 +575,7 @@ impl Walk<'_> {
                 let value = word.value.as_str();
                 if command.runs_file
                     && !command.script_read
+                    && !command.no_script
                     && command.carrier.as_ref().is_none_or(|c| !c.started)
                 {
                     if std::mem::take(&mut command.option_value) {
@@ -573,12 +584,15 @@ impl Walk<'_> {
                         command.script_read = true;
                         command.reads_descriptor |= names_descriptor(&word, false);
                         self.scan.runs |= self.runs_saved(&word);
-                    } else if value == "--" && !word.computed {
+                    } else if matches!(value, "--" | "-") && !word.computed {
                         command.operands = true;
                     } else {
+                        let cluster = !value.starts_with("--");
+                        command.no_script |=
+                            cluster && value.starts_with('-') && value.contains('s');
                         // `-o`/`-O` take the next word, also inside a cluster (`-oe`).
                         command.option_value = matches!(value, "--rcfile" | "--init-file")
-                            || (!value.starts_with("--") && value.contains(['o', 'O']));
+                            || (cluster && value.contains(['o', 'O']));
                     }
                 }
                 // After a shell's script, `-c` is the script's argument.
@@ -871,6 +885,11 @@ impl Walk<'_> {
                 self.saved_name(name.as_deref());
             }
         }
+        if command.fetch {
+            for name in &command.stdout {
+                self.saved_name(name.as_deref());
+            }
+        }
         let start = command.start.unwrap_or(0);
         if interpreter && command.reads_descriptor && self.after_fetch(start) {
             self.scan.pipes = true;
@@ -986,6 +1005,7 @@ impl Carrier {
             shell,
             started: !shell,
             options: true,
+            taken: false,
             code: String::new(),
             computed: false,
         }
@@ -1005,6 +1025,10 @@ impl Carrier {
         if self.options && self.shell && value.starts_with(['-', '+']) {
             return;
         }
+        if self.taken {
+            return;
+        }
+        self.taken = self.shell;
         self.options = false;
         self.computed |= word.computed;
         if !self.code.is_empty() {
