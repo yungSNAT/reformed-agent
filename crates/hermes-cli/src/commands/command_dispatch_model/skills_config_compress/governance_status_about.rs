@@ -222,14 +222,17 @@ fn discover_repo_root_for_about() -> Option<PathBuf> {
     }
     probes.push(PathBuf::from(env!("CARGO_MANIFEST_DIR")));
 
-    for probe in probes {
-        for candidate in probe.ancestors() {
-            if candidate.join("docs/parity").exists() && candidate.join("README.md").exists() {
-                return Some(candidate.to_path_buf());
-            }
-        }
-    }
-    None
+    probes.iter().find_map(|probe| source_checkout_root(probe))
+}
+
+/// The nearest ancestor of `probe` that is a Hermes source checkout.
+fn source_checkout_root(probe: &Path) -> Option<PathBuf> {
+    probe
+        .ancestors()
+        .find(|candidate| {
+            candidate.join("docs/parity").exists() && candidate.join("README.md").exists()
+        })
+        .map(Path::to_path_buf)
 }
 
 fn read_json_file(path: &Path) -> Option<serde_json::Value> {
