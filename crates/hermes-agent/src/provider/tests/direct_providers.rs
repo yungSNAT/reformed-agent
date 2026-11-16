@@ -81,6 +81,23 @@ fn fireworks_never_sends_a_nested_reasoning_object() {
         Some(&serde_json::json!({"reasoning": {"enabled": false, "effort": "high"}})),
     );
     assert_eq!(off["reasoning_effort"], "none");
+    assert!(off.get("reasoning_config").is_none());
+
+    // Upstream passes Fireworks the effort as written.
+    let verbatim = direct_provider_body(
+        "fireworks",
+        "accounts/fireworks/models/kimi-k2p6",
+        Some(&serde_json::json!({"reasoning_config": {"effort": " Future "}})),
+    );
+    assert_eq!(verbatim["reasoning_effort"], " Future ");
+    assert!(verbatim.get("reasoning_config").is_none());
+
+    let empty = direct_provider_body(
+        "fireworks",
+        "accounts/fireworks/models/kimi-k2p6",
+        Some(&serde_json::json!({"reasoning_config": {"effort": ""}})),
+    );
+    assert!(empty.get("reasoning_effort").is_none());
 }
 
 #[test]

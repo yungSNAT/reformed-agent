@@ -750,10 +750,33 @@ fn apply_deepinfra_profile(body: &mut Value, extra_body: Option<&Value>) {
 fn apply_fireworks_profile(body: &mut Value, extra_body: Option<&Value>) {
     remove_key(body, "reasoning");
     remove_key(body, "reasoning_effort");
-    match requested_reasoning(extra_body) {
-        (Some(false), _) => body["reasoning_effort"] = Value::String("none".to_string()),
-        (_, Some(effort)) => body["reasoning_effort"] = Value::String(effort),
-        _ => {}
+    let config = reasoning_config(extra_body);
+    if config
+        .and_then(|cfg| cfg.get("enabled"))
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        body["reasoning_effort"] = Value::String("none".to_string());
+        return;
+    }
+    // Upstream passes the effort through as written, with no clamping or case change.
+    let effort = config
+        .and_then(|cfg| cfg.get("effort"))
+        .or_else(|| extra_body.and_then(|v| v.get("reasoning_effort")));
+    if let Some(effort) = effort.filter(|effort| python_truthy(effort)) {
+        body["reasoning_effort"] = effort.clone();
+    }
+}
+
+/// Python's truth test for a JSON value, as upstream's `if effort` applies it.
+fn python_truthy(value: &Value) -> bool {
+    match value {
+        Value::Null => false,
+        Value::Bool(b) => *b,
+        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+        Value::String(s) => !s.is_empty(),
+        Value::Array(items) => !items.is_empty(),
+        Value::Object(map) => !map.is_empty(),
     }
 }
 
