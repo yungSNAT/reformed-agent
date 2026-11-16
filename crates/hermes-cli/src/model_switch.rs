@@ -174,6 +174,9 @@ pub fn provider_picker_description(provider: &str) -> &'static str {
             "minimax" => "MiniMax (Global direct API)",
             "ollama-cloud" => "Ollama Cloud (Cloud-hosted open models, ollama.com)",
             "arcee" => "Arcee AI (Trinity models, direct API)",
+            "deepinfra" => "DeepInfra (100+ open models, pay-per-use)",
+            "fireworks" => "Fireworks AI (OpenAI-compatible direct model API)",
+            "upstage" => "Upstage Solar (Solar API)",
             "gmi" => "GMI Cloud (Multi-model direct API)",
             "kilocode" => "Kilo Code (Kilo Gateway API)",
             "opencode-zen" => "OpenCode Zen (Curated models, pay-as-you-go)",
@@ -512,7 +515,7 @@ pub async fn provider_model_ids_with_client(
         merged
     } else if matches!(
         catalog_provider,
-        "gmi" | "arcee" | "xiaomi" | "tencent-tokenhub"
+        "gmi" | "arcee" | "xiaomi" | "tencent-tokenhub" | "deepinfra" | "upstage"
     ) {
         let mut seen: HashSet<String> = HashSet::new();
         let mut merged: Vec<String> = Vec::new();

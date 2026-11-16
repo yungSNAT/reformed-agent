@@ -92,6 +92,9 @@ const SETUP_STEPFUN_ENV_KEYS: &[&str] = &["HERMES_STEPFUN_API_KEY", "STEPFUN_API
 const SETUP_COPILOT_ENV_KEYS: &[&str] = &["COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"];
 const SETUP_AI_GATEWAY_ENV_KEYS: &[&str] = &["AI_GATEWAY_API_KEY"];
 const SETUP_ARCEE_ENV_KEYS: &[&str] = &["ARCEEAI_API_KEY", "ARCEE_API_KEY"];
+const SETUP_DEEPINFRA_ENV_KEYS: &[&str] = &["DEEPINFRA_API_KEY"];
+const SETUP_FIREWORKS_ENV_KEYS: &[&str] = &["FIREWORKS_API_KEY"];
+const SETUP_UPSTAGE_ENV_KEYS: &[&str] = &["UPSTAGE_API_KEY"];
 const SETUP_DEEPSEEK_ENV_KEYS: &[&str] = &["DEEPSEEK_API_KEY"];
 const SETUP_HUGGINGFACE_ENV_KEYS: &[&str] = &["HF_TOKEN"];
 const SETUP_GMI_ENV_KEYS: &[&str] = &["GMI_API_KEY"];
@@ -305,6 +308,21 @@ const SETUP_MODEL_OPTIONS: &[SetupModelOption] = &[
         label: "Arcee AI",
     },
     SetupModelOption {
+        provider: "deepinfra",
+        model: "deepinfra:deepseek-ai/DeepSeek-V4-Flash",
+        label: "DeepInfra",
+    },
+    SetupModelOption {
+        provider: "fireworks",
+        model: "fireworks:accounts/fireworks/models/kimi-k2p6",
+        label: "Fireworks AI",
+    },
+    SetupModelOption {
+        provider: "upstage",
+        model: "upstage:solar-pro3",
+        label: "Upstage Solar",
+    },
+    SetupModelOption {
         provider: "xiaomi",
         model: "xiaomi:mimo-v2.5-pro",
         label: "Xiaomi MiMo",
@@ -499,6 +517,9 @@ fn setup_provider_display(provider: &str) -> &'static str {
         "nous" => "Nous",
         "ai-gateway" => "Vercel AI Gateway",
         "arcee" => "Arcee",
+        "deepinfra" => "DeepInfra",
+        "fireworks" => "Fireworks AI",
+        "upstage" => "Upstage Solar",
         "bedrock" => "AWS Bedrock",
         "vertex" => "Google Vertex AI",
         "copilot" => "GitHub Copilot",
@@ -551,6 +572,9 @@ fn setup_provider_env_keys(provider: &str) -> &'static [&'static str] {
         "nous" | "nous-api" => SETUP_NOUS_ENV_KEYS,
         "ai-gateway" => SETUP_AI_GATEWAY_ENV_KEYS,
         "arcee" => SETUP_ARCEE_ENV_KEYS,
+        "deepinfra" => SETUP_DEEPINFRA_ENV_KEYS,
+        "fireworks" => SETUP_FIREWORKS_ENV_KEYS,
+        "upstage" => SETUP_UPSTAGE_ENV_KEYS,
         "bedrock" => SETUP_BEDROCK_ENV_KEYS,
         "vertex" => SETUP_VERTEX_ENV_KEYS,
         "copilot" => SETUP_COPILOT_ENV_KEYS,
@@ -598,6 +622,9 @@ fn setup_provider_default_base_url(provider: &str) -> Option<&'static str> {
         "stepfun" => Some("https://api.stepfun.ai/step_plan/v1"),
         "ai-gateway" => Some("https://ai-gateway.vercel.sh/v1"),
         "arcee" => Some("https://api.arcee.ai/api/v1"),
+        "deepinfra" => Some("https://api.deepinfra.com/v1/openai"),
+        "fireworks" => Some("https://api.fireworks.ai/inference/v1"),
+        "upstage" => Some("https://api.upstage.ai/v1"),
         "copilot" => Some("https://api.githubcopilot.com"),
         "huggingface" => Some("https://router.huggingface.co/v1"),
         "kilocode" => Some("https://api.kilo.ai/api/gateway"),

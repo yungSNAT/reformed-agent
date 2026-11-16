@@ -663,6 +663,9 @@ pub fn infer_provider_from_url(base_url: &str) -> Option<&'static str> {
         ("token-plan-cn.xiaomimimo.com", "xiaomi"),
         ("token-plan-sgp.xiaomimimo.com", "xiaomi"),
         ("tokenhub.tencentmaas.com", "tencent-tokenhub"),
+        ("api.deepinfra.com", "deepinfra"),
+        ("api.fireworks.ai", "fireworks"),
+        ("api.upstage.ai", "upstage"),
     ];
 
     for (pattern, provider) in mappings {

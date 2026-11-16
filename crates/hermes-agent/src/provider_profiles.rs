@@ -38,6 +38,9 @@ pub const ARCEE_BASE_URL: &str = "https://api.arcee.ai/api/v1";
 pub const TENCENT_TOKENHUB_BASE_URL: &str = "https://tokenhub.tencentmaas.com/v1";
 pub const OLLAMA_CLOUD_BASE_URL: &str = "https://ollama.com/v1";
 pub const DEEPSEEK_BASE_URL: &str = "https://api.deepseek.com/v1";
+pub const DEEPINFRA_BASE_URL: &str = "https://api.deepinfra.com/v1/openai";
+pub const FIREWORKS_BASE_URL: &str = "https://api.fireworks.ai/inference/v1";
+pub const UPSTAGE_BASE_URL: &str = "https://api.upstage.ai/v1";
 
 pub fn is_kimi_code_base_url(base_url: &str) -> bool {
     base_url
@@ -88,6 +91,9 @@ pub fn canonical_provider_profile_id(provider: &str) -> Option<&'static str> {
         }
         "qwen" | "qwen-oauth" | "qwen-portal" | "qwen-cli" => Some("qwen-oauth"),
         "xiaomi" | "mimo" | "xiaomi-mimo" => Some("xiaomi"),
+        "deepinfra" | "deep-infra" | "deepinfra-ai" => Some("deepinfra"),
+        "fireworks" | "fireworks-ai" | "fw" => Some("fireworks"),
+        "upstage" | "solar" => Some("upstage"),
         "custom"
         | "ollama"
         | "ollama-local"
@@ -159,7 +165,7 @@ pub fn profile_auth_type(profile: &str) -> Option<&'static str> {
         "nous" => Some("oauth_device_code"),
         "qwen-oauth" => Some("oauth_external"),
         "nvidia" | "kimi-coding" | "kimi-coding-cn" | "openrouter" | "minimax" | "xiaomi"
-        | "custom" => Some("api_key"),
+        | "deepinfra" | "fireworks" | "upstage" | "custom" => Some("api_key"),
         _ => None,
     }
 }
@@ -174,6 +180,9 @@ pub fn profile_base_url(profile: &str) -> Option<&'static str> {
         "nous" => Some("https://inference-api.nousresearch.com/v1"),
         "qwen-oauth" => Some("https://dashscope-intl.aliyuncs.com/compatible-mode/v1"),
         "xiaomi" => Some("https://api.xiaomimimo.com/v1"),
+        "deepinfra" => Some(DEEPINFRA_BASE_URL),
+        "fireworks" => Some(FIREWORKS_BASE_URL),
+        "upstage" => Some(UPSTAGE_BASE_URL),
         _ => None,
     }
 }
@@ -206,6 +215,9 @@ pub fn normalize_runtime_provider_name(provider: &str) -> String {
         "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
+        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
+        "fireworks-ai" | "fw" => "fireworks".to_string(),
+        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
@@ -261,6 +273,8 @@ pub fn provider_base_url_from_env(provider: &str) -> Option<String> {
             "xiaomi" => "XIAOMI_BASE_URL",
             "zai" => "GLM_BASE_URL",
             "arcee" => "ARCEE_BASE_URL",
+            "deepinfra" => "DEEPINFRA_BASE_URL",
+            "upstage" => "UPSTAGE_BASE_URL",
             "tencent-tokenhub" => "TOKENHUB_BASE_URL",
             "deepseek" => "DEEPSEEK_BASE_URL",
             _ => return None,
@@ -301,6 +315,9 @@ pub fn provider_default_base_url(provider: &str) -> Option<&'static str> {
         "xiaomi" | "mimo" | "xiaomi-mimo" => Some(XIAOMI_BASE_URL),
         "zai" | "glm" | "z-ai" | "z_ai" | "zhipu" => Some(ZAI_BASE_URL),
         "arcee" | "arcee-ai" | "arceeai" => Some(ARCEE_BASE_URL),
+        "deepinfra" | "deep-infra" | "deepinfra-ai" => Some(DEEPINFRA_BASE_URL),
+        "fireworks" | "fireworks-ai" | "fw" => Some(FIREWORKS_BASE_URL),
+        "upstage" | "solar" => Some(UPSTAGE_BASE_URL),
         "tencent-tokenhub" | "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => {
             Some(TENCENT_TOKENHUB_BASE_URL)
         }
@@ -403,7 +420,10 @@ pub fn local_control_key_for_profile(profile: Option<&str>, key: &str) -> bool {
     }
 
     match profile.and_then(canonical_provider_profile_id) {
-        Some("kimi-coding" | "kimi-coding-cn" | "nous" | "openrouter") => {
+        Some(
+            "kimi-coding" | "kimi-coding-cn" | "nous" | "openrouter" | "deepinfra" | "fireworks"
+            | "upstage",
+        ) => {
             matches!(key, "reasoning" | "reasoning_effort")
         }
         _ => false,
@@ -500,6 +520,9 @@ pub fn apply_profile_to_body(
         "nous" => apply_nous_profile(body, extra_body),
         "qwen-oauth" => apply_qwen_profile(body, extra_body),
         "custom" => apply_custom_profile(body, extra_body),
+        "deepinfra" => apply_deepinfra_profile(body, extra_body),
+        "fireworks" => apply_fireworks_profile(body, extra_body),
+        "upstage" => apply_upstage_profile(body, effective_model, extra_body),
         "nvidia" => {}
         _ => {}
     }
@@ -657,6 +680,118 @@ fn apply_custom_profile(body: &mut Value, extra_body: Option<&Value>) {
         *options = Value::Object(Map::new());
     }
     options["num_ctx"] = Value::Number(num_ctx.into());
+}
+
+/// Hermes's effort ladder, weakest first (upstream `agent/reasoning_effort.py`).
+const EFFORT_LADDER: &[&str] = &[
+    "none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra",
+];
+/// The widest OpenAI-compatible wire vocabulary.
+const OPENAI_COMPAT_WIRE_EFFORTS: &[&str] =
+    &["none", "minimal", "low", "medium", "high", "xhigh", "max"];
+const SOLAR_EFFORTS: &[&str] = &["low", "medium", "high"];
+
+/// Upstream `clamp_effort`: a supported or unrecognised level passes through; a
+/// recognised level the wire lacks becomes the nearest weaker supported level
+/// other than `none`, or the weakest one when nothing is weaker.
+fn clamp_effort(effort: &str, supported: &[&str]) -> String {
+    let requested = effort.trim().to_ascii_lowercase();
+    let Some(requested_idx) = EFFORT_LADDER.iter().position(|l| *l == requested) else {
+        return requested;
+    };
+    if supported.contains(&requested.as_str()) {
+        return requested;
+    }
+    let rank = |level: &&str| EFFORT_LADDER.iter().position(|l| l == level);
+    let candidates = supported.iter().filter(|level| **level != "none");
+    candidates
+        .clone()
+        .filter(|level| rank(level).is_some_and(|idx| idx < requested_idx))
+        .max_by_key(rank)
+        .or_else(|| candidates.min_by_key(rank))
+        .map_or(requested, |level| (*level).to_string())
+}
+
+/// The user's reasoning choice from the request's extra body: `Some(false)` when
+/// reasoning is switched off, and the requested effort when one is set.
+fn requested_reasoning(extra_body: Option<&Value>) -> (Option<bool>, Option<String>) {
+    let config = reasoning_config(extra_body);
+    let enabled = config
+        .and_then(|cfg| cfg.get("enabled"))
+        .and_then(Value::as_bool);
+    let effort = config
+        .and_then(|cfg| cfg.get("effort"))
+        .and_then(Value::as_str)
+        .or_else(|| string_field(extra_body, "reasoning_effort"))
+        .map(|effort| effort.trim().to_ascii_lowercase())
+        .filter(|effort| !effort.is_empty());
+    (enabled, effort)
+}
+
+/// DeepInfra takes a top-level `reasoning_effort`; `none` is its only off switch,
+/// and an unset effort is omitted so each model keeps its own default.
+fn apply_deepinfra_profile(body: &mut Value, extra_body: Option<&Value>) {
+    remove_key(body, "reasoning");
+    remove_key(body, "reasoning_effort");
+    match requested_reasoning(extra_body) {
+        (Some(false), _) => body["reasoning_effort"] = Value::String("none".to_string()),
+        (_, Some(effort)) => {
+            let clamped = clamp_effort(&effort, OPENAI_COMPAT_WIRE_EFFORTS);
+            if OPENAI_COMPAT_WIRE_EFFORTS.contains(&clamped.as_str()) {
+                body["reasoning_effort"] = Value::String(clamped);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Fireworks rejects a nested `reasoning` object; its control is a top-level
+/// `reasoning_effort`, with `none` switching thinking off.
+fn apply_fireworks_profile(body: &mut Value, extra_body: Option<&Value>) {
+    remove_key(body, "reasoning");
+    remove_key(body, "reasoning_effort");
+    match requested_reasoning(extra_body) {
+        (Some(false), _) => body["reasoning_effort"] = Value::String("none".to_string()),
+        (_, Some(effort)) => body["reasoning_effort"] = Value::String(effort),
+        _ => {}
+    }
+}
+
+/// Upstage Solar defaults to reasoning off, which is wrong for an agent, so an
+/// unset effort sends `medium`. `solar-mini` and `syn-pro` take no effort at all;
+/// switching reasoning off, or `minimal`, leaves Solar's own default.
+fn apply_upstage_profile(body: &mut Value, effective_model: &str, extra_body: Option<&Value>) {
+    remove_key(body, "reasoning");
+    remove_key(body, "reasoning_effort");
+    let model = effective_model.trim().to_ascii_lowercase();
+    if model.contains("syn-pro") || is_solar_mini(&model) {
+        return;
+    }
+    let effort = match requested_reasoning(extra_body) {
+        (Some(false), _) => return,
+        (_, None) => "medium".to_string(),
+        (_, Some(effort)) if effort == "minimal" => return,
+        (_, Some(effort)) => {
+            let clamped = clamp_effort(&effort, SOLAR_EFFORTS);
+            if SOLAR_EFFORTS.contains(&clamped.as_str()) {
+                clamped
+            } else {
+                "high".to_string()
+            }
+        }
+    };
+    body["reasoning_effort"] = Value::String(effort);
+}
+
+/// `solar-mini` alone or followed by a version separator (upstream's
+/// `solar-mini(?:[-:.@]|$)`), so `solar-mini-250127` matches.
+fn is_solar_mini(model: &str) -> bool {
+    model.match_indices("solar-mini").any(|(idx, needle)| {
+        model[idx + needle.len()..]
+            .chars()
+            .next()
+            .is_none_or(|c| matches!(c, '-' | ':' | '.' | '@'))
+    })
 }
 
 fn reasoning_config(extra_body: Option<&Value>) -> Option<&Value> {
