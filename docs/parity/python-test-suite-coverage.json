@@ -2,7 +2,7 @@
   "generated_at_utc": "2026-07-02T18:14:12Z",
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 219,
+    "covered_paths": 228,
     "required_backlog_classification_paths": [
       "tests",
       "tests/agent",
@@ -813,6 +813,25 @@
       ]
     },
     {
+      "path": "tests/agent/test_gemini_schema.py",
+      "classification_path": "tests/agent",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_gemini_schema",
+        "python_suite",
+        "rust_contracts",
+        "tests_agent"
+      ],
+      "rationale": "Not ported: upstream drops non-string enums and unknown keys from tool schemas sent to native Gemini. The Rust native Gemini path cleans OpenAI-only request fields (cited test) but sends tool schemas unchanged; ledger follow-up under R3524.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-agent/src/provider/tests/profile_sanitization.rs",
+          "name": "test_native_gemini_request_body_strips_openai_extra_body_fields"
+        }
+      ]
+    },
+    {
       "path": "tests/agent/test_i18n.py",
       "classification_path": "tests/agent",
       "status": "covered_by_rust_test_suite_contracts",
@@ -1569,6 +1588,52 @@
         {
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
+        }
+      ]
+    },
+    {
+      "path": "tests/agent/test_think_scrubber.py",
+      "classification_path": "tests/agent",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_think_scrubber",
+        "python_suite",
+        "rust_contracts",
+        "tests_agent"
+      ],
+      "rationale": "Partly covered: the Rust TTS stream strips think blocks whose tags are split across deltas (cited tests). Upstream's single scrubber for every stream consumer (ACP, API server, CLI, gateway) is not ported as one component; whether each Rust consumer scrubs split tags is not verified.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/tts_streaming/sanitizer.rs",
+          "name": "think_stripper_drops_complete_block"
+        },
+        {
+          "file": "crates/hermes-tools/src/tts_streaming/sanitizer.rs",
+          "name": "think_stripper_handles_split_opening_tag"
+        }
+      ]
+    },
+    {
+      "path": "tests/agent/test_unsupported_parameter_retry.py",
+      "classification_path": "tests/agent",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_unsupported_parameter_retry",
+        "python_suite",
+        "rust_contracts",
+        "tests_agent"
+      ],
+      "rationale": "Covered: the Rust auxiliary client detects a provider's unsupported-parameter error for any named parameter and retries the same provider without it (cited tests).",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-intelligence/src/auxiliary/error.rs",
+          "name": "detects_unsupported_parameter_errors"
+        },
+        {
+          "file": "crates/hermes-intelligence/src/auxiliary/client.rs",
+          "name": "unsupported_temperature_retries_same_provider_without_temperature"
         }
       ]
     },
@@ -3146,6 +3211,29 @@
         {
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "test_mcp_sentrux_remove_syncs_json_and_yaml"
+        }
+      ]
+    },
+    {
+      "path": "tests/cli/test_manual_compress.py",
+      "classification_path": "tests/cli",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_manual_compress",
+        "python_suite",
+        "rust_contracts",
+        "tests_cli"
+      ],
+      "rationale": "Partly covered: Rust /compress reports the before and after message and token counts and keeps the replaced turns searchable under the session (cited tests). Upstream's no-op, aborted and token-rise messages are not verified here.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/commands/tests/surface_and_compression.rs",
+          "name": "compress_command_reports_before_after_message_and_token_summary"
+        },
+        {
+          "file": "crates/hermes-cli/src/commands/tests/surface_and_compression.rs",
+          "name": "compress_command_keeps_the_compressed_turns_searchable_under_the_session"
         }
       ]
     },
@@ -9189,6 +9277,25 @@
       ]
     },
     {
+      "path": "tests/tools/test_ansi_strip.py",
+      "classification_path": "tests/tools",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_ansi_strip",
+        "python_suite",
+        "rust_contracts",
+        "tests_tools"
+      ],
+      "rationale": "Not ported: upstream strips all ECMA-48 escape sequences from terminal and code output before the model sees it. Rust strips CSI sequences only in the RTK output filter (cited test); ledger follow-up under R3524.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/rtk_filter.rs",
+          "name": "filter_preserves_signal_and_summarizes_long_output"
+        }
+      ]
+    },
+    {
       "path": "tests/tools/test_browser_cdp_override.py",
       "classification_path": "tests/tools",
       "status": "covered_by_rust_test_suite_contracts",
@@ -10529,6 +10636,25 @@
       ]
     },
     {
+      "path": "tests/tools/test_file_staleness.py",
+      "classification_path": "tests/tools",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_file_staleness",
+        "python_suite",
+        "rust_contracts",
+        "tests_tools"
+      ],
+      "rationale": "Not ported: upstream warns on write_file and patch when a file changed after the agent read it. Rust file tools deduplicate repeated reads (cited test) but give no staleness warning; ledger follow-up under R3524.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/tools/file.rs",
+          "name": "internal_read_status_write_guard_is_status_dominated_only"
+        }
+      ]
+    },
+    {
       "path": "tests/tools/test_file_sync.py",
       "classification_path": "tests/tools",
       "status": "covered_by_rust_test_suite_contracts",
@@ -10871,6 +10997,25 @@
       ]
     },
     {
+      "path": "tests/tools/test_image_generation_plugin_dispatch.py",
+      "classification_path": "tests/tools",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_image_generation_plugin_dispatch",
+        "python_suite",
+        "rust_contracts",
+        "tests_tools"
+      ],
+      "rationale": "Covered in Rust form: image generation picks its provider from the environment and config (cited test) instead of upstream's plugin registry. A DeepInfra key cannot select an image backend because Rust has none (intentional-divergence rust-no-deepinfra-media-generation).",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/backends/image_gen/fal_managed_tests.rs",
+          "name": "selected_image_provider_reads_env_and_config"
+        }
+      ]
+    },
+    {
       "path": "tests/tools/test_interrupt.py",
       "classification_path": "tests/tools",
       "status": "covered_by_rust_test_suite_contracts",
@@ -10994,6 +11139,29 @@
         {
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
+        }
+      ]
+    },
+    {
+      "path": "tests/tools/test_local_env_cwd_recovery.py",
+      "classification_path": "tests/tools",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_local_env_cwd_recovery",
+        "python_suite",
+        "rust_contracts",
+        "tests_tools"
+      ],
+      "rationale": "Not ported: upstream's local terminal falls back to the nearest existing ancestor when its working directory is deleted. No Rust test covers a deleted working directory; the cited tests cover how Rust resolves the working directory; ledger follow-up under R3524.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/tools/file.rs",
+          "name": "resolve_tool_path_prefers_live_cwd_then_terminal_cwd"
+        },
+        {
+          "file": "crates/hermes-tools/src/tools/terminal.rs",
+          "name": "test_terminal_handler_execute"
         }
       ]
     },
@@ -13061,6 +13229,29 @@
         {
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
+        }
+      ]
+    },
+    {
+      "path": "tests/tools/test_tts_mistral.py",
+      "classification_path": "tests/tools",
+      "status": "covered_by_rust_test_suite_contracts",
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "test_tts_mistral",
+        "python_suite",
+        "rust_contracts",
+        "tests_tools"
+      ],
+      "rationale": "Intentional divergence: Rust reserves `mistral` as an upstream TTS provider name so a command provider cannot shadow it, and has no Mistral (Voxtral) TTS backend; Mistral is supported for transcription only.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-tools/src/backends/tts.rs",
+          "name": "command_provider_resolution_matches_upstream_contracts"
+        },
+        {
+          "file": "crates/hermes-tools/src/backends/tts.rs",
+          "name": "tts_provider_resolution_treats_null_and_missing_as_default"
         }
       ]
     },

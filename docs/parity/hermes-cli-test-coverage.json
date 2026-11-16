@@ -1685,6 +1685,33 @@
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
+        "config/aux/mcp"
+      ],
+      "path": "tests/hermes_cli/test_ignore_user_config_flags.py",
+      "rationale": "Covered: --ignore-user-config and --ignore-rules parse in the Rust CLI and set HERMES_IGNORE_USER_CONFIG and HERMES_IGNORE_RULES (crates/hermes-cli/src/main/entrypoint.rs); the config loader then skips the user config.yaml but keeps managed scope, and the rules flag turns off context files.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/cli/tests.rs",
+          "name": "cli_parse_ignore_flags"
+        },
+        {
+          "file": "crates/hermes-config/src/loader/tests/env_overrides.rs",
+          "name": "load_config_ignore_user_config_uses_defaults_when_files_exist"
+        },
+        {
+          "file": "crates/hermes-config/src/loader/tests/managed_overlays.rs",
+          "name": "load_config_ignore_user_config_still_honors_managed_scope"
+        },
+        {
+          "file": "crates/hermes-config/src/loader/tests/env_overrides.rs",
+          "name": "apply_env_overrides_respects_ignore_rules_flags"
+        }
+      ],
+      "status": "covered_by_rust_contracts"
+    },
+    {
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_image_gen_picker.py",
@@ -1915,6 +1942,25 @@
         {
           "file": "crates/hermes-cli/src/cli.rs",
           "name": "cli_parse_kanban_passes_flags_as_args"
+        }
+      ],
+      "status": "covered_by_rust_contracts"
+    },
+    {
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
+        "kanban"
+      ],
+      "path": "tests/hermes_cli/test_kanban_specify.py",
+      "rationale": "Not ported: upstream's `hermes kanban specify` has an auxiliary model write a triage task's specification. The Rust kanban CLI passes its flags through and keeps its store consistent (cited tests) but has no specify subcommand; ledger follow-up under R3524.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/cli/tests.rs",
+          "name": "cli_parse_kanban_passes_flags_as_args"
+        },
+        {
+          "file": "crates/hermes-cli/src/kanban.rs",
+          "name": "kanban_claim_completion_archive_is_idempotent_under_reclaim_like_replay"
         }
       ],
       "status": "covered_by_rust_contracts"
@@ -4050,6 +4096,29 @@
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
+        "tool/tools/pty"
+      ],
+      "path": "tests/hermes_cli/test_tools_disable_enable.py",
+      "rationale": "Partly covered: Rust `/tools enable|disable <name>` edits tools.enabled and tools.disabled in config.yaml idempotently, and tool planning applies them over platform toolsets (cited tests). Upstream's per-platform toolset lists and MCP server exclude lists are not ported.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/commands/command_tests.rs",
+          "name": "app_contextual_autocomplete_and_tools_toggle_use_runtime_state"
+        },
+        {
+          "file": "crates/hermes-tool-planning/src/lib.rs",
+          "name": "tools_config_enabled_adds_tools_outside_platform_toolset"
+        },
+        {
+          "file": "crates/hermes-tool-planning/src/lib.rs",
+          "name": "tools_config_disabled_removes_even_if_platform_enables"
+        }
+      ],
+      "status": "covered_by_rust_contracts"
+    },
+    {
+      "coverage_kind": "rust_contract_or_documented_divergence",
+      "coverage_tags": [
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_tui_npm_install.py",
@@ -4486,7 +4555,7 @@
   "schema_version": 1,
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 126,
+    "covered_paths": 129,
     "guard_test": "crates/hermes-source-parity-tests/tests/hermes_cli_test_coverage_contract.rs",
     "provider_api_mode_bridge_added": true,
     "required_backlog_classification_path": "tests/hermes_cli"

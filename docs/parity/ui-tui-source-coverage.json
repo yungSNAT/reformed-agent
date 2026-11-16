@@ -1,6 +1,6 @@
 {
   "summary": {
-    "covered_paths": 121,
+    "covered_paths": 122,
     "required_backlog_classification_paths": [
       "ui-tui",
       "ui-tui/packages",
@@ -2439,6 +2439,25 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/terminalSetup.test.ts",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui"
+      ],
+      "rationale": "Intentional divergence: upstream's Ink TUI writes newline keybindings into VS Code family keybindings.json files. The Rust TUI handles newline and submit shortcuts itself and edits no editor settings (cited tests).",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui/tests.rs",
+          "name": "test_submit_shortcuts_exclude_newline_shortcuts"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui/tests.rs",
+          "name": "test_insert_newline_at_cursor_updates_input_and_cursor"
         }
       ]
     },
