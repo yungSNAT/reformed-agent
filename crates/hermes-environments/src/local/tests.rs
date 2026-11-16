@@ -407,6 +407,52 @@ async fn test_execute_command_echo() {
     assert!(output.stdout.trim().contains("hello"));
 }
 
+/// A foreground command must not read the agent's stdin, which under ACP or
+/// `mcp serve` is the JSON-RPC stream. A child copy of this test binary gets
+/// a stdin that holds a line and stays open, and runs `cat` in the foreground:
+/// with the agent's stdin, `cat` echoes the line and then waits for more.
+#[test]
+fn a_foreground_command_cannot_read_the_agent_stdin() {
+    const MARK: &str = "agent-stdin-line";
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        let output =
+            block_on(LocalBackend::default().execute_command("cat", None, None, false, false))
+                .expect("cat");
+        assert!(!output.stdout.contains(MARK), "{}", output.stdout);
+        return;
+    }
+    use std::io::Write;
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "local::tests::a_foreground_command_cannot_read_the_agent_stdin",
+            "--test-threads=1",
+        ])
+        .env("REFORMED_TEST_CHILD", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(format!("{MARK}\n").as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the foreground command read the agent's stdin and waited on it");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}"
+    );
+}
+
 #[tokio::test]
 async fn test_execute_command_with_stdin_data() {
     let backend = LocalBackend::default();
