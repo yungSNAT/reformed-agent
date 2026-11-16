@@ -132,8 +132,9 @@ pub(super) fn queue_init(app: &mut App, cwd: &Path, notes: &str) {
 }
 
 /// The `/init` prompt for the project at `cwd`, an absolute path the agent
-/// is given as text, so it must be UTF-8. An existing AGENTS.md is read only
-/// when it is a file in the project folder itself, or a link to one there
+/// is given as text, so it must be UTF-8 without control characters. An
+/// existing AGENTS.md is read only when it is a file in the project folder
+/// itself, or a link to one there
 /// (`AGENTS.md -> CLAUDE.md`), and passes the prompt-injection scan applied
 /// to context files; otherwise the reason comes back and nothing is sent.
 pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String> {
@@ -144,6 +145,13 @@ pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String>
             cwd.display()
         ));
     };
+    // A line break in the path would start a line of the prompt the folder
+    // name chose.
+    if project.chars().any(char::is_control) {
+        return Err(format!(
+            "The working directory {project:?} contains a control character, so /init cannot name it to the agent safely."
+        ));
+    }
     let root = cwd
         .canonicalize()
         .map_err(|err| format!("Cannot read the working directory {project}: {err}"))?;
