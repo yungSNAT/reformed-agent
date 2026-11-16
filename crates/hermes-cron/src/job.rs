@@ -482,6 +482,11 @@ mod tests {
         assert_eq!(next("0 9 13 * ?"), day(12, 13));
         assert_eq!(next("0 9 * * 5"), day(11, 20));
         assert_eq!(next("0 9 ? * 5"), day(11, 20));
+        // As croniter, unlike POSIX: a field listing every value counts as
+        // unrestricted when the other day field's expression holds a `*`.
+        assert_eq!(next("0 9 1-31 * */2"), day(11, 17));
+        assert_eq!(next("0 9 */2 * 0-6"), day(11, 17));
+        assert_eq!(next("0 9 1-31 * 2"), day(11, 16));
     }
 
     #[test]
