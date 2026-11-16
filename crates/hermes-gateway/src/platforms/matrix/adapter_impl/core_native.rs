@@ -144,7 +144,8 @@ impl MatrixAdapter {
         R: IncomingResponse,
         R::EndpointError: std::fmt::Debug,
     {
-        R::try_from_http_response(response).map_err(|e| {
+        let (parts, body) = response.into_parts();
+        R::try_from_http_response(http::Response::from_parts(parts, body.as_slice())).map_err(|e| {
             GatewayError::ConnectionFailed(format!(
                 "Matrix native decrypt {operation} response parse failed: {e:?}"
             ))

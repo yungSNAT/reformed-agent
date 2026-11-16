@@ -2,18 +2,6 @@
 # Each needs more than a compatible update; the comment says what removes it.
 [advisories]
 ignore = [
-    # imbl-sized-chunks 0.1.3: a double free if an element's Drop panics in
-    # Chunk::clear, drop_left or drop_right, or InlineArray::clear or truncate.
-    # It comes through imbl 6 in matrix-sdk-common and eyeball-im 0.18 (the
-    # Matrix adapter). No workspace crate uses imbl or eyeball-im, so the
-    # elements are the SDK's own types. imbl 7 uses the fixed 0.2 and arrives
-    # with matrix-sdk-crypto 0.19.
-    "RUSTSEC-2026-0292",
-    # bitmaps 3.2.1, unmaintained, with an unsound Bitmap::try_from(&[u8]):
-    # the same imbl 6 path. Neither imbl 6.1 nor imbl-sized-chunks 0.1.3 calls
-    # try_from, and no workspace crate uses bitmaps. imbl 7 does not use it.
-    "RUSTSEC-2026-0247",
-    "RUSTSEC-2025-0167",
     # libsqlite3-sys 0.30.1 bundles an SQLite before 3.54.0, which can return
     # uninitialised memory when it opens a database and -wal pair with
     # different page sizes. That needs files a less trusted party wrote, and
