@@ -821,14 +821,7 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         chrono::Utc::now().format("%Y%m%d%H%M%S"),
         uuid::Uuid::new_v4().simple()
     );
-    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
-    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
-        AgentError::Io(format!(
-            "Failed to create background job directory {}: {}",
-            jobs_dir.display(),
-            e
-        ))
-    })?;
+    let jobs_dir = background_jobs_dir()?;
     let status_path = jobs_dir.join(format!("{}.json", job_id));
     let log_path = jobs_dir.join(format!("{}.log", job_id));
 
@@ -856,6 +849,41 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         status_path,
         log_path,
     })
+}
+
+/// The background jobs folder, created if missing.
+fn background_jobs_dir() -> Result<PathBuf, AgentError> {
+    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
+    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
+        AgentError::Io(format!(
+            "Failed to create background job directory {}: {}",
+            jobs_dir.display(),
+            e
+        ))
+    })?;
+    Ok(jobs_dir)
+}
+
+/// Starts `exe chat --query` for a background task.
+fn spawn_background_child(
+    exe: &std::path::Path,
+    task: &str,
+) -> std::io::Result<tokio::process::Child> {
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.arg("chat")
+        .arg("--query")
+        .arg(task)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd.suppress_windows_console();
+    // Ensure detached children do not survive runtime/session teardown.
+    cmd.kill_on_drop(true);
+
+    if let Ok(home) = std::env::var("HERMES_HOME") {
+        cmd.env("HERMES_HOME", home);
+    }
+    cmd.spawn()
 }
 
 fn handle_background_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
@@ -1161,22 +1189,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
             }
         };
 
-        let mut cmd = tokio::process::Command::new(exe);
-        cmd.arg("chat")
-            .arg("--query")
-            .arg(task)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.suppress_windows_console();
-        // Ensure detached children do not survive runtime/session teardown.
-        cmd.kill_on_drop(true);
-
-        if let Ok(home) = std::env::var("HERMES_HOME") {
-            cmd.env("HERMES_HOME", home);
-        }
-
-        let child = match cmd.spawn() {
+        let child = match spawn_background_child(&exe, &task) {
             Ok(child) => child,
             Err(e) => {
                 let mut failed = queued.clone();
