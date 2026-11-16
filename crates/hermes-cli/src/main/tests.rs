@@ -369,6 +369,10 @@ mod tests {
                 .as_deref(),
             Some("restart")
         );
+        assert_eq!(
+            acp_action_from_flags(None, false, false, false, false).as_deref(),
+            Some("start")
+        );
     }
 
     #[test]

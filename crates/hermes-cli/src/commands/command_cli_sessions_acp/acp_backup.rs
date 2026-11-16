@@ -393,7 +393,7 @@ pub async fn handle_cli_acp(
     action: Option<String>,
     assume_yes: bool,
 ) -> Result<(), hermes_core::AgentError> {
-    match action.as_deref().unwrap_or("status") {
+    match action.as_deref().unwrap_or("start") {
         "start" => {
             let config = hermes_config::load_config(None)
                 .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?;
@@ -404,7 +404,8 @@ pub async fn handle_cli_acp(
                 .unwrap_or_else(|| "dynamic".to_string());
             let max_turns = config.max_turns as usize;
 
-            println!(
+            // stdout carries the ACP messages.
+            eprintln!(
                 "Starting ACP server (model={}, max_turns={})...",
                 model, max_turns
             );
