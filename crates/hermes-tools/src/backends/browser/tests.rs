@@ -49,6 +49,7 @@ impl EnvScope {
             "HERMES_BROWSER_COMMAND_TIMEOUT_SECONDS",
             "BROWSER_COMMAND_TIMEOUT",
             "TERMINAL_ENV",
+            "TERMINAL_BACKEND",
         ];
         let original = keys.iter().map(|k| (*k, std::env::var(k).ok())).collect();
         for k in &keys {
@@ -1632,7 +1633,15 @@ fn only_a_default_browser_beside_a_local_terminal_is_local() {
     assert!(!CdpBrowserBackend::from_env().is_local_backend());
     assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
 
+    // TERMINAL_BACKEND alone chooses the terminal too.
+    std::env::remove_var("TERMINAL_ENV");
+    std::env::set_var("TERMINAL_BACKEND", "docker");
+    assert!(!CdpBrowserBackend::from_env().is_local_backend());
+    assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
     std::env::set_var("TERMINAL_ENV", "local");
+    assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
+
+    std::env::remove_var("TERMINAL_BACKEND");
     std::env::set_var("CHROME_CDP_URL", "ws://10.0.0.9:9222/devtools/browser/B");
     assert!(!CdpBrowserBackend::from_env().is_local_backend());
     assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
