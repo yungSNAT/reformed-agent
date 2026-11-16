@@ -17,20 +17,44 @@ use crate::ToolRegistry;
 
 /// A tool that acts on this machine directly rather than through the
 /// terminal backend. It runs only while that backend is local: with any
-/// other, the user chose it for isolation, so the tool is hidden and also
-/// refuses a call by name (dispatch does not check availability).
-struct HostOnly(Arc<dyn ToolHandler>);
+/// other, the user chose it for isolation, so the tool refuses.
+///
+/// With no parameters listed, every call refuses and the tool is registered
+/// hidden (dispatch does not check availability, so a call by name must still
+/// refuse). With parameters listed, the handler reads or writes the path one of
+/// them names, so only a call giving one a value other than an `http://` or
+/// `https://` URL refuses, and the tool stays offered.
+struct HostOnly(Arc<dyn ToolHandler>, &'static [&'static str]);
 
 #[async_trait]
 impl ToolHandler for HostOnly {
     async fn execute(&self, params: Value) -> Result<String, ToolError> {
         if let Some(backend) = non_local_terminal_backend() {
-            return Err(ToolError::ExecutionFailed(format!(
-                "`{}` works on this machine directly, so it is off whilst the terminal backend \
-                 is `{backend}`; use the terminal, read_file and write_file tools, which run in \
-                 that backend.",
-                self.0.schema().name
-            )));
+            let name = self.0.schema().name;
+            if self.1.is_empty() {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "`{name}` works on this machine directly, so it is off whilst the terminal \
+                     backend is `{backend}`; use the terminal, read_file and write_file tools, \
+                     which run in that backend."
+                )));
+            }
+            let local = self.1.iter().find(|key| {
+                params
+                    .get(**key)
+                    .and_then(Value::as_str)
+                    .is_some_and(|value| {
+                        !value.is_empty()
+                            && !value.starts_with("https://")
+                            && !value.starts_with("http://")
+                    })
+            });
+            if let Some(key) = local {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "`{name}` would use the path in `{key}` on this machine, which is off whilst \
+                     the terminal backend is `{backend}`; leave `{key}` out or give an http(s) \
+                     URL where the tool takes one."
+                )));
+            }
         }
         self.0.execute(params).await
     }
@@ -230,9 +254,12 @@ fn register_builtin_tools_with_data_dir(
     reg_with_check(
         registry,
         "file",
-        Arc::new(HostOnly(Arc::new(crate::tools::file::PatchHandler::new(
-            Arc::new(crate::backends::file::LocalPatchBackend::new()),
-        )))),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::file::PatchHandler::new(Arc::new(
+                crate::backends::file::LocalPatchBackend::new(),
+            ))),
+            &[],
+        )),
         "🩹",
         vec![],
         host_only_check.clone(),
@@ -240,30 +267,39 @@ fn register_builtin_tools_with_data_dir(
     reg_with_check(
         registry,
         "file",
-        Arc::new(HostOnly(Arc::new(
-            crate::tools::file::SearchFilesHandler::new(Arc::new(
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::file::SearchFilesHandler::new(Arc::new(
                 crate::backends::file::LocalSearchBackend::new(),
-            )),
-        ))),
+            ))),
+            &[],
+        )),
         "🔎",
         vec![],
         host_only_check.clone(),
     );
 
     // -- Project/workspace tools ----------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "project",
-        Arc::new(crate::tools::project_workspace::ProjectFactsHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::project_workspace::ProjectFactsHandler),
+            &[],
+        )),
         "🗂️",
         vec![],
+        host_only_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "project",
-        Arc::new(crate::tools::project_workspace::ProjectTreeHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::project_workspace::ProjectTreeHandler),
+            &[],
+        )),
         "🌳",
         vec![],
+        host_only_check.clone(),
     );
     reg(
         registry,
@@ -303,8 +339,11 @@ fn register_builtin_tools_with_data_dir(
         reg(
             registry,
             "vision",
-            Arc::new(crate::tools::vision::VisionAnalyzeHandler::new(
-                vision_backend.clone(),
+            Arc::new(HostOnly(
+                Arc::new(crate::tools::vision::VisionAnalyzeHandler::new(
+                    vision_backend.clone(),
+                )),
+                &["image_url"],
             )),
             "👁️",
             vec![
@@ -320,14 +359,18 @@ fn register_builtin_tools_with_data_dir(
                 "XAI_API_KEY".into(),
             ],
         );
-        reg(
+        reg_with_check(
             registry,
             "vision",
-            Arc::new(crate::tools::video::VideoAnalyzeHandler::new(Arc::new(
-                crate::backends::video::VisionFrameSamplingVideoBackend::new(vision_backend),
-            ))),
+            Arc::new(HostOnly(
+                Arc::new(crate::tools::video::VideoAnalyzeHandler::new(Arc::new(
+                    crate::backends::video::VisionFrameSamplingVideoBackend::new(vision_backend),
+                ))),
+                &[],
+            )),
             "🎬",
             vec!["HERMES_OPENAI_API_KEY".into(), "OPENAI_API_KEY".into()],
+            host_only_check.clone(),
         );
     }
 
@@ -484,14 +527,15 @@ fn register_builtin_tools_with_data_dir(
     reg_with_check(
         registry,
         "code_execution",
-        Arc::new(HostOnly(Arc::new(
-            crate::tools::code_execution::ExecuteCodeHandler::new(Arc::new(
-                crate::backends::code_execution::LocalCodeExecutionBackend::default(),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::code_execution::ExecuteCodeHandler::new(
+                Arc::new(crate::backends::code_execution::LocalCodeExecutionBackend::default()),
             )),
-        ))),
+            &[],
+        )),
         "🖥️",
         vec![],
-        host_only_check,
+        host_only_check.clone(),
     );
 
     // -- Delegation ----------------------------------------------------------
@@ -589,9 +633,12 @@ fn register_builtin_tools_with_data_dir(
     reg(
         registry,
         "tts",
-        Arc::new(crate::tools::tts::TextToSpeechHandler::new(Arc::new(
-            crate::backends::tts::MultiTtsBackend::new(),
-        ))),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::tts::TextToSpeechHandler::new(Arc::new(
+                crate::backends::tts::MultiTtsBackend::new(),
+            ))),
+            &["output_path"],
+        )),
         "🔊",
         vec![],
     );
@@ -621,12 +668,16 @@ fn register_builtin_tools_with_data_dir(
     );
 
     // -- Transcription -------------------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "voice",
-        Arc::new(crate::tools::transcription::TranscriptionHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::transcription::TranscriptionHandler),
+            &[],
+        )),
         "🎙️",
         vec!["HERMES_OPENAI_API_KEY".into(), "OPENAI_API_KEY".into()],
+        host_only_check.clone(),
     );
 
     // -- Voice mode ----------------------------------------------------------
@@ -769,12 +820,18 @@ fn register_builtin_tools_with_data_dir(
     reg_with_check(
         registry,
         "computer_use",
-        Arc::new(crate::tools::computer_use::ComputerUseHandler::new(
-            Arc::new(crate::backends::computer_use::CuaDriverBackend::from_env()),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::computer_use::ComputerUseHandler::new(
+                Arc::new(crate::backends::computer_use::CuaDriverBackend::from_env()),
+            )),
+            &[],
         )),
         "🖱️",
         vec!["HERMES_CUA_DRIVER_CMD".into()],
-        Arc::new(crate::backends::computer_use::CuaDriverBackend::command_available_from_env),
+        Arc::new(move || {
+            host_only_check()
+                && crate::backends::computer_use::CuaDriverBackend::command_available_from_env()
+        }),
     );
 
     // -- Credential files ----------------------------------------------------
@@ -1275,6 +1332,53 @@ pub(crate) mod tests {
             );
         }
     }
+
+    struct Ran;
+
+    #[async_trait]
+    impl ToolHandler for Ran {
+        async fn execute(&self, _params: Value) -> Result<String, ToolError> {
+            Ok("ran".into())
+        }
+
+        fn schema(&self) -> ToolSchema {
+            hermes_core::tool_schema(
+                "ran",
+                "Reports that it ran.",
+                hermes_core::JsonSchema::object(Default::default(), vec![]),
+            )
+        }
+    }
+
+    /// A tool guarded on a path parameter still runs for a web URL, and refuses
+    /// any other value, which its handler would read as a path on this machine.
+    #[test]
+    fn a_path_guarded_tool_runs_only_for_web_urls_under_a_non_local_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::set("TERMINAL_ENV", "docker");
+        let tool = HostOnly(Arc::new(Ran), &["image_url"]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let run = |params: Value| runtime.block_on(tool.execute(params));
+        for url in ["https://example.com/a.png", "http://example.com/a.png"] {
+            assert_eq!(run(serde_json::json!({ "image_url": url })).unwrap(), "ran");
+        }
+        assert_eq!(run(serde_json::json!({ "question": "q" })).unwrap(), "ran");
+        for path in [
+            "/etc/hostname",
+            "a.png",
+            "HTTPS://example.com/a.png",
+            "file:///etc/hostname",
+        ] {
+            let err = run(serde_json::json!({ "image_url": path })).unwrap_err();
+            assert!(
+                err.to_string().contains("terminal backend"),
+                "{path}: {err}"
+            );
+        }
+    }
+
     #[test]
     fn builtin_registry_exposes_snapshot_surfaces_to_cli_list() {
         let _lock = lock_env();
