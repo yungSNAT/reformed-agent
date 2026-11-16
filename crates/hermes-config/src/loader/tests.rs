@@ -291,6 +291,90 @@ fallback_providers:
     serde_yaml::from_str::<serde_yaml::Value>(&text).expect("normalized yaml parses");
 }
 
+/// A list inside a list item, such as a custom provider's `models`, used to be
+/// written twice on one line, which corrupted config.yaml on `config set`.
+#[test]
+fn atomic_yaml_write_keeps_sequences_nested_in_sequence_items() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let value: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+custom_providers:
+  - name: provider-a
+    models:
+      - model-a
+      - model-b
+    notes: |
+      key:
+      - not a sequence
+  - first:
+      - x
+    name: provider-b
+grid:
+  - - inner
+    - list
+  - tail
+"#,
+    )
+    .unwrap();
+
+    atomic_yaml_write(&path, &value, None).unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let reread: serde_yaml::Value =
+        serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    assert_eq!(reread, value, "{text}");
+    assert!(
+        text.starts_with(concat!(
+            "custom_providers:\n",
+            "  - name: provider-a\n",
+            "    models:\n",
+            "      - model-a\n",
+            "      - model-b\n",
+            "    notes: |\n",
+            "      key:\n",
+            "      - not a sequence\n",
+            "  - first:\n",
+            "      - x\n",
+            "    name: provider-b\n",
+            "grid:\n",
+            "  - - inner\n",
+            "    - list\n",
+            "  - tail\n",
+        )),
+        "{text}"
+    );
+}
+
+/// A tagged multi-line string keeps its text: its block content must not be
+/// read as a key and a sequence.
+#[test]
+fn atomic_yaml_write_keeps_tagged_block_scalars_in_sequence_items() {
+    use tempfile::tempdir;
+
+    let dir = tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let value: serde_yaml::Value = serde_yaml::from_str(
+        r#"
+custom_providers:
+  - name: provider-a
+    note: !note |
+      key:
+      - not a sequence
+"#,
+    )
+    .unwrap();
+
+    atomic_yaml_write(&path, &value, None).unwrap();
+
+    let text = std::fs::read_to_string(&path).unwrap();
+    let reread: serde_yaml::Value =
+        serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    assert_eq!(reread, value, "{text}");
+}
+
 #[test]
 fn save_config_yaml_preserves_utf8_personality_and_prompt() {
     use tempfile::tempdir;

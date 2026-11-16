@@ -43,11 +43,11 @@ use hermes_cli::cli::{
     CloudflareArgs, CompletionArgs, ComputerUseArgs, ConfigArgs, CronArgs, DashboardArgs,
     DebugArgs, DoctorArgs, DumpArgs, EliteCheckArgs, GatewayArgs, ImportArgs,
     ImportHermesSessionsArgs, IncidentPackArgs, InsightsArgs, KanbanArgs, LoginArgs, LogoutArgs,
-    LogsArgs, LumioArgs, McpArgs, MemoryArgs, ModelArgs, PairingArgs, PluginsArgs, PortalArgs,
-    ProfileArgs, ResumeArgs, RotateProvenanceKeyArgs, RouteAutotuneArgs, RouteHealthArgs,
-    RouteLearningArgs, SecretsArgs, SessionsArgs, SetupArgs, SkillsArgs, SystemsArgs,
-    TeamsPipelineArgs, ToolsArgs, UninstallArgs, UpArgs, UpdateArgs, VerifyProvenanceArgs,
-    WebhookArgs, WhatsappArgs,
+    LogsArgs, LumioArgs, McpArgs, MemoryArgs, MigrateArgs, ModelArgs, PairingArgs, PluginsArgs,
+    PortalArgs, ProfileArgs, ResumeArgs, RotateProvenanceKeyArgs, RouteAutotuneArgs,
+    RouteHealthArgs, RouteLearningArgs, SecretsArgs, SessionsArgs, SetupArgs, SkillsArgs,
+    SystemsArgs, TeamsPipelineArgs, ToolsArgs, UninstallArgs, UpArgs, UpdateArgs,
+    VerifyProvenanceArgs, WebhookArgs, WhatsappArgs,
 };
 use hermes_cli::config_env::hydrate_env_from_config;
 use hermes_cli::model_switch::{

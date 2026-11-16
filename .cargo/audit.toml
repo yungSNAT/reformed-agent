@@ -10,7 +10,4 @@ ignore = [
     # changes (execute refuses a trailing statement; u64 binding and the
     # statement cache become features) that need their own change.
     "RUSTSEC-2026-0459",
-    # unsafe-libyaml 0.2.11, unmaintained: used by serde_yaml 0.9 (itself
-    # deprecated) in 8 crates. Replacing serde_yaml removes it.
-    "RUSTSEC-2024-0449",
 ]

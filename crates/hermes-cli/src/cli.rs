@@ -202,6 +202,10 @@ pub enum CliCommand {
     /// Convert a Hermes JSONL session export into resumable snapshots in a new profile.
     ImportHermesSessions(ImportHermesSessionsArgs),
 
+    /// Move a Hermes Agent home into this one: config, .env, sessions, memories,
+    /// skills, SOUL.md, plugins, cron jobs and scripts. A dry run unless --apply.
+    Migrate(MigrateArgs),
+
     /// Show version information.
     Version,
 
@@ -1001,6 +1005,22 @@ pub struct ImportHermesSessionsArgs {
     /// New profile directory under an existing private directory.
     #[arg(long)]
     pub profile_dir: std::path::PathBuf,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct MigrateArgs {
+    /// Hermes home to read [default: ~/.hermes, or %LOCALAPPDATA%\hermes on Windows].
+    #[arg(long)]
+    pub from: Option<std::path::PathBuf>,
+    /// Reformed home to write [default: this home].
+    #[arg(long)]
+    pub to: Option<std::path::PathBuf>,
+    /// Write the migration; without it the command only prints the plan.
+    #[arg(long)]
+    pub apply: bool,
+    /// Add to a Reformed home that already exists, leaving everything in it unchanged.
+    #[arg(long)]
+    pub into_existing: bool,
 }
 
 #[derive(Debug, Clone, Args)]
