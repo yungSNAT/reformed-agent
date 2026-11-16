@@ -123,7 +123,7 @@ pub fn load_divergence_items(
     if py::strip(divergence_file).is_empty() {
         return Ok(Vec::new());
     }
-    let path = py::resolve(&py::join(&repo_root, divergence_file));
+    let path = py::resolve(&py::join(repo_root, divergence_file));
     if !path.exists() {
         return Ok(Vec::new());
     }
