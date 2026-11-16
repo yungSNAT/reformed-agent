@@ -1,7 +1,7 @@
 //! Cron job definition and related types.
 
 use chrono::{DateTime, Utc};
-use cron::Schedule;
+use cron::{Schedule, TimeUnitSpec};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -269,21 +269,38 @@ impl CronJob {
     /// The `cron` crate runs a day only when both day fields match. Standard
     /// cron (POSIX crontab, Vixie cron, croniter as Hermes uses it) runs a day
     /// when either matches if both are restricted, so such a schedule is read
-    /// as 2 schedules, one per day field, and the earlier run wins.
+    /// as 2 schedules, one per day field, and the earlier run wins. A field is
+    /// unrestricted when it is `*` or `?`, or, as croniter reads it, when it
+    /// lists every value and the other day field's expression holds a `*`.
     fn parse_next_run(schedule: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let normalized = Self::normalize_cron_expr(schedule);
-        let next = |expression: &str| match expression.parse::<Schedule>() {
-            Ok(sched) => Some(sched.after(&after).next()),
+        let parse = |expression: &str| match expression.parse::<Schedule>() {
+            Ok(sched) => Some(sched),
             Err(e) => {
                 tracing::warn!("Failed to parse cron expression '{}': {}", expression, e);
                 None
             }
         };
-        let unrestricted = |field: &str| matches!(field, "*" | "?");
+        let next = |expression: &str| Some(parse(expression)?.after(&after).next());
+        let sched = parse(&normalized)?;
+        // The day fields as written; 5-field weekdays are renamed when normalized.
+        let written: Vec<&str> = schedule.split_whitespace().collect();
+        let (day_written, weekday_written) = match written[..] {
+            [_, _, day, _, weekday] => (day, weekday),
+            [_, _, _, day, _, weekday, ..] => (day, weekday),
+            _ => ("*", "*"),
+        };
+        let unrestricted = |field: &str, all: bool, other: &str| {
+            matches!(field, "*" | "?") || (all && other.contains('*'))
+        };
         if let [second, minute, hour, day, month, weekday, year] =
             normalized.split_whitespace().collect::<Vec<_>>()[..]
         {
-            if !unrestricted(day) && !unrestricted(weekday) {
+            let day_all = sched.days_of_month().is_all();
+            let weekday_all = sched.days_of_week().is_all();
+            if !unrestricted(day_written, day_all, weekday_written)
+                && !unrestricted(weekday_written, weekday_all, day_written)
+            {
                 let by_day = next(&format!("{second} {minute} {hour} {day} {month} * {year}"))?;
                 let by_weekday = next(&format!(
                     "{second} {minute} {hour} * {month} {weekday} {year}"
@@ -291,7 +308,7 @@ impl CronJob {
                 return by_day.into_iter().chain(by_weekday).min();
             }
         }
-        next(&normalized)?
+        sched.after(&after).next()
     }
 
     /// Normalize a cron expression to 7-field format.
