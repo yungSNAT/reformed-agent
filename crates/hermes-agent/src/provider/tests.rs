@@ -27,16 +27,6 @@ fn header_value<'a>(headers: &'a [(String, String)], key: &str) -> Option<&'a st
         .map(|(_, value)| value.as_str())
 }
 
-include!("tests/codex_generic.rs");
-
-include!("tests/profile_sanitization.rs");
-
-include!("tests/openai_parsing.rs");
-
-include!("tests/anthropic_requests.rs");
-
-include!("tests/anthropic_openrouter_parsing.rs");
-
 #[tokio::test]
 async fn a_character_split_across_network_chunks_streams_intact() {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
@@ -78,3 +68,13 @@ async fn a_character_split_across_network_chunks_streams_intact() {
     }
     assert_eq!(content, "caf\u{e9}");
 }
+
+include!("tests/codex_generic.rs");
+
+include!("tests/profile_sanitization.rs");
+
+include!("tests/openai_parsing.rs");
+
+include!("tests/anthropic_requests.rs");
+
+include!("tests/anthropic_openrouter_parsing.rs");
