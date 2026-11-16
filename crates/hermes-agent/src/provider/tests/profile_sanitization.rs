@@ -396,7 +396,8 @@ fn test_opencode_go_kimi_reasoning_uses_moonshot_shape() {
     GenericProvider::merge_extra_body_fields(&mut body, Some(&extra));
     provider.apply_opencode_go_reasoning_controls(&mut body, "moonshotai/kimi-k2.6");
 
-    assert_eq!(body["thinking"], serde_json::json!({"type": "enabled"}));
+    // An effort implies thinking on; the relay rejects both fields together.
+    assert!(body.get("thinking").is_none());
     assert_eq!(body["reasoning_effort"], "high");
     assert!(body.get("reasoning").is_none());
 }
@@ -408,15 +409,107 @@ fn test_opencode_go_deepseek_reasoning_uses_thinking_shape() {
         "test-key",
         "deepseek-v4-pro",
     );
-    let extra = serde_json::json!({"reasoning": {"effort": "max"}});
-    let mut body = serde_json::json!({"model": "deepseek-v4-pro", "messages": []});
+    let shape = |extra: serde_json::Value| {
+        let mut body = serde_json::json!({"model": "deepseek-v4-pro", "messages": []});
+        GenericProvider::merge_extra_body_fields(&mut body, Some(&extra));
+        provider.apply_opencode_go_reasoning_controls(&mut body, "deepseek/deepseek-v4-pro");
+        assert!(body.get("reasoning").is_none());
+        (
+            body.get("thinking").cloned(),
+            body.get("reasoning_effort").cloned(),
+        )
+    };
+    let effort = |level: &str| (None, Some(serde_json::json!(level)));
 
-    GenericProvider::merge_extra_body_fields(&mut body, Some(&extra));
-    provider.apply_opencode_go_reasoning_controls(&mut body, "deepseek/deepseek-v4-pro");
+    // An effort implies thinking on; the relay rejects both fields together.
+    assert_eq!(
+        shape(serde_json::json!({"reasoning": {"effort": "max"}})),
+        effort("max")
+    );
+    assert_eq!(
+        shape(serde_json::json!({"reasoning": {"effort": "ultra"}})),
+        effort("max")
+    );
+    assert_eq!(
+        shape(serde_json::json!({"reasoning": {"effort": "low"}})),
+        effort("low")
+    );
+    assert_eq!(
+        shape(serde_json::json!({"reasoning": {"effort": "minimal"}})),
+        (Some(serde_json::json!({"type": "enabled"})), None)
+    );
+    assert_eq!(
+        shape(serde_json::json!({"reasoning": {"enabled": false, "effort": "high"}})),
+        (Some(serde_json::json!({"type": "disabled"})), None)
+    );
+}
 
-    assert_eq!(body["thinking"], serde_json::json!({"type": "enabled"}));
-    assert_eq!(body["reasoning_effort"], "max");
-    assert!(body.get("reasoning").is_none());
+#[test]
+fn test_provider_profile_request_body_deepseek_reasoning_contract() {
+    let messages = vec![Message::user("hello")];
+    let shape = |model: &str, extra: Option<serde_json::Value>| {
+        let provider = GenericProvider::new("https://api.deepseek.com/v1", "key", model)
+            .with_provider_profile("deepseek");
+        let body = provider.chat_request_body(ChatRequestParams {
+            messages: &messages,
+            tools: &[],
+            max_tokens: None,
+            temperature: None,
+            effective_model: model,
+            extra_body: extra.as_ref(),
+            stream: false,
+        });
+        assert!(body.get("reasoning").is_none(), "{model}: {body}");
+        (
+            body.get("thinking").cloned(),
+            body.get("reasoning_effort").cloned(),
+        )
+    };
+    let on = Some(serde_json::json!({"type": "enabled"}));
+    let effort = |level: &str| Some(serde_json::json!(level));
+
+    for level in ["xhigh", "max", "ultra"] {
+        assert_eq!(
+            shape(
+                "deepseek-v4-pro",
+                Some(serde_json::json!({"reasoning": {"effort": level}}))
+            ),
+            (on.clone(), effort("max")),
+            "{level}"
+        );
+    }
+    assert_eq!(
+        shape(
+            "deepseek-reasoner",
+            Some(serde_json::json!({"reasoning_effort": "medium"}))
+        ),
+        (on.clone(), effort("medium"))
+    );
+    // No effort, or one DeepSeek has no level for: the server default applies,
+    // but thinking is still stated.
+    assert_eq!(shape("deepseek-v4-flash", None), (on.clone(), None));
+    assert_eq!(
+        shape(
+            "deepseek-v4-flash",
+            Some(serde_json::json!({"reasoning": {"effort": "minimal"}}))
+        ),
+        (on, None)
+    );
+    assert_eq!(
+        shape(
+            "deepseek-v4-pro",
+            Some(serde_json::json!({"reasoning_config": {"enabled": false, "effort": "high"}}))
+        ),
+        (Some(serde_json::json!({"type": "disabled"})), None)
+    );
+    // V3 has no thinking mode: nothing is added and the effort is not sent.
+    assert_eq!(
+        shape(
+            "deepseek-chat",
+            Some(serde_json::json!({"reasoning": {"effort": "high"}}))
+        ),
+        (None, None)
+    );
 }
 
 #[test]
