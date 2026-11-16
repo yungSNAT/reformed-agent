@@ -186,88 +186,38 @@ mod tests {
     }
 
     #[test]
-    fn long_messages_are_cut_and_the_briefing_stays_within_its_cap() {
-        // `é` is one UTF-16 unit and `😀` two, so the cap is not a char count.
-        let messages: Vec<_> = (0..10)
-            .map(|turn| message(MessageRole::User, &format!("{turn}{}", "é😀".repeat(8_000))))
+    fn ten_long_messages_are_all_kept_as_upstream_keeps_them() {
+        // 12,000 characters each, with surrogate pairs, quotes and
+        // backslashes: the task no longer travels on a command line.
+        let body = "é😀\"\\".repeat(2_999) + "!!";
+        let messages: Vec<_> = (0..11)
+            .map(|turn| message(MessageRole::User, &format!("{turn:02}{body}")))
             .collect();
         let task = build_review_task(&messages, "").unwrap();
-        assert!(units(&task) <= BRIEFING_CAP, "{}", units(&task));
-        // The newest message is kept, cut to the per-message cap without
-        // splitting a character.
-        let newest = task.split("[USER]\n").nth(2).unwrap();
-        let newest = newest.split(TRUNCATED).next().unwrap();
-        assert!(newest.starts_with("9é😀"));
-        assert_eq!(units(newest), MESSAGE_CAP - TRUNCATED.len());
-        assert!(
-            task.contains("[USER]\n8é"),
-            "the next message fills the rest"
-        );
-        assert!(
-            !task.contains("[USER]\n7"),
-            "the briefing kept more than fits"
-        );
-        let without = build_review_task(&messages[..1], "").unwrap();
-        assert!(!without.contains(INSTRUCTIONS_INTRO));
-    }
-
-    /// `arg` quoted as Rust's standard library quotes a Windows argument:
-    /// backslashes before a quote or the closing quote are doubled and each
-    /// quote is escaped.
-    fn windows_quoted(arg: &str) -> String {
-        let mut quoted = String::from("\"");
-        let mut backslashes = 0;
-        for c in arg.chars() {
-            if c == '\\' {
-                backslashes += 1;
-                continue;
-            }
-            let doubled = if c == '"' {
-                2 * backslashes + 1
-            } else {
-                backslashes
-            };
-            quoted.push_str(&"\\".repeat(doubled));
-            quoted.push(c);
-            backslashes = 0;
+        for turn in 1..11 {
+            assert!(
+                task.contains(&format!("[USER]\n{turn:02}{body}\n")),
+                "message {turn} was cut or dropped"
+            );
         }
-        quoted.push_str(&"\\".repeat(2 * backslashes));
-        quoted.push('"');
-        quoted
+        assert!(!task.contains("[USER]\n00"), "an eleventh message was kept");
+        assert!(!task.contains(TRUNCATED));
     }
 
     #[test]
-    fn quotes_and_backslashes_still_fit_one_windows_command_line() {
-        let messages: Vec<_> = (0..10)
-            .map(|turn| {
-                message(
-                    MessageRole::User,
-                    &format!("{turn}{}", "\\\"".repeat(8_000)),
-                )
-            })
-            .collect();
-        let task = build_review_task(&messages, "a \"b\" \\").unwrap();
-        let length = windows_quoted(&task).encode_utf16().count();
-        assert!(length <= BRIEFING_CAP + 2, "{length}");
-        assert!(task.contains("[USER]\n9\\\""), "the newest message is kept");
+    fn a_message_over_the_cap_keeps_its_first_12000_characters() {
+        let text = "😀".repeat(MESSAGE_CAP + 1);
+        let task = build_review_task(&[message(MessageRole::User, &text)], "").unwrap();
+        let kept = format!("[USER]\n{}{TRUNCATED}\n", "😀".repeat(MESSAGE_CAP));
+        assert!(task.contains(&kept), "the message was not cut at its cap");
+        assert!(!task.contains(INSTRUCTIONS_INTRO));
     }
 
     #[test]
-    fn instructions_too_long_for_the_briefing_are_refused() {
-        let messages = [message(MessageRole::User, "question")];
-        let reason = build_review_task(&messages, &"x".repeat(BRIEFING_CAP)).unwrap_err();
-        assert!(
-            reason.starts_with("The review instructions are too long"),
-            "{reason}"
-        );
-        let limit: usize = reason
-            .trim_end_matches(" characters.")
-            .rsplit(' ')
-            .next()
-            .unwrap()
-            .parse()
+    fn long_instructions_are_kept_whole() {
+        let instructions = "check \"this\" \\ ".repeat(5_000);
+        let task = build_review_task(&[message(MessageRole::User, "question")], &instructions)
             .unwrap();
-        assert!(build_review_task(&messages, &"x".repeat(limit)).is_ok());
-        assert!(build_review_task(&messages, &"x".repeat(limit + 1)).is_err());
+        assert!(task.contains(&format!("{INSTRUCTIONS_INTRO}\n{}\n", instructions.trim())));
     }
 }
