@@ -12,7 +12,7 @@
 [![CI](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml?query=branch%3Amain) [![Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml?query=branch%3Amain) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=yungSNAT_reformed-agent&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=yungSNAT_reformed-agent)<br>
 [![rust: 1.99.1](.github/assets/badges/rust.svg)](rust-toolchain.toml) [![licence: MIT (fork contributions)](.github/assets/badges/licence.svg)](#licence) [![fork of: hermes-agent-ultra](.github/assets/badges/fork-of.svg)](https://github.com/sheawinkler/hermes-agent-ultra)
 
-[Install](#install) · [Use](#use) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
+[Install](#install) · [Use](#use) · [Against Hermes Agent](#against-hermes-agent) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Documentation](#documentation) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
 
 </div>
 
@@ -108,6 +108,28 @@ hermes-ultra migrate --apply --into-existing    # add to a home that already exi
 - Sessions convert as `import-hermes-sessions` converts an export. `state.db` is opened read-only; if it reports unapplied changes, stop Hermes, or start and stop it once.
 - Cron jobs are written paused, because Reformed reads schedules in UTC. Cron expressions keep their fields, so check each one's time; interval and one-off jobs keep their times; a job Reformed cannot run the same way is skipped with its reason. Start each with `hermes-ultra cron resume <id>`.
 
+## Against Hermes Agent
+
+What Reformed has against [Hermes Agent v0.23.1](https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.1) (`3b421578`, released 10 November 2026), checked on 16 November 2026 against this repository's `main` and Hermes's source at that tag. Each cell links its evidence.
+
+| Area | Reformed Agent | Hermes Agent v0.23.1 |
+| --- | --- | --- |
+| Runtime | One Rust binary; no Python or Node.js ([Footprint](#footprint)) | Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg, from its installer ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L53-L55)) |
+| Start-up and size | 35.5 ms cold `--version`; 59.7 MB binary ([Footprint](#footprint)) | 881 ms cold `--version`; 901.6 MB install directory ([Footprint](#footprint)) |
+| Install | From source only, with `cargo install` or [`scripts/install.sh`](./scripts/install.sh); no release yet ([Install](#install)) | One-line installers for Linux, macOS, WSL2 and Windows, a Termux APT repository and an MSIX package ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L35-L61)) |
+| Desktop app | None | Hermes Desktop ([`apps/desktop`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/apps/desktop)) |
+| Terminal UI | Yes, on Ratatui ([`hermes-cli/src/tui`](./crates/hermes-cli/src/tui)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L24)) |
+| Chat platforms | 17 built in: BlueBubbles, DingTalk, Discord, Email, Feishu, Home Assistant, Matrix, Mattermost, ntfy, QQ Bot, Signal, Slack, SMS, Telegram, WeCom, Weixin and WhatsApp ([`platforms`](./crates/hermes-gateway/src/platforms), enabled by [`gateway-adapters-all`](./crates/hermes-cli/Cargo.toml)) | 26 bundled, adding A2A, Buzz, Google Chat, IRC, LINE, Photon, Raft, SimpleX, Teams and WhatsApp Cloud ([`plugins/platforms`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/plugins/platforms)); Home Assistant is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/homeassistant.yaml)) |
+| API server and webhooks | Yes ([`api_server`](./crates/hermes-gateway/src/platforms/api_server.rs), [`webhook`](./crates/hermes-gateway/src/platforms/webhook.rs)) | Yes ([`api_server.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/api_server.py), [`webhook.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/webhook.py)) |
+| Terminal backends | Local only as built: the Docker, SSH, Modal, Daytona and Singularity backends in `hermes-environments` sit behind Cargo features the CLI does not enable, so a configured one runs commands locally ([`manager.rs`](./crates/hermes-environments/src/manager.rs)) | Local, Docker, SSH, Modal, Daytona and Vercel Sandbox ([`tools/environments`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/tools/environments)); Singularity is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/singularity.yaml)) |
+| Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs), with a dry run by default) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From OpenClaw, Claude Code, Codex, Cursor and others through the official `agent-importers` plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/agent-importers.yaml)) |
+| Cron, MCP, ACP, skills, subagents | Yes ([`hermes-cron`](./crates/hermes-cron), [`hermes-mcp`](./crates/hermes-mcp), [`hermes-acp`](./crates/hermes-acp), [`hermes-skills`](./crates/hermes-skills), [`delegation.rs`](./crates/hermes-tools/src/tools/delegation.rs)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L26-L28), [MCP](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L178), [`acp_adapter`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/acp_adapter)) |
+| Batch trajectories | No model runs: the batch runners in [`hermes-intelligence`](./crates/hermes-intelligence/src/rl.rs) and [`hermes-rl`](./crates/hermes-rl/src/batch_runner.rs) write fixed baseline text without calling a model | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L30), [`batch_runner.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/batch_runner.py), [`trajectory_compressor.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/trajectory_compressor.py)) |
+| Documentation | This README and the guides under [Documentation](#documentation), in the repository; no published site | A site at [hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/) |
+| Licence | MIT for the fork's contributions ([LICENSE](./LICENSE)) | MIT ([LICENSE](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/LICENSE)) |
+
+Slash-command and surface parity is measured against an earlier upstream revision; see [Status](#status).
+
 ## Status
 
 - **Base:** Hermes Agent Ultra [`v0.22.0`](./docs/releases/v0.22.0.md) at commit `c002f8c4`.
@@ -165,6 +187,22 @@ These are start-up and size figures from 1 machine, not a general speed comparis
 - `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
 - `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
 - `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
+
+## Documentation
+
+Guides for this fork live in the repository; there is no published documentation site yet.
+
+- [README_QUICKSTART.md](./README_QUICKSTART.md): install, setup and a first session.
+- [Installer troubleshooting](./docs/installer-troubleshooting.md): `command not found` and other install problems.
+- [MCP](./docs/mcp.md): connecting MCP servers, and serving Reformed's tools over MCP.
+- [Local backends](./docs/local-backends.md): local and self-hosted model endpoints.
+- [Session lifecycle](./docs/session-lifecycle.md): where sessions live and who owns them.
+- [Security](./website/docs/user-guide/security.md): command approval, the tool guard and other controls.
+- [Demo and readiness](./docs/demo.md): the source-tree proof path.
+- [Parity reports](./docs/parity/README.md) and [upstream sync](./docs/upstream-sync.md): how parity is measured and upstream changes are brought in.
+- [CONTRIBUTING.md](./CONTRIBUTING.md): development setup, PR rules and the no-stub gate.
+
+The user guide under [`website/docs`](./website/docs) is inherited from Hermes Agent and Ultra and is only partly updated for this fork. Where it disagrees with this README, the README describes this fork; for example, its configuration page lists 7 terminal backends, but this fork's build runs only the local one (see [Against Hermes Agent](#against-hermes-agent)).
 
 ## Development
 
