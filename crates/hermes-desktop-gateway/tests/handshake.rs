@@ -68,7 +68,11 @@ async fn upgrade_without_a_token_is_refused() {
 async fn upgrade_with_a_wrong_token_is_refused() {
     let addr = start().await;
     for query in ["?token=wrong", "?token=", &format!("?token={TOKEN}x")] {
-        assert_eq!(refused_status(ws_request(addr, query)).await, 401, "{query}");
+        assert_eq!(
+            refused_status(ws_request(addr, query)).await,
+            401,
+            "{query}"
+        );
     }
     let prefix = &TOKEN[..TOKEN.len() - 1];
     assert_eq!(
@@ -80,9 +84,10 @@ async fn upgrade_with_a_wrong_token_is_refused() {
 #[tokio::test]
 async fn first_frame_is_gateway_ready() {
     let addr = start().await;
-    let (mut socket, _) = tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
-        .await
-        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
+            .await
+            .unwrap();
     let ready = next_json(&mut socket).await;
     assert_eq!(ready["jsonrpc"], "2.0");
     assert_eq!(ready["method"], "event");
@@ -90,18 +95,24 @@ async fn first_frame_is_gateway_ready() {
     let payload = &ready["params"]["payload"];
     assert!(payload["skin"].is_object());
     assert_eq!(payload["change_events"], false);
-    assert!(payload["replay_epoch"].as_str().is_some_and(|e| !e.is_empty()));
+    assert!(payload["replay_epoch"]
+        .as_str()
+        .is_some_and(|e| !e.is_empty()));
 }
 
 #[tokio::test]
 async fn an_unknown_method_gets_method_not_found_with_its_id() {
     let addr = start().await;
-    let (mut socket, _) = tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
-        .await
-        .unwrap();
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
+            .await
+            .unwrap();
     next_json(&mut socket).await; // gateway.ready
     let request = json!({"jsonrpc": "2.0", "id": "r1", "method": "no.such.method", "params": {}});
-    socket.send(Message::text(request.to_string())).await.unwrap();
+    socket
+        .send(Message::text(request.to_string()))
+        .await
+        .unwrap();
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["id"], "r1");
     assert_eq!(reply["error"]["code"], -32601);
@@ -178,5 +189,8 @@ async fn a_same_origin_page_may_connect() {
         format!("http://127.0.0.1:{}", addr.port()).parse().unwrap(),
     );
     let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
-    assert_eq!(next_json(&mut socket).await["params"]["type"], "gateway.ready");
+    assert_eq!(
+        next_json(&mut socket).await["params"]["type"],
+        "gateway.ready"
+    );
 }
