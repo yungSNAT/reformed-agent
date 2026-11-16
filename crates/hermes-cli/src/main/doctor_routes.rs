@@ -1079,8 +1079,8 @@ fn replay_manifest_json(summaries: &[ReplayIntegritySummary]) -> serde_json::Val
     })
 }
 
-fn append_bundle_bytes(
-    tar: &mut tar::Builder<flate2::write::GzEncoder<std::fs::File>>,
+fn append_bundle_bytes<W: std::io::Write>(
+    tar: &mut tar::Builder<W>,
     name: &str,
     bytes: &[u8],
     deterministic: bool,
@@ -1118,8 +1118,15 @@ fn build_doctor_support_bundle_with_options(
         std::fs::create_dir_all(parent)
             .map_err(|e| AgentError::Io(format!("mkdir {}: {}", parent.display(), e)))?;
     }
-    let file = std::fs::File::create(&bundle_path)
-        .map_err(|e| AgentError::Io(format!("create {}: {}", bundle_path.display(), e)))?;
+    // The bundle holds logs and diagnostics, so it is written to a new file
+    // only the owner can read (0600 on Unix) and renamed into place: writing
+    // into an existing file would reach anyone already holding it open.
+    let dir = bundle_path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let file = tempfile::NamedTempFile::new_in(dir)
+        .map_err(|e| AgentError::Io(format!("create in {}: {}", dir.display(), e)))?;
     let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut tar = tar::Builder::new(encoder);
 
@@ -1204,8 +1211,12 @@ fn build_doctor_support_bundle_with_options(
         )?;
     }
 
-    tar.finish()
-        .map_err(|e| AgentError::Io(format!("finalize {}: {}", bundle_path.display(), e)))?;
+    let finalize = |e: std::io::Error| {
+        AgentError::Io(format!("finalize {}: {}", bundle_path.display(), e))
+    };
+    let file = tar.into_inner().and_then(|gz| gz.finish()).map_err(finalize)?;
+    file.persist(&bundle_path)
+        .map_err(|e| finalize(e.error))?;
     Ok(bundle_path)
 }
 

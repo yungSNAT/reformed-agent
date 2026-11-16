@@ -1039,6 +1039,48 @@ mod tests {
         assert_eq!(modes, vec![0o600]);
     }
 
+    /// A bundle written over an existing file never reaches a reader who
+    /// already holds that file open, as narrowing its mode would not stop one.
+    #[cfg(unix)]
+    #[test]
+    fn support_bundle_over_an_existing_file_is_unreadable_through_an_open_handle() {
+        use std::io::Read;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cli = cli_for_temp_state_root(dir.path());
+        let snapshot = dir.path().join("snapshot.json");
+        std::fs::write(&snapshot, r#"{"marker":"snapshot canary"}"#).expect("snapshot");
+        let existing = dir.path().join("out").join("bundle.tar.gz");
+        std::fs::create_dir_all(existing.parent().unwrap()).expect("mkdir");
+        std::fs::write(&existing, "old").expect("existing");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod");
+        let mut held = std::fs::File::open(&existing).expect("hold open");
+
+        let path = build_doctor_support_bundle_with_options(&cli, &snapshot, Some(&existing), true)
+            .expect("bundle");
+
+        assert_eq!(path, existing);
+        let mut seen = Vec::new();
+        held.read_to_end(&mut seen).expect("read held");
+        assert_eq!(seen, b"old", "the held handle sees the new bundle");
+        let mode = std::fs::metadata(&existing).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let bundle = std::fs::read(&existing).expect("read bundle");
+        assert_eq!(&bundle[..2], &[0x1f, 0x8b], "not a gzip file");
+
+        let fresh = dir.path().join("out").join("fresh.tar.gz");
+        build_doctor_support_bundle_with_options(&cli, &snapshot, Some(&fresh), true)
+            .expect("fresh bundle");
+        let mode = std::fs::metadata(&fresh).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
+    }
+
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");
