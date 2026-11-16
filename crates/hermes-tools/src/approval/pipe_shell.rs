@@ -46,7 +46,10 @@
 //! knowing where each fetch tool writes for every flag form, and each miss
 //! there is a bypass. File names compare without ASCII case, as the default
 //! filesystems on macOS and Windows and some Linux mounts ignore it, so
-//! `curl -o INSTALL.SH … && bash install.sh` asks on Linux too.
+//! `curl -o INSTALL.SH … && bash install.sh` asks on Linux too. A fetch in
+//! code another command runs counts that command's redirection even when a
+//! compound command inside the code redirects elsewhere
+//! (`eval '{ curl x; } > other' > i.sh`).
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
