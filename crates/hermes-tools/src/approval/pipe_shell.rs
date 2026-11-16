@@ -309,7 +309,7 @@ struct Command {
     urls: Vec<Option<String>>,
     /// Its stdout redirections' file names; `None` when computed.
     stdout: Vec<Option<String>>,
-    /// An output option names stdout (`-o -`, `-O-`).
+    /// An output option names or may name stdout (`-o -`, `-O-`, `-o "$OUT"`).
     output_stdout: bool,
     /// `-s`: the shell reads its script from stdin, so it has no script operand.
     no_script: bool,
@@ -639,7 +639,7 @@ impl Walk<'_> {
     fn save(&mut self, word: &Word, output: bool) {
         if output {
             let name = self.static_name(word);
-            self.output_name(name, &word.value);
+            self.output_name(name, &word.value, word.computed);
             return;
         }
         let value = word.value.as_str();
@@ -700,18 +700,18 @@ impl Walk<'_> {
                 .static_name(word)
                 .map(|_| file_name(attached))
                 .filter(|name| !name.is_empty());
-            self.output_name(name, attached);
+            self.output_name(name, attached, word.computed);
         }
     }
 
     /// Notes a fetch's output option naming `path`, whose file name is
     /// `name` (`None` when computed). `-` and the stdout device paths are
-    /// stdout; a computed path may be either.
-    fn output_name(&mut self, name: Option<&str>, path: &str) {
+    /// stdout; a path with any computed part (`"/proc/$$/fd/1"`) may be either.
+    fn output_name(&mut self, name: Option<&str>, path: &str, computed: bool) {
         const STDOUT: [&str; 4] = ["-", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"];
         let command = &mut self.list().command;
         command.output_given = true;
-        command.output_stdout |= name.is_none() || STDOUT.contains(&path);
+        command.output_stdout |= computed || name.is_none() || STDOUT.contains(&path);
         if name.is_none() || !STDOUT.contains(&path) {
             self.saved_name(name);
         }
