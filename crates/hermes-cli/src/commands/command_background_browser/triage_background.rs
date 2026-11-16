@@ -856,19 +856,27 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
 /// open by an older version included.
 fn background_jobs_dir() -> Result<PathBuf, AgentError> {
     let jobs_dir = hermes_config::hermes_home().join("background_jobs");
-    let io_error = |e: std::io::Error| {
+    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
         AgentError::Io(format!(
             "Failed to create background job directory {}: {}",
             jobs_dir.display(),
             e
         ))
-    };
-    std::fs::create_dir_all(&jobs_dir).map_err(io_error)?;
+    })?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&jobs_dir, std::fs::Permissions::from_mode(0o700))
-            .map_err(io_error)?;
+        std::fs::set_permissions(&jobs_dir, std::fs::Permissions::from_mode(0o700)).map_err(
+            |e| {
+                AgentError::Io(format!(
+                    "Cannot make the background job directory {} owner-only ({}); \
+                     its job files would be readable by other users, so fix its \
+                     ownership or remove it",
+                    jobs_dir.display(),
+                    e
+                ))
+            },
+        )?;
     }
     Ok(jobs_dir)
 }
@@ -1289,19 +1297,20 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
     });
 }
 
-pub fn recover_queued_background_jobs(max_jobs: usize) -> usize {
+/// Runs the jobs left queued by an earlier session. Fails when an existing
+/// jobs folder cannot be made owner-only, so the CLI does not start with job
+/// files other users can read.
+pub fn recover_queued_background_jobs(max_jobs: usize) -> Result<usize, AgentError> {
     if !hermes_config::hermes_home()
         .join("background_jobs")
         .is_dir()
     {
-        return 0;
+        return Ok(0);
     }
     // Narrows a folder an older version created open before its jobs run.
-    let Ok(jobs_dir) = background_jobs_dir() else {
-        return 0;
-    };
+    let jobs_dir = background_jobs_dir()?;
     let Ok(entries) = std::fs::read_dir(&jobs_dir) else {
-        return 0;
+        return Ok(0);
     };
     let mut recovered = 0usize;
     for entry in entries.filter_map(Result::ok) {
@@ -1342,7 +1351,7 @@ pub fn recover_queued_background_jobs(max_jobs: usize) -> usize {
             recovered = recovered.saturating_add(1);
         }
     }
-    recovered
+    Ok(recovered)
 }
 
 fn read_json_map(path: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {

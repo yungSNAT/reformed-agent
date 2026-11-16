@@ -73,7 +73,7 @@
         .unwrap();
         std::fs::set_permissions(&jobs, std::fs::Permissions::from_mode(0o755)).unwrap();
 
-        assert_eq!(recover_queued_background_jobs(8), 0);
+        assert_eq!(recover_queued_background_jobs(8).unwrap(), 0);
         let mode = std::fs::metadata(&jobs).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "background_jobs mode {mode:o}");
     }
