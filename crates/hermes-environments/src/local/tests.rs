@@ -931,3 +931,64 @@ async fn test_background_process_not_found_contract() {
     let kill = backend.kill_process("proc_missing").await.unwrap();
     assert_eq!(kill["status"], "not_found");
 }
+
+/// A value no UTF-8 string can hold: a lone 0xFF byte on Unix, a lone
+/// surrogate on Windows.
+fn not_utf8(prefix: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = prefix.as_bytes().to_vec();
+        bytes.push(0xff);
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = prefix.encode_utf16().collect();
+        wide.push(0xD800);
+        std::ffi::OsString::from_wide(&wide)
+    }
+}
+
+/// Runs `test` (its full path) in a child copy of this test binary with
+/// `envs` added, so a variable that is not UTF-8 never enters this process,
+/// whose other tests read the environment. True when the child ran it and it
+/// passed.
+fn passes_in_child(test: &str, envs: &[(std::ffi::OsString, std::ffi::OsString)]) -> bool {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads=1"])
+        .env("REFORMED_TEST_CHILD", "1")
+        .envs(envs.iter().map(|(k, v)| (k, v)))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    output.status.success() && stdout.contains("1 passed")
+}
+
+#[test]
+fn scrubbing_survives_a_variable_that_is_not_utf8() {
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        let mut cmd = TokioCommand::new("true");
+        scrub_subprocess_env(&mut cmd, &[]);
+        let removed: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            removed.iter().any(|key| key == "OPENAI_API_KEY"),
+            "{removed:?}"
+        );
+        return;
+    }
+    assert!(passes_in_child(
+        "local::tests::scrubbing_survives_a_variable_that_is_not_utf8",
+        &[
+            ("OPENAI_API_KEY".into(), "sk-test".into()),
+            ("REFORMED_TEST_BAD_VALUE".into(), not_utf8("x")),
+            (not_utf8("REFORMED_TEST_BAD_NAME"), "x".into()),
+        ],
+    ));
+}
