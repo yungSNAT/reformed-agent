@@ -12,6 +12,8 @@ const CONTEXT_MESSAGES: usize = 10;
 const MESSAGE_CAP: usize = 12_000;
 /// Marks a cut message.
 const TRUNCATED: &str = "\n[... truncated ...]";
+/// Skills the reviewer is told to load, at most (upstream's limit).
+const SKILL_LIMIT: usize = 8;
 
 const REVIEW_GOAL: &str = "Act as an independent senior reviewer. Thoroughly review the work presented in the conversation excerpt below: investigate any code, pull request, branch, commit, documentation, design, or other artifact it references (open the PR, read the diff, run the code or tests where feasible) rather than judging from the excerpt alone. Produce a full, structured review: what the work does, whether it is correct and complete, concrete defects or risks found (with file/line references where possible), what was verified vs. only read, and a clear final verdict with recommended next steps.";
 const EXCERPT_INTRO: &str = "You were spawned by the /review command. The following is an excerpt of the most recent conversation between the user and their primary agent. It is your starting evidence: the work to review is referenced in it.";
@@ -42,8 +44,9 @@ pub(super) fn handle_review_command(
 }
 
 /// The reviewer's briefing: the goal, the newest user and assistant
-/// messages (oldest first), each cut to [`MESSAGE_CAP`] characters, and
-/// the user's instructions. `Err` holds the message to show.
+/// messages (oldest first), each cut to [`MESSAGE_CAP`] characters, the
+/// skills the agent loaded and the user's instructions. `Err` holds the
+/// message to show.
 pub(super) fn build_review_task(
     messages: &[Message],
     instructions: &str,
@@ -57,7 +60,7 @@ pub(super) fn build_review_task(
                 MessageRole::Assistant => "[PRIMARY AGENT]",
                 _ => return None,
             };
-            let text = message.content.as_deref().unwrap_or_default().trim();
+            let text = strip(message.content.as_deref().unwrap_or_default());
             let text = match text.char_indices().nth(MESSAGE_CAP) {
                 Some((at, _)) => format!("{}{TRUNCATED}", &text[..at]),
                 None => text.to_string(),
@@ -75,12 +78,59 @@ pub(super) fn build_review_task(
         lines.extend([*label, text.as_str(), ""]);
     }
     lines.push(EXCERPT_END);
-    let instructions = instructions.trim();
+    let skills = loaded_skills(messages);
+    let skills_line = (!skills.is_empty()).then(|| format!("The primary agent was operating under these loaded skills: {}. Before reviewing, load each with skill_view(name=...) and treat their conventions, invariants, and review standards as binding for your assessment: the work was produced under them and must be judged against them.", skills.join(", ")));
+    if let Some(line) = &skills_line {
+        lines.extend(["", line.as_str()]);
+    }
+    let instructions = strip(instructions);
     if !instructions.is_empty() {
         lines.extend(["", INSTRUCTIONS_INTRO, instructions]);
     }
     lines.extend(["", CLOSING]);
     Ok(lines.join("\n"))
+}
+
+/// `text` without what Python's `str.strip` removes: Unicode whitespace
+/// and the separators U+001C to U+001F.
+fn strip(text: &str) -> &str {
+    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
+}
+
+/// The skills the agent loaded whole with `skill_view`, in load order,
+/// each once, at most [`SKILL_LIMIT`] (upstream's
+/// `collect_parent_loaded_skills`; the CLI keeps no launch-preloaded marker
+/// to read). A call with a `file_path` read one file of a skill, and one
+/// whose name is not a string loaded nothing, so neither counts.
+fn loaded_skills(messages: &[Message]) -> Vec<String> {
+    let mut names: Vec<String> = Vec::new();
+    let calls = messages
+        .iter()
+        .filter(|message| message.role == MessageRole::Assistant)
+        .flat_map(|message| message.tool_calls.iter().flatten())
+        .filter(|call| call.function.name == "skill_view");
+    for call in calls {
+        let Ok(args) = serde_json::from_str::<serde_json::Value>(&call.function.arguments) else {
+            continue;
+        };
+        let reads_a_file = args
+            .get("file_path")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|path| !path.trim().is_empty());
+        let name = args
+            .get("name")
+            .and_then(serde_json::Value::as_str)
+            .map(strip);
+        if let Some(name) = name.filter(|name| !reads_a_file && !name.is_empty()) {
+            if !names.iter().any(|known| known == name) {
+                names.push(name.to_string());
+            }
+        }
+        if names.len() == SKILL_LIMIT {
+            break;
+        }
+    }
+    names
 }
 
 #[cfg(test)]
