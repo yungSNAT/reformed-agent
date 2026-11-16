@@ -1069,10 +1069,12 @@ pub async fn handle_cli_sessions(
                 println!("Cancelled.");
                 return Ok(());
             }
+            // The conversation is also in sessions.db, where resume and search
+            // find it. The store goes first, so a failure leaves the snapshot
+            // that lets the user run the command again.
+            SessionPersistence::new(hermes_config::hermes_home()).delete_session(&resolved.id)?;
             let deleted = delete_session_snapshot_by_query(&sessions_dir, &resolved.id)?
                 .unwrap_or_else(|| resolved.id.clone());
-            // The conversation is also in sessions.db, where resume and search find it.
-            SessionPersistence::new(hermes_config::hermes_home()).delete_session(&deleted)?;
             println!("Deleted session '{}'.", deleted);
         }
         "stats" => {
