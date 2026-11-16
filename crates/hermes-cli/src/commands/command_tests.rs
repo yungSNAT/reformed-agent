@@ -709,12 +709,36 @@ mod tests {
 
         assert_eq!(result, CommandResult::Handled);
         let seed = app.take_pending_agent_seed().expect("queued seed");
-        let cwd = std::env::current_dir().expect("cwd");
         assert!(seed.starts_with("[/init] The user wants you to "), "{seed}");
-        assert!(seed.contains(&format!("for the project at: {}", cwd.display())));
+        assert!(seed.contains("for the project in the working directory."));
         assert!(seed.ends_with("conflict):
 note the fixtures"));
         assert!(latest_ui_assistant_text(&app).contains("AGENTS.md from a project scan."));
+    }
+
+    /// The agent writes `AGENTS.md` relative to `TERMINAL_CWD` when it is set,
+    /// so `/init` reads the existing file there too.
+    #[tokio::test]
+    async fn init_command_reads_agents_md_where_the_agent_will_write_it() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let project = tmp.path().join("project");
+        std::fs::create_dir(&project).expect("project");
+        std::fs::write(project.join("AGENTS.md"), "# Rules from TERMINAL_CWD\n").expect("AGENTS.md");
+        let previous = std::env::var_os("TERMINAL_CWD");
+        std::env::set_var("TERMINAL_CWD", &project);
+
+        let result = handle_slash_command(&mut app, "/init", &[]).await;
+        match previous {
+            Some(value) => std::env::set_var("TERMINAL_CWD", value),
+            None => std::env::remove_var("TERMINAL_CWD"),
+        }
+
+        assert_eq!(result.expect("init command"), CommandResult::Handled);
+        let seed = app.take_pending_agent_seed().expect("queued seed");
+        assert!(seed.contains("# Rules from TERMINAL_CWD"), "{seed}");
     }
 
     #[tokio::test]
