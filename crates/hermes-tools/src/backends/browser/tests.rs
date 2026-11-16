@@ -4,11 +4,18 @@ use hermes_config::managed_gateway::test_lock;
 pub(crate) struct EnvScope {
     original: Vec<(&'static str, Option<String>)>,
     _g: std::sync::MutexGuard<'static, ()>,
+    _terminal: std::sync::MutexGuard<'static, ()>,
 }
 
 impl EnvScope {
     pub(crate) fn new() -> Self {
         let g = test_lock::lock();
+        // The terminal and registration tests set TERMINAL_ENV under this
+        // lock alone; clearing it without the lock let a concurrent test see
+        // the local backend instead of the one it set.
+        let terminal = crate::approval::TEST_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         let keys = [
             "HERMES_BROWSER_BACKEND",
             "BROWSER_CLOUD_PROVIDER",
@@ -47,7 +54,11 @@ impl EnvScope {
         for k in &keys {
             std::env::remove_var(k);
         }
-        Self { original, _g: g }
+        Self {
+            original,
+            _g: g,
+            _terminal: terminal,
+        }
     }
 }
 
@@ -1611,10 +1622,6 @@ async fn cloud_browser_releases_its_session_once_a_page_could_not_be_cleared() {
 #[test]
 fn only_a_default_browser_beside_a_local_terminal_is_local() {
     let _scope = EnvScope::new();
-    // The terminal tests read TERMINAL_ENV under this lock.
-    let _terminal = crate::approval::TEST_ENV_LOCK
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
     assert!(CdpBrowserBackend::from_env().is_local_backend());
     assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
     assert!(!CdpBrowserBackend::new("http://localhost:9222".into()).is_local_backend());
