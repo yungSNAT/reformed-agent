@@ -19,7 +19,12 @@
 //! holding one wherever the fetch is. [`runs_downloaded_script`] flags a
 //! file the fetch saved (an output option, a redirection or the URL's last
 //! path segment) that the same command then runs by path or through a
-//! shell, `source` or `.`, matched by file name.
+//! shell, `source` or `.`, matched by file name. The fetched bytes are
+//! followed into a redirection of a command they are piped to, of a
+//! compound command holding the fetch or after it, and of `exec` for later
+//! commands. Output to a descriptor other than stdout (`>&3`, `-o
+//! /dev/fd/3`) lands where the check cannot name, so every script run after
+//! it is flagged; `-` and `/dev/stdout` are stdout, not files.
 //!
 //! Out of scope: other downloaders and interpreters, a fetch named at run
 //! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
@@ -36,7 +41,9 @@
 //! flags, so `wget -q https://x/data.json > install.sh && bash install.sh`
 //! asks although wget saves the body to `data.json`. Narrowing it needs
 //! knowing where each fetch tool writes for every flag form, and each miss
-//! there is a bypass.
+//! there is a bypass. File names compare without ASCII case, as the default
+//! filesystems on macOS and Windows and some Linux mounts ignore it, so
+//! `curl -o INSTALL.SH … && bash install.sh` asks on Linux too.
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
@@ -171,6 +178,8 @@ struct Saved {
     names: Vec<String>,
     /// An output name is computed at run time.
     computed: bool,
+    /// A fetch wrote to a descriptor whose file is not known here.
+    unknown: bool,
 }
 
 impl Saved {
@@ -197,16 +206,47 @@ fn names_descriptor(word: &Word, dup: bool) -> bool {
         .any(|dir| value.strip_prefix(dir).is_some_and(|fd| fd != "0"))
 }
 
+/// `>&` target text that names a descriptor: digits, digits then `-`, or `-`.
+fn is_descriptor(value: &str) -> bool {
+    let fd = value.strip_suffix('-').unwrap_or(value);
+    fd.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Where a fetch's output option sends the body.
+enum Output {
+    Stdout,
+    /// Another descriptor: `/dev/stderr`, `/dev/fd/3`, `/proc/<pid>/fd/3`.
+    Descriptor,
+    File,
+}
+
+fn output_target(path: &str) -> Output {
+    match path {
+        "-" | "/dev/stdout" => return Output::Stdout,
+        "/dev/stderr" => return Output::Descriptor,
+        _ => {}
+    }
+    let fd = path.strip_prefix("/dev/fd/").or_else(|| {
+        path.strip_prefix("/proc/")?
+            .split_once("/fd/")
+            .map(|(_, fd)| fd)
+    });
+    match fd {
+        Some("1") => Output::Stdout,
+        Some(fd) if !fd.is_empty() && fd.chars().all(|c| c.is_ascii_digit()) => Output::Descriptor,
+        _ => Output::File,
+    }
+}
+
 /// A redirection's kind, read from its operator.
 #[derive(Default, Clone, Copy)]
 enum Redirect {
     #[default]
     Other,
     /// Onto stdin; `dup` for `<&`.
-    Stdin {
-        dup: bool,
-    },
-    Stdout,
+    Stdin { dup: bool },
+    /// Onto stdout; `dup` for `>&`, whose target may be a descriptor.
+    Stdout { dup: bool },
 }
 
 /// A command list being walked: the top level or one frame.
@@ -314,6 +354,11 @@ struct Command {
     urls: Vec<Option<String>>,
     /// Its stdout redirections' file names; `None` when computed.
     stdout: Vec<Option<String>>,
+    /// It sends stdout to another descriptor (`>&3`, `>&"$fd"`).
+    stdout_descriptor: bool,
+    /// It ends a compound command that ran a fetch, or one that ends after
+    /// the fetch, so its redirections hold the fetched bytes.
+    holds_fetch: bool,
     /// `-s`: the shell reads its script from stdin, so it has no script operand.
     no_script: bool,
     /// A shell without `-c`, `source` or `.`: its first operand may be a script.
@@ -482,6 +527,7 @@ impl Walk<'_> {
         }
         let parent = self.list();
         parent.ran_fetch |= child.ran_fetch;
+        parent.command.holds_fetch |= child.frame == Some(Frame::Subshell) && child.ran_fetch;
         if child.frame == Some(Frame::ProcessIn) && child.ran_fetch {
             parent.command.fetching_file = true;
         }
@@ -509,7 +555,10 @@ impl Walk<'_> {
                     ("" | "0", Some(b'<')) => Redirect::Stdin {
                         dup: operator.starts_with("<&"),
                     },
-                    ("" | "1", Some(b'>')) | ("", Some(b'&')) => Redirect::Stdout,
+                    ("" | "1", Some(b'>')) => Redirect::Stdout {
+                        dup: operator.starts_with(">&"),
+                    },
+                    ("", Some(b'&')) => Redirect::Stdout { dup: false },
                     _ => Redirect::Other,
                 };
             }
@@ -554,7 +603,13 @@ impl Walk<'_> {
             match std::mem::take(&mut command.redirect) {
                 Redirect::Stdin { dup } => command.reads_descriptor |= names_descriptor(&word, dup),
                 // Kept until the end: `>i.sh curl ...` names the fetch later.
-                Redirect::Stdout => {
+                // `>&2` and `>&-` are descriptors; `>&file` is a file, as `&>file`.
+                Redirect::Stdout { dup: true } if word.computed || is_descriptor(&word.value) => {
+                    let fd = word.value.strip_suffix('-').unwrap_or(&word.value);
+                    self.list().command.stdout_descriptor |=
+                        word.computed || !matches!(fd, "" | "1");
+                }
+                Redirect::Stdout { .. } => {
                     let name = self.static_name(&word).map(str::to_string);
                     self.list().command.stdout.push(name);
                 }
@@ -642,8 +697,7 @@ impl Walk<'_> {
     fn save(&mut self, word: &Word, output: bool) {
         if output {
             self.list().command.output_given = true;
-            let name = self.static_name(word);
-            self.saved_name(name);
+            self.output_file(word, &word.value);
             return;
         }
         let value = word.value.as_str();
@@ -701,17 +755,31 @@ impl Walk<'_> {
         };
         if let Some(attached) = attached {
             self.list().command.output_given = true;
-            let name = self
-                .static_name(word)
-                .map(|_| file_name(attached))
-                .filter(|name| !name.is_empty());
-            self.saved_name(name);
+            self.output_file(word, attached);
+        }
+    }
+
+    /// Notes the output file `path` of a fetch's output option `word`.
+    fn output_file(&mut self, word: &Word, path: &str) {
+        match output_target(path) {
+            Output::Stdout => {}
+            Output::Descriptor => self.scan.saved.unknown = true,
+            Output::File => {
+                let name = self
+                    .static_name(word)
+                    .map(|_| file_name(path))
+                    .filter(|name| !name.is_empty());
+                self.saved_name(name);
+            }
         }
     }
 
     /// Whether `word`, a script or a command run by path, names a file a
     /// fetch saved.
     fn runs_saved(&self, word: &Word) -> bool {
+        if self.scan.saved.unknown {
+            return true;
+        }
         match self.static_name(word) {
             Some(name) => self.scan.saved.has(name),
             None => self.scan.saved.computed,
@@ -724,6 +792,7 @@ impl Walk<'_> {
         let raw = &text[word.start..word.end];
         let joined = raw.replace("\\\n", "");
         let fetching = self.fetch_end.is_some();
+        let after_fetch = self.after_fetch(word.start);
         // A file run by path: bash looks a bare name up in PATH.
         let runs_path =
             (word.computed || word.value.contains(['/', '\\'])) && self.runs_saved(word);
@@ -752,6 +821,7 @@ impl Walk<'_> {
                 return;
             }
             "}" | "fi" | "done" | "esac" => {
+                list.command.holds_fetch = after_fetch;
                 let sink = list.compounds.pop().unwrap_or(false);
                 if let Some(open) = list.compounds.last_mut() {
                     *open |= sink;
@@ -890,10 +960,18 @@ impl Walk<'_> {
                 self.saved_name(name.as_deref());
             }
         }
-        if command.fetch {
+        // Redirections that hold the fetched bytes: the fetch's own, a
+        // command they are piped to, a compound command around or after
+        // the fetch, and `exec`'s for every later command.
+        if command.fetch
+            || command.piped
+            || command.holds_fetch
+            || (exec_alone && self.fetch_end.is_some())
+        {
             for name in &command.stdout {
                 self.saved_name(name.as_deref());
             }
+            self.scan.saved.unknown |= command.stdout_descriptor;
         }
         let start = command.start.unwrap_or(0);
         if interpreter && command.reads_descriptor && self.after_fetch(start) {
