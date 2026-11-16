@@ -14,7 +14,4 @@ ignore = [
     # try_from, and no workspace crate uses bitmaps. imbl 7 does not use it.
     "RUSTSEC-2026-0247",
     "RUSTSEC-2025-0167",
-    # unsafe-libyaml 0.2.11, unmaintained: used by serde_yaml 0.9 (itself
-    # deprecated) in 8 crates. Replacing serde_yaml removes it.
-    "RUSTSEC-2024-0449",
 ]

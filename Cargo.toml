@@ -66,7 +66,7 @@ futures = "0.3"
 # Serialization
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-serde_yaml = "0.9"
+serde_yaml = { package = "yaml_serde", version = "0.10" }
 
 # HTTP / networking
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
