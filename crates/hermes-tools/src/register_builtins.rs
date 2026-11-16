@@ -22,9 +22,33 @@ use crate::ToolRegistry;
 /// With no parameters listed, every call refuses and the tool is registered
 /// hidden (dispatch does not check availability, so a call by name must still
 /// refuse). With parameters listed, the handler reads or writes the path one of
-/// them names, so only a call giving one a value other than an `http://` or
-/// `https://` URL refuses, and the tool stays offered.
-struct HostOnly(Arc<dyn ToolHandler>, &'static [&'static str]);
+/// them names, so only a call giving one a value that reaches this machine
+/// refuses, and the tool stays offered.
+struct HostOnly(Arc<dyn ToolHandler>, &'static [HostParam]);
+
+/// A parameter through which a guarded tool reaches this machine.
+enum HostParam {
+    /// Read as a path on this machine unless it is an `http://` or
+    /// `https://` URL.
+    PathOrUrl(&'static str),
+    /// Always a path on this machine, whatever it looks like.
+    Path(&'static str),
+}
+
+impl HostParam {
+    /// The parameter's name when `params` gives it a value that reaches this
+    /// machine. The URL test is case-sensitive, like the handlers'.
+    fn reaching_host(&self, params: &Value) -> Option<&'static str> {
+        let (key, url_allowed) = match *self {
+            Self::PathOrUrl(key) => (key, true),
+            Self::Path(key) => (key, false),
+        };
+        let value = params.get(key)?.as_str()?;
+        let allowed = url_allowed
+            && (value.is_empty() || value.starts_with("https://") || value.starts_with("http://"));
+        (!allowed).then_some(key)
+    }
+}
 
 #[async_trait]
 impl ToolHandler for HostOnly {
@@ -38,17 +62,7 @@ impl ToolHandler for HostOnly {
                      which run in that backend."
                 )));
             }
-            let local = self.1.iter().find(|key| {
-                params
-                    .get(**key)
-                    .and_then(Value::as_str)
-                    .is_some_and(|value| {
-                        !value.is_empty()
-                            && !value.starts_with("https://")
-                            && !value.starts_with("http://")
-                    })
-            });
-            if let Some(key) = local {
+            if let Some(key) = self.1.iter().find_map(|param| param.reaching_host(&params)) {
                 return Err(ToolError::ExecutionFailed(format!(
                     "`{name}` would use the path in `{key}` on this machine, which is off whilst \
                      the terminal backend is `{backend}`; leave `{key}` out or give an http(s) \
@@ -343,7 +357,7 @@ fn register_builtin_tools_with_data_dir(
                 Arc::new(crate::tools::vision::VisionAnalyzeHandler::new(
                     vision_backend.clone(),
                 )),
-                &["image_url"],
+                &[HostParam::PathOrUrl("image_url")],
             )),
             "👁️",
             vec![
@@ -637,7 +651,7 @@ fn register_builtin_tools_with_data_dir(
             Arc::new(crate::tools::tts::TextToSpeechHandler::new(Arc::new(
                 crate::backends::tts::MultiTtsBackend::new(),
             ))),
-            &["output_path"],
+            &[HostParam::Path("output_path")],
         )),
         "🔊",
         vec![],
@@ -1310,7 +1324,7 @@ pub(crate) mod tests {
         let _lock = lock_env();
         let _alias = EnvGuard::remove("TERMINAL_BACKEND");
         let _terminal_env = EnvGuard::set("TERMINAL_ENV", "docker");
-        let tool = HostOnly(Arc::new(Ran), &["image_url"]);
+        let tool = HostOnly(Arc::new(Ran), &[HostParam::PathOrUrl("image_url")]);
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let run = |params: Value| runtime.block_on(tool.execute(params));
         for url in ["https://example.com/a.png", "http://example.com/a.png"] {
@@ -1327,6 +1341,32 @@ pub(crate) mod tests {
             assert!(
                 err.to_string().contains("terminal backend"),
                 "{path}: {err}"
+            );
+        }
+    }
+
+    /// A tool guarded on a parameter that is always a path refuses any value
+    /// for it, a web URL included, and runs without it.
+    #[test]
+    fn a_tool_guarded_on_a_path_only_parameter_refuses_every_value_under_a_non_local_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::set("TERMINAL_ENV", "docker");
+        let tool = HostOnly(Arc::new(Ran), &[HostParam::Path("output_path")]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let run = |params: Value| runtime.block_on(tool.execute(params));
+        assert_eq!(run(serde_json::json!({ "text": "hi" })).unwrap(), "ran");
+        for value in [
+            "https://example.com/a.mp3",
+            "http://example.com/a.mp3",
+            "a.mp3",
+            "",
+        ] {
+            let err = run(serde_json::json!({ "output_path": value })).unwrap_err();
+            assert!(
+                err.to_string().contains("terminal backend"),
+                "{value:?}: {err}"
             );
         }
     }
