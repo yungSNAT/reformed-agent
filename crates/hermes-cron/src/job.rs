@@ -442,6 +442,29 @@ mod tests {
     }
 
     #[test]
+    fn restricted_day_of_month_and_day_of_week_fire_when_either_matches() {
+        use chrono::TimeZone;
+        // Monday 16 November 2026; Friday 13 November has passed.
+        let after = Utc.with_ymd_and_hms(2026, 11, 16, 0, 0, 0).unwrap();
+        let next = |schedule: &str| {
+            CronJob::new(schedule, "x")
+                .compute_next_run(after)
+                .unwrap_or_else(|| panic!("{schedule} does not parse"))
+        };
+        let day = |month, day| Utc.with_ymd_and_hms(2026, month, day, 9, 0, 0).unwrap();
+        // Both restricted: the 13th or a Friday, whichever comes first.
+        assert_eq!(next("0 9 13 * 5"), day(11, 20));
+        assert_eq!(next("0 9 17 * 5"), day(11, 17));
+        assert_eq!(next("0 0 9 13 * Fri"), day(11, 20));
+        // Only `*` (or `?`) leaves a field unrestricted; `*/1` restricts it.
+        assert_eq!(next("0 9 */1 * 5"), day(11, 16));
+        assert_eq!(next("0 9 13 * *"), day(12, 13));
+        assert_eq!(next("0 9 13 * ?"), day(12, 13));
+        assert_eq!(next("0 9 * * 5"), day(11, 20));
+        assert_eq!(next("0 9 ? * 5"), day(11, 20));
+    }
+
+    #[test]
     fn five_field_weekdays_are_numbered_as_in_standard_cron() {
         use chrono::{Datelike, TimeZone, Weekday::*};
         // The weekdays of the next 7 runs after Sunday 15 November 2026.
