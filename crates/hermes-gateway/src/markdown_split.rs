@@ -51,14 +51,19 @@ pub fn split_markdown(text: &str, max_len: usize) -> Vec<String> {
 
 /// Find a safe byte offset to split at, within `max_len` bytes.
 fn find_safe_split(text: &str, max_len: usize) -> usize {
-    let search_range = &text[..max_len.min(text.len())];
+    // Cut on a character boundary; take at least one character.
+    let mut limit = text.floor_char_boundary(max_len);
+    if limit == 0 {
+        limit = text.ceil_char_boundary(1);
+    }
+    let search_range = &text[..limit];
 
     // Check if we're inside a code block at the split point
     let in_code_block = is_in_code_block(search_range);
 
     if in_code_block {
         // Find the end of the code block
-        if let Some(end) = find_code_block_end(text, max_len) {
+        if let Some(end) = find_code_block_end(text, limit) {
             if end <= max_len + 100 {
                 // Allow slight overflow to close the code block
                 return end;
@@ -88,8 +93,8 @@ fn find_safe_split(text: &str, max_len: usize) -> usize {
         }
     }
 
-    // Hard split at max_len
-    max_len.min(text.len())
+    // Hard split at the limit
+    limit
 }
 
 /// Check if the text ends inside an unclosed code block.
@@ -350,6 +355,20 @@ pub fn strip_markdown(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn split_cuts_multi_byte_text_on_character_boundaries() {
+        let text = "é".repeat(30);
+        for max_len in [1, 7, 20] {
+            let chunks = split_markdown(&text, max_len);
+            assert_eq!(chunks.concat(), text, "max_len {max_len}");
+        }
+        let fenced = format!("```\n{}\n```\nafter", "é".repeat(30));
+        assert_eq!(
+            split_markdown(&fenced, 21).concat().matches('é').count(),
+            30
+        );
+    }
 
     #[test]
     fn test_split_short_text() {
