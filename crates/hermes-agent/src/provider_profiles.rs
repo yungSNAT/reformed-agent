@@ -707,8 +707,8 @@ fn clamp_effort(effort: &str, supported: &[&str]) -> String {
     candidates
         .clone()
         .filter(|level| rank(level).is_some_and(|idx| idx < requested_idx))
-        .max_by_key(rank)
-        .or_else(|| candidates.min_by_key(rank))
+        .max_by_key(|level| rank(level))
+        .or_else(|| candidates.min_by_key(|level| rank(level)))
         .map_or(requested, |level| (*level).to_string())
 }
 
