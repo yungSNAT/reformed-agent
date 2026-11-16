@@ -182,6 +182,32 @@ async fn an_unknown_method_gets_method_not_found_with_its_id() {
     assert_eq!(replies[0]["error"]["code"], -32600);
     assert_eq!(replies[1]["id"], 6);
     assert_eq!(replies[1]["error"]["code"], -32600);
+
+    // A request needs "jsonrpc": "2.0" and a non-empty method, with or without an id.
+    let unversioned = [
+        json!({"jsonrpc": "1.0", "method": "x"}),
+        json!({"jsonrpc": "2.0", "method": ""}),
+        json!({"id": 9, "method": "x"}),
+    ];
+    for frame in &unversioned {
+        socket.send(Message::text(frame.to_string())).await.unwrap();
+        let reply = next_json(&mut socket).await;
+        assert_eq!(reply["error"]["code"], -32600, "{frame}");
+        assert_eq!(reply["id"], frame.get("id").cloned().unwrap_or(Value::Null));
+    }
+    let batch = json!([
+        unversioned[0],
+        {"jsonrpc": "2.0", "method": "notified"},
+        unversioned[1],
+    ]);
+    socket.send(Message::text(batch.to_string())).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    let replies = reply.as_array().expect("a batch reply is an array");
+    assert_eq!(replies.len(), 2, "{reply}");
+    assert!(
+        replies.iter().all(|r| r["error"]["code"] == -32600),
+        "{reply}"
+    );
 }
 
 #[tokio::test]
