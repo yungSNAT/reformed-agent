@@ -1,129 +1,24 @@
-# Reformed Agent
+<p align="center">
+  <picture>
+    <source media="(max-width: 600px) and (prefers-color-scheme: light)" srcset=".github/assets/banner-phone-light.svg">
+    <source media="(max-width: 600px)" srcset=".github/assets/banner-phone.svg">
+    <source media="(prefers-color-scheme: light)" srcset=".github/assets/banner-light.svg">
+    <img src=".github/assets/banner.svg" width="100%" alt="Reformed Agent. A Rust port of Hermes Agent that runs without Python or Node.js. Pixel art of a hammer striking an anvil beside the Reformed Agent wordmark in slab-serif block letters.">
+  </picture>
+</p>
+
+<div align="center">
+
+[![CI](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml?query=branch%3Amain) [![Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml?query=branch%3Amain) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=yungSNAT_reformed-agent&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=yungSNAT_reformed-agent)<br>
+[![rust: 1.99.1](.github/assets/badges/rust.svg)](rust-toolchain.toml) [![licence: MIT (fork contributions)](.github/assets/badges/licence.svg)](#licence) [![fork of: hermes-agent-ultra](.github/assets/badges/fork-of.svg)](https://github.com/sheawinkler/hermes-agent-ultra)
+
+[Install](#install) · [Use](#use) · [Against Hermes Agent](#against-hermes-agent) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Documentation](#documentation) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
+
+</div>
 
 Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`. Reformed Agent is a fork of [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) and keeps its reliability, security and operator-control layer. It installs as Rust binaries and needs no Python or Node.js runtime to run the agent, whilst upstream's source installer adds Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg; tools that call another program, such as FFmpeg for video or `npx` for some MCP servers, still need it.
 
 Translations of an earlier README, which predate this fork: [中文](./README_ZH.md), [日本語](./README_JA.md), [한국어](./README_KO.md).
-
-## Status
-
-- **Base:** Hermes Agent Ultra [`v0.22.0`](./docs/releases/v0.22.0.md) at commit `c002f8c4`.
-- **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
-- **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
-- **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
-- **Drift:** upstream has moved since the pin. The daily [Parity Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/parity-audit.yml) run reports the current gap against upstream `main` in its job summary. Moving the pin forward is the next parity work.
-- **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
-- **Code analysis:** the [SonarCloud](https://sonarcloud.io/project/overview?id=yungSNAT_reformed-agent) ratings cover the Rust crates in `crates/` and the other files outside the excluded paths. Content inherited from Ultra (`scripts/`, `skills/`, `optional-skills/`, `ui-tui/`, `plugins/`, `tests/` and `website/`) and the vendored crates in `third_party/` are excluded from analysis; [`.sonarcloud.properties`](./.sonarcloud.properties) lists each path and why.
-- **Footprint:** measured on 13 November 2026 against Hermes Agent v0.23.1 and on 15 November 2026 against OpenClaw v2026.11.3 (see the tables below).
-
-| Measure | Reformed Agent at `5cdde8fd` | Hermes Agent v0.23.1 (`3b421578`) |
-| --- | --- | --- |
-| Installed size | 59.7 MB binary (21.0 MB as the release `.tar.gz`) | 901.6 MB install directory, 2.68 GB home after install |
-| `--version`, cold page cache | 35.5 ms, 13.9 MiB peak RSS | 881 ms, 36.5 MiB peak RSS |
-| `--version`, warm | 4.6 ms, 13.9 MiB | 353 ms, 37.0 MiB |
-| `doctor`, cold page cache | 55.0 ms, 14.2 MiB | not comparable (see below) |
-| `doctor`, warm | 9.2 ms, 14.3 MiB | not comparable |
-
-Method:
-
-- Machine: one x86_64 Linux machine (AMD Ryzen 7 4800H, 4 CPU threads available to the run, 31 GiB RAM) running CachyOS with Linux 7.3.3 and rustc 1.99.1. It was not idle: the load average was 2.46 before the runs and 2.35 after.
-- Network: none. Both tools ran in a network namespace with no interfaces up, each in its own scratch home (empty before the first run for Reformed, as the installer left it for Hermes), with no account or key.
-- Builds: Reformed was built with `cargo build --locked --release -p hermes-cli --bin hermes-agent-ultra`. Hermes was installed by its own installer (`install.sh --non-interactive --skip-browser --skip-computer-use`).
-- Figures: wall-clock medians of 5 cold runs (page cache dropped before each) and 10 warm runs. Peak RSS is the largest resident set of any process in the run.
-- Hermes `doctor`: it runs 44 network connectivity checks, so offline it took about 95 s and exited 1. That is not a start-up time.
-
-Against OpenClaw, measured on 15 November 2026 on the same machine with the same method except as noted:
-
-| Measure | Reformed Agent at `a9fa2077` | OpenClaw v2026.11.3 |
-| --- | --- | --- |
-| Installed size | 44.8 MB binary | 546.8 MB npm prefix, 332.9 MB home after install |
-| `--version`, cold page cache | 46.7 ms, 12.4 MiB peak RSS | 577 ms, 65.8 MiB peak RSS |
-| `--version`, warm | 5.2 ms, 12.3 MiB | 98.2 ms, 66.2 MiB |
-
-- OpenClaw was installed by the npm route in its README (`npm install -g openclaw@2026.11.3 --allow-scripts=openclaw`) into a scratch prefix and home, with the machine's Node.js v26.13.1, which the installed size leaves out. Both tools ran with an empty scratch home.
-- The machine was busier than for the Hermes table: the load average was 7.19 before the runs and 5.28 after, so Reformed's figures here differ from the table above.
-
-These are start-up and size figures from 1 machine, not a general speed comparison.
-
-Repo-local CI is the authoritative gate for development and release confidence.
-GitHub Actions are a hosted mirror of the repo contract when they run; they are
-not required as the source of truth.
-
-```bash
-CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} bash scripts/run-repo-ci.sh
-```
-
-The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). See [docs/demo.md](./docs/demo.md) for the one-command demo/readiness path.
-
-## What Reformed Agent Changes
-
-- `Reformation skin`: the default terminal theme, a palette for a pure black canvas
-- `Hermes history import`: `hermes-ultra import-hermes-sessions <export.jsonl> --profile-dir <dir>` converts a Hermes JSONL session export into resumable, searchable sessions in a new profile
-- `Tool guard`: `security.tool_guard` names a program that speaks Claude Code's PreToolUse hook format; when it is set, local terminal commands, `write_file`, `patch` and cron scripts ask it first and run only on a clean allow (see [security.md](./website/docs/user-guide/security.md))
-- `Stream lifetime cap`: `agent.stream_max_lifetime`, ported from Hermes
-- `Pinned parity reference`: the parity gates compare against one recorded upstream revision, so a day's upstream commits cannot fail an unrelated change
-- `Provider routing`: retries keep the configured endpoint and provider-specific credentials. Vertex AI supports service-account credentials and application default credentials.
-- `Gateway replies`: API replies keep the final answer after tool progress messages and handle streaming previews and UTF-8 chunks.
-- `Browser tools`: local and cloud browsers use Chrome DevTools Protocol, with HTTP discovery for cloud sessions and screenshot analysis through the configured vision model.
-- `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
-- `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
-- `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
-
-### Migrating from Hermes
-
-`hermes-ultra migrate` moves a Hermes Agent home into Reformed's:
-
-```bash
-hermes-ultra migrate                            # plan only: lists each item and writes nothing
-hermes-ultra migrate --apply                    # migrate into a new home
-hermes-ultra migrate --apply --into-existing    # add to a home that already exists
-```
-
-- It reads `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows, with `HERMES_DATA_DIR_SUFFIX`) unless `--from` names another home or a profile, and writes Reformed's home unless `--to` names another.
-- It moves `config.yaml`, `.env`, the sessions in `state.db`, `memories/`, `skills/`, `SOUL.md`, `plugins/`, `cron/jobs.json` and `scripts/`. It does not move `auth.json`: sign in to each provider again.
-- It replaces nothing. An item already in the Reformed home is listed and left unchanged, and a new home is removed again if the run fails. Links are neither followed nor copied, no file content is printed, and on Unix every file written is owner-only.
-- Sessions convert as `import-hermes-sessions` converts an export. `state.db` is opened read-only; if it reports unapplied changes, stop Hermes, or start and stop it once.
-- Cron jobs are written paused, because Reformed reads schedules in UTC. Cron expressions keep their fields, so check each one's time; interval and one-off jobs keep their times; a job Reformed cannot run the same way is skipped with its reason. Start each with `hermes-ultra cron resume <id>`.
-
-Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
-
-## What You Get
-
-- Fully Rust-native core runtime (agent loop, tools, gateway, skills, CLI/TUI)
-- Multi-provider inference routing and OAuth-capable provider flows
-- First-class local/self-host backends: Ollama, llama.cpp/llamafile, vLLM, MLX, Apple ANE endpoint, SGLang, TGI, LM Studio, LMDeploy, LocalAI, KoboldCpp, text-generation-webui, TabbyAPI
-- Tool runtime with policy enforcement, MCP integration, cron, and memory backends
-- Parity upkeep system for upstream drift triage and controlled roll-forward
-- Production operations surface (`doctor`, replay traces, sync gates, parity artifacts)
-
-## Why Ultra Exists
-
-`NousResearch/hermes-agent` is the canonical upstream product surface.  
-Hermes Agent Ultra keeps that surface in scope while focusing on:
-
-- deterministic Rust execution paths
-- explicit safety and policy controls
-- better observability and incident debugging
-- easier operator workflows for long-running local and gateway sessions
-
-## Differentiation vs Upstream
-
-Ultra keeps parity work separate from intentional extensions.
-
-- `Runtime policy engine`: enforce/audit/simulate tool policy decisions at runtime
-- `Session branching + time-travel`: checkpoint/rollback/replay navigation from the TUI
-- `Tool-call simulator`: preview policy allow/deny outcomes before running risky tool invocations
-- `Adaptive repo-review budget controls`: tune discovery-loop trimming live (`balanced/aggressive/relaxed/off`)
-- `Semantic repo graph`: inspect dependency hubs/edges with inline Mermaid preview
-- `Provider QoS router controls`: inspect route learning/health and apply autotune from chat
-- `Live session eval harness`: score real saved sessions and gate quality trends from actual usage
-- `RTK raw-mode controls`: inspect unwrapped tool payloads when debugging integrations
-- `Memory fusion`: ContextLattice + external memory providers with scoring/fusion logic
-- `One-true-harness cockpit`: `/harness` and `harness_cockpit` unify skills, proof, OIDC, replay, objectives, onboarding, and chaos probes
-- `Ultra autonomy cockpit`: `ultra_autonomy`, `/harness autonomy`, and `harness.autonomy` expose task boards, loop detection, resource-governed subagents, ContextLattice-first memory lifecycle, channel surfaces, and objective-to-board planning
-- `One-command always-on UX`: `hermes-ultra up` composes gateway service install/start/status into a single operator command
-- `Advanced sync gates`: differential parity checks, red-team/adversarial gating, elite sync gate
-- `Operational tooling`: deep doctor snapshots, replay traces, queue-based upstream webhook sync
-- `Rust-only implementation strategy`: parity in Rust first; no direct Python runtime vendoring
 
 ## Install
 
@@ -156,7 +51,7 @@ release's `SHA256SUMS` and, when `cosign` is on `PATH`, checks that file's
 signature from this repository's release workflow for that tag. Set
 `HERMES_REQUIRE_SIGNATURE=true` to refuse any install it cannot verify that way.
 
-## Quick Start
+## Use
 
 Need a shorter path? See [README_QUICKSTART.md](./README_QUICKSTART.md).
 
@@ -165,14 +60,6 @@ Setup:
 ```bash
 hermes-ultra setup
 ```
-
-Mem0 memory setup supports cloud, self-hosted, and OSS-style endpoints:
-
-```bash
-hermes-ultra memory setup mem0 --mode selfhosted --host http://127.0.0.1:24220 -y
-```
-
-Add `--api-key ...` only when the self-hosted server requires auth; Hermes writes the host to `mem0.json` and the secret to `$HERMES_HOME/.env`.
 
 Interactive session:
 
@@ -199,7 +86,192 @@ Gateway mode, in the foreground. Without chat platforms the gateway serves only 
 hermes-ultra gateway run
 ```
 
-## Skip API-key collection With Nous Portal
+Deep diagnostics bundle:
+
+```bash
+hermes-ultra doctor --deep --snapshot --bundle
+```
+
+### Migrating from Hermes
+
+`hermes-ultra migrate` moves a Hermes Agent home into Reformed's:
+
+```bash
+hermes-ultra migrate                            # plan only: lists each item and writes nothing
+hermes-ultra migrate --apply                    # migrate into a new home
+hermes-ultra migrate --apply --into-existing    # add to a home that already exists
+```
+
+- It reads `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows, with `HERMES_DATA_DIR_SUFFIX`) unless `--from` names another home or a profile, and writes Reformed's home unless `--to` names another.
+- It moves `config.yaml`, `.env`, the sessions in `state.db`, `memories/`, `skills/`, `SOUL.md`, `plugins/`, `cron/jobs.json` and `scripts/`. It does not move `auth.json`: sign in to each provider again.
+- It replaces nothing. An item already in the Reformed home is listed and left unchanged, and a new home is removed again if the run fails. Links are neither followed nor copied, no file content is printed, and on Unix every file written is owner-only.
+- Sessions convert as `import-hermes-sessions` converts an export. `state.db` is opened read-only; if it reports unapplied changes, stop Hermes, or start and stop it once.
+- Cron jobs are written paused, because Reformed reads schedules in UTC. Cron expressions keep their fields, so check each one's time; interval and one-off jobs keep their times; a job Reformed cannot run the same way is skipped with its reason. Start each with `hermes-ultra cron resume <id>`.
+
+## Against Hermes Agent
+
+What Reformed has against [Hermes Agent v0.23.1](https://github.com/NousResearch/hermes-agent/releases/tag/v0.23.1) (`3b421578`, released 10 November 2026), checked on 16 November 2026 against this repository's `main` and Hermes's source at that tag. Each cell links its evidence.
+
+| Area | Reformed Agent | Hermes Agent v0.23.1 |
+| --- | --- | --- |
+| Runtime | One Rust binary; no Python or Node.js ([Footprint](#footprint)) | Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg, from its installer ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L53-L55)) |
+| Start-up and size | 35.5 ms cold `--version`; 59.7 MB binary ([Footprint](#footprint)) | 881 ms cold `--version`; 901.6 MB install directory ([Footprint](#footprint)) |
+| Install | From source only, with `cargo install` or [`scripts/install.sh`](./scripts/install.sh); no release yet ([Install](#install)) | One-line installers for Linux, macOS, WSL2 and Windows, a Termux APT repository and an MSIX package ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L35-L61)) |
+| Desktop app | None | Hermes Desktop ([`apps/desktop`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/apps/desktop)) |
+| Terminal UI | Yes, on Ratatui ([`hermes-cli/src/tui`](./crates/hermes-cli/src/tui)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L24)) |
+| Chat platforms | 17 built in: BlueBubbles, DingTalk, Discord, Email, Feishu, Home Assistant, Matrix, Mattermost, ntfy, QQ Bot, Signal, Slack, SMS, Telegram, WeCom, Weixin and WhatsApp ([`platforms`](./crates/hermes-gateway/src/platforms), enabled by [`gateway-adapters-all`](./crates/hermes-cli/Cargo.toml)) | 26 bundled, adding A2A, Buzz, Google Chat, IRC, LINE, Photon, Raft, SimpleX, Teams and WhatsApp Cloud ([`plugins/platforms`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/plugins/platforms)); Home Assistant is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/homeassistant.yaml)) |
+| API server and webhooks | Yes ([`api_server`](./crates/hermes-gateway/src/platforms/api_server.rs), [`webhook`](./crates/hermes-gateway/src/platforms/webhook.rs)) | Yes ([`api_server.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/api_server.py), [`webhook.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/webhook.py)) |
+| Terminal backends | Local only as built: the Docker, SSH, Modal, Daytona and Singularity backends in `hermes-environments` sit behind Cargo features the CLI does not enable, so a configured one runs commands locally ([`manager.rs`](./crates/hermes-environments/src/manager.rs)) | Local, Docker, SSH, Modal, Daytona and Vercel Sandbox ([`tools/environments`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/tools/environments)); Singularity is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/singularity.yaml)) |
+| Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs), with a dry run by default) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From OpenClaw, Claude Code, Codex, Cursor and others through the official `agent-importers` plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/agent-importers.yaml)) |
+| Cron, MCP, ACP, skills, subagents | Yes ([`hermes-cron`](./crates/hermes-cron), [`hermes-mcp`](./crates/hermes-mcp), [`hermes-acp`](./crates/hermes-acp), [`hermes-skills`](./crates/hermes-skills), [`delegation.rs`](./crates/hermes-tools/src/tools/delegation.rs)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L26-L28), [MCP](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L178), [`acp_adapter`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/acp_adapter)) |
+| Batch trajectories | No model runs: the batch runners in [`hermes-intelligence`](./crates/hermes-intelligence/src/rl.rs) and [`hermes-rl`](./crates/hermes-rl/src/batch_runner.rs) write fixed baseline text without calling a model | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L30), [`batch_runner.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/batch_runner.py), [`trajectory_compressor.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/trajectory_compressor.py)) |
+| Documentation | This README and the guides under [Documentation](#documentation), in the repository; no published site | A site at [hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/) |
+| Licence | MIT for the fork's contributions ([LICENSE](./LICENSE)) | MIT ([LICENSE](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/LICENSE)) |
+
+Slash-command and surface parity is measured against an earlier upstream revision; see [Status](#status).
+
+## Status
+
+- **Base:** Hermes Agent Ultra [`v0.22.0`](./docs/releases/v0.22.0.md) at commit `c002f8c4`.
+- **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
+- **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
+- **Parity:** measured against the upstream revision pinned in [`docs/parity/upstream-reference.txt`](./docs/parity/upstream-reference.txt) (`f64e4f4f`, 8 July 2026). The slash-command and surface gates pass at that revision.
+- **Drift:** upstream has moved since the pin. The daily [Parity Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/parity-audit.yml) run reports the current gap against upstream `main` in its job summary. Moving the pin forward is the next parity work.
+- **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
+- **Code analysis:** the [SonarCloud](https://sonarcloud.io/project/overview?id=yungSNAT_reformed-agent) ratings cover the Rust crates in `crates/` and the other files outside the excluded paths. Content inherited from Ultra (`scripts/`, `skills/`, `optional-skills/`, `ui-tui/`, `plugins/`, `tests/` and `website/`) and the vendored crates in `third_party/` are excluded from analysis; [`.sonarcloud.properties`](./.sonarcloud.properties) lists each path and why.
+
+## Footprint
+
+Measured on 13 November 2026 against Hermes Agent v0.23.1 and on 15 November 2026 against OpenClaw v2026.11.3.
+
+| Measure | Reformed Agent at `5cdde8fd` | Hermes Agent v0.23.1 (`3b421578`) |
+| --- | --- | --- |
+| Installed size | 59.7 MB binary (21.0 MB as the release `.tar.gz`) | 901.6 MB install directory, 2.68 GB home after install |
+| `--version`, cold page cache | 35.5 ms, 13.9 MiB peak RSS | 881 ms, 36.5 MiB peak RSS |
+| `--version`, warm | 4.6 ms, 13.9 MiB | 353 ms, 37.0 MiB |
+| `doctor`, cold page cache | 55.0 ms, 14.2 MiB | not comparable (see below) |
+| `doctor`, warm | 9.2 ms, 14.3 MiB | not comparable |
+
+Method:
+
+- Machine: one x86_64 Linux machine (AMD Ryzen 7 4800H, 4 CPU threads available to the run, 31 GiB RAM) running CachyOS with Linux 7.3.3 and rustc 1.99.1. It was not idle: the load average was 2.46 before the runs and 2.35 after.
+- Network: none. Both tools ran in a network namespace with no interfaces up, each in its own scratch home (empty before the first run for Reformed, as the installer left it for Hermes), with no account or key.
+- Builds: Reformed was built with `cargo build --locked --release -p hermes-cli --bin hermes-agent-ultra`. Hermes was installed by its own installer (`install.sh --non-interactive --skip-browser --skip-computer-use`).
+- Figures: wall-clock medians of 5 cold runs (page cache dropped before each) and 10 warm runs. Peak RSS is the largest resident set of any process in the run.
+- Hermes `doctor`: it runs 44 network connectivity checks, so offline it took about 95 s and exited 1. That is not a start-up time.
+
+Against OpenClaw, measured on 15 November 2026 on the same machine with the same method except as noted:
+
+| Measure | Reformed Agent at `a9fa2077` | OpenClaw v2026.11.3 |
+| --- | --- | --- |
+| Installed size | 44.8 MB binary | 546.8 MB npm prefix, 332.9 MB home after install |
+| `--version`, cold page cache | 46.7 ms, 12.4 MiB peak RSS | 577 ms, 65.8 MiB peak RSS |
+| `--version`, warm | 5.2 ms, 12.3 MiB | 98.2 ms, 66.2 MiB |
+
+- OpenClaw was installed by the npm route in its README (`npm install -g openclaw@2026.11.3 --allow-scripts=openclaw`) into a scratch prefix and home, with the machine's Node.js v26.13.1, which the installed size leaves out. Both tools ran with an empty scratch home.
+- The machine was busier than for the Hermes table: the load average was 7.19 before the runs and 5.28 after, so Reformed's figures here differ from the table above.
+
+These are start-up and size figures from 1 machine, not a general speed comparison.
+
+## What Reformed changes
+
+- `Reformation skin`: the default terminal theme, a palette for a pure black canvas
+- `Hermes history import`: `hermes-ultra import-hermes-sessions <export.jsonl> --profile-dir <dir>` converts a Hermes JSONL session export into resumable, searchable sessions in a new profile
+- `Hermes home migration`: `hermes-ultra migrate` (see [Migrating from Hermes](#migrating-from-hermes))
+- `Tool guard`: `security.tool_guard` names a program that speaks Claude Code's PreToolUse hook format; when it is set, local terminal commands, `write_file`, `patch` and cron scripts ask it first and run only on a clean allow (see [security.md](./website/docs/user-guide/security.md))
+- `Stream lifetime cap`: `agent.stream_max_lifetime`, ported from Hermes
+- `Pinned parity reference`: the parity gates compare against one recorded upstream revision, so a day's upstream commits cannot fail an unrelated change
+- `Provider routing`: retries keep the configured endpoint and provider-specific credentials. Vertex AI supports service-account credentials and application default credentials.
+- `Gateway replies`: API replies keep the final answer after tool progress messages and handle streaming previews and UTF-8 chunks.
+- `Browser tools`: local and cloud browsers use Chrome DevTools Protocol, with HTTP discovery for cloud sessions and screenshot analysis through the configured vision model.
+- `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
+- `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
+- `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
+
+## Documentation
+
+Guides for this fork live in the repository; there is no published documentation site yet.
+
+- [README_QUICKSTART.md](./README_QUICKSTART.md): install, setup and a first session.
+- [Installer troubleshooting](./docs/installer-troubleshooting.md): `command not found` and other install problems.
+- [MCP](./docs/mcp.md): connecting MCP servers, and serving Reformed's tools over MCP.
+- [Local backends](./docs/local-backends.md): local and self-hosted model endpoints.
+- [Session lifecycle](./docs/session-lifecycle.md): where sessions live and who owns them.
+- [Security](./website/docs/user-guide/security.md): command approval, the tool guard and other controls.
+- [Demo and readiness](./docs/demo.md): the source-tree proof path.
+- [Parity reports](./docs/parity/README.md) and [upstream sync](./docs/upstream-sync.md): how parity is measured and upstream changes are brought in.
+- [CONTRIBUTING.md](./CONTRIBUTING.md): development setup, PR rules and the no-stub gate.
+
+The user guide under [`website/docs`](./website/docs) is inherited from Hermes Agent and Ultra and is only partly updated for this fork. Where it disagrees with this README, the README describes this fork; for example, its configuration page lists 7 terminal backends, but this fork's build runs only the local one (see [Against Hermes Agent](#against-hermes-agent)).
+
+## Development
+
+Repo-local CI is the authoritative gate for development and release confidence.
+GitHub Actions are a hosted mirror of the repo contract when they run; they are
+not required as the source of truth.
+
+```bash
+CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} bash scripts/run-repo-ci.sh
+```
+
+The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). See [docs/demo.md](./docs/demo.md) for the one-command demo/readiness path.
+
+Interested in helping? Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, PR expectations, parity rules, and the no-stub completeness gate.
+
+## Inherited from Hermes Agent Ultra
+
+Everything in this section is inherited from Ultra and describes the runtime this fork builds on.
+
+### What You Get
+
+- Fully Rust-native core runtime (agent loop, tools, gateway, skills, CLI/TUI)
+- Multi-provider inference routing and OAuth-capable provider flows
+- First-class local/self-host backends: Ollama, llama.cpp/llamafile, vLLM, MLX, Apple ANE endpoint, SGLang, TGI, LM Studio, LMDeploy, LocalAI, KoboldCpp, text-generation-webui, TabbyAPI
+- Tool runtime with policy enforcement, MCP integration, cron, and memory backends
+- Parity upkeep system for upstream drift triage and controlled roll-forward
+- Production operations surface (`doctor`, replay traces, sync gates, parity artifacts)
+
+### Why Ultra Exists
+
+`NousResearch/hermes-agent` is the canonical upstream product surface.  
+Hermes Agent Ultra keeps that surface in scope while focusing on:
+
+- deterministic Rust execution paths
+- explicit safety and policy controls
+- better observability and incident debugging
+- easier operator workflows for long-running local and gateway sessions
+
+### Differentiation vs Upstream
+
+Ultra keeps parity work separate from intentional extensions.
+
+- `Runtime policy engine`: enforce/audit/simulate tool policy decisions at runtime
+- `Session branching + time-travel`: checkpoint/rollback/replay navigation from the TUI
+- `Tool-call simulator`: preview policy allow/deny outcomes before running risky tool invocations
+- `Adaptive repo-review budget controls`: tune discovery-loop trimming live (`balanced/aggressive/relaxed/off`)
+- `Semantic repo graph`: inspect dependency hubs/edges with inline Mermaid preview
+- `Provider QoS router controls`: inspect route learning/health and apply autotune from chat
+- `Live session eval harness`: score real saved sessions and gate quality trends from actual usage
+- `RTK raw-mode controls`: inspect unwrapped tool payloads when debugging integrations
+- `Memory fusion`: ContextLattice + external memory providers with scoring/fusion logic
+- `One-true-harness cockpit`: `/harness` and `harness_cockpit` unify skills, proof, OIDC, replay, objectives, onboarding, and chaos probes
+- `Ultra autonomy cockpit`: `ultra_autonomy`, `/harness autonomy`, and `harness.autonomy` expose task boards, loop detection, resource-governed subagents, ContextLattice-first memory lifecycle, channel surfaces, and objective-to-board planning
+- `One-command always-on UX`: `hermes-ultra up` composes gateway service install/start/status into a single operator command
+- `Advanced sync gates`: differential parity checks, red-team/adversarial gating, elite sync gate
+- `Operational tooling`: deep doctor snapshots, replay traces, queue-based upstream webhook sync
+- `Rust-only implementation strategy`: parity in Rust first; no direct Python runtime vendoring
+
+### Memory Setup
+
+Mem0 memory setup supports cloud, self-hosted, and OSS-style endpoints:
+
+```bash
+hermes-ultra memory setup mem0 --mode selfhosted --host http://127.0.0.1:24220 -y
+```
+
+Add `--api-key ...` only when the self-hosted server requires auth; Hermes writes the host to `mem0.json` and the secret to `$HERMES_HOME/.env`.
+
+### Skip API-key collection With Nous Portal
 
 Hermes Agent Ultra still supports direct provider and per-tool keys. If you prefer one managed subscription for model access plus hosted tool backends, [Nous Portal](https://portal.nousresearch.com) can cover:
 
@@ -220,11 +292,7 @@ hermes-ultra portal info
 
 You can still bring your own keys for individual tools; gateway routing is per backend, not all-or-nothing.
 
-Deep diagnostics bundle:
-
-```bash
-hermes-ultra doctor --deep --snapshot --bundle
-```
+### Operator Commands
 
 Optional Sentrux MCP profile:
 
@@ -291,7 +359,7 @@ Key operator commands:
 /ops eval run
 ```
 
-## Local Backends
+### Local Backends
 
 `hermes-ultra setup` now includes local/self-host provider options with no mandatory API key:
 
@@ -327,7 +395,7 @@ Override endpoint URLs via env vars:
 
 Detailed guide: [docs/local-backends.md](./docs/local-backends.md)
 
-## Built-In Context + Memory Behavior
+### Built-In Context + Memory Behavior
 
 Ultra auto-loads high-value project and persona context:
 
@@ -339,7 +407,7 @@ Ultra auto-loads high-value project and persona context:
 
 Subdirectory discovery is enabled so context follows the code path being edited.
 
-## Skills and Registry Surface
+### Skills and Registry Surface
 
 Skills commands support multi-registry search/install and local tap flows.
 
@@ -363,7 +431,7 @@ loop detection, resource admission, ContextLattice-first memory lifecycle, and
 objective-to-board planning. Dashboard clients can call `harness.autonomy` via
 `/v1/rpc`; see [Ultra Autonomy Surfaces](./docs/ultra-autonomy-surfaces.md).
 
-## Dashboard OIDC
+### Dashboard OIDC
 
 `hermes-http` supports a Rust-native dashboard OIDC mode while preserving
 `HERMES_HTTP_API_KEY` bearer access for machine clients.
@@ -391,7 +459,7 @@ OpenHuman runbooks and matrices:
 - `docs/implementation/openhuman-p3-swarms-runbook.md`
 - `docs/implementation/openhuman-p3-swarms-surface-matrix.md`
 
-## Security Posture
+### Security Posture
 
 - Skill content security scanning blocks dangerous patterns and restricted URL targets
 - Skill guard modes: `strict` (default), `relaxed` (only blocks destructive `rm` ops), `off`
@@ -409,7 +477,7 @@ Operator runtime overrides (env):
 - `HERMES_FORCE_RUNTIME_AUTH_REFRESH=1`
 - `HERMES_AUTH_REFRESH_MAX_RETRIES=6`
 
-## Upstream Sync and Parity Upkeep
+### Upstream Sync and Parity Upkeep
 
 Ultra uses controlled sync workflows, not blind merges.
 
@@ -423,11 +491,20 @@ Ultra uses controlled sync workflows, not blind merges.
 
 Note: this repository intentionally tracks parity via queue/gate workflows because upstream and ultra history can diverge materially.
 
-## Contributing
+### Architecture Map
 
-Interested in helping? Start with [CONTRIBUTING.md](./CONTRIBUTING.md) for setup, PR expectations, parity rules, and the no-stub completeness gate.
+Primary Rust workspace crates:
 
-## Official References and Attribution
+- `crates/hermes-agent`: agent loop, memory orchestration, provider control
+- `crates/hermes-tools`: tool registry and execution backends
+- `crates/hermes-cli`: CLI/TUI, setup, model/personality switching, operator commands
+- `crates/hermes-gateway`: gateway adapters and live runtime paths
+- `crates/hermes-skills`: skill storage, guardrails, hub and registry pathways
+- `crates/hermes-mcp`: MCP transport/client/server support
+- `crates/hermes-config`: config model and runtime loading
+- `crates/hermes-telemetry`: tracing and metrics surfaces
+
+## Credits
 
 Canonical/official upstream references:
 
@@ -446,22 +523,13 @@ Integrated ecosystem references used in Ultra workflows:
 
 Additional ownership, provenance, and credit notes are maintained in [UPSTREAM_ATTRIBUTION.md](./UPSTREAM_ATTRIBUTION.md).
 
-## Architecture Map
+The banner's lettering uses Cascadia Mono and Besley glyphs (SIL OFL 1.1); its anvil emblem is hand-drawn pixel art.
 
-Primary Rust workspace crates:
+## Licence
 
-- `crates/hermes-agent`: agent loop, memory orchestration, provider control
-- `crates/hermes-tools`: tool registry and execution backends
-- `crates/hermes-cli`: CLI/TUI, setup, model/personality switching, operator commands
-- `crates/hermes-gateway`: gateway adapters and live runtime paths
-- `crates/hermes-skills`: skill storage, guardrails, hub and registry pathways
-- `crates/hermes-mcp`: MCP transport/client/server support
-- `crates/hermes-config`: config model and runtime loading
-- `crates/hermes-telemetry`: tracing and metrics surfaces
-
-## License
-
-Distributed under this repository's license and notices.  
+Distributed under this repository's license and notices: the MIT licence in [LICENSE](./LICENSE) covers contributions made in the fork after it diverged from its upstream, and does not relicense upstream-authored work.  
 See [LICENSE](./LICENSE), [NOTICE](./NOTICE), and [UPSTREAM_ATTRIBUTION.md](./UPSTREAM_ATTRIBUTION.md).
 
-<sub>Post tenebras lux.</sub>
+---
+
+<p align="center"><sub>Post tenebras lux.<br>Made by <a href="https://github.com/yungSNAT">yungSNAT</a>. <i>Ad gloriam eius, non meam.</i></sub></p>
