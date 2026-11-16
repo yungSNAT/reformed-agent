@@ -98,6 +98,16 @@ fn fireworks_never_sends_a_nested_reasoning_object() {
         Some(&serde_json::json!({"reasoning_config": {"effort": ""}})),
     );
     assert!(empty.get("reasoning_effort").is_none());
+
+    // The port-level `reasoning_effort` extra still applies when the
+    // nested config sets no effort.
+    let top_level = direct_provider_body(
+        "fireworks",
+        "accounts/fireworks/models/kimi-k2p6",
+        Some(&serde_json::json!({"reasoning_config": {}, "reasoning_effort": "high"})),
+    );
+    assert_eq!(top_level["reasoning_effort"], "high");
+    assert!(top_level.get("reasoning_config").is_none());
 }
 
 #[test]
