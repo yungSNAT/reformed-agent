@@ -562,7 +562,7 @@ mod tests {
         let key = |kind| {
             Event::Key(KeyEvent::new_with_kind(
                 KeyCode::Down,
-                Default::default(),
+                crossterm::event::KeyModifiers::NONE,
                 kind,
             ))
         };

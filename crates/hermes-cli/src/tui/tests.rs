@@ -12,7 +12,7 @@ mod tests {
         let key = |kind| {
             CrosstermEvent::Key(KeyEvent::new_with_kind(
                 crossterm::event::KeyCode::Up,
-                Default::default(),
+                crossterm::event::KeyModifiers::NONE,
                 kind,
             ))
         };
