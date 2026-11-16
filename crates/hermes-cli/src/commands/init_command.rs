@@ -1,7 +1,13 @@
 //! `/init`: the prompt that asks the agent to write or update the project's
 //! AGENTS.md (upstream `hermes_cli/init_command.py`).
 
+use std::io::Read;
 use std::path::Path;
+
+use super::{emit_command_output, AgentError, App, CommandResult};
+
+/// How an update prompt opens; a generate prompt opens otherwise.
+const UPDATE_OPENING: &str = "[/init] The user wants you to UPDATE";
 
 /// Embedded in every prompt so the file reads as a maintainer wrote it.
 const QUALITY_BAR: &str = "\
@@ -25,10 +31,16 @@ from noise):
   sections (e.g. \"Dev environment\", \"Build & test\", \"Conventions\",
   \"Pitfalls\"). Flat and scannable — no deep nesting.";
 
-/// The `/init` prompt. `existing` is the current AGENTS.md, which switches
-/// the request to an update that keeps the user's content; `extra` is the
+/// The `/init` prompt for the project at `cwd`, whose AGENTS.md is at
+/// `destination`. `existing` is the current AGENTS.md, which switches the
+/// request to an update that keeps the user's content; `extra` is the
 /// user's text after `/init`.
-pub(super) fn build_init_prompt(cwd: &str, existing: Option<&str>, extra: &str) -> String {
+pub(super) fn build_init_prompt(
+    cwd: &str,
+    destination: &str,
+    existing: Option<&str>,
+    extra: &str,
+) -> String {
     let extra = extra.trim();
     let update = existing.is_some();
     let mut parts = vec![
@@ -50,10 +62,9 @@ pub(super) fn build_init_prompt(cwd: &str, existing: Option<&str>, extra: &str) 
              CI workflow configs, lockfiles), then the directory layout, existing \
              README/docs, and test/lint configuration. Learn the real commands, \
              don't guess them.\n\
-             2. Write the file to {}/AGENTS.md with `write_file`{}\n\
+             2. Write the file to {destination} with `write_file`{}\n\
              3. Confirm to the user the exact path you wrote and summarize in one \
              or two lines what the file covers.\n",
-            cwd.trim_end_matches(['/', '\\']),
             if update {
                 " — but this is an UPDATE, so follow the merge discipline below."
             } else {
@@ -87,30 +98,77 @@ pub(super) fn build_init_prompt(cwd: &str, existing: Option<&str>, extra: &str) 
     parts.join("\n")
 }
 
-/// The `/init` prompt for the project at `cwd`, an absolute path. An existing AGENTS.md is
-/// read only when it is a file inside `cwd` (a link may point within the
-/// project) and passes the prompt-injection scan applied to context files;
-/// otherwise the reason comes back and nothing is sent.
+/// `/init [notes]`: asks the agent to write or update AGENTS.md for the
+/// working directory, as the next turn.
+pub(super) fn handle_init_command(
+    app: &mut App,
+    args: &[&str],
+) -> Result<CommandResult, AgentError> {
+    match std::env::current_dir() {
+        Ok(cwd) => queue_init(app, &cwd, &args.join(" ")),
+        Err(err) => emit_command_output(app, format!("Cannot read the working directory: {err}")),
+    }
+    Ok(CommandResult::Handled)
+}
+
+/// Queues the `/init` prompt for the project at `cwd`, or shows why not.
+pub(super) fn queue_init(app: &mut App, cwd: &Path, notes: &str) {
+    match init_prompt_for(cwd, notes) {
+        Ok(prompt) => {
+            // The notes come last, so only the opening tells the modes apart.
+            let update = prompt.starts_with(UPDATE_OPENING);
+            app.queue_pending_agent_seed(prompt);
+            emit_command_output(
+                app,
+                if update {
+                    "Updating AGENTS.md from a project scan."
+                } else {
+                    "Generating AGENTS.md from a project scan."
+                },
+            );
+        }
+        Err(reason) => emit_command_output(app, reason),
+    }
+}
+
+/// The `/init` prompt for the project at `cwd`, an absolute path the agent
+/// is given as text, so it must be UTF-8. An existing AGENTS.md is read only
+/// when it is a file in the project folder itself, or a link to one there
+/// (`AGENTS.md -> CLAUDE.md`), and passes the prompt-injection scan applied
+/// to context files; otherwise the reason comes back and nothing is sent.
 pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String> {
+    let destination = cwd.join("AGENTS.md");
+    let (Some(project), Some(destination)) = (cwd.to_str(), destination.to_str()) else {
+        return Err(format!(
+            "The working directory {} is not valid UTF-8, so /init cannot name it to the agent.",
+            cwd.display()
+        ));
+    };
     let root = cwd
         .canonicalize()
-        .map_err(|err| format!("Cannot read the working directory {}: {err}", cwd.display()))?;
+        .map_err(|err| format!("Cannot read the working directory {project}: {err}"))?;
     let agents = root.join("AGENTS.md");
     let existing = match std::fs::symlink_metadata(&agents) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(format!("Cannot read {}: {err}", agents.display())),
+        Err(err) => return Err(format!("Cannot read {destination}: {err}")),
         Ok(_) => {
             let target = agents
                 .canonicalize()
-                .map_err(|err| format!("Cannot read {}: {err}", agents.display()))?;
-            if !target.starts_with(&root) || !target.is_file() {
+                .map_err(|err| format!("Cannot read {destination}: {err}"))?;
+            // A folder inside the project could be swapped for a link
+            // between this check and the read; the project folder itself
+            // is the user's working directory.
+            if target.parent() != Some(root.as_path()) || !target.is_file() {
                 return Err(format!(
-                    "{} is not a file inside the project; /init leaves it alone.",
-                    agents.display()
+                    "{destination} is not a file in the project folder; /init leaves it alone."
                 ));
             }
-            let content = std::fs::read_to_string(&target)
-                .map_err(|err| format!("Cannot read {}: {err}", agents.display()))?;
+            // Opened without following a link, so a file swapped for one
+            // after the check is refused, not read.
+            let mut content = String::new();
+            super::hermes_migrate::open_regular(&target)
+                .and_then(|mut file| file.read_to_string(&mut content))
+                .map_err(|err| format!("Cannot read {destination}: {err}"))?;
             let scanned = hermes_agent::scan_context_content(&content, "AGENTS.md");
             if scanned != content {
                 return Err(format!("{scanned} Review AGENTS.md, then run /init again."));
@@ -119,7 +177,8 @@ pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String>
         }
     };
     Ok(build_init_prompt(
-        &cwd.display().to_string(),
+        project,
+        destination,
         existing.as_deref(),
         extra,
     ))
@@ -137,8 +196,8 @@ mod tests {
         assert!(prompt.starts_with("[/init] The user wants you to generate an AGENTS.md"));
         assert!(prompt.contains(&format!("for the project at: {}", root.display())));
         assert!(prompt.contains(&format!(
-            "Write the file to {}/AGENTS.md with `write_file`.",
-            root.display()
+            "Write the file to {} with `write_file`.",
+            root.join("AGENTS.md").display()
         )));
         assert!(!prompt.contains("MERGE DISCIPLINE"));
         assert!(!prompt.contains("USER NOTES"));

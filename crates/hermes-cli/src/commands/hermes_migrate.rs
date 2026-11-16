@@ -192,7 +192,7 @@ fn source(path: &Path) -> Source {
 }
 
 /// Opens a regular file without following a link at its last component.
-fn open_regular(path: &Path) -> io::Result<File> {
+pub(super) fn open_regular(path: &Path) -> io::Result<File> {
     let mut options = fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
