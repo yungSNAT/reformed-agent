@@ -1638,6 +1638,9 @@ fn only_a_default_browser_beside_a_local_terminal_is_local() {
     std::env::set_var("TERMINAL_BACKEND", "docker");
     assert!(!CdpBrowserBackend::from_env().is_local_backend());
     assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
+    // A blank TERMINAL_ENV is unset to the loader, which then reads TERMINAL_BACKEND.
+    std::env::set_var("TERMINAL_ENV", "  ");
+    assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
     std::env::set_var("TERMINAL_ENV", "local");
     assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
 
