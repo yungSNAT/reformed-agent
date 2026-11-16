@@ -1039,6 +1039,26 @@ mod tests {
         assert_eq!(modes, vec![0o600]);
     }
 
+    /// The bundle holds logs and diagnostics, so its file is the owner's
+    /// alone, whatever the umask, including a file it overwrites.
+    #[cfg(unix)]
+    #[test]
+    fn support_bundle_file_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let fresh = dir.path().join("fresh.tar.gz");
+        let existing = dir.path().join("existing.tar.gz");
+        std::fs::write(&existing, "old").expect("existing");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod");
+        for path in [&fresh, &existing] {
+            drop(create_bundle_file(path).expect("create bundle"));
+            let mode = std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
+            assert_eq!(mode, 0o600, "{}", path.display());
+        }
+        assert_eq!(std::fs::read(&existing).expect("read"), b"");
+    }
+
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");

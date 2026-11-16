@@ -1079,6 +1079,11 @@ fn replay_manifest_json(summaries: &[ReplayIntegritySummary]) -> serde_json::Val
     })
 }
 
+/// Creates (or truncates) the support bundle file.
+fn create_bundle_file(path: &Path) -> std::io::Result<std::fs::File> {
+    std::fs::File::create(path)
+}
+
 fn append_bundle_bytes(
     tar: &mut tar::Builder<flate2::write::GzEncoder<std::fs::File>>,
     name: &str,
@@ -1118,7 +1123,7 @@ fn build_doctor_support_bundle_with_options(
         std::fs::create_dir_all(parent)
             .map_err(|e| AgentError::Io(format!("mkdir {}: {}", parent.display(), e)))?;
     }
-    let file = std::fs::File::create(&bundle_path)
+    let file = create_bundle_file(&bundle_path)
         .map_err(|e| AgentError::Io(format!("create {}: {}", bundle_path.display(), e)))?;
     let encoder = flate2::write::GzEncoder::new(file, flate2::Compression::default());
     let mut tar = tar::Builder::new(encoder);
