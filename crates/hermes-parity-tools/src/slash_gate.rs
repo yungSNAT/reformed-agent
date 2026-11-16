@@ -6,7 +6,6 @@ use std::path::{Path, PathBuf};
 
 use clap::Args;
 use regex::Regex;
-use serde_json::Value;
 
 use crate::git::git;
 use crate::py::{self, Py};
@@ -109,27 +108,27 @@ pub fn load_allowlist(path: &Path) -> Result<BTreeSet<String>, String> {
     }
     let text = std::fs::read_to_string(path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
-    let raw: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
+    let raw = py::loads(&text).map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
     let values = match &raw {
-        Value::Object(map) => map
+        Py::Dict(_) => raw
             .get("allowed_missing_upstream_commands")
             .cloned()
-            .unwrap_or(Value::Array(Vec::new())),
-        Value::Array(_) => raw.clone(),
-        _ => Value::Array(Vec::new()),
+            .unwrap_or(Py::List(Vec::new())),
+        Py::List(_) => raw.clone(),
+        _ => Py::List(Vec::new()),
     };
     let items: Vec<String> = match values {
-        Value::Array(items) => items.iter().map(py::str_of).collect(),
-        Value::String(s) => s.chars().map(String::from).collect(),
-        Value::Object(map) => map.keys().cloned().collect(),
+        Py::List(items) => items.iter().map(py::str_of).collect(),
+        Py::Str(s) => s.chars().map(String::from).collect(),
+        Py::Dict(pairs) => pairs.into_iter().map(|(k, _)| k).collect(),
         other => {
             return Err(format!(
                 "'{}' object is not iterable",
                 match other {
-                    Value::Null => "NoneType",
-                    Value::Bool(_) => "bool",
-                    _ => "number",
+                    Py::Null => "NoneType",
+                    Py::Bool(_) => "bool",
+                    Py::Int(_) => "int",
+                    _ => "float",
                 }
             ))
         }
@@ -167,12 +166,12 @@ fn fail(args: &SlashGateArgs, report: &Py, report_path: &Path, what: &str) -> Re
 }
 
 pub fn run(args: SlashGateArgs) -> Result<i32, String> {
-    let repo_root = py::resolve(&py::expanduser(&args.repo_root));
+    let repo_root = py::resolve(&py::expanduser(&args.repo_root)?);
     let allowlist_path = py::join(&repo_root, &args.allowlist);
     let report_path = if args.report_path.is_empty() {
         default_report_path(&repo_root)
     } else {
-        py::resolve(&py::expanduser(&args.report_path))
+        py::resolve(&py::expanduser(&args.report_path)?)
     };
     if let Some(parent) = report_path.parent() {
         std::fs::create_dir_all(parent)

@@ -1,4 +1,4 @@
-use serde_json::json;
+use serde_json::{json, Value};
 
 use super::*;
 
@@ -39,8 +39,8 @@ fn iso_dates_parse_as_cpython_fromisoformat_does() {
     }
 }
 
-fn item(value: Value) -> Map<String, Value> {
-    value.as_object().unwrap().clone()
+fn item(value: Value) -> Py {
+    py::loads(&value.to_string()).unwrap()
 }
 
 fn paths(items: &[&str]) -> BTreeSet<String> {
@@ -108,20 +108,31 @@ fn a_broken_item_lists_every_error_in_python_order() {
 
 #[test]
 fn tickets_and_owners_follow_python_types() {
-    let check = |ticket: Value| {
-        let row = validate_item(
-            &item(json!({ "ticket": ticket, "owner": 5 })),
-            &paths(&[]),
-            today(),
-        );
+    let check = |ticket: &str| {
+        let text = format!(r#"{{"ticket": {ticket}, "owner": 5}}"#);
+        let row = validate_item(&py::loads(&text).unwrap(), &paths(&[]), today());
         let errors = py::dumps(row.get("errors").unwrap(), None, false);
         (errors.contains("ticket must be"), row.get("owner").cloned())
     };
-    assert_eq!(check(json!(true)), (false, Some(Py::from("5"))));
-    assert!(check(json!(false)).0);
-    assert!(check(json!(3.0)).0);
-    assert!(check(json!("3")).0);
-    assert!(!check(json!(18446744073709551615u64)).0);
+    assert_eq!(check("true"), (false, Some(Py::from("5"))));
+    assert!(check("false").0);
+    assert!(check("3.0").0);
+    assert!(check(r#""3""#).0);
+    assert!(check("-1").0);
+    assert!(!check("18446744073709551615").0);
+    // Past u64: Python's int still reads 2**64 as a positive integer.
+    assert!(!check("18446744073709551616").0);
+}
+
+#[test]
+fn an_object_owner_prints_its_keys_in_document_order() {
+    // str({"z": 1, "a": 2}) after json.loads keeps the document's order.
+    let row = validate_item(
+        &py::loads(r#"{"owner": {"z": 1, "a": 2}}"#).unwrap(),
+        &paths(&[]),
+        today(),
+    );
+    assert_eq!(row.get("owner"), Some(&Py::from("{'z': 1, 'a': 2}")));
 }
 
 #[test]
@@ -155,10 +166,10 @@ fn the_committed_report_names_the_registry_by_its_repository_path() {
         Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/parity/divergence-validation.json"),
     )
     .unwrap();
-    let report: Value = serde_json::from_str(&report).unwrap();
+    let report = py::loads(&report).unwrap();
     assert_eq!(
-        report["divergence_file"],
-        "docs/parity/intentional-divergence.json"
+        report.get("divergence_file"),
+        Some(&Py::from("docs/parity/intentional-divergence.json"))
     );
 }
 

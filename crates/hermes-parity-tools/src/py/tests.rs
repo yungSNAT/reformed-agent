@@ -1,5 +1,4 @@
 use super::*;
-use serde_json::json;
 
 #[test]
 fn dumps_matches_python_indent_2() {
@@ -55,14 +54,38 @@ fn floats_print_as_python_repr() {
 
 #[test]
 fn str_of_follows_python_str() {
-    assert_eq!(str_of(&json!(null)), "None");
-    assert_eq!(str_of(&json!(true)), "True");
-    assert_eq!(str_of(&json!(7)), "7");
-    assert_eq!(str_of(&json!(7.0)), "7.0");
-    assert_eq!(str_of(&json!("x")), "x");
-    assert_eq!(str_of(&json!(["a", 1, null])), "['a', 1, None]");
-    assert_eq!(str_of(&json!(["it's"])), "[\"it's\"]");
-    assert_eq!(str_of(&json!({"k": false})), "{'k': False}");
+    let str_of = |text: &str| str_of(&loads(text).unwrap());
+    assert_eq!(str_of("null"), "None");
+    assert_eq!(str_of("true"), "True");
+    assert_eq!(str_of("7"), "7");
+    assert_eq!(str_of("7.0"), "7.0");
+    assert_eq!(str_of(r#""x""#), "x");
+    assert_eq!(str_of(r#"["a", 1, null]"#), "['a', 1, None]");
+    assert_eq!(str_of(r#"["it's"]"#), "[\"it's\"]");
+    assert_eq!(str_of(r#"{"k": false}"#), "{'k': False}");
+    assert_eq!(
+        str_of(r#"{"z": 1, "a": [NaN, -Infinity]}"#),
+        "{'z': 1, 'a': [nan, -inf]}"
+    );
+}
+
+#[test]
+fn loads_reads_documents_as_python_does() {
+    // json.loads: a repeated key keeps its first place and last value; big
+    // integers stay integers; escapes and surrogate pairs decode.
+    assert_eq!(
+        loads(r#"{"b": 1, "a": 2, "b": 3}"#).unwrap(),
+        Py::dict([("b", Py::Int(3)), ("a", Py::Int(2))])
+    );
+    assert_eq!(loads("18446744073709551616").unwrap(), Py::Int(1 << 64));
+    assert_eq!(loads("-0.5e1").unwrap(), Py::Float(-5.0));
+    assert_eq!(
+        loads(r#""a\u00e9\ud83d\ude00\n""#).unwrap(),
+        Py::from("a\u{e9}\u{1f600}\n")
+    );
+    for bad in ["", "01", "1.", "[1,]", "{'a': 1}", r#""a"#, "tru", "[1] x"] {
+        assert!(loads(bad).is_err(), "{bad}");
+    }
 }
 
 #[test]
@@ -104,4 +127,30 @@ fn join_uses_the_platform_separator_as_pathlib_does() {
     let joined = join(base, "docs/parity//x.json");
     let expected: PathBuf = ["root", "docs", "parity", "x.json"].iter().collect();
     assert_eq!(joined, expected);
+}
+
+#[test]
+fn expanduser_leaves_a_path_without_a_tilde() {
+    assert_eq!(expanduser("docs/~x").unwrap(), PathBuf::from("docs/~x"));
+}
+
+#[cfg(unix)]
+#[test]
+fn expanduser_reads_a_named_users_home() {
+    // pathlib.Path("~root/x").expanduser() and an unknown user's RuntimeError.
+    assert_eq!(expanduser("~root/x").unwrap(), PathBuf::from("/root/x"));
+    assert!(expanduser("~no-such-user-w6/x").is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn expanduser_puts_another_user_beside_this_home() {
+    // ntpath.expanduser(r"~someone-else\x") with USERPROFILE set.
+    let home = PathBuf::from(std::env::var("USERPROFILE").expect("USERPROFILE"));
+    let expected = home
+        .parent()
+        .expect("profile parent")
+        .join("someone-else")
+        .join("x");
+    assert_eq!(expanduser(r"~someone-else\x").unwrap(), expected);
 }

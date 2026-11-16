@@ -17,10 +17,16 @@ pub fn git(repo_root: &Path, args: &[&str]) -> Result<GitOutput, String> {
         .current_dir(repo_root)
         .output()
         .map_err(|e| format!("could not run git: {e}"))?;
+    // Python decoded git's output strictly (`text=True` under a UTF-8
+    // locale), so a file name that is not UTF-8 stops the run.
+    let decode = |bytes: Vec<u8>| {
+        String::from_utf8(bytes)
+            .map_err(|e| format!("git {} printed text that is not UTF-8: {e}", args.join(" ")))
+    };
     Ok(GitOutput {
         ok: output.status.success(),
-        stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
-        stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
+        stdout: decode(output.stdout)?,
+        stderr: decode(output.stderr)?,
     })
 }
 

@@ -6,7 +6,6 @@ use std::path::Path;
 
 use chrono::{Datelike as _, NaiveDate, Weekday};
 use clap::Args;
-use serde_json::{Map, Value};
 
 use crate::git::{git, git_checked};
 use crate::py::{self, Py};
@@ -122,30 +121,26 @@ pub fn parse_iso_date(value: &str) -> Option<NaiveDate> {
     NaiveDate::from_ymd_opt(year as i32, month, day)
 }
 
-fn str_field(item: &Map<String, Value>, key: &str) -> String {
+fn str_field(item: &Py, key: &str) -> String {
     item.get(key).map(py::str_of).unwrap_or_default()
 }
 
 /// Python's `isinstance(ticket, int) and ticket > 0`; a JSON `true` is the
 /// int 1 to Python.
-fn ticket_is_valid(ticket: Option<&Value>) -> bool {
+fn ticket_is_valid(ticket: Option<&Py>) -> bool {
     match ticket {
-        Some(Value::Bool(b)) => *b,
-        Some(Value::Number(n)) if n.is_i64() || n.is_u64() => n.as_i64().is_none_or(|i| i > 0),
+        Some(Py::Bool(b)) => *b,
+        Some(Py::Int(i)) => *i > 0,
         _ => false,
     }
 }
 
-pub fn validate_item(
-    item: &Map<String, Value>,
-    all_paths: &BTreeSet<String>,
-    now: NaiveDate,
-) -> Py {
+pub fn validate_item(item: &Py, all_paths: &BTreeSet<String>, now: NaiveDate) -> Py {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
     for field in REQUIRED_FIELDS {
-        if !item.contains_key(field) {
+        if item.get(field).is_none() {
             errors.push(format!("missing field: {field}"));
         }
     }
@@ -189,7 +184,7 @@ pub fn validate_item(
     }
 
     let prefixes: Vec<String> = match item.get("path_prefixes") {
-        Some(Value::Array(prefixes)) if !prefixes.is_empty() => prefixes
+        Some(Py::List(prefixes)) if !prefixes.is_empty() => prefixes
             .iter()
             .map(py::str_of)
             .filter(|p| !py::strip(p).is_empty())
@@ -225,7 +220,7 @@ pub fn validate_item(
         ("id", Py::from(str_field(item, "id"))),
         ("status", Py::from(status)),
         ("owner", Py::from(owner)),
-        ("ticket", ticket.map_or(Py::Null, py::from_json)),
+        ("ticket", ticket.cloned().unwrap_or(Py::Null)),
         ("review_date", Py::from(review_date_raw)),
         ("last_reviewed", Py::from(last_reviewed_raw)),
         ("matched_files", Py::from(matched.len())),
@@ -317,20 +312,26 @@ pub fn run(args: DivergenceArgs) -> Result<i32, String> {
 
     let text = std::fs::read_to_string(&div_path)
         .map_err(|e| format!("could not read {}: {e}", div_path.display()))?;
-    let raw: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("invalid JSON in {}: {e}", div_path.display()))?;
+    let raw =
+        py::loads(&text).map_err(|e| format!("invalid JSON in {}: {e}", div_path.display()))?;
     let invalid = || format!("invalid items payload in {}", py::path_str(&div_path));
-    let items = match raw.as_object().ok_or_else(invalid)?.get("items") {
+    if !raw.is_dict() {
+        return Err(invalid());
+    }
+    let items = match raw.get("items") {
         None => Vec::new(),
-        Some(Value::Array(items)) => items.clone(),
+        Some(Py::List(items)) => items.clone(),
         Some(_) => return Err(invalid()),
     };
 
     let mut rows = Vec::new();
     for item in &items {
-        let item = item
-            .as_object()
-            .ok_or_else(|| format!("registry item is not an object: {item}"))?;
+        if !item.is_dict() {
+            return Err(format!(
+                "registry item is not an object: {}",
+                py::repr(item)
+            ));
+        }
         rows.push(validate_item(item, &all_paths, now));
     }
     let list_len = |row: &Py, key: &str| match row.get(key) {

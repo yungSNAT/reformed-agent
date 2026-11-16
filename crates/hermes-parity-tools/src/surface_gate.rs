@@ -5,7 +5,6 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use clap::{Args, ValueEnum};
-use serde_json::Value;
 
 use crate::git::{git, objects_exist};
 use crate::py::{self, Py};
@@ -129,17 +128,16 @@ pub fn load_divergence_items(
     }
     let text = std::fs::read_to_string(&path)
         .map_err(|e| format!("could not read {}: {e}", path.display()))?;
-    let raw: Value = serde_json::from_str(&text)
-        .map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
-    let Value::Object(raw) = raw else {
+    let raw = py::loads(&text).map_err(|e| format!("invalid JSON in {}: {e}", path.display()))?;
+    if !raw.is_dict() {
         return Err(format!(
             "invalid intentional divergence payload: {}",
             path.display()
         ));
-    };
+    }
     let items = match raw.get("items") {
         None => return Ok(Vec::new()),
-        Some(Value::Array(items)) => items,
+        Some(Py::List(items)) => items,
         Some(_) => {
             return Err(format!(
                 "invalid intentional divergence payload: {}",
@@ -147,30 +145,40 @@ pub fn load_divergence_items(
             ))
         }
     };
-    let field = |item: &serde_json::Map<String, Value>, key: &str| {
-        item.get(key).map(py::str_of).unwrap_or_default()
-    };
-    Ok(items
-        .iter()
-        .filter_map(|item| {
-            let item = item.as_object()?;
-            let status = item.get("status")?.as_str()?;
-            if status != "approved" && status != "temporary" {
-                return None;
+    let field = |item: &Py, key: &str| item.get(key).map(py::str_of).unwrap_or_default();
+    let mut active = Vec::new();
+    for item in items {
+        if !item.is_dict() {
+            continue;
+        }
+        // Python tests `status in {"approved", "temporary"}`, which raises
+        // TypeError for a list or dict status, so the gate fails.
+        let status = match item.get("status") {
+            Some(Py::Str(status)) => status.as_str(),
+            Some(value @ (Py::List(_) | Py::Dict(_))) => {
+                return Err(format!(
+                    "unhashable intentional divergence status: {}",
+                    py::str_of(value)
+                ))
             }
-            let prefixes = match item.get("path_prefixes") {
-                None => Vec::new(),
-                Some(Value::Array(prefixes)) => prefixes.iter().map(py::str_of).collect(),
-                Some(_) => return None,
-            };
-            Some(DivergenceItem {
-                id: field(item, "id"),
-                status: status.to_string(),
-                workstream: field(item, "workstream"),
-                path_prefixes: prefixes,
-            })
-        })
-        .collect())
+            _ => continue,
+        };
+        if status != "approved" && status != "temporary" {
+            continue;
+        }
+        let prefixes = match item.get("path_prefixes") {
+            None => Vec::new(),
+            Some(Py::List(prefixes)) => prefixes.iter().map(py::str_of).collect(),
+            Some(_) => continue,
+        };
+        active.push(DivergenceItem {
+            id: field(item, "id"),
+            status: status.to_string(),
+            workstream: field(item, "workstream"),
+            path_prefixes: prefixes,
+        });
+    }
+    Ok(active)
 }
 
 pub struct Owner<'a> {
@@ -367,7 +375,7 @@ fn report_path(args: &SurfaceGateArgs, repo_root: &Path) -> Result<PathBuf, Stri
             py::utc_stamp()
         ))
     } else {
-        py::resolve(&py::expanduser(&args.report_path))
+        py::resolve(&py::expanduser(&args.report_path)?)
     };
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)
@@ -395,7 +403,7 @@ fn write_and_print(
 }
 
 pub fn run(args: SurfaceGateArgs) -> Result<i32, String> {
-    let repo_root = py::resolve(&py::expanduser(&args.repo_root));
+    let repo_root = py::resolve(&py::expanduser(&args.repo_root)?);
     if !repo_root.exists() {
         return Err(format!(
             "repo root does not exist: {}",

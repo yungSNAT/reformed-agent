@@ -1,12 +1,13 @@
 //! The parts of Python's behaviour the ported scripts' output depends on:
-//! `json.dumps` byte for byte (`indent=2` or compact, `ensure_ascii`,
-//! `sort_keys`), `str()` of a parsed JSON value, `str.strip()`,
-//! `datetime.isoformat()` and `pathlib.Path.resolve()`.
+//! `json.loads` and `json.dumps` byte for byte (`indent=2` or compact,
+//! `ensure_ascii`, `sort_keys`), `str()` of a parsed JSON value,
+//! `str.strip()`, `datetime.isoformat()` and `pathlib.Path.resolve()`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
-use serde_json::Value;
+mod loads;
+pub use loads::loads;
 
 /// A JSON value that keeps its keys in insertion order, as a Python dict does.
 #[derive(Debug, Clone, PartialEq)]
@@ -46,6 +47,10 @@ impl Py {
             _ => None,
         }
     }
+
+    pub fn is_dict(&self) -> bool {
+        matches!(self, Py::Dict(_))
+    }
 }
 
 impl From<&str> for Py {
@@ -75,25 +80,6 @@ impl From<usize> for Py {
 impl From<f64> for Py {
     fn from(value: f64) -> Self {
         Py::Float(value)
-    }
-}
-
-/// A parsed JSON value as Python's `json.loads` gives it. Object keys come
-/// back sorted, as serde_json keeps them; only `sort_keys` output reads them.
-pub fn from_json(value: &Value) -> Py {
-    match value {
-        Value::Null => Py::Null,
-        Value::Bool(b) => Py::Bool(*b),
-        Value::Number(n) => match (n.as_i64(), n.as_u64()) {
-            (Some(i), _) => Py::Int(i as i128),
-            (None, Some(u)) => Py::Int(u as i128),
-            _ => Py::Float(n.as_f64().unwrap_or(f64::NAN)),
-        },
-        Value::String(s) => Py::Str(s.clone()),
-        Value::Array(items) => Py::List(items.iter().map(from_json).collect()),
-        Value::Object(map) => {
-            Py::Dict(map.iter().map(|(k, v)| (k.clone(), from_json(v))).collect())
-        }
     }
 }
 
@@ -202,6 +188,12 @@ fn float_json(f: f64) -> String {
 /// fixed notation when the decimal exponent is from -4 to 15, otherwise as
 /// `1.5e+16` or `1e-05`.
 pub fn float_repr(f: f64) -> String {
+    if f.is_nan() {
+        return "nan".to_string();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "inf" } else { "-inf" }.to_string();
+    }
     if f == 0.0 {
         return if f.is_sign_negative() { "-0.0" } else { "0.0" }.to_string();
     }
@@ -237,30 +229,28 @@ pub fn strip(s: &str) -> &str {
 }
 
 /// Python's `str()` of a value `json.loads` produced.
-pub fn str_of(value: &Value) -> String {
+pub fn str_of(value: &Py) -> String {
     match value {
-        Value::String(s) => s.clone(),
+        Py::Str(s) => s.clone(),
         other => repr(other),
     }
 }
 
 /// Python's `repr()` of a value `json.loads` produced.
-pub fn repr(value: &Value) -> String {
+pub fn repr(value: &Py) -> String {
     match value {
-        Value::Null => "None".to_string(),
-        Value::Bool(true) => "True".to_string(),
-        Value::Bool(false) => "False".to_string(),
-        Value::Number(n) => match from_json(value) {
-            Py::Float(f) => float_repr(f),
-            _ => n.to_string(),
-        },
-        Value::String(s) => str_repr(s),
-        Value::Array(items) => {
+        Py::Null => "None".to_string(),
+        Py::Bool(true) => "True".to_string(),
+        Py::Bool(false) => "False".to_string(),
+        Py::Int(i) => i.to_string(),
+        Py::Float(f) => float_repr(*f),
+        Py::Str(s) => str_repr(s),
+        Py::List(items) => {
             let inner: Vec<String> = items.iter().map(repr).collect();
             format!("[{}]", inner.join(", "))
         }
-        Value::Object(map) => {
-            let inner: Vec<String> = map
+        Py::Dict(pairs) => {
+            let inner: Vec<String> = pairs
                 .iter()
                 .map(|(k, v)| format!("{}: {}", str_repr(k), repr(v)))
                 .collect();
@@ -315,23 +305,72 @@ pub fn utc_stamp() -> String {
     chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
 }
 
-/// `pathlib.Path(raw).expanduser()`.
-pub fn expanduser(raw: &str) -> PathBuf {
-    let home = || {
-        std::env::var_os("HOME")
-            .or_else(|| std::env::var_os("USERPROFILE"))
-            .map(PathBuf::from)
+/// `pathlib.Path(raw).expanduser()`: `~` and `~user` become a home
+/// directory as `os.path.expanduser` finds it; a home it cannot find is an
+/// error, as pathlib's RuntimeError is.
+pub fn expanduser(raw: &str) -> Result<PathBuf, String> {
+    if !raw.starts_with('~') {
+        return Ok(PathBuf::from(raw));
+    }
+    let seps: &[char] = if cfg!(windows) { &['/', '\\'] } else { &['/'] };
+    let end = raw[1..].find(seps).map_or(raw.len(), |i| i + 1);
+    let (head, rest) = raw.split_at(end);
+    let user = &head[1..];
+    let home = if cfg!(windows) {
+        windows_home(user)
+    } else {
+        posix_home(user)
     };
-    if raw == "~" {
-        if let Some(home) = home() {
-            return home;
-        }
-    } else if let Some(rest) = raw.strip_prefix("~/").or_else(|| raw.strip_prefix("~\\")) {
-        if let Some(home) = home() {
-            return home.join(rest);
+    let home = home.ok_or_else(|| "Could not determine home directory.".to_string())?;
+    let home = if cfg!(windows) {
+        home
+    } else {
+        home.trim_end_matches('/').to_string()
+    };
+    let joined = home + rest;
+    Ok(PathBuf::from(if joined.is_empty() { "/" } else { &joined }))
+}
+
+/// `posixpath.expanduser`: `$HOME` for `~`, the passwd entry otherwise.
+fn posix_home(user: &str) -> Option<String> {
+    if user.is_empty() {
+        if let Some(home) = std::env::var_os("HOME") {
+            return Some(home.to_string_lossy().into_owned());
         }
     }
-    PathBuf::from(raw)
+    let name = if user.is_empty() {
+        std::env::var("USER").ok()?
+    } else {
+        user.to_string()
+    };
+    // shortcut: reads /etc/passwd where Python asks NSS (getpwnam); users
+    // known only to LDAP or similar are not found.
+    let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
+    passwd.lines().find_map(|line| {
+        let fields: Vec<&str> = line.split(':').collect();
+        (fields.len() >= 7 && fields[0] == name).then(|| fields[5].to_string())
+    })
+}
+
+/// `ntpath.expanduser`: `%USERPROFILE%` (else `%HOMEDRIVE%%HOMEPATH%`), and
+/// for another user's name the sibling directory of that home.
+fn windows_home(user: &str) -> Option<String> {
+    let home = match std::env::var("USERPROFILE") {
+        Ok(profile) => profile,
+        Err(_) => {
+            let path = std::env::var("HOMEPATH").ok()?;
+            std::env::var("HOMEDRIVE").unwrap_or_default() + &path
+        }
+    };
+    if user.is_empty() {
+        return Some(home);
+    }
+    let home_path = Path::new(&home);
+    if home_path.file_name().is_some_and(|name| name == user) {
+        return Some(home);
+    }
+    let parent = home_path.parent().unwrap_or(Path::new(""));
+    Some(parent.join(user).to_string_lossy().into_owned())
 }
 
 /// `pathlib.Path.resolve()`: absolute, with symbolic links resolved as far as
