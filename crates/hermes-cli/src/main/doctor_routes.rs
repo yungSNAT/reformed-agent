@@ -1079,9 +1079,21 @@ fn replay_manifest_json(summaries: &[ReplayIntegritySummary]) -> serde_json::Val
     })
 }
 
-/// Creates (or truncates) the support bundle file.
+/// Creates (or truncates) the support bundle file. It holds logs and
+/// diagnostics, so on Unix it is the owner's alone: created that way, and an
+/// existing file is narrowed before anything is written to it.
 fn create_bundle_file(path: &Path) -> std::io::Result<std::fs::File> {
-    std::fs::File::create(path)
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let file = options.open(path)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+    }
+    Ok(file)
 }
 
 fn append_bundle_bytes(
