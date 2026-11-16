@@ -203,8 +203,9 @@ fn reply_to(text: &str) -> Option<Value> {
     }
 }
 
-/// Notifications (a method, no id) and responses to our own requests (an id with a result or
-/// an error) get no reply; anything else that is not a request gets -32600.
+/// A request carries "jsonrpc": "2.0" and a non-empty string method. Notifications (a request
+/// with no id) and responses to our own requests (an id with a result or an error) get no
+/// reply; anything else gets -32600.
 fn reply_to_one(frame: &Value) -> Option<Value> {
     let invalid = |id: Option<&Value>| {
         let id = id.cloned().unwrap_or(Value::Null);
@@ -214,8 +215,9 @@ fn reply_to_one(frame: &Value) -> Option<Value> {
         return invalid(None);
     };
     let id = request.get("id");
+    let version_2 = request.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
     match request.get("method") {
-        Some(Value::String(method)) => {
+        Some(Value::String(method)) if version_2 && !method.is_empty() => {
             id.map(|id| rpc_error(id.clone(), -32601, format!("method not found: {method}")))
         }
         Some(_) => invalid(id),
