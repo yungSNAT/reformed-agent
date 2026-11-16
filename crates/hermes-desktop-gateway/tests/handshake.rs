@@ -157,6 +157,31 @@ async fn an_unknown_method_gets_method_not_found_with_its_id() {
     socket.send(Message::text("[]")).await.unwrap();
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["error"]["code"], -32600);
+
+    // Malformed requests get -32600, alone or in a batch; a response to us still gets none.
+    let malformed = [
+        json!({"jsonrpc": "2.0", "id": 5, "method": 7}),
+        json!({"jsonrpc": "2.0", "id": 6}),
+        json!({"jsonrpc": "2.0"}),
+    ];
+    for frame in &malformed {
+        socket.send(Message::text(frame.to_string())).await.unwrap();
+        let reply = next_json(&mut socket).await;
+        assert_eq!(reply["error"]["code"], -32600, "{frame}");
+    }
+    let batch = json!([
+        malformed[0],
+        {"jsonrpc": "2.0", "id": 8, "result": {}},
+        malformed[1],
+    ]);
+    socket.send(Message::text(batch.to_string())).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    let replies = reply.as_array().expect("a batch reply is an array");
+    assert_eq!(replies.len(), 2, "{reply}");
+    assert_eq!(replies[0]["id"], 5);
+    assert_eq!(replies[0]["error"]["code"], -32600);
+    assert_eq!(replies[1]["id"], 6);
+    assert_eq!(replies[1]["error"]["code"], -32600);
 }
 
 #[tokio::test]
