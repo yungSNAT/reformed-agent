@@ -1039,26 +1039,6 @@ mod tests {
         assert_eq!(modes, vec![0o600]);
     }
 
-    /// The bundle holds logs and diagnostics, so its file is the owner's
-    /// alone, whatever the umask, including a file it overwrites.
-    #[cfg(unix)]
-    #[test]
-    fn support_bundle_file_is_owner_only() {
-        use std::os::unix::fs::PermissionsExt;
-        let dir = tempfile::tempdir().expect("tempdir");
-        let fresh = dir.path().join("fresh.tar.gz");
-        let existing = dir.path().join("existing.tar.gz");
-        std::fs::write(&existing, "old").expect("existing");
-        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644))
-            .expect("chmod");
-        for path in [&fresh, &existing] {
-            drop(create_bundle_file(path).expect("create bundle"));
-            let mode = std::fs::metadata(path).expect("metadata").permissions().mode() & 0o777;
-            assert_eq!(mode, 0o600, "{}", path.display());
-        }
-        assert_eq!(std::fs::read(&existing).expect("read"), b"");
-    }
-
     /// A bundle written over an existing file never reaches a reader who
     /// already holds that file open, as narrowing its mode would not stop one.
     #[cfg(unix)]
@@ -1088,6 +1068,17 @@ mod tests {
         assert_eq!(mode, 0o600);
         let bundle = std::fs::read(&existing).expect("read bundle");
         assert_eq!(&bundle[..2], &[0x1f, 0x8b], "not a gzip file");
+
+        let fresh = dir.path().join("out").join("fresh.tar.gz");
+        build_doctor_support_bundle_with_options(&cli, &snapshot, Some(&fresh), true)
+            .expect("fresh bundle");
+        let mode = std::fs::metadata(&fresh).expect("metadata").permissions().mode() & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
     }
 
     include!("tests/provider_setup.rs");
