@@ -46,16 +46,25 @@ async fn next_json(
     }
 }
 
+/// `auth_required: false` tells the desktop this is a token gateway; `true` means an OAuth
+/// gate (upstream `apps/desktop/electron/connection-config.ts`, `authModeFromStatus`).
 #[tokio::test]
-async fn status_is_public_and_names_the_version() {
+async fn status_and_health_are_public_and_report_token_auth() {
     let addr = start().await;
-    let response = reqwest::get(format!("http://{addr}/api/status"))
+    for path in ["/api/status", "/api/health"] {
+        let response = reqwest::get(format!("http://{addr}{path}")).await.unwrap();
+        assert_eq!(response.status(), 200, "{path}");
+        let body: Value = response.json().await.unwrap();
+        assert_eq!(body["version"], env!("CARGO_PKG_VERSION"), "{path}");
+        assert_eq!(body["auth_required"], false, "{path}");
+    }
+    let health: Value = reqwest::get(format!("http://{addr}/api/health"))
+        .await
+        .unwrap()
+        .json()
         .await
         .unwrap();
-    assert_eq!(response.status(), 200);
-    let body: Value = response.json().await.unwrap();
-    assert_eq!(body["version"], env!("CARGO_PKG_VERSION"));
-    assert_eq!(body["auth_required"], true);
+    assert_eq!(health["ok"], true);
 }
 
 #[tokio::test]
