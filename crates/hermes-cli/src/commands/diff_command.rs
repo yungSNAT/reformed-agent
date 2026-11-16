@@ -40,9 +40,9 @@ pub(super) async fn handle_diff_command(
     Ok(CommandResult::Handled)
 }
 
-/// The folder `/diff` reads: `TERMINAL_CWD` when set, as for the terminal
-/// tool, else the process's working directory.
-fn diff_cwd(terminal_cwd: Option<OsString>) -> Result<PathBuf, String> {
+/// The folder `/diff` reads and `/init` writes AGENTS.md in: `TERMINAL_CWD`
+/// when set, as for the terminal tool, else the process's working directory.
+pub(super) fn diff_cwd(terminal_cwd: Option<OsString>) -> Result<PathBuf, String> {
     match terminal_cwd.filter(|cwd| !cwd.is_empty()) {
         Some(cwd) => Ok(PathBuf::from(cwd)),
         None => std::env::current_dir()

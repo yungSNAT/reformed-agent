@@ -63,6 +63,7 @@ const COMMAND_CATALOG_SECTIONS: &[CommandCatalogSection] = &[
             "/subgoal",
             "/plan",
             "/prompt",
+            "/init",
             "/learn",
             "/ask",
             "/steer",
