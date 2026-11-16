@@ -12,7 +12,7 @@
 [![CI](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml?query=branch%3Amain) [![Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml?query=branch%3Amain) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=yungSNAT_reformed-agent&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=yungSNAT_reformed-agent)<br>
 [![rust: 1.99.1](.github/assets/badges/rust.svg)](rust-toolchain.toml) [![licence: MIT (fork contributions)](.github/assets/badges/licence.svg)](#licence) [![fork of: hermes-agent-ultra](.github/assets/badges/fork-of.svg)](https://github.com/sheawinkler/hermes-agent-ultra)
 
-[Install](#install) · [Use](#use) · [Against Hermes Agent](#against-hermes-agent) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Documentation](#documentation) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
+[Install](#install) · [Use](#use) · [Against Hermes Agent](#against-hermes-agent) · [Against OpenClaw](#against-openclaw) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Documentation](#documentation) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
 
 </div>
 
@@ -129,6 +129,20 @@ What Reformed has against [Hermes Agent v0.23.1](https://github.com/NousResearch
 | Licence | MIT for the fork's contributions ([LICENSE](./LICENSE)) | MIT ([LICENSE](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/LICENSE)) |
 
 Slash-command and surface parity is measured against an earlier upstream revision; see [Status](#status).
+
+## Against OpenClaw
+
+What Reformed has against [OpenClaw v2026.11.4](https://github.com/openclaw/openclaw/releases/tag/v2026.11.4) (`d843d6af`, released 16 November 2026), checked on 16 November 2026 against this repository's `main` and OpenClaw's source at that tag. Each cell links its evidence.
+
+| Area | Reformed Agent | OpenClaw v2026.11.4 |
+| --- | --- | --- |
+| Runtime | One Rust binary; no Python or Node.js ([Footprint](#footprint)) | Node.js 24.16 or later, or 26.1 or later; its installers provide one when needed ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L26-L41)) |
+| Start-up and size | 46.7 ms cold `--version`; 44.8 MB binary ([Footprint](#footprint), measured against v2026.11.3) | 577 ms cold `--version`; 546.8 MB npm prefix, at v2026.11.3 ([Footprint](#footprint)) |
+| Install | From source only; no release yet ([Install](#install)) | Installers for macOS, Linux, WSL2 and Windows, and the `openclaw` npm package ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L24-L47)) |
+| Desktop and mobile apps | None | Apps for macOS, iOS, Android, Windows and Linux ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L18), [`apps`](https://github.com/openclaw/openclaw/tree/v2026.11.4/apps)) |
+| Chat platforms | 17 built in ([Against Hermes Agent](#against-hermes-agent)); OpenClaw has no channel for BlueBubbles, DingTalk, Home Assistant, ntfy, QQ Bot, WeCom or Weixin | 25 bundled channel plugins, adding Buzz, ClickClack, Google Chat, iMessage, IRC, LINE, Microsoft Teams, Nextcloud Talk, Nostr, Raft, Synology Chat, Tlon, Twitch, X, Zalo and Zalo Personal (the plugins in [`extensions`](https://github.com/openclaw/openclaw/tree/v2026.11.4/extensions) whose `openclaw.plugin.json` has the `channels` category); email arrives through an IMAP trigger ([`imap`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/imap/openclaw.plugin.json)) |
+| Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs)) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From Hermes, Claude Code and Claude Desktop ([`migrate-hermes`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/migrate-hermes/openclaw.plugin.json), [`migrate-claude`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/migrate-claude/openclaw.plugin.json)) |
+| Licence | MIT for the fork's contributions ([LICENSE](./LICENSE)) | MIT ([LICENSE](https://github.com/openclaw/openclaw/blob/v2026.11.4/LICENSE)) |
 
 ## Status
 
