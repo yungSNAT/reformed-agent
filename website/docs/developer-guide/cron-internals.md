@@ -26,7 +26,7 @@ Four schedule formats are supported:
 |--------|---------|----------|
 | **Relative delay** | `30m`, `2h`, `1d` | One-shot, fires after the specified duration |
 | **Interval** | `every 2h`, `every 30m` | Recurring, fires at regular intervals |
-| **Cron expression** | `0 9 * * *` | Standard 5-field cron syntax (minute, hour, day, month, weekday) |
+| **Cron expression** | `0 9 * * *` | Standard 5-field cron syntax (minute, hour, day, month, weekday); when day and weekday are both restricted (neither is `*`), a day matching either runs the job |
 | **ISO timestamp** | `2025-01-15T09:00:00` | One-shot, fires at the exact time |
 
 The model-facing surface is a single `cronjob` tool with action-style operations: `create`, `list`, `update`, `pause`, `resume`, `run`, `remove`.

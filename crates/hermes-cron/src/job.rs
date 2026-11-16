@@ -1,7 +1,7 @@
 //! Cron job definition and related types.
 
 use chrono::{DateTime, Utc};
-use cron::Schedule;
+use cron::{Schedule, TimeUnitSpec};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -117,7 +117,9 @@ pub struct CronJob {
     /// Human-readable name for this job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Cron expression schedule (e.g. "0 9 * * *" for 9am daily).
+    /// Cron expression schedule (e.g. "0 9 * * *" for 9am daily). As in
+    /// standard cron, when day of month and day of week are both restricted
+    /// (neither is `*` or `?`), a day matching either runs the job.
     pub schedule: String,
     /// The prompt to send to the agent when this job fires.
     pub prompt: String,
@@ -263,15 +265,50 @@ impl CronJob {
     /// The `cron` crate requires 7-field format (sec min hour dom month dow year).
     /// If the user provides a 5-field expression (min hour dom month dow), we
     /// automatically prepend "0 " (run at second 0) and append " *" (any year).
+    ///
+    /// The `cron` crate runs a day only when both day fields match. Standard
+    /// cron (POSIX crontab, Vixie cron, croniter as Hermes uses it) runs a day
+    /// when either matches if both are restricted, so such a schedule is read
+    /// as 2 schedules, one per day field, and the earlier run wins. A field is
+    /// unrestricted when it is `*` or `?`, or, as croniter reads it, when it
+    /// lists every value and the other day field's expression holds a `*`.
     fn parse_next_run(schedule: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let normalized = Self::normalize_cron_expr(schedule);
-        match normalized.parse::<Schedule>() {
-            Ok(sched) => sched.after(&after).next().map(|dt: DateTime<Utc>| dt),
+        let parse = |expression: &str| match expression.parse::<Schedule>() {
+            Ok(sched) => Some(sched),
             Err(e) => {
-                tracing::warn!("Failed to parse cron expression '{}': {}", normalized, e);
+                tracing::warn!("Failed to parse cron expression '{}': {}", expression, e);
                 None
             }
+        };
+        let next = |expression: &str| Some(parse(expression)?.after(&after).next());
+        let sched = parse(&normalized)?;
+        // The day fields as written; 5-field weekdays are renamed when normalized.
+        let written: Vec<&str> = schedule.split_whitespace().collect();
+        let (day_written, weekday_written) = match written[..] {
+            [_, _, day, _, weekday] => (day, weekday),
+            [_, _, _, day, _, weekday, ..] => (day, weekday),
+            _ => ("*", "*"),
+        };
+        let unrestricted = |field: &str, all: bool, other: &str| {
+            matches!(field, "*" | "?") || (all && other.contains('*'))
+        };
+        if let [second, minute, hour, day, month, weekday, year] =
+            normalized.split_whitespace().collect::<Vec<_>>()[..]
+        {
+            let day_all = sched.days_of_month().is_all();
+            let weekday_all = sched.days_of_week().is_all();
+            if !unrestricted(day_written, day_all, weekday_written)
+                && !unrestricted(weekday_written, weekday_all, day_written)
+            {
+                let by_day = next(&format!("{second} {minute} {hour} {day} {month} * {year}"))?;
+                let by_weekday = next(&format!(
+                    "{second} {minute} {hour} * {month} {weekday} {year}"
+                ))?;
+                return by_day.into_iter().chain(by_weekday).min();
+            }
         }
+        sched.after(&after).next()
     }
 
     /// Normalize a cron expression to 7-field format.
@@ -439,6 +476,34 @@ mod tests {
         assert_eq!(job.run_count, 0);
         assert!(job.next_run.is_some());
         assert!(!job.id.is_empty());
+    }
+
+    #[test]
+    fn restricted_day_of_month_and_day_of_week_fire_when_either_matches() {
+        use chrono::TimeZone;
+        // Monday 16 November 2026; Friday 13 November has passed.
+        let after = Utc.with_ymd_and_hms(2026, 11, 16, 0, 0, 0).unwrap();
+        let next = |schedule: &str| {
+            CronJob::new(schedule, "x")
+                .compute_next_run(after)
+                .unwrap_or_else(|| panic!("{schedule} does not parse"))
+        };
+        let day = |month, day| Utc.with_ymd_and_hms(2026, month, day, 9, 0, 0).unwrap();
+        // Both restricted: the 13th or a Friday, whichever comes first.
+        assert_eq!(next("0 9 13 * 5"), day(11, 20));
+        assert_eq!(next("0 9 17 * 5"), day(11, 17));
+        assert_eq!(next("0 0 9 13 * Fri"), day(11, 20));
+        // Only `*` (or `?`) leaves a field unrestricted; `*/1` restricts it.
+        assert_eq!(next("0 9 */1 * 5"), day(11, 16));
+        assert_eq!(next("0 9 13 * *"), day(12, 13));
+        assert_eq!(next("0 9 13 * ?"), day(12, 13));
+        assert_eq!(next("0 9 * * 5"), day(11, 20));
+        assert_eq!(next("0 9 ? * 5"), day(11, 20));
+        // As croniter, unlike POSIX: a field listing every value counts as
+        // unrestricted when the other day field's expression holds a `*`.
+        assert_eq!(next("0 9 1-31 * */2"), day(11, 17));
+        assert_eq!(next("0 9 */2 * 0-6"), day(11, 17));
+        assert_eq!(next("0 9 1-31 * 2"), day(11, 16));
     }
 
     #[test]
