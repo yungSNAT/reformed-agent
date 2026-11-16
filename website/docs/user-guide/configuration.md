@@ -85,6 +85,10 @@ Leaving these unset keeps the legacy defaults (`HERMES_API_TIMEOUT=1800`s, `HERM
 
 Hermes supports seven terminal backends. Each determines where the agent's shell commands actually execute — your local machine, a Docker container, a remote server via SSH, a Modal cloud sandbox (direct or via the Nous-managed gateway), a Daytona workspace, a Vercel Sandbox, or a Singularity/Apptainer container.
 
+:::warning
+Reformed builds 4 of these: `local`, `docker`, `ssh` and `singularity`. With `terminal.backend` set to `modal` or `daytona`, commands and file operations stop with an error instead of running on your machine. Reformed has no `vercel_sandbox` backend.
+:::
+
 ```yaml
 terminal:
   backend: local    # local | docker | ssh | modal | daytona | vercel_sandbox | singularity
