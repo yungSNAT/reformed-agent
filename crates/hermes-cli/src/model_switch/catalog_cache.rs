@@ -238,26 +238,20 @@ fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    write_through_fresh_tmp(
-        &cache_path.with_extension("json.tmp"),
-        &cache_path,
-        &payload_bytes,
-    );
-    write_through_fresh_tmp(&sig_path.with_extension("sig.json.tmp"), &sig_path, &sig_bytes);
+    write_by_rename(&cache_path, &payload_bytes);
+    write_by_rename(&sig_path, &sig_bytes);
 }
 
-/// Writes `bytes` to `tmp`, then renames it over `path`. `tmp` is created
-/// anew, so a link planted there is removed rather than written through.
-fn write_through_fresh_tmp(tmp: &std::path::Path, path: &std::path::Path, bytes: &[u8]) {
-    let _ = std::fs::remove_file(tmp);
-    let Ok(mut file) = std::fs::OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(tmp)
-    else {
+/// Writes `bytes` to a new, randomly named file beside `path`, then renames
+/// it over `path`, so no link planted in the cache folder is written through.
+fn write_by_rename(path: &std::path::Path, bytes: &[u8]) {
+    let Some(dir) = path.parent() else {
+        return;
+    };
+    let Ok(mut file) = tempfile::NamedTempFile::new_in(dir) else {
         return;
     };
     if file.write_all(bytes).and_then(|()| file.flush()).is_ok() {
-        let _ = std::fs::rename(tmp, path);
+        let _ = file.persist(path);
     }
 }
