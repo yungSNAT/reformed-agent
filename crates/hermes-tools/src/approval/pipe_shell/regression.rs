@@ -676,7 +676,7 @@ fn accepted_false_positives_still_ask() {
     // is attached, and `cat` only prints a body that saves a file, but both
     // ask: telling them apart needs expansion-order modelling. R3388: a
     // fetch's stdout redirection names a saved file whatever its output
-    // flags, as narrowing that needs where each tool writes for every flag
+    // flags: narrowing that needs where each tool writes for every flag
     // form, and each miss there is a bypass.
     expect(
         hits,

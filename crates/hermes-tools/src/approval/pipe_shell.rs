@@ -27,11 +27,16 @@
 //! copy or rename, or under a name the server chooses (`curl -J`), zsh-only
 //! syntax other than `=cmd`, and PowerShell.
 //!
-//! Accepted false positives (R3389), both failing safe: `eval "$(cat)"
+//! Accepted false positives, all failing safe. R3389: `eval "$(cat)"
 //! <<EOF` scans the body as code although bash expands `$(cat)` before a
 //! simple command's here-document is attached, and `cat <<'EOF' | bash`
 //! flags a body that only saves a file with `curl -o`. Telling either apart
-//! needs expansion-order modelling the lexer does not have.
+//! needs expansion-order modelling the lexer does not have. R3388: a fetch's
+//! stdout redirection target counts as a saved name whatever its output
+//! flags, so `wget -q https://x/data.json > install.sh && bash install.sh`
+//! asks although wget saves the body to `data.json`. Narrowing it needs
+//! knowing where each fetch tool writes for every flag form, and each miss
+//! there is a bypass.
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
@@ -309,8 +314,6 @@ struct Command {
     urls: Vec<Option<String>>,
     /// Its stdout redirections' file names; `None` when computed.
     stdout: Vec<Option<String>>,
-    /// An output option names or may name stdout (`-o -`, `-O-`, `-o "$OUT"`).
-    output_stdout: bool,
     /// `-s`: the shell reads its script from stdin, so it has no script operand.
     no_script: bool,
     /// A shell without `-c`, `source` or `.`: its first operand may be a script.
@@ -638,8 +641,9 @@ impl Walk<'_> {
     /// wget (`-O`, `--output-document`), and its URLs.
     fn save(&mut self, word: &Word, output: bool) {
         if output {
+            self.list().command.output_given = true;
             let name = self.static_name(word);
-            self.output_name(name, &word.value, word.computed);
+            self.saved_name(name);
             return;
         }
         let value = word.value.as_str();
@@ -696,23 +700,11 @@ impl Walk<'_> {
             None
         };
         if let Some(attached) = attached {
+            self.list().command.output_given = true;
             let name = self
                 .static_name(word)
                 .map(|_| file_name(attached))
                 .filter(|name| !name.is_empty());
-            self.output_name(name, attached, word.computed);
-        }
-    }
-
-    /// Notes a fetch's output option naming `path`, whose file name is
-    /// `name` (`None` when computed). `-` and the stdout device paths are
-    /// stdout; a path with any computed part (`"/proc/$$/fd/1"`) may be either.
-    fn output_name(&mut self, name: Option<&str>, path: &str, computed: bool) {
-        const STDOUT: [&str; 4] = ["-", "/dev/stdout", "/dev/fd/1", "/proc/self/fd/1"];
-        let command = &mut self.list().command;
-        command.output_given = true;
-        command.output_stdout |= computed || name.is_none() || STDOUT.contains(&path);
-        if name.is_none() || !STDOUT.contains(&path) {
             self.saved_name(name);
         }
     }
@@ -898,11 +890,7 @@ impl Walk<'_> {
                 self.saved_name(name.as_deref());
             }
         }
-        // curl writes the body to stdout unless told to save it; wget only
-        // with `-O -`.
-        let to_stdout =
-            command.output_stdout || !(command.wget || command.output_given || command.remote_name);
-        if command.fetch && to_stdout {
+        if command.fetch {
             for name in &command.stdout {
                 self.saved_name(name.as_deref());
             }
