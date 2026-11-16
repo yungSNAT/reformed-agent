@@ -632,6 +632,7 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
             .env_remove("GIT_CONFIG")
             .stdin(std::process::Stdio::null())
             .suppress_windows_console(),
+        GIT_SNAPSHOT_TIMEOUT,
     )?;
     // Refuse the snapshot if the listing fails, rather than running status
     // with an incomplete set of overrides.
@@ -704,19 +705,27 @@ fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     Some(cmd)
 }
 
+/// A `git` command for reading the repository at `root` that its own
+/// configuration cannot use to run a program, as for the snapshot, or `None`
+/// when the installed git is older than 2.39.1 or the configuration cannot
+/// be read. Run it with [`output_within_timeout`].
+pub fn read_only_git(root: &Path) -> Option<Command> {
+    workspace_git(root, lazy_fetch_guard()?)
+}
+
 /// How long one git call of the snapshot may take. A config key can name a
 /// FIFO (`include.path`, `mailmap.file`), and git then waits for a writer
 /// that never comes.
 const GIT_SNAPSHOT_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// The command's exit status and standard output, or `None` when it cannot
-/// start, outlasts `GIT_SNAPSHOT_TIMEOUT` (it is then killed) or leaves its
-/// output open past it.
+/// start, outlasts `timeout` (it is then killed) or leaves its output open
+/// past it.
 ///
 /// shortcut: only git itself is killed, so a process git started and left
 /// blocked keeps running, and so does the thread reading the output it
 /// holds open; killing git's process group would end both.
-fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
+pub fn output_within_timeout(cmd: &mut Command, timeout: Duration) -> Option<Output> {
     let mut child = cmd
         .stdout(Stdio::piped())
         .stderr(Stdio::null())
@@ -729,7 +738,7 @@ fn output_within_timeout(cmd: &mut Command) -> Option<Output> {
         let mut buf = Vec::new();
         let _ = read.send(stdout.read_to_end(&mut buf).map(|_| buf));
     });
-    let deadline = Instant::now() + GIT_SNAPSHOT_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let status = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status,
@@ -761,12 +770,10 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
     };
     // A submodule has its own config and filter drivers. Read its committed
     // gitlink state, but never run status inside its dirty worktree.
-    let status = output_within_timeout(git.args([
-        "status",
-        "--short",
-        "--branch",
-        "--ignore-submodules=dirty",
-    ]));
+    let status = output_within_timeout(
+        git.args(["status", "--short", "--branch", "--ignore-submodules=dirty"]),
+        GIT_SNAPSHOT_TIMEOUT,
+    );
     let Some(output) = status else {
         return;
     };
@@ -810,8 +817,10 @@ fn append_git_snapshot(root: &Path, guard: LazyFetchGuard, lines: &mut Vec<Strin
 }
 
 fn git_last_commit(root: &Path, guard: LazyFetchGuard) -> Option<String> {
-    let output =
-        output_within_timeout(workspace_git(root, guard)?.args(["log", "-1", "--oneline"]))?;
+    let output = output_within_timeout(
+        workspace_git(root, guard)?.args(["log", "-1", "--oneline"]),
+        GIT_SNAPSHOT_TIMEOUT,
+    )?;
     if !output.status.success() {
         return None;
     }
@@ -1582,7 +1591,10 @@ mod tests {
     #[test]
     fn output_held_open_after_exit_is_given_up_on() {
         let started = Instant::now();
-        let output = output_within_timeout(Command::new("sh").args(["-c", "sleep 30 & exit 0"]));
+        let output = output_within_timeout(
+            Command::new("sh").args(["-c", "sleep 30 & exit 0"]),
+            GIT_SNAPSHOT_TIMEOUT,
+        );
         assert!(output.is_none());
         assert!(started.elapsed() < GIT_SNAPSHOT_TIMEOUT + Duration::from_secs(5));
     }

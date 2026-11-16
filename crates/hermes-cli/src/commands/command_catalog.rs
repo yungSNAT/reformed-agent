@@ -84,6 +84,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/snap", "Alias for /snapshot"),
     ("/rollback", "List rollback checkpoints"),
     (
+        "/diff",
+        "Show git changes in the working directory (`/diff [staged|all] [--stat] [path...]`)",
+    ),
+    (
         "/model",
         "Show/switch models, run capability diagnostics (`/model explain`, `why-not`, `harness`, `backend`), or configure failover (`/model failover`)",
     ),

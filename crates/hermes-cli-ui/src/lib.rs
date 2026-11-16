@@ -28,6 +28,7 @@ const COMMAND_CATALOG_SECTIONS: &[CommandCatalogSection] = &[
             "/timetravel",
             "/snapshot",
             "/rollback",
+            "/diff",
             "/queue",
             "/background",
             "/save",
