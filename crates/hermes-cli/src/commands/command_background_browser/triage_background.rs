@@ -851,20 +851,31 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
     })
 }
 
-/// The background jobs folder, created if missing.
+/// The background jobs folder, created if missing. Job files hold the task
+/// and its output, so on Unix the folder is the owner's alone, one created
+/// open by an older version included.
 fn background_jobs_dir() -> Result<PathBuf, AgentError> {
     let jobs_dir = hermes_config::hermes_home().join("background_jobs");
-    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
+    let io_error = |e: std::io::Error| {
         AgentError::Io(format!(
             "Failed to create background job directory {}: {}",
             jobs_dir.display(),
             e
         ))
-    })?;
+    };
+    std::fs::create_dir_all(&jobs_dir).map_err(io_error)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&jobs_dir, std::fs::Permissions::from_mode(0o700))
+            .map_err(io_error)?;
+    }
     Ok(jobs_dir)
 }
 
-/// Starts `exe chat --query` for a background task.
+/// Starts `exe chat --query -` for a background task and writes the task to
+/// its standard input: on the command line, other local users could read it
+/// while the child runs.
 fn spawn_background_child(
     exe: &std::path::Path,
     task: &str,
@@ -872,8 +883,8 @@ fn spawn_background_child(
     let mut cmd = tokio::process::Command::new(exe);
     cmd.arg("chat")
         .arg("--query")
-        .arg(task)
-        .stdin(Stdio::null())
+        .arg("-")
+        .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
     cmd.suppress_windows_console();
@@ -883,7 +894,17 @@ fn spawn_background_child(
     if let Ok(home) = std::env::var("HERMES_HOME") {
         cmd.env("HERMES_HOME", home);
     }
-    cmd.spawn()
+    let mut child = cmd.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let task = task.to_string();
+        // Written alongside the wait, so a child that stops reading cannot
+        // stall it; dropping the pipe afterwards ends the child's input.
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(task.as_bytes()).await;
+        });
+    }
+    Ok(child)
 }
 
 fn handle_background_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {

@@ -48,3 +48,22 @@
         let mode = std::fs::metadata(&jobs).unwrap().permissions().mode() & 0o777;
         assert_eq!(mode, 0o700, "background_jobs mode {mode:o}");
     }
+
+    /// `--query -` takes the query from standard input; any other query, or
+    /// none, is left as given, and an empty input is refused.
+    #[test]
+    fn chat_query_dash_reads_standard_input() {
+        let read = |query: Option<&str>, input: &str| {
+            read_chat_query(query.map(str::to_string), input.as_bytes())
+        };
+        assert_eq!(
+            read(Some("-"), "  the task\n").unwrap().as_deref(),
+            Some("the task")
+        );
+        assert_eq!(
+            read(Some("hello"), "ignored").unwrap().as_deref(),
+            Some("hello")
+        );
+        assert_eq!(read(None, "ignored").unwrap(), None);
+        assert!(read(Some("-"), " \n").is_err());
+    }
