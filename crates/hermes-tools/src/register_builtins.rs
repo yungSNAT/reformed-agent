@@ -628,15 +628,6 @@ fn register_builtin_tools_with_data_dir(
         vec![],
     );
 
-    // -- Env passthrough -----------------------------------------------------
-    reg(
-        registry,
-        "system",
-        Arc::new(crate::tools::env_passthrough::EnvPassthroughHandler),
-        "🔧",
-        vec![],
-    );
-
     // -- Computer Use --------------------------------------------------------
     reg_with_check(
         registry,
