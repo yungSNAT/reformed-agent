@@ -250,13 +250,6 @@ fn cron_expression(expression: Option<&Value>) -> Result<String, String> {
         [_, _, _, _, _, _] => return Err("it runs at seconds past the minute".into()),
         _ => return Err("its cron expression does not have 5 fields".into()),
     };
-    // croniter fires when either day field matches; the cron crate needs both.
-    if !matches!(fields[2], "*" | "?") && !matches!(fields[4], "*" | "?") {
-        return Err(
-            "it sets both day of month and day of week, which Hermes reads as either and Reformed as both"
-                .into(),
-        );
-    }
     Ok(fields.join(" "))
 }
 
