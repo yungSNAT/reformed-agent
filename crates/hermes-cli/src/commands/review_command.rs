@@ -9,7 +9,8 @@ use super::{emit_command_output, queue_background_job, AgentError, App, CommandR
 /// Recent user and assistant messages the reviewer gets.
 const CONTEXT_MESSAGES: usize = 10;
 /// Text kept from one message. Sizes here are UTF-16 code units, as
-/// Windows counts a command line.
+/// Windows counts a command line, with a quote or backslash counted twice
+/// for the escaping argument quoting may add.
 const MESSAGE_CAP: usize = 12_000;
 /// shortcut: a background job takes its task as one command-line argument,
 /// and Windows caps a command line at 32,767 UTF-16 units, so the briefing
@@ -50,16 +51,22 @@ pub(super) fn handle_review_command(
     Ok(CommandResult::Handled)
 }
 
-/// `text`'s length in UTF-16 code units.
-fn units(text: &str) -> usize {
-    text.encode_utf16().count()
+/// `c`'s length on a Windows command line: its UTF-16 units, plus one for a
+/// quote or backslash, which quoting may escape.
+fn char_units(c: char) -> usize {
+    c.len_utf16() + usize::from(matches!(c, '"' | '\\'))
 }
 
-/// The longest start of `text` within `limit` UTF-16 units.
+/// `text`'s length on a Windows command line, at most.
+fn units(text: &str) -> usize {
+    text.chars().map(char_units).sum()
+}
+
+/// The longest start of `text` within `limit` units.
 fn cut(text: &str, limit: usize) -> &str {
     let mut used = 0;
     for (at, c) in text.char_indices() {
-        used += c.len_utf16();
+        used += char_units(c);
         if used > limit {
             return &text[..at];
         }
@@ -202,6 +209,47 @@ mod tests {
         );
         let without = build_review_task(&messages[..1], "").unwrap();
         assert!(!without.contains(INSTRUCTIONS_INTRO));
+    }
+
+    /// `arg` quoted as Rust's standard library quotes a Windows argument:
+    /// backslashes before a quote or the closing quote are doubled and each
+    /// quote is escaped.
+    fn windows_quoted(arg: &str) -> String {
+        let mut quoted = String::from("\"");
+        let mut backslashes = 0;
+        for c in arg.chars() {
+            if c == '\\' {
+                backslashes += 1;
+                continue;
+            }
+            let doubled = if c == '"' {
+                2 * backslashes + 1
+            } else {
+                backslashes
+            };
+            quoted.push_str(&"\\".repeat(doubled));
+            quoted.push(c);
+            backslashes = 0;
+        }
+        quoted.push_str(&"\\".repeat(2 * backslashes));
+        quoted.push('"');
+        quoted
+    }
+
+    #[test]
+    fn quotes_and_backslashes_still_fit_one_windows_command_line() {
+        let messages: Vec<_> = (0..10)
+            .map(|turn| {
+                message(
+                    MessageRole::User,
+                    &format!("{turn}{}", "\\\"".repeat(8_000)),
+                )
+            })
+            .collect();
+        let task = build_review_task(&messages, "a \"b\" \\").unwrap();
+        let length = windows_quoted(&task).encode_utf16().count();
+        assert!(length <= BRIEFING_CAP + 2, "{length}");
+        assert!(task.contains("[USER]\n9\\\""), "the newest message is kept");
     }
 
     #[test]
