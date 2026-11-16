@@ -77,7 +77,9 @@ hermes-config = { workspace = true }
 hermes-gateway = { workspace = true }
 hermes-cli-ui = { workspace = true }
 hermes-cron = { workspace = true }
-hermes-environments = { workspace = true }
+# Backends that run through a local CLI (docker, ssh, singularity). Modal and
+# Daytona stay off: a configured one refuses to run (manager.rs).
+hermes-environments = { workspace = true, features = ["docker", "ssh", "singularity"] }
 hermes-mcp = { workspace = true }
 hermes-acp = { workspace = true }
 hermes-skills = { workspace = true }
