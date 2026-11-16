@@ -1,13 +1,13 @@
 //! Preview backend that Hermes Desktop attaches to by URL and token.
 //!
-//! Hermes Desktop's remote mode probes `GET /api/status`, then opens a WebSocket to
+//! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake. It answers every method with
 //! JSON-RPC 'method not found' until the session methods are added.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
-//! address and the bound port (DNS rebinding), a browser `Origin` must be this server's own,
-//! and the WebSocket upgrade needs the token. Each refusal happens before the upgrade.
+//! address and the bound port (DNS rebinding), a web page's `Origin` must be this server's
+//! own, and the WebSocket upgrade needs the token. Each refusal happens before the upgrade.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -58,6 +58,7 @@ fn router(token: String, port: u16) -> Router {
         replay_epoch: uuid::Uuid::new_v4().simple().to_string(),
     });
     Router::new()
+        .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/ws", get(upgrade))
         .layer(middleware::from_fn_with_state(gateway.clone(), host_guard))
@@ -88,23 +89,39 @@ async fn host_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next
     }
 }
 
-/// An absent `Origin` is a non-browser client; a browser page must be served from here.
+/// An absent `Origin` is a non-browser client. A web page (`http` or `https`) must be served
+/// from this listener. The packaged desktop renderer sends `file://`, `null` or its own
+/// scheme; as in upstream's server, the token is the boundary for those.
 fn origin_allowed(headers: &HeaderMap, port: u16) -> bool {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return true;
     };
-    origin
-        .to_str()
-        .ok()
-        .and_then(|o| o.strip_prefix("http://"))
-        .is_some_and(|authority| is_loopback_authority(authority, port))
+    let Ok(origin) = origin.to_str() else {
+        return false;
+    };
+    match origin.split_once("://") {
+        Some((scheme, authority))
+            if scheme.eq_ignore_ascii_case("http") || scheme.eq_ignore_ascii_case("https") =>
+        {
+            is_loopback_authority(authority, port)
+        }
+        Some(_) => true,
+        None => origin == "null",
+    }
 }
 
-/// Public liveness probe: the version and that the socket needs a token; nothing else.
+// Public probes say only that the process is up and its version. `auth_required: false` is
+// how the desktop tells a token gateway from an OAuth-gated one (`authModeFromStatus` in
+// upstream's apps/desktop/electron/connection-config.ts); the socket still needs the token.
+
+async fn health() -> Json<Value> {
+    Json(json!({"ok": true, "version": env!("CARGO_PKG_VERSION"), "auth_required": false}))
+}
+
 async fn status() -> Json<Value> {
     Json(json!({
         "version": env!("CARGO_PKG_VERSION"),
-        "auth_required": true,
+        "auth_required": false,
         "gateway_running": true,
     }))
 }
@@ -196,6 +213,23 @@ mod tests {
         ));
         assert!(!is_loopback_authority("[::1]", 9119));
         assert!(!is_loopback_authority("127.0.0.1:", 9119));
+    }
+
+    #[test]
+    fn origins() {
+        let allowed = |origin: &str| {
+            let mut headers = HeaderMap::new();
+            headers.insert(header::ORIGIN, origin.parse().unwrap());
+            origin_allowed(&headers, 9119)
+        };
+        assert!(origin_allowed(&HeaderMap::new(), 9119));
+        assert!(allowed("http://localhost:9119"));
+        assert!(allowed("https://127.0.0.1:9119"));
+        assert!(allowed("file://"));
+        assert!(allowed("null"));
+        assert!(!allowed("HTTP://attacker.example:9119"));
+        assert!(!allowed("https://localhost:9120"));
+        assert!(!allowed("attacker.example"));
     }
 
     #[test]
