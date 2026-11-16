@@ -85,6 +85,7 @@ use crate::providers::canonical_provider_id;
 use crate::skin_engine::{canonical_skin_name, BUILTIN_SKINS};
 use hermes_config::{find_node_executable, set_user_config_value, GatewayConfig};
 
+mod diff_command;
 mod hermes_history;
 pub use hermes_history::{import_hermes_sessions, HermesHistorySummary};
 mod hermes_migrate;
