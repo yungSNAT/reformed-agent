@@ -1332,10 +1332,12 @@ pub(crate) mod tests {
         }
         assert_eq!(run(serde_json::json!({ "question": "q" })).unwrap(), "ran");
         for path in [
-            "/etc/hostname",
-            "a.png",
-            "HTTPS://example.com/a.png",
-            "file:///etc/hostname",
+            serde_json::json!("/etc/hostname"),
+            serde_json::json!("a.png"),
+            serde_json::json!("HTTPS://example.com/a.png"),
+            serde_json::json!("file:///etc/hostname"),
+            serde_json::json!(7),
+            serde_json::json!(["/etc/hostname"]),
         ] {
             let err = run(serde_json::json!({ "image_url": path })).unwrap_err();
             assert!(
@@ -1346,7 +1348,8 @@ pub(crate) mod tests {
     }
 
     /// A tool guarded on a parameter that is always a path refuses any value
-    /// for it, a web URL included, and runs without it.
+    /// for it, a web URL or a value of another JSON type included, and runs
+    /// without it or with it null.
     #[test]
     fn a_tool_guarded_on_a_path_only_parameter_refuses_every_value_under_a_non_local_backend() {
         let _global_env = hermes_config::managed_gateway::test_lock::lock();
@@ -1357,11 +1360,19 @@ pub(crate) mod tests {
         let runtime = tokio::runtime::Runtime::new().unwrap();
         let run = |params: Value| runtime.block_on(tool.execute(params));
         assert_eq!(run(serde_json::json!({ "text": "hi" })).unwrap(), "ran");
+        assert_eq!(
+            run(serde_json::json!({ "output_path": null })).unwrap(),
+            "ran"
+        );
         for value in [
-            "https://example.com/a.mp3",
-            "http://example.com/a.mp3",
-            "a.mp3",
-            "",
+            serde_json::json!("https://example.com/a.mp3"),
+            serde_json::json!("http://example.com/a.mp3"),
+            serde_json::json!("a.mp3"),
+            serde_json::json!(""),
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!(["a.mp3"]),
+            serde_json::json!({ "path": "a.mp3" }),
         ] {
             let err = run(serde_json::json!({ "output_path": value })).unwrap_err();
             assert!(
