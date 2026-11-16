@@ -1,13 +1,4 @@
 # Exceptions for `cargo audit --deny warnings` (.github/workflows/audit.yml).
 # Each needs more than a compatible update; the comment says what removes it.
 [advisories]
-ignore = [
-    # libsqlite3-sys 0.30.1 bundles an SQLite before 3.54.0, which can return
-    # uninitialised memory when it opens a database and -wal pair with
-    # different page sizes. That needs files a less trusted party wrote, and
-    # Hermes opens only the SQLite files it creates in its own home and data
-    # folders. The fix, rusqlite 0.41 with libsqlite3-sys 0.39, brings breaking
-    # changes (execute refuses a trailing statement; u64 binding and the
-    # statement cache become features) that need their own change.
-    "RUSTSEC-2026-0459",
-]
+ignore = []

@@ -650,6 +650,11 @@ fn cron_schedules_convert_to_the_same_instants_in_utc() {
             "15 10 * * 1-5",
         ),
         (
+            json!({"kind": "cron", "expr": "0 9 1 * 1"}),
+            json!({}),
+            "0 9 1 * 1",
+        ),
+        (
             json!({"kind": "interval", "minutes": 30}),
             json!({"next_run_at": "2026-11-15T20:37:42+11:00"}),
             "42 7,37 * * * *",
@@ -764,10 +769,6 @@ fn cron_fields_map_and_unsupported_jobs_are_skipped_with_a_reason() {
             "not a file in the scripts folder",
         ),
         (with("id", json!("CON")), "not a safe file name"),
-        (
-            with("schedule", json!({"kind": "cron", "expr": "0 9 1 * 1"})),
-            "both day of month",
-        ),
         (
             with("schedule", json!({"kind": "cron", "expr": "0 9 * * * 30"})),
             "seconds past",
