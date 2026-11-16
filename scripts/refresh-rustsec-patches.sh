@@ -30,29 +30,11 @@ patch_root() {
 
 patch_spec() {
   case "$1" in
-    matrix-pickle-derive)
-      printf '%s\t%s\t%s\n' \
-        "0.2.2" \
-        "matrix-pickle-derive-0.2.2" \
-        "patches/matrix-pickle-derive-0.2.2-remove-proc-macro-error2.patch"
-      ;;
-    matrix-sdk-crypto)
-      printf '%s\t%s\t%s\n' \
-        "0.18.0" \
-        "matrix-sdk-crypto-0.18.0" \
-        "patches/matrix-sdk-crypto-0.18.0-remove-doc-aquamarine.patch"
-      ;;
     tungstenite)
       printf '%s\t%s\t%s\n' \
         "0.29.0" \
         "tungstenite-0.29.0" \
         "patches/tungstenite-0.29.0-use-getrandom.patch"
-      ;;
-    vodozemac)
-      printf '%s\t%s\t%s\n' \
-        "0.10.0" \
-        "vodozemac-0.10.0" \
-        "patches/vodozemac-0.10.0-use-rand-core-osrng.patch"
       ;;
     *)
       return 1
@@ -61,7 +43,7 @@ patch_spec() {
 }
 
 known_crates() {
-  printf '%s\n' matrix-pickle-derive matrix-sdk-crypto tungstenite vodozemac
+  printf '%s\n' tungstenite
 }
 
 download_and_patch() {
