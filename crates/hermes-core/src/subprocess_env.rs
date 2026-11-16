@@ -220,7 +220,7 @@ pub fn hermes_subprocess_env(inherit_credentials: bool) -> BTreeMap<String, Stri
 
 /// The process environment's entries whose name and value are both UTF-8;
 /// `std::env::vars` panics on any other, and a map of strings cannot hold it.
-pub fn utf8_env_vars() -> impl Iterator<Item = (String, String)> {
+fn utf8_env_vars() -> impl Iterator<Item = (String, String)> {
     std::env::vars_os()
         .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
 }
