@@ -515,7 +515,7 @@
     },
     "12bbca95ecf4": {
       "disposition": "superseded",
-      "notes": "The vendored tinker-atropos Python submodule path is superseded by Rust-native RL environment descriptors for tinker, atropos-compatible, and custom environments plus local run-manager control; no Python submodule is required for runtime registration."
+      "notes": "The vendored tinker-atropos Python submodule is not carried: Reformed has no RL training pipeline, and the simulated Rust rl_* tools were removed."
     },
     "13038dc747aa": {
       "disposition": "ported",
@@ -1755,8 +1755,8 @@
       "notes": "TypeScript/React CI toolchain changes are hosted UI tooling only; local Rust runtime gates are authoritative and GitHub CI is optional."
     },
     "3c0d0dba49f9": {
-      "disposition": "ported",
-      "notes": "Updated RL tools and configuration management are covered by Rust TrainingConfig editing, TrainingStatus serde, TrainingMetrics progression, RunManager lifecycle, registered rl_training toolset membership, and focused hermes-intelligence/hermes-tools tests."
+      "disposition": "superseded",
+      "notes": "Not carried: the Rust rl_* tools simulated training runs and returned canned inference without a trainer or model, so they were removed; Reformed has no RL training tools."
     },
     "3c252ae44b52": {
       "disposition": "ported",
@@ -7258,8 +7258,8 @@
       "notes": "Rust keeps anthropic_content_blocks in-memory only on hermes_core::Message and deliberately does not persist them through SessionPersistence, matching upstream's final no-state-db-column decision while leaving fallback reconstruction for reloaded sessions."
     },
     "f018999da978": {
-      "disposition": "ported",
-      "notes": "Initial Python RL training tools and loop are ported as Rust rl_* ToolHandler implementations backed by hermes_intelligence::rl run/config/status/metrics types, registered as built-in tools under the rl_training toolset with lifecycle and inference tests."
+      "disposition": "superseded",
+      "notes": "Not carried: the Rust rl_* tools simulated training runs and returned canned inference without a trainer or model, so they were removed; Reformed has no RL training tools."
     },
     "f019a999d85c4fe6408858fbd7c022122ab4c373": {
       "disposition": "superseded",
@@ -7454,8 +7454,8 @@
       "owner": "rust-runtime"
     },
     "f6574978de39": {
-      "disposition": "ported",
-      "notes": "RL training configuration and tools are now first-class Rust runtime surface: rl_list_environments, rl_select_environment, rl_get_current_config, rl_edit_config, rl_start_training, rl_check_status, rl_stop_training, rl_get_results, rl_list_runs, and rl_test_inference are registered and covered."
+      "disposition": "superseded",
+      "notes": "Not carried: the Rust rl_* tools simulated training runs and returned canned inference without a trainer or model, so they were removed; Reformed has no RL training tools."
     },
     "f66a929a6b78": {
       "disposition": "superseded",
@@ -7541,7 +7541,7 @@
     },
     "f957ec226789": {
       "disposition": "ported",
-      "notes": "Rust toolset_distributions now covers validated probability-weighted distributions against registered ToolsetManager toolsets, including the first-class rl_training toolset added in this batch, with deterministic and sampling contract tests."
+      "notes": "Rust toolset_distributions now covers validated probability-weighted distributions against registered ToolsetManager toolsets, with deterministic and sampling contract tests."
     },
     "f993d76874e8": {
       "disposition": "superseded",
