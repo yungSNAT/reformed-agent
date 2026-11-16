@@ -591,7 +591,9 @@ impl Walk<'_> {
                 parent.begin(at);
                 let fed = match frame {
                     Frame::Subshell => parent.command.fed,
-                    Frame::ProcessOut => parent.command.fed || parent.command.fetch,
+                    Frame::ProcessOut => {
+                        parent.command.fed || parent.command.fetch || parent.command.holds_fetch
+                    }
                     _ => false,
                 };
                 let mut list = List::new(Some(frame), arith, inherited, fed);
