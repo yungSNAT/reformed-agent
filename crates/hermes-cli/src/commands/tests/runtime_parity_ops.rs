@@ -676,6 +676,41 @@ async fn ops_eval_run_writes_report_under_hermes_home_not_repo_checkout() {
     assert!(latest.contains(&written[0]), "{latest}");
 }
 
+/// `/ops eval latest` reads the home's session report before a checkout's
+/// trend report, even an older one, and falls back to the checkout's only
+/// when the home has none.
+#[tokio::test]
+async fn latest_eval_report_prefers_the_home_report_then_the_checkout() {
+    let _guard = test_env_lock::lock_async().await;
+    let checkout = tempdir().expect("checkout");
+    std::fs::create_dir_all(checkout.path().join("docs/parity")).expect("docs/parity");
+    std::fs::write(checkout.path().join("README.md"), "# checkout
+").expect("README");
+    let trend_dir = checkout.path().join(".sync-reports");
+    std::fs::create_dir_all(&trend_dir).expect(".sync-reports");
+    let trend = trend_dir.join("eval-trend-gate-20991231T000000Z.json");
+    std::fs::write(&trend, "{}").expect("trend report");
+    let home = tempdir().expect("home");
+    let _home_guard = TempHomeGuard::new(home.path());
+    let previous_repo_root = std::env::var("HERMES_REPO_ROOT").ok();
+    std::env::set_var("HERMES_REPO_ROOT", checkout.path());
+    let reports = home.path().join("eval-reports");
+    std::fs::create_dir_all(&reports).expect("eval-reports");
+    let session = reports.join("session-eval-harness-20200101T000000Z.json");
+    std::fs::write(&session, "{}").expect("session report");
+
+    let with_home = latest_eval_report();
+    std::fs::remove_file(&session).expect("remove session report");
+    let without_home = latest_eval_report();
+
+    match previous_repo_root {
+        Some(value) => std::env::set_var("HERMES_REPO_ROOT", value),
+        None => std::env::remove_var("HERMES_REPO_ROOT"),
+    }
+    assert_eq!(with_home, Some(session));
+    assert_eq!(without_home, Some(trend));
+}
+
 #[test]
 fn summarize_performance_autopilot_report_formats_fields() {
     let tmp = tempdir().expect("tempdir");

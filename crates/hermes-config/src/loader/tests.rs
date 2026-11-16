@@ -375,6 +375,64 @@ custom_providers:
     assert_eq!(reread, value, "{text}");
 }
 
+/// Writes `yaml` through `atomic_yaml_write` and returns the text, which
+/// must read back as the same value.
+fn written_yaml(yaml: &str) -> String {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    let value: serde_yaml::Value = serde_yaml::from_str(yaml).unwrap();
+    atomic_yaml_write(&path, &value, None).unwrap();
+    let text = std::fs::read_to_string(&path).unwrap();
+    let reread: serde_yaml::Value =
+        serde_yaml::from_str(&text).unwrap_or_else(|e| panic!("{e}\n{text}"));
+    assert_eq!(reread, value, "{text}");
+    text
+}
+
+/// A tagged multi-line string that is itself a sequence item keeps its text,
+/// and the sequence after it is indented under its key.
+#[test]
+fn atomic_yaml_write_keeps_a_tagged_block_scalar_sequence_item() {
+    let text = written_yaml(
+        r#"
+notes:
+  - !note |
+    key:
+    - not a sequence
+  - plain
+models:
+  - a
+"#,
+    );
+    assert_eq!(
+        text,
+        concat!(
+            "notes:\n",
+            "  - !note |\n",
+            "    key:\n",
+            "    - not a sequence\n",
+            "  - plain\n",
+            "models:\n",
+            "  - a\n",
+        ),
+    );
+}
+
+/// A plain string ending in `- |` is a value, not a block scalar header, so
+/// the key after it still owns an indented sequence.
+#[test]
+fn atomic_yaml_write_reads_a_plain_scalar_ending_in_a_dash_and_pipe_as_text() {
+    for note in ["text- |", "text- !tag |"] {
+        let text = written_yaml(&format!(
+            "custom_providers:\n  - note: {note}\n    models:\n      - a\n"
+        ));
+        assert_eq!(
+            text,
+            format!("custom_providers:\n  - note: {note}\n    models:\n      - a\n"),
+        );
+    }
+}
+
 #[test]
 fn save_config_yaml_preserves_utf8_personality_and_prompt() {
     use tempfile::tempdir;

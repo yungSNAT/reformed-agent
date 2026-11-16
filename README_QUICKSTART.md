@@ -61,20 +61,21 @@ hermes-ultra doctor --deep --snapshot --bundle
 
 ## 5) Gateway Mode (Optional)
 
-```bash
-hermes-ultra gateway --live
-```
-
-## 6) Upstream/Parity Visibility
-
-Refresh parity and README sync status:
+Run the gateway in the foreground. Without chat platforms it serves only cron
+jobs and HTTP webhooks; `hermes-ultra gateway setup` enables platforms.
 
 ```bash
-python3 scripts/generate-parity-dashboard.py
-python3 scripts/generate-readme-sync-status.py
+hermes-ultra gateway run
 ```
 
-Artifacts:
+## 6) Coming from Hermes Agent
 
-- `docs/parity/PARITY_DASHBOARD.md`
-- `README.md` auto-generated live sync block
+Preview what `hermes-ultra migrate` would move from `~/.hermes`, then apply it:
+
+```bash
+hermes-ultra migrate
+hermes-ultra migrate --apply
+```
+
+See [Migrating from Hermes](./README.md#migrating-from-hermes) for what moves
+and what does not.
