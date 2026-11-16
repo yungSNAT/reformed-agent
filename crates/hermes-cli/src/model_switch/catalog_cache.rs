@@ -238,16 +238,26 @@ fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
     if let Some(parent) = cache_path.parent() {
         let _ = std::fs::create_dir_all(parent);
     }
-    let tmp_payload = cache_path.with_extension("json.tmp");
-    let tmp_sig = sig_path.with_extension("sig.json.tmp");
-    if let Ok(mut file) = std::fs::File::create(&tmp_payload) {
-        let _ = file.write_all(&payload_bytes);
-        let _ = file.flush();
-        let _ = std::fs::rename(&tmp_payload, &cache_path);
-    }
-    if let Ok(mut file) = std::fs::File::create(&tmp_sig) {
-        let _ = file.write_all(&sig_bytes);
-        let _ = file.flush();
-        let _ = std::fs::rename(&tmp_sig, &sig_path);
+    write_through_fresh_tmp(
+        &cache_path.with_extension("json.tmp"),
+        &cache_path,
+        &payload_bytes,
+    );
+    write_through_fresh_tmp(&sig_path.with_extension("sig.json.tmp"), &sig_path, &sig_bytes);
+}
+
+/// Writes `bytes` to `tmp`, then renames it over `path`. `tmp` is created
+/// anew, so a link planted there is removed rather than written through.
+fn write_through_fresh_tmp(tmp: &std::path::Path, path: &std::path::Path, bytes: &[u8]) {
+    let _ = std::fs::remove_file(tmp);
+    let Ok(mut file) = std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(tmp)
+    else {
+        return;
+    };
+    if file.write_all(bytes).and_then(|()| file.flush()).is_ok() {
+        let _ = std::fs::rename(tmp, path);
     }
 }
