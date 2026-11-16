@@ -162,4 +162,79 @@ mod tests {
             build_review_task(&[message(MessageRole::User, "question")], &instructions).unwrap();
         assert!(task.contains(&format!("{INSTRUCTIONS_INTRO}\n{}\n", instructions.trim())));
     }
+
+    /// An assistant turn that only calls tools: `calls` holds each tool's
+    /// name and its JSON arguments.
+    fn tool_turn(calls: &[(&str, &str)]) -> Message {
+        let mut turn = message(MessageRole::Assistant, "");
+        turn.content = None;
+        turn.tool_calls = Some(
+            calls
+                .iter()
+                .map(|(name, arguments)| hermes_core::ToolCall {
+                    id: String::new(),
+                    function: hermes_core::FunctionCall {
+                        name: (*name).to_string(),
+                        arguments: (*arguments).to_string(),
+                    },
+                    extra_content: None,
+                })
+                .collect(),
+        );
+        turn
+    }
+
+    #[test]
+    fn skills_the_agent_loaded_whole_are_listed_once_in_load_order() {
+        let mut messages = vec![
+            message(MessageRole::User, "fix the parser"),
+            tool_turn(&[
+                ("skill_view", r#"{"name":"rust"}"#),
+                (
+                    "skill_view",
+                    r#"{"name":"docs","file_path":"references/a.md"}"#,
+                ),
+                ("skill_view", r#"{"name":" tdd ","file_path":""}"#),
+                ("read_file", r#"{"name":"other"}"#),
+                ("skill_view", "not json"),
+            ]),
+            tool_turn(&[("skill_view", r#"{"name":"rust"}"#)]),
+            message(MessageRole::Assistant, "done"),
+        ];
+        let mut user_turn = tool_turn(&[("skill_view", r#"{"name":"from-user"}"#)]);
+        user_turn.role = MessageRole::User;
+        messages.push(user_turn);
+        let task = build_review_task(&messages, "").unwrap();
+        let line = "The primary agent was operating under these loaded skills: rust, tdd. Before reviewing, load each with skill_view(name=...)";
+        assert!(task.contains(&format!("{EXCERPT_END}\n\n{line}")), "{task}");
+        assert_eq!(task.matches("loaded skills").count(), 1);
+
+        let many: Vec<String> = (0..10)
+            .map(|n| format!(r#"{{"name":"skill-{n}"}}"#))
+            .collect();
+        let calls: Vec<(&str, &str)> = many.iter().map(|a| ("skill_view", a.as_str())).collect();
+        let task =
+            build_review_task(&[message(MessageRole::User, "q"), tool_turn(&calls)], "").unwrap();
+        assert!(task.contains("loaded skills: skill-0, skill-1, skill-2, skill-3, skill-4, skill-5, skill-6, skill-7. Before"), "{task}");
+
+        let task = build_review_task(&[message(MessageRole::User, "q")], "").unwrap();
+        assert!(!task.contains("loaded skills"));
+    }
+
+    #[test]
+    fn separators_python_strips_count_as_whitespace() {
+        // Python's str.strip removes U+001C to U+001F; Rust's trim does not.
+        let messages = [message(MessageRole::User, "\u{1c}\u{1d} \u{1e}\u{1f}")];
+        assert_eq!(
+            build_review_task(&messages, ""),
+            Err("Nothing to review yet: the conversation is empty.".to_string())
+        );
+        let messages = [message(MessageRole::User, "\u{1f} question \u{1c}")];
+        let task = build_review_task(&messages, "\u{1d}check\u{1e}").unwrap();
+        assert!(task.contains("[USER]\nquestion\n"), "{task}");
+        assert!(
+            task.contains(&format!("{INSTRUCTIONS_INTRO}\ncheck\n")),
+            "{task}"
+        );
+    }
 }
