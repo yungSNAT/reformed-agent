@@ -440,6 +440,7 @@ mod tests {
 
     #[test]
     fn working_staged_and_all_follow_git() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(dir.path().join("new.txt"), "fresh\n").unwrap();
@@ -467,6 +468,7 @@ mod tests {
 
     #[test]
     fn stat_only_lists_untracked_names_without_diffs() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         std::fs::write(dir.path().join("a.txt"), "one\ntwo\n").unwrap();
         std::fs::write(dir.path().join("new.txt"), "fresh\n").unwrap();
@@ -478,6 +480,7 @@ mod tests {
 
     #[test]
     fn trailing_spaces_survive_between_untracked_files() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         std::fs::write(dir.path().join("u1.txt"), "x \n").unwrap();
         std::fs::write(dir.path().join("u2.txt"), "y\n").unwrap();
@@ -488,6 +491,7 @@ mod tests {
 
     #[test]
     fn an_untracked_file_that_times_out_is_skipped_and_the_rest_kept() {
+        let _env = crate::test_env_lock::lock();
         let dir = tempfile::tempdir().unwrap();
         let files: Vec<Untracked> = ["slow.txt", "fast.txt"]
             .iter()
@@ -512,6 +516,7 @@ mod tests {
 
     #[test]
     fn a_path_limits_the_diff_and_skips_untracked_files() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         std::fs::write(dir.path().join("b.txt"), "b\n").unwrap();
         run(dir.path(), &["add", "b.txt"]);
@@ -529,6 +534,7 @@ mod tests {
 
     #[test]
     fn a_clean_tree_reports_no_changes_and_a_folder_outside_git_is_refused() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         let req = request(&[]);
         let diff = collect_working_diff(dir.path(), &req).unwrap();
@@ -543,6 +549,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn the_repository_cannot_run_a_diff_or_textconv_driver() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         let marker = dir.path().join("ran");
         let script = dir.path().join("driver.sh");
@@ -571,6 +578,7 @@ mod tests {
     #[test]
     fn a_name_that_is_not_utf8_is_read_inside_the_tree() {
         use std::os::unix::ffi::OsStrExt;
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         let outside = tempfile::tempdir().unwrap();
         std::fs::write(outside.path().join("f"), "outside secret\n").unwrap();
@@ -588,6 +596,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn untracked_links_and_fifos_are_not_read() {
+        let _env = crate::test_env_lock::lock();
         let dir = repo();
         let outside = tempfile::tempdir().unwrap();
         let secret = outside.path().join("secret.txt");
@@ -621,6 +630,7 @@ mod tests {
     #[cfg(unix)]
     #[test]
     fn a_submodule_configuration_cannot_run_a_program() {
+        let _env = crate::test_env_lock::lock();
         use std::os::unix::fs::PermissionsExt;
         let sub_origin = repo();
         let dir = repo();
@@ -660,6 +670,7 @@ mod tests {
 
     #[test]
     fn long_diffs_and_many_untracked_files_are_cut() {
+        let _env = crate::test_env_lock::lock();
         let req = request(&[]);
         let diff = WorkingDiff {
             stat: " a.txt | 500 +".to_string(),
