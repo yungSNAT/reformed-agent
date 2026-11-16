@@ -636,8 +636,8 @@ fn source_checkout_root_skips_cargo_unpacked_copies() {
     assert_eq!(source_checkout_root(&crate_dir), None);
 }
 
-/// A `cargo install` binary finds its cargo git checkout as the repo root; the
-/// session eval report must still go to the state root, never into that checkout.
+/// Even with a source checkout found as the repo root, the session eval report
+/// goes to the state root, never into that checkout.
 #[tokio::test]
 async fn ops_eval_run_writes_report_under_hermes_home_not_repo_checkout() {
     let _guard = test_env_lock::lock_async().await;

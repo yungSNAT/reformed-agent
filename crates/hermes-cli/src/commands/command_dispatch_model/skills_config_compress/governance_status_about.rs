@@ -225,13 +225,16 @@ fn discover_repo_root_for_about() -> Option<PathBuf> {
     probes.iter().find_map(|probe| source_checkout_root(probe))
 }
 
-/// The nearest ancestor of `probe` that is a Hermes source checkout.
+/// The nearest ancestor of `probe` that is a Hermes source checkout. A copy cargo
+/// unpacked into its cache (marked `.cargo-ok`) is not one: a `cargo install --git`
+/// binary would otherwise write reports into that cache.
 fn source_checkout_root(probe: &Path) -> Option<PathBuf> {
     probe
         .ancestors()
         .find(|candidate| {
             candidate.join("docs/parity").exists() && candidate.join("README.md").exists()
         })
+        .filter(|root| !root.join(".cargo-ok").exists())
         .map(Path::to_path_buf)
 }
 
