@@ -206,8 +206,9 @@ pub enum CliCommand {
     /// skills, SOUL.md, plugins, cron jobs and scripts. A dry run unless --apply.
     Migrate(MigrateArgs),
 
-    /// Import another coding agent's setup: Claude Code's CLAUDE.md as memory
-    /// entries, its MCP servers and its skills. A plan unless --apply.
+    /// Import another coding agent's setup (Claude Code or Codex): its
+    /// instructions as memory entries, its MCP servers and its skills. A plan
+    /// unless --apply.
     ImportAgent(ImportAgentArgs),
 
     /// Show version information.
@@ -1032,7 +1033,7 @@ pub struct ImportAgentArgs {
     /// The agent to import from.
     #[arg(value_enum)]
     pub agent: crate::agent_import::SourceAgent,
-    /// The agent's folder [default: ~/.claude for Claude Code].
+    /// The agent's folder [default: ~/.claude for Claude Code, ~/.codex for Codex].
     #[arg(long)]
     pub source: Option<std::path::PathBuf>,
     /// Write the import; without it the command only prints the plan.
