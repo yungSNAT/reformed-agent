@@ -1290,7 +1290,16 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
 }
 
 pub fn recover_queued_background_jobs(max_jobs: usize) -> usize {
-    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
+    if !hermes_config::hermes_home()
+        .join("background_jobs")
+        .is_dir()
+    {
+        return 0;
+    }
+    // Narrows a folder an older version created open before its jobs run.
+    let Ok(jobs_dir) = background_jobs_dir() else {
+        return 0;
+    };
     let Ok(entries) = std::fs::read_dir(&jobs_dir) else {
         return 0;
     };
