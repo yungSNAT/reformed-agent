@@ -41,7 +41,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--surface-coverage-cmd",
         default=(
-            "python3 scripts/run-upstream-surface-coverage-gate.py "
+            "cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate "
             "--upstream-ref upstream/main"
         ),
         help="Required upstream surface coverage command",
