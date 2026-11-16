@@ -7,6 +7,22 @@ mod tests {
     use std::path::Path;
     use unicode_width::UnicodeWidthStr;
 
+    #[test]
+    fn tui_events_skip_key_releases() {
+        let key = |kind| {
+            CrosstermEvent::Key(KeyEvent::new_with_kind(
+                crossterm::event::KeyCode::Up,
+                Default::default(),
+                kind,
+            ))
+        };
+        assert!(matches!(
+            tui_event(key(KeyEventKind::Press)),
+            Some(Event::Key(_))
+        ));
+        assert!(tui_event(key(KeyEventKind::Release)).is_none());
+    }
+
     fn env_test_lock() -> tokio::sync::MutexGuard<'static, ()> {
         test_env_lock::lock()
     }

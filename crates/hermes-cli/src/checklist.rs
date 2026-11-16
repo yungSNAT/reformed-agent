@@ -9,7 +9,7 @@ use std::collections::HashSet;
 use std::io::{self, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crossterm::event::{self, Event, KeyCode, KeyEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
 use crossterm::terminal::{disable_raw_mode, enable_raw_mode};
 use crossterm::{cursor, execute, terminal};
 
@@ -281,7 +281,7 @@ fn curses_checklist_inner(
         stdout.flush()?;
 
         // Read key
-        if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
+        if let Some(code) = event::read().ok().and_then(pressed_key) {
             match code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     cursor_pos = if cursor_pos == 0 {
@@ -465,7 +465,7 @@ fn curses_select_inner(
 
         stdout.flush()?;
 
-        if let Ok(Event::Key(KeyEvent { code, .. })) = event::read() {
+        if let Some(code) = event::read().ok().and_then(pressed_key) {
             match code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     cursor_pos = if cursor_pos == 0 {
@@ -544,9 +544,32 @@ fn numbered_select_fallback(title: &str, items: &[String], initial_index: usize)
     }
 }
 
+/// The key a terminal event presses, if any. Windows also reports each
+/// key's release, which must not move the cursor a second time.
+fn pressed_key(event: Event) -> Option<KeyCode> {
+    match event {
+        Event::Key(KeyEvent { code, kind, .. }) if kind != KeyEventKind::Release => Some(code),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_key_release_is_not_a_key_press() {
+        let key = |kind| {
+            Event::Key(KeyEvent::new_with_kind(
+                KeyCode::Down,
+                Default::default(),
+                kind,
+            ))
+        };
+        assert_eq!(pressed_key(key(KeyEventKind::Press)), Some(KeyCode::Down));
+        assert_eq!(pressed_key(key(KeyEventKind::Repeat)), Some(KeyCode::Down));
+        assert_eq!(pressed_key(key(KeyEventKind::Release)), None);
+    }
 
     #[test]
     fn test_checklist_result_default() {
