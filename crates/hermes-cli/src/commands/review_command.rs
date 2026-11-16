@@ -8,19 +8,9 @@ use super::{emit_command_output, queue_background_job, AgentError, App, CommandR
 
 /// Recent user and assistant messages the reviewer gets.
 const CONTEXT_MESSAGES: usize = 10;
-/// Text kept from one message. Sizes here are UTF-16 code units, as
-/// Windows counts a command line, with a quote or backslash counted twice
-/// for the escaping argument quoting may add.
+/// Characters kept from one message (upstream's `_MESSAGE_CHAR_CAP`).
 const MESSAGE_CAP: usize = 12_000;
-/// shortcut: a background job takes its task as one command-line argument,
-/// and Windows caps a command line at 32,767 UTF-16 units, so the briefing
-/// keeps the newest messages within this many, leaving room for the
-/// program path and argument quoting. Passing the task on standard input or
-/// in a file would lift the cap.
-const BRIEFING_CAP: usize = 24_000;
-/// Room the user's instructions must leave for the conversation.
-const MIN_EXCERPT: usize = 2_000;
-/// Marks a cut message; ASCII, so its length is its unit count.
+/// Marks a cut message.
 const TRUNCATED: &str = "\n[... truncated ...]";
 
 const REVIEW_GOAL: &str = "Act as an independent senior reviewer. Thoroughly review the work presented in the conversation excerpt below: investigate any code, pull request, branch, commit, documentation, design, or other artifact it references (open the PR, read the diff, run the code or tests where feasible) rather than judging from the excerpt alone. Produce a full, structured review: what the work does, whether it is correct and complete, concrete defects or risks found (with file/line references where possible), what was verified vs. only read, and a clear final verdict with recommended next steps.";
@@ -51,93 +41,45 @@ pub(super) fn handle_review_command(
     Ok(CommandResult::Handled)
 }
 
-/// `c`'s length on a Windows command line: its UTF-16 units, plus one for a
-/// quote or backslash, which quoting may escape.
-fn char_units(c: char) -> usize {
-    c.len_utf16() + usize::from(matches!(c, '"' | '\\'))
-}
-
-/// `text`'s length on a Windows command line, at most.
-fn units(text: &str) -> usize {
-    text.chars().map(char_units).sum()
-}
-
-/// The longest start of `text` within `limit` units.
-fn cut(text: &str, limit: usize) -> &str {
-    let mut used = 0;
-    for (at, c) in text.char_indices() {
-        used += char_units(c);
-        if used > limit {
-            return &text[..at];
-        }
-    }
-    text
-}
-
 /// The reviewer's briefing: the goal, the newest user and assistant
-/// messages (oldest first) and the user's instructions, within
-/// [`BRIEFING_CAP`] units. `Err` holds the message to show.
+/// messages (oldest first), each cut to [`MESSAGE_CAP`] characters, and
+/// the user's instructions. `Err` holds the message to show.
 pub(super) fn build_review_task(
     messages: &[Message],
     instructions: &str,
 ) -> Result<String, String> {
-    let instructions = instructions.trim();
-    let mut lines = vec![REVIEW_GOAL, "", EXCERPT_INTRO, "", EXCERPT_START];
-    let tail = if instructions.is_empty() {
-        vec![EXCERPT_END, "", CLOSING]
-    } else {
-        vec![
-            EXCERPT_END,
-            "",
-            INSTRUCTIONS_INTRO,
-            instructions,
-            "",
-            CLOSING,
-        ]
-    };
-    // Each line and the newline after it.
-    let fixed: usize = lines.iter().chain(&tail).map(|line| units(line) + 1).sum();
-    let Some(mut budget) = BRIEFING_CAP
-        .checked_sub(fixed)
-        .filter(|budget| *budget >= MIN_EXCERPT)
-    else {
-        let limit = BRIEFING_CAP + units(instructions) - fixed - MIN_EXCERPT;
-        return Err(format!(
-            "The review instructions are too long: keep them to {limit} characters."
-        ));
-    };
-    let mut excerpt = Vec::new();
-    for message in messages.iter().rev() {
-        let label = match message.role {
-            MessageRole::User => "[USER]",
-            MessageRole::Assistant => "[PRIMARY AGENT]",
-            _ => continue,
-        };
-        let text = message.content.as_deref().unwrap_or_default().trim();
-        if text.is_empty() {
-            continue;
-        }
-        // The label, the text and a blank line, each with its newline.
-        let overhead = label.len() + 3;
-        if excerpt.len() == CONTEXT_MESSAGES || budget < overhead + TRUNCATED.len() + 1 {
-            break;
-        }
-        let room = MESSAGE_CAP.min(budget - overhead);
-        let text = if units(text) <= room {
-            text.to_string()
-        } else {
-            format!("{}{TRUNCATED}", cut(text, room - TRUNCATED.len()))
-        };
-        budget -= overhead + units(&text);
-        excerpt.push((label, text));
-    }
+    let mut excerpt: Vec<(&str, String)> = messages
+        .iter()
+        .rev()
+        .filter_map(|message| {
+            let label = match message.role {
+                MessageRole::User => "[USER]",
+                MessageRole::Assistant => "[PRIMARY AGENT]",
+                _ => return None,
+            };
+            let text = message.content.as_deref().unwrap_or_default().trim();
+            let text = match text.char_indices().nth(MESSAGE_CAP) {
+                Some((at, _)) => format!("{}{TRUNCATED}", &text[..at]),
+                None => text.to_string(),
+            };
+            (!text.is_empty()).then_some((label, text))
+        })
+        .take(CONTEXT_MESSAGES)
+        .collect();
     if excerpt.is_empty() {
         return Err("Nothing to review yet: the conversation is empty.".to_string());
     }
-    for (label, text) in excerpt.iter().rev() {
+    excerpt.reverse();
+    let mut lines = vec![REVIEW_GOAL, "", EXCERPT_INTRO, "", EXCERPT_START];
+    for (label, text) in &excerpt {
         lines.extend([*label, text.as_str(), ""]);
     }
-    lines.extend(tail);
+    lines.push(EXCERPT_END);
+    let instructions = instructions.trim();
+    if !instructions.is_empty() {
+        lines.extend(["", INSTRUCTIONS_INTRO, instructions]);
+    }
+    lines.extend(["", CLOSING]);
     Ok(lines.join("\n"))
 }
 
@@ -216,8 +158,8 @@ mod tests {
     #[test]
     fn long_instructions_are_kept_whole() {
         let instructions = "check \"this\" \\ ".repeat(5_000);
-        let task = build_review_task(&[message(MessageRole::User, "question")], &instructions)
-            .unwrap();
+        let task =
+            build_review_task(&[message(MessageRole::User, "question")], &instructions).unwrap();
         assert!(task.contains(&format!("{INSTRUCTIONS_INTRO}\n{}\n", instructions.trim())));
     }
 }
