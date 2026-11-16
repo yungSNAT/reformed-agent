@@ -239,6 +239,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/steer", "Inject non-interrupt steering instruction"),
     ("/btw", "Run an ephemeral side-question"),
     (
+        "/review",
+        "Start an independent reviewer of the work just discussed as a background job (`/review [instructions]`)",
+    ),
+    (
         "/plan",
         "Queue planning work or inspect planner queue status (`/plan caps ...`, `/plan depth ...`)",
     ),
