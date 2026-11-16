@@ -275,7 +275,7 @@ mod tests {
     }
 
     #[test]
-    fn frames_without_an_id_or_method_get_no_reply() {
+    fn notifications_and_responses_get_no_reply() {
         assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#), None);
         assert_eq!(reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#), None);
         assert_eq!(
