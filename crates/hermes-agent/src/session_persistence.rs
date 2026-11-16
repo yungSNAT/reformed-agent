@@ -936,23 +936,29 @@ impl SessionPersistence {
             let tx = conn
                 .unchecked_transaction()
                 .map_err(|e| AgentError::Io(format!("Failed to open delete transaction: {e}")))?;
-            Self::delete_fts_rows_for_session(&tx, session_id)?;
-            for sql in [
-                "UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?1",
-                "DELETE FROM messages WHERE session_id = ?1",
-            ] {
-                tx.execute(sql, rusqlite::params![session_id])
-                    .map_err(|e| AgentError::Io(format!("Failed to delete session data: {e}")))?;
-            }
             deleted = tx
-                .execute(
-                    "DELETE FROM sessions WHERE id = ?1",
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
                     rusqlite::params![session_id],
+                    |row| row.get(0),
                 )
-                .map_err(|e| AgentError::Io(format!("Failed to delete session row: {e}")))?
-                > 0;
-            tx.commit()
-                .map_err(|e| AgentError::Io(format!("Failed to commit session delete: {e}")))?;
+                .map_err(|e| AgentError::Io(format!("Failed to look up session: {e}")))?;
+            // As upstream, a session the store does not hold changes nothing there.
+            if deleted {
+                Self::delete_fts_rows_for_session(&tx, session_id)?;
+                for sql in [
+                    "UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?1",
+                    "DELETE FROM messages WHERE session_id = ?1",
+                    "DELETE FROM sessions WHERE id = ?1",
+                ] {
+                    tx.execute(sql, rusqlite::params![session_id])
+                        .map_err(|e| {
+                            AgentError::Io(format!("Failed to delete session data: {e}"))
+                        })?;
+                }
+                tx.commit()
+                    .map_err(|e| AgentError::Io(format!("Failed to commit session delete: {e}")))?;
+            }
         }
         let transcript = self.sessions_dir.join(format!("{session_id}.jsonl"));
         match std::fs::remove_file(&transcript) {

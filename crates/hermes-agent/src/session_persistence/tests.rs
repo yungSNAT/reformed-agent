@@ -1071,12 +1071,51 @@ fn delete_session_removes_rows_search_entries_and_transcript() {
         1
     );
     assert_eq!(
+        count("SELECT COUNT(*) FROM messages_fts WHERE session_id = 'kept'"),
+        1
+    );
+    assert_eq!(
         count("SELECT COUNT(*) FROM sessions WHERE id = 'branch' AND parent_session_id IS NULL"),
         1
     );
     assert!(!transcript.exists());
     assert!(!sp.delete_session("gone").unwrap());
     assert!(sp.delete_session("../gone").is_err());
+}
+
+#[test]
+fn delete_session_changes_nothing_when_the_store_lacks_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    sp.persist_session(
+        "child",
+        &[Message::user("hi")],
+        Some("gpt-4o"),
+        Some("cli"),
+        None,
+        None,
+    )
+    .unwrap();
+    set_session_lineage(
+        &sp,
+        "child",
+        Some("ghost"),
+        None,
+        &Utc::now().to_rfc3339(),
+        None,
+    );
+
+    assert!(!sp.delete_session("ghost").unwrap());
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let linked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'child' AND parent_session_id = 'ghost'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(linked, 1);
 }
 
 #[test]
