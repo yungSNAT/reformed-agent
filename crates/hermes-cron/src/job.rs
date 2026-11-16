@@ -117,7 +117,9 @@ pub struct CronJob {
     /// Human-readable name for this job.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
-    /// Cron expression schedule (e.g. "0 9 * * *" for 9am daily).
+    /// Cron expression schedule (e.g. "0 9 * * *" for 9am daily). As in
+    /// standard cron, when day of month and day of week are both restricted
+    /// (neither is `*` or `?`), a day matching either runs the job.
     pub schedule: String,
     /// The prompt to send to the agent when this job fires.
     pub prompt: String,
@@ -263,15 +265,33 @@ impl CronJob {
     /// The `cron` crate requires 7-field format (sec min hour dom month dow year).
     /// If the user provides a 5-field expression (min hour dom month dow), we
     /// automatically prepend "0 " (run at second 0) and append " *" (any year).
+    ///
+    /// The `cron` crate runs a day only when both day fields match. Standard
+    /// cron (POSIX crontab, Vixie cron, croniter as Hermes uses it) runs a day
+    /// when either matches if both are restricted, so such a schedule is read
+    /// as 2 schedules, one per day field, and the earlier run wins.
     fn parse_next_run(schedule: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
         let normalized = Self::normalize_cron_expr(schedule);
-        match normalized.parse::<Schedule>() {
-            Ok(sched) => sched.after(&after).next().map(|dt: DateTime<Utc>| dt),
+        let next = |expression: &str| match expression.parse::<Schedule>() {
+            Ok(sched) => Some(sched.after(&after).next()),
             Err(e) => {
-                tracing::warn!("Failed to parse cron expression '{}': {}", normalized, e);
+                tracing::warn!("Failed to parse cron expression '{}': {}", expression, e);
                 None
             }
+        };
+        let unrestricted = |field: &str| matches!(field, "*" | "?");
+        if let [second, minute, hour, day, month, weekday, year] =
+            normalized.split_whitespace().collect::<Vec<_>>()[..]
+        {
+            if !unrestricted(day) && !unrestricted(weekday) {
+                let by_day = next(&format!("{second} {minute} {hour} {day} {month} * {year}"))?;
+                let by_weekday = next(&format!(
+                    "{second} {minute} {hour} * {month} {weekday} {year}"
+                ))?;
+                return by_day.into_iter().chain(by_weekday).min();
+            }
         }
+        next(&normalized)?
     }
 
     /// Normalize a cron expression to 7-field format.
