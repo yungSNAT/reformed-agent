@@ -1207,9 +1207,20 @@ pub(crate) mod tests {
                 Arc::new(MockTerminalBackend),
                 Arc::new(MockSkillProvider),
             );
-            for tool in ["patch", "search_files", "execute_code"] {
+            for tool in [
+                "patch",
+                "search_files",
+                "execute_code",
+                "project_facts",
+                "project_tree",
+                "transcription",
+                "video_analyze",
+                "computer_use",
+            ] {
                 assert!(!registry.is_available(tool), "{backend}: {tool} offered");
             }
+            let path = file.to_string_lossy();
+            let speech = home.path().join("speech.mp3");
             let calls = [
                 (
                     "patch",
@@ -1227,6 +1238,28 @@ pub(crate) mod tests {
                     "execute_code",
                     serde_json::json!({ "code": "print(1)", "language": "python" }),
                 ),
+                (
+                    "project_facts",
+                    serde_json::json!({ "cwd": home.path().to_string_lossy() }),
+                ),
+                (
+                    "project_tree",
+                    serde_json::json!({ "cwd": home.path().to_string_lossy() }),
+                ),
+                ("transcription", serde_json::json!({ "audio_path": path })),
+                ("video_analyze", serde_json::json!({ "video_url": path })),
+                (
+                    "computer_use",
+                    serde_json::json!({ "action": "screenshot" }),
+                ),
+                (
+                    "vision_analyze",
+                    serde_json::json!({ "image_url": path, "question": "What is this?" }),
+                ),
+                (
+                    "text_to_speech",
+                    serde_json::json!({ "text": "hi", "output_path": speech.to_string_lossy() }),
+                ),
             ];
             for (tool, params) in calls {
                 let out = runtime.block_on(registry.dispatch_async(tool, params));
@@ -1236,9 +1269,12 @@ pub(crate) mod tests {
                 );
             }
             assert_eq!(std::fs::read_to_string(&file).unwrap(), "host text");
+            assert!(
+                !speech.exists(),
+                "{backend}: text_to_speech wrote on the host"
+            );
         }
     }
-
     #[test]
     fn builtin_registry_exposes_snapshot_surfaces_to_cli_list() {
         let _lock = lock_env();
