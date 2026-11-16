@@ -13,7 +13,7 @@ python3 scripts/generate-workstream-status.py
 python3 scripts/generate-test-intent-mapping.py
 python3 scripts/generate-test-coverage-audit.py --check
 python3 scripts/generate-adapter-matrix.py
-python3 scripts/validate-intentional-divergence.py --check --allow-warnings
+cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
 python3 scripts/generate-upstream-patch-queue.py --max-commits 0
 python3 scripts/generate-behavioral-similarity-diff.py --check
 python3 scripts/generate-deep-problem-solving-diff.py --check
@@ -21,7 +21,7 @@ python3 scripts/generate-global-parity-proof.py --check-ci
 python3 scripts/generate-gpar-01-04-proof.py
 python3 scripts/generate-sota-harness-hardening.py --check
 python3 scripts/generate-parity-dashboard.py
-python3 scripts/run-upstream-surface-coverage-gate.py --upstream-ref upstream/main
+cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --upstream-ref upstream/main
 ```
 
 By default this command fetches upstream directly from GitHub

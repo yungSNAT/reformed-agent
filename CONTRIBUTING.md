@@ -49,8 +49,8 @@ bash scripts/check-runtime-placeholders.sh
 cargo test --workspace
 git remote get-url upstream >/dev/null 2>&1 || git remote add upstream https://github.com/NousResearch/hermes-agent.git
 git fetch --no-tags --depth=1 upstream "+$(tr -d '[:space:]' < docs/parity/upstream-reference.txt):refs/remotes/upstream/parity-reference"
-python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref upstream/parity-reference
-python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
+cargo run --locked -q -p hermes-parity-tools -- run-upstream-slash-parity-gate --upstream-ref upstream/parity-reference
+cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
 ```
 
 `bash scripts/run-repo-ci.sh` runs all of these and the governance checks in one pass. The compiler is the version pinned in `rust-toolchain.toml`.

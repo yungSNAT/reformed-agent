@@ -79,7 +79,7 @@ refresh_upstream
 run python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-intent-mapping.py
-run python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-coverage-audit.py --check
 run python3 scripts/generate-adapter-matrix.py
 run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
@@ -95,16 +95,14 @@ run cargo test --workspace
 run cargo test -p hermes-parity-tests
 run cargo test -p hermes-source-parity-tests --test cli_command_contract
 run cargo test -p hermes-protocol-parity-tests --test protocol_differential_contracts
-run python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref "${UPSTREAM_REF}"
-run python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref "${UPSTREAM_REF}" --local-ref HEAD
+run cargo run --locked -q -p hermes-parity-tools -- run-upstream-slash-parity-gate --upstream-ref "${UPSTREAM_REF}"
+run cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref "${UPSTREAM_REF}" --local-ref HEAD
 run cargo test -p hermes-source-parity-tests --test global_parity_governance
 
 for script in \
   scripts/upstream_webhook_sync.py \
   scripts/publish_automation_summary.py \
   scripts/run-golden-parity-harness.py \
-  scripts/run-upstream-slash-parity-gate.py \
-  scripts/run-upstream-surface-coverage-gate.py \
   scripts/generate-shared-diff-backlog.py \
   scripts/generate-test-coverage-audit.py \
   scripts/generate-release-readiness-summary.py \
