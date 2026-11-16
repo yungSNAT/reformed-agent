@@ -1,47 +1,69 @@
 //! The binary as an operator starts it: loopback only, a strong token, and the readiness
 //! lines Hermes Desktop's launcher reads from standard output.
 
-use std::io::{BufRead, BufReader};
+use std::ffi::OsStr;
+use std::io::{BufRead, BufReader, Read};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_hermes-desktop-gateway");
 const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
 
+/// Runs the binary, which must refuse and exit within 10 seconds (a binary that serves
+/// instead fails the test rather than hanging it); returns its standard error.
+fn refusal(args: &[&str], token: &OsStr) -> String {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .env(TOKEN_ENV, token)
+        .stdout(Stdio::null())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break Some(status);
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            break None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
+    assert!(
+        status.is_some_and(|s| !s.success()),
+        "{args:?} was not refused: {stderr}"
+    );
+    stderr
+}
+
 #[test]
 fn refuses_a_non_loopback_bind() {
     for host in ["0.0.0.0", "::", "192.0.2.1", "example.com"] {
-        let out = Command::new(BIN)
-            .args(["--host", host, "--port", "0"])
-            .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef")
-            .output()
-            .unwrap();
-        assert!(!out.status.success(), "{host} was accepted");
-        assert!(
-            String::from_utf8_lossy(&out.stderr).contains("loopback"),
-            "{host}: {}",
-            String::from_utf8_lossy(&out.stderr)
+        let stderr = refusal(
+            &["--host", host, "--port", "0"],
+            OsStr::new("0123456789abcdef0123456789abcdef"),
         );
+        assert!(stderr.contains("loopback"), "{host}: {stderr}");
     }
 }
 
 #[test]
 fn refuses_a_short_token() {
-    let out = Command::new(BIN)
-        .args(["--port", "0"])
-        .env(TOKEN_ENV, "short")
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("at least 32"));
+    let stderr = refusal(&["--port", "0"], OsStr::new("short"));
+    assert!(stderr.contains("at least 32"), "{stderr}");
 
     // 16 characters, 48 bytes: the minimum counts characters.
-    let out = Command::new(BIN)
-        .args(["--port", "0"])
-        .env(TOKEN_ENV, "\u{20ac}".repeat(16))
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("at least 32"));
+    let stderr = refusal(&["--port", "0"], OsStr::new(&"\u{20ac}".repeat(16)));
+    assert!(stderr.contains("at least 32"), "{stderr}");
 }
 
 /// A token that is set but not valid Unicode is refused, not silently replaced.
@@ -51,13 +73,8 @@ fn refuses_a_token_that_is_not_unicode() {
     use std::os::unix::ffi::OsStrExt;
     let mut bytes = vec![b'a'; 40];
     bytes[0] = 0xff;
-    let out = Command::new(BIN)
-        .args(["--port", "0"])
-        .env(TOKEN_ENV, std::ffi::OsStr::from_bytes(&bytes))
-        .output()
-        .unwrap();
-    assert!(!out.status.success());
-    assert!(String::from_utf8_lossy(&out.stderr).contains("not valid Unicode"));
+    let stderr = refusal(&["--port", "0"], OsStr::from_bytes(&bytes));
+    assert!(stderr.contains("not valid Unicode"), "{stderr}");
 }
 
 /// Starts the binary, returns the port from its first readiness line, then stops it.
@@ -75,11 +92,13 @@ fn ready_port(token: Option<&str>) -> (u16, String) {
     let first = lines.next().unwrap().unwrap();
     let second = lines.next().unwrap().unwrap();
     child.kill().unwrap();
-    let stderr = {
-        let mut s = String::new();
-        std::io::Read::read_to_string(&mut child.stderr.take().unwrap(), &mut s).unwrap();
-        s
-    };
+    let mut stderr = String::new();
+    child
+        .stderr
+        .take()
+        .unwrap()
+        .read_to_string(&mut stderr)
+        .unwrap();
     child.wait().unwrap();
     let port = first
         .strip_prefix("HERMES_BACKEND_READY port=")
