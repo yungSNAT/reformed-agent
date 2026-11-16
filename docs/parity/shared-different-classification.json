@@ -3876,7 +3876,7 @@
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/tools/test_env_passthrough.py",
-      "rationale": "Upstream env passthrough registry/config intent is covered by Rust EnvPassthroughHandler registry contracts, terminal.env_passthrough YAML parsing, HERMES_SUBPROCESS_ENV_PASSTHROUGH mirroring, and LocalBackend sanitizer/profile-cleanup tests proving blocklisted provider and gateway-prefix vars remain blocked by default but pass through when explicitly allowed.",
+      "rationale": "Upstream env passthrough registry/config intent is covered by the Rust env_passthrough registry functions and their tests, terminal.env_passthrough YAML parsing, HERMES_SUBPROCESS_ENV_PASSTHROUGH mirroring, and LocalBackend sanitizer/profile-cleanup tests proving blocklisted provider and gateway-prefix vars remain blocked by default but pass through when explicitly allowed.",
       "ticket": 25
     },
     {
@@ -4086,7 +4086,7 @@
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/tools/test_skill_env_passthrough.py",
-      "rationale": "Upstream skill required-environment metadata normalization is covered by Rust skill_utils required-env parsing while Ultra exposes env_passthrough as an explicit Rust tool instead of Python's implicit global registry.",
+      "rationale": "Upstream skill required-environment metadata normalization is covered by Rust skill_utils required-env parsing and, as upstream, env_passthrough is a registry module rather than a model tool.",
       "ticket": 25
     },
     {
