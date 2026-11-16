@@ -38,11 +38,15 @@ async fn main() -> ExitCode {
     };
     let (token, generated) = match std::env::var(TOKEN_ENV) {
         Ok(token) if !token.is_empty() => {
-            if token.len() < MIN_TOKEN_LEN {
+            if token.chars().count() < MIN_TOKEN_LEN {
                 eprintln!("{TOKEN_ENV} must be at least {MIN_TOKEN_LEN} characters");
                 return ExitCode::FAILURE;
             }
             (token, false)
+        }
+        Err(std::env::VarError::NotUnicode(_)) => {
+            eprintln!("{TOKEN_ENV} is set but not valid Unicode");
+            return ExitCode::FAILURE;
         }
         _ => (new_token(), true),
     };

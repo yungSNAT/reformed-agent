@@ -184,13 +184,32 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
-/// The reply to one inbound frame. Notifications (no id) and responses (no method) get none.
+/// The reply to one inbound frame: one request or a JSON-RPC batch of them.
 fn reply_to(text: &str) -> Option<Value> {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return Some(rpc_error(Value::Null, -32700, "parse error".into()));
     };
-    let id = frame.get("id")?.clone();
-    let method = frame.get("method")?.as_str()?;
+    match frame {
+        Value::Array(items) if items.is_empty() => Some(rpc_error(
+            Value::Null,
+            -32600,
+            "invalid request: empty batch".into(),
+        )),
+        Value::Array(items) => {
+            let replies: Vec<Value> = items.iter().filter_map(reply_to_one).collect();
+            (!replies.is_empty()).then_some(Value::Array(replies))
+        }
+        single => reply_to_one(&single),
+    }
+}
+
+/// Notifications (no id) and responses to our own requests (no method) get no reply.
+fn reply_to_one(frame: &Value) -> Option<Value> {
+    let Some(request) = frame.as_object() else {
+        return Some(rpc_error(Value::Null, -32600, "invalid request".into()));
+    };
+    let id = request.get("id")?.clone();
+    let method = request.get("method")?.as_str()?;
     Some(rpc_error(id, -32601, format!("method not found: {method}")))
 }
 
@@ -244,6 +263,9 @@ mod tests {
     fn frames_without_an_id_or_method_get_no_reply() {
         assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#), None);
         assert_eq!(reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#), None);
-        assert_eq!(reply_to(r#"[1,2]"#), None);
+        assert_eq!(
+            reply_to(r#"[{"jsonrpc":"2.0","method":"x"},{"id":2,"result":{}}]"#),
+            None
+        );
     }
 }
