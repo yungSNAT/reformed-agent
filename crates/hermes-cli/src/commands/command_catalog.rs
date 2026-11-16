@@ -57,6 +57,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
         "Stage a markdown prompt draft in the composer (`/prompt [initial text]`)",
     ),
     ("/compose", "Alias for /prompt"),
+    (
+        "/init",
+        "Generate or update AGENTS.md project instructions from a repo scan (`/init [notes]`)",
+    ),
     ("/undo", "Undo the last N user turns and prefill the latest undone prompt"),
     ("/rewind", "Alias for /undo [N]"),
     ("/history", "Show recent conversation history"),

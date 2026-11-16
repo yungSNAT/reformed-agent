@@ -697,6 +697,27 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn init_command_queues_the_agents_md_prompt_for_the_working_directory() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+
+        let result = handle_slash_command(&mut app, "/init", &["note", "the", "fixtures"])
+            .await
+            .expect("init command");
+
+        assert_eq!(result, CommandResult::Handled);
+        let seed = app.take_pending_agent_seed().expect("queued seed");
+        let cwd = std::env::current_dir().expect("cwd");
+        assert!(seed.starts_with("[/init] The user wants you to "), "{seed}");
+        assert!(seed.contains(&format!("for the project at: {}", cwd.display())));
+        assert!(seed.ends_with("conflict):
+note the fixtures"));
+        assert!(latest_ui_assistant_text(&app).contains("AGENTS.md from a project scan."));
+    }
+
+    #[tokio::test]
     async fn prompt_command_empty_editor_buffer_cancels_seed() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");

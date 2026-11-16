@@ -250,6 +250,7 @@ async fn dispatch_slash_command(
         }
         "/history" => handle_history_command(app),
         "/prompt" | "/compose" => handle_prompt_command(app, args),
+        "/init" => handle_init_command(app, args),
         "/recap" => handle_recap_command(app, args),
         "/context" => handle_context_command(app, args),
         "/title" => handle_session_compat_command(app, canonical_command(cmd), args),
@@ -500,6 +501,30 @@ fn handle_prompt_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
         Err(err) => {
             emit_command_output(app, format!("Could not open prompt editor: {err}"));
         }
+    }
+    Ok(CommandResult::Handled)
+}
+
+/// `/init [notes]`: asks the agent to write or update AGENTS.md for the
+/// working directory, as the next turn.
+fn handle_init_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
+    let prompt = std::env::current_dir()
+        .map_err(|err| format!("Cannot read the working directory: {err}"))
+        .and_then(|cwd| init_command::init_prompt_for(&cwd, &args.join(" ")));
+    match prompt {
+        Ok(prompt) => {
+            let update = prompt.contains("UPDATE the existing AGENTS.md");
+            app.queue_pending_agent_seed(prompt);
+            emit_command_output(
+                app,
+                if update {
+                    "Updating AGENTS.md from a project scan."
+                } else {
+                    "Generating AGENTS.md from a project scan."
+                },
+            );
+        }
+        Err(reason) => emit_command_output(app, reason),
     }
     Ok(CommandResult::Handled)
 }
