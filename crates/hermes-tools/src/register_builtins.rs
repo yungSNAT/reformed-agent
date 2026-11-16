@@ -1162,84 +1162,127 @@ pub(crate) mod tests {
         let home = tempfile::tempdir().expect("temp home");
         let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
         let _alias = EnvGuard::remove("TERMINAL_BACKEND");
-        let file = home.path().join("host.txt");
-        std::fs::write(&file, "host text").unwrap();
-        let runtime = tokio::runtime::Runtime::new().unwrap();
         for backend in ["docker", "modal", "vercel_sandbox"] {
             let _terminal_env = EnvGuard::set("TERMINAL_ENV", backend);
-            let registry = ToolRegistry::new();
-            register_builtin_tools(
-                &registry,
-                Arc::new(MockTerminalBackend),
-                Arc::new(MockSkillProvider),
-            );
-            for tool in [
+            assert_host_tools_refuse(backend, home.path());
+        }
+    }
+
+    /// `terminal.backend: docker` in config.yaml alone, with neither
+    /// TERMINAL_ENV nor TERMINAL_BACKEND set, turns the host tools off once the
+    /// configuration is loaded, as every entry point loads it before it
+    /// registers the tools.
+    #[test]
+    fn host_tools_refuse_when_only_config_yaml_names_the_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _hermes_home = EnvGuard::remove("HERMES_HOME");
+        let _managed = EnvGuard::remove("HERMES_MANAGED_DIR");
+        let _ignore = EnvGuard::remove("HERMES_IGNORE_USER_CONFIG");
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::remove("TERMINAL_ENV");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "terminal:\n  backend: docker\n",
+        )
+        .unwrap();
+        // The loaded configuration is not printed: it can hold keys from the
+        // environment.
+        let loaded = hermes_config::load_config(Some(home.path().to_string_lossy().as_ref()));
+        assert!(
+            loaded.is_ok_and(|config| {
+                config.terminal.backend == hermes_config::TerminalBackendType::Docker
+            }),
+            "config.yaml's docker backend did not load"
+        );
+        assert_host_tools_refuse("config.yaml docker", home.path());
+    }
+
+    /// The tools that act on this machine are not offered and refuse a call by
+    /// name; `home` holds the host file they must leave alone.
+    fn assert_host_tools_refuse(backend: &str, home: &std::path::Path) {
+        let file = home.join("host.txt");
+        std::fs::write(&file, "host text").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let registry = ToolRegistry::new();
+        register_builtin_tools(
+            &registry,
+            Arc::new(MockTerminalBackend),
+            Arc::new(MockSkillProvider),
+        );
+        for tool in [
+            "patch",
+            "search_files",
+            "execute_code",
+            "project_facts",
+            "project_tree",
+            "transcription",
+            "video_analyze",
+            "computer_use",
+        ] {
+            assert!(!registry.is_available(tool), "{backend}: {tool} offered");
+        }
+        let path = file.to_string_lossy();
+        let speech = home.join("speech.mp3");
+        let calls = [
+            (
                 "patch",
+                serde_json::json!({
+                    "path": file.to_string_lossy(),
+                    "old_string": "host",
+                    "new_string": "changed",
+                }),
+            ),
+            (
                 "search_files",
+                serde_json::json!({ "pattern": "host", "path": home.to_string_lossy() }),
+            ),
+            (
                 "execute_code",
+                serde_json::json!({ "code": "print(1)", "language": "python" }),
+            ),
+            (
                 "project_facts",
+                serde_json::json!({ "cwd": home.to_string_lossy() }),
+            ),
+            (
                 "project_tree",
-                "transcription",
-                "video_analyze",
+                serde_json::json!({ "cwd": home.to_string_lossy() }),
+            ),
+            ("transcription", serde_json::json!({ "audio_path": path })),
+            ("video_analyze", serde_json::json!({ "video_url": path })),
+            (
                 "computer_use",
-            ] {
-                assert!(!registry.is_available(tool), "{backend}: {tool} offered");
-            }
-            let path = file.to_string_lossy();
-            let speech = home.path().join("speech.mp3");
-            let calls = [
-                (
-                    "patch",
-                    serde_json::json!({
-                        "path": file.to_string_lossy(),
-                        "old_string": "host",
-                        "new_string": "changed",
-                    }),
-                ),
-                (
-                    "search_files",
-                    serde_json::json!({ "pattern": "host", "path": home.path().to_string_lossy() }),
-                ),
-                (
-                    "execute_code",
-                    serde_json::json!({ "code": "print(1)", "language": "python" }),
-                ),
-                (
-                    "project_facts",
-                    serde_json::json!({ "cwd": home.path().to_string_lossy() }),
-                ),
-                (
-                    "project_tree",
-                    serde_json::json!({ "cwd": home.path().to_string_lossy() }),
-                ),
-                ("transcription", serde_json::json!({ "audio_path": path })),
-                ("video_analyze", serde_json::json!({ "video_url": path })),
-                (
-                    "computer_use",
-                    serde_json::json!({ "action": "screenshot" }),
-                ),
-                (
-                    "vision_analyze",
-                    serde_json::json!({ "image_url": path, "question": "What is this?" }),
-                ),
-                (
-                    "text_to_speech",
-                    serde_json::json!({ "text": "hi", "output_path": speech.to_string_lossy() }),
-                ),
-            ];
-            for (tool, params) in calls {
-                let out = runtime.block_on(registry.dispatch_async(tool, params));
-                assert!(
-                    out.contains("terminal backend") && !out.contains("host text"),
-                    "{backend}: {tool} ran on the host: {out}"
-                );
-            }
-            assert_eq!(std::fs::read_to_string(&file).unwrap(), "host text");
+                serde_json::json!({ "action": "screenshot" }),
+            ),
+            (
+                "vision_analyze",
+                serde_json::json!({ "image_url": path, "question": "What is this?" }),
+            ),
+            (
+                "text_to_speech",
+                serde_json::json!({ "text": "hi", "output_path": speech.to_string_lossy() }),
+            ),
+            // output_path is always a path on this machine: a URL is no exception.
+            (
+                "text_to_speech",
+                serde_json::json!({ "text": "hi", "output_path": "https://example.com/speech.mp3" }),
+            ),
+        ];
+        for (tool, params) in calls {
+            let out = runtime.block_on(registry.dispatch_async(tool, params));
             assert!(
-                !speech.exists(),
-                "{backend}: text_to_speech wrote on the host"
+                out.contains("terminal backend") && !out.contains("host text"),
+                "{backend}: {tool} ran on the host: {out}"
             );
         }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "host text");
+        assert!(
+            !speech.exists() && !std::path::Path::new("https:").exists(),
+            "{backend}: text_to_speech wrote on the host"
+        );
     }
 
     struct Ran;

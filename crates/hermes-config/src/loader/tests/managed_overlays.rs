@@ -190,6 +190,38 @@ fn load_config_managed_overlay_is_fail_open_on_invalid_values() {
     clear_managed_scope_test_env();
 }
 
+/// A managed overlay that pins a terminal backend other than local but cannot
+/// be applied stops loading, rather than leaving the user's backend in place.
+#[test]
+fn load_config_managed_overlay_naming_a_backend_it_cannot_apply_stops_loading() {
+    use tempfile::tempdir;
+
+    let _global_guard = crate::managed_gateway::test_lock::lock();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for (text, name) in [
+        ("terminal:\n  backend: vercel_sandbox\n", "vercel_sandbox"),
+        ("terminal:\n  backend: docker\nmax_turns: 0\n", "docker"),
+    ] {
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+        let home = tempdir().unwrap();
+        let managed = tempdir().unwrap();
+        std::fs::write(managed.path().join("config.yaml"), text).unwrap();
+        set_test_env("HERMES_HOME", home.path());
+        set_test_env("HERMES_MANAGED_DIR", managed.path());
+
+        let result = load_config(Some(home.path().to_string_lossy().as_ref()));
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+
+        let Err(err) = result else {
+            panic!("a managed overlay naming `{name}` loaded with the backend left local");
+        };
+        let err = err.to_string();
+        assert!(err.contains(&format!("`{name}`")), "{err}");
+    }
+}
+
 #[test]
 fn load_config_ignore_user_config_still_honors_managed_scope() {
     use tempfile::tempdir;
