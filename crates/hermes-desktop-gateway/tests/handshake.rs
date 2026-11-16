@@ -32,13 +32,18 @@ async fn refused_status(request: tungstenite::handshake::client::Request) -> u16
     }
 }
 
+/// The next text frame as JSON; a missing reply fails the test instead of hanging it.
 async fn next_json(
     socket: &mut tokio_tungstenite::WebSocketStream<
         tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>,
     >,
 ) -> Value {
     loop {
-        match socket.next().await.expect("socket closed").unwrap() {
+        let frame = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
+            .await
+            .expect("no frame within 10 seconds")
+            .expect("socket closed");
+        match frame.unwrap() {
             Message::Text(text) => return serde_json::from_str(&text).unwrap(),
             Message::Ping(_) | Message::Pong(_) => continue,
             other => panic!("unexpected frame {other:?}"),
