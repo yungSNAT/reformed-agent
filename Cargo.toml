@@ -19,6 +19,7 @@ members = [
     "crates/hermes-acp",
     "crates/hermes-eval",
     "crates/hermes-http",
+    "crates/hermes-desktop-gateway",
     "crates/hermes-auth",
     "crates/hermes-telemetry",
     "crates/hermes-parity-tests",
