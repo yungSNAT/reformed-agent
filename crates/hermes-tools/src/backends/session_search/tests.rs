@@ -7,6 +7,19 @@ mod tests {
     use std::sync::Mutex;
     use tempfile::TempDir;
 
+    #[test]
+    fn truncation_keeps_the_match_when_lowercasing_changes_length() {
+        // U+0130 is 2 bytes and lowercases to 3, so byte offsets from the
+        // lowercased copy pointed past the match in the original.
+        let text = format!("{}needle{}", "\u{130}".repeat(30), "x".repeat(30));
+        let cut = SqliteSessionSearchBackend::truncate_around_matches(&text, "NEEDLE", 20);
+        let body = cut
+            .trim_start_matches("...[earlier conversation truncated]...\n\n")
+            .trim_end_matches("\n\n...[later conversation truncated]...");
+        assert!(body.contains("needle"), "{cut}");
+        assert_eq!(body.chars().count(), 20);
+    }
+
     fn backend_with_db() -> (TempDir, SqliteSessionSearchBackend) {
         let tmp = tempfile::tempdir().expect("tempdir");
         let db_path = tmp.path().join("sessions.db");
