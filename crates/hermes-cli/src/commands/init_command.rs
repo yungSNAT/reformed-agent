@@ -31,21 +31,17 @@ from noise):
   sections (e.g. \"Dev environment\", \"Build & test\", \"Conventions\",
   \"Pitfalls\"). Flat and scannable — no deep nesting.";
 
-/// The `/init` prompt for the project at `cwd`, whose AGENTS.md is at
-/// `destination`. `existing` is the current AGENTS.md, which switches the
-/// request to an update that keeps the user's content; `extra` is the
-/// user's text after `/init`.
-pub(super) fn build_init_prompt(
-    cwd: &str,
-    destination: &str,
-    existing: Option<&str>,
-    extra: &str,
-) -> String {
+/// The `/init` prompt for the project in the working directory. It names
+/// the file `AGENTS.md`, relative to that directory, and never the folder's
+/// path, which a repository could name to read as an instruction. `existing`
+/// is the current AGENTS.md, which switches the request to an update that
+/// keeps the user's content; `extra` is the user's text after `/init`.
+pub(super) fn build_init_prompt(existing: Option<&str>, extra: &str) -> String {
     let extra = extra.trim();
     let update = existing.is_some();
     let mut parts = vec![
         format!(
-            "[/init] The user wants you to {} AGENTS.md project-instructions file for the project at: {cwd}\n",
+            "[/init] The user wants you to {} AGENTS.md project-instructions file for the project in the working directory.\n",
             if update { "UPDATE the existing" } else { "generate an" }
         ),
         "AGENTS.md is the instruction file coding agents (Hermes included) \
@@ -62,7 +58,8 @@ pub(super) fn build_init_prompt(
              CI workflow configs, lockfiles), then the directory layout, existing \
              README/docs, and test/lint configuration. Learn the real commands, \
              don't guess them.\n\
-             2. Write the file to {destination} with `write_file`{}\n\
+             2. Write the file to `AGENTS.md`, a path relative to the working \
+             directory, with `write_file`{}\n\
              3. Confirm to the user the exact path you wrote and summarize in one \
              or two lines what the file covers.\n",
             if update {
@@ -99,14 +96,15 @@ pub(super) fn build_init_prompt(
 }
 
 /// `/init [notes]`: asks the agent to write or update AGENTS.md for the
-/// working directory, as the next turn.
+/// working directory, as the next turn: `TERMINAL_CWD` when set, which the
+/// file tools resolve `AGENTS.md` against, else the process's.
 pub(super) fn handle_init_command(
     app: &mut App,
     args: &[&str],
 ) -> Result<CommandResult, AgentError> {
-    match std::env::current_dir() {
+    match super::diff_command::diff_cwd(std::env::var_os("TERMINAL_CWD")) {
         Ok(cwd) => queue_init(app, &cwd, &args.join(" ")),
-        Err(err) => emit_command_output(app, format!("Cannot read the working directory: {err}")),
+        Err(err) => emit_command_output(app, err),
     }
     Ok(CommandResult::Handled)
 }
@@ -131,8 +129,9 @@ pub(super) fn queue_init(app: &mut App, cwd: &Path, notes: &str) {
     }
 }
 
-/// The `/init` prompt for the project at `cwd`, an absolute path the agent
-/// is given as text, so it must be UTF-8 without control characters. An
+/// The `/init` prompt for the project at `cwd`. Its path stays out of the
+/// prompt, but tool results show it to the agent, so it must be UTF-8
+/// without control characters or Unicode line separators. An
 /// existing AGENTS.md is read only when it is a file in the project folder
 /// itself, or a link to one there
 /// (`AGENTS.md -> CLAUDE.md`), and passes the prompt-injection scan applied
@@ -141,15 +140,18 @@ pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String>
     let destination = cwd.join("AGENTS.md");
     let (Some(project), Some(destination)) = (cwd.to_str(), destination.to_str()) else {
         return Err(format!(
-            "The working directory {} is not valid UTF-8, so /init cannot name it to the agent.",
+            "The working directory {} is not valid UTF-8, so /init leaves it alone.",
             cwd.display()
         ));
     };
-    // A line break in the path would start a line of the prompt the folder
-    // name chose.
-    if project.chars().any(char::is_control) {
+    // A line break in the path would start a line of a tool result that the
+    // folder name chose.
+    if project
+        .chars()
+        .any(|c| c.is_control() || c == '\u{2028}' || c == '\u{2029}')
+    {
         return Err(format!(
-            "The working directory {project:?} contains a control character, so /init cannot name it to the agent safely."
+            "The working directory {project:?} contains a control character or a Unicode line or paragraph separator, so /init leaves it alone."
         ));
     }
     let root = cwd
@@ -184,12 +186,7 @@ pub(super) fn init_prompt_for(cwd: &Path, extra: &str) -> Result<String, String>
             Some(content)
         }
     };
-    Ok(build_init_prompt(
-        project,
-        destination,
-        existing.as_deref(),
-        extra,
-    ))
+    Ok(build_init_prompt(existing.as_deref(), extra))
 }
 
 #[cfg(test)]
