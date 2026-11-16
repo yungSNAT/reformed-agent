@@ -1,0 +1,81 @@
+//! The local CI runner (`scripts/run-repo-ci.sh`) mirrors the hosted
+//! workflow's gates, and both compare against the pinned upstream revision.
+
+use std::fs;
+use std::path::PathBuf;
+
+fn read(path: &str) -> String {
+    let full = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../..")
+        .join(path);
+    fs::read_to_string(&full)
+        .unwrap_or_else(|err| panic!("read {}: {err}", full.display()))
+        .replace("\r\n", "\n")
+}
+
+#[test]
+fn repo_ci_runner_exists_and_declares_authority() {
+    let text = read("scripts/run-repo-ci.sh");
+    assert!(text.contains("repository-local CI contract"));
+    assert!(text.contains("hosted GitHub Actions are a convenience mirror"));
+    assert!(text.contains("+${UPSTREAM_REVISION}:refs/remotes/${UPSTREAM_REF}"));
+    assert!(text.contains("[repo-ci] PASS"));
+}
+
+#[test]
+fn parity_gates_use_the_pinned_upstream_revision() {
+    let revision = read("docs/parity/upstream-reference.txt");
+    let revision = revision.trim();
+    assert_eq!(revision.len(), 40, "{revision}");
+    assert!(revision
+        .chars()
+        .all(|c| c.is_ascii_hexdigit() && !c.is_ascii_uppercase()));
+
+    let script = read("scripts/run-repo-ci.sh");
+    let workflow = read(".github/workflows/ci.yml");
+    assert!(script.contains("docs/parity/upstream-reference.txt"));
+    assert!(workflow.contains("docs/parity/upstream-reference.txt"));
+    // A gate that fetched or named upstream's live main would move with it.
+    assert!(!script.contains("refs/heads/main"));
+    assert!(!workflow.contains("upstream/main"));
+    assert!(!workflow.contains("upstream main"));
+}
+
+#[test]
+fn repo_ci_runner_covers_workflow_test_job_gates() {
+    let script = read("scripts/run-repo-ci.sh");
+    let workflow = read(".github/workflows/ci.yml");
+    for command in [
+        "python3 scripts/generate-parity-matrix.py --local-ref HEAD",
+        "python3 scripts/generate-workstream-status.py",
+        "python3 scripts/generate-test-intent-mapping.py",
+        "python3 scripts/generate-test-coverage-audit.py --check",
+        "python3 scripts/generate-adapter-matrix.py",
+        "cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings",
+        "python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch",
+        "python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0",
+        "python3 scripts/generate-global-parity-proof.py",
+        "cargo fmt --all --check",
+        "bash scripts/clippy-warning-gate.sh --check",
+        "cargo test -p hermes-source-parity-tests --test rust_module_size_policy -- --nocapture",
+        "bash scripts/check-runtime-placeholders.sh",
+        "cargo test --workspace",
+        "cargo test -p hermes-parity-tests",
+        "cargo test -p hermes-source-parity-tests --test cli_command_contract",
+        "cargo test -p hermes-protocol-parity-tests --test protocol_differential_contracts",
+        "cargo test -p hermes-source-parity-tests --test global_parity_governance",
+        "cargo run --locked -q -p hermes-parity-tools -- run-upstream-slash-parity-gate --upstream-ref",
+        "cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref",
+    ] {
+        assert!(workflow.contains(command), "ci.yml lacks: {command}");
+        assert!(script.contains(command), "run-repo-ci.sh lacks: {command}");
+    }
+}
+
+#[test]
+fn readme_names_repo_ci_as_gold_standard() {
+    let text = read("README.md");
+    assert!(text.contains("Repo-local CI is the authoritative gate"));
+    assert!(text.contains("GitHub Actions are a hosted mirror"));
+    assert!(text.contains("bash scripts/run-repo-ci.sh"));
+}
