@@ -868,6 +868,14 @@ impl HttpSseTransport {
     /// Send these headers with every request.
     pub fn with_headers(mut self, headers: impl IntoIterator<Item = (String, String)>) -> Self {
         self.headers = headers.into_iter().collect();
+        if !self.headers.is_empty() {
+            // reqwest drops only Authorization and cookies on a redirect to
+            // another origin; a configured API key header would go along.
+            self.client = reqwest::Client::builder()
+                .redirect(same_origin_redirects())
+                .build()
+                .expect("HTTP client builds as Client::new() does");
+        }
         self
     }
 
@@ -912,6 +920,22 @@ impl HttpSseTransport {
         builder = builder.timeout(self.sse_read_timeout);
         self.with_auth(builder)
     }
+}
+
+/// Follows up to 10 redirects within the first URL's origin and stops at one
+/// that leaves it.
+fn same_origin_redirects() -> reqwest::redirect::Policy {
+    reqwest::redirect::Policy::custom(|attempt| {
+        let same_origin = attempt
+            .previous()
+            .first()
+            .is_some_and(|first| first.origin() == attempt.url().origin());
+        if same_origin && attempt.previous().len() <= 10 {
+            attempt.follow()
+        } else {
+            attempt.stop()
+        }
+    })
 }
 
 /// The JSON-RPC messages in a POST reply: each SSE event's data, or the JSON
@@ -1322,5 +1346,61 @@ mod tests {
         assert!(enforce_message_size(128, 256).is_ok());
         let err = enforce_message_size(257, 256).expect_err("must fail");
         assert!(matches!(err, McpError::Protocol { .. }));
+    }
+
+    /// Reads one HTTP request from `listener` and answers `reply`; returns
+    /// the request's head, lower-cased.
+    async fn answer_once(listener: &tokio::net::TcpListener, reply: String) -> String {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let (mut stream, _) = listener.accept().await.expect("accept");
+        let mut buf = vec![0; 8192];
+        let n = stream.read(&mut buf).await.expect("read request");
+        stream
+            .write_all(reply.as_bytes())
+            .await
+            .expect("write reply");
+        String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase()
+    }
+
+    #[tokio::test]
+    async fn configured_headers_follow_redirects_only_within_the_origin() {
+        let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let first_url = format!("http://{}", first.local_addr().unwrap());
+        let other_url = format!("http://{}", other.local_addr().unwrap());
+        let redirect = |to: &str| {
+            format!(
+                "HTTP/1.1 307 Temporary Redirect\r\nLocation: {to}\r\nContent-Length: 0\r\n\r\n"
+            )
+        };
+        let ok = "HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n".to_string();
+        let message = serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"});
+
+        // Within the origin the redirect is followed, header and all.
+        let mut transport = HttpSseTransport::new(&format!("{first_url}/mcp"), None)
+            .with_headers([("x-consumer-api-key".to_string(), "k".to_string())]);
+        let server = async {
+            answer_once(&first, redirect(&format!("{first_url}/moved"))).await;
+            answer_once(&first, ok.clone()).await
+        };
+        let (sent, followed) = tokio::join!(transport.send(message.clone()), server);
+        sent.expect("same-origin redirect followed");
+        assert!(followed.starts_with("post /moved"), "{followed}");
+        assert!(followed.contains("x-consumer-api-key: k"), "{followed}");
+
+        // To another origin it is not, so the key never leaves.
+        // (Were it followed, the other origin would never answer and the
+        // send would wait; the timeout turns that into a failure.)
+        let (sent, _) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                transport.send(message),
+                answer_once(&first, redirect(&format!("{other_url}/mcp")))
+            )
+        })
+        .await
+        .expect("the redirect to the other origin was followed");
+        assert!(sent.is_err(), "the 307 itself is the answer");
+        let reached = tokio::time::timeout(Duration::from_millis(300), other.accept()).await;
+        assert!(reached.is_err(), "the other origin was contacted");
     }
 }

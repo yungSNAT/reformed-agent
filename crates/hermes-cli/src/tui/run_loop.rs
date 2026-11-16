@@ -2,6 +2,18 @@
 // Main TUI run loop
 // ---------------------------------------------------------------------------
 
+/// The TUI event for a terminal event, if it needs one. Windows also reports
+/// each key's release, which must not act as a second press.
+fn tui_event(event: CrosstermEvent) -> Option<Event> {
+    match event {
+        CrosstermEvent::Key(key) if key.kind != KeyEventKind::Release => Some(Event::Key(key)),
+        CrosstermEvent::Resize(w, h) => Some(Event::Resize(w, h)),
+        CrosstermEvent::Mouse(mouse) => Some(Event::Mouse(mouse)),
+        CrosstermEvent::Paste(text) => Some(Event::Paste(text)),
+        _ => None,
+    }
+}
+
 /// Run the interactive TUI with the given App.
 ///
 /// This is the main entry point for the interactive TUI mode.
@@ -30,14 +42,7 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
             }
             if crossterm::event::poll(Duration::from_millis(16)).unwrap_or(false) {
                 if let Ok(event) = crossterm::event::read() {
-                    let msg = match event {
-                        CrosstermEvent::Key(key) => Some(Event::Key(key)),
-                        CrosstermEvent::Resize(w, h) => Some(Event::Resize(w, h)),
-                        CrosstermEvent::Mouse(mouse) => Some(Event::Mouse(mouse)),
-                        CrosstermEvent::Paste(text) => Some(Event::Paste(text)),
-                        _ => None,
-                    };
-                    if let Some(msg) = msg {
+                    if let Some(msg) = tui_event(event) {
                         if event_sender.send(msg).is_err() {
                             break;
                         }
