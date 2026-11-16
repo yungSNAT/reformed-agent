@@ -33,6 +33,31 @@ fn refuses_a_short_token() {
         .unwrap();
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("at least 32"));
+
+    // 16 characters, 48 bytes: the minimum counts characters.
+    let out = Command::new(BIN)
+        .args(["--port", "0"])
+        .env(TOKEN_ENV, "\u{20ac}".repeat(16))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("at least 32"));
+}
+
+/// A token that is set but not valid Unicode is refused, not silently replaced.
+#[cfg(unix)]
+#[test]
+fn refuses_a_token_that_is_not_unicode() {
+    use std::os::unix::ffi::OsStrExt;
+    let mut bytes = vec![b'a'; 40];
+    bytes[0] = 0xff;
+    let out = Command::new(BIN)
+        .args(["--port", "0"])
+        .env(TOKEN_ENV, std::ffi::OsStr::from_bytes(&bytes))
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("not valid Unicode"));
 }
 
 /// Starts the binary, returns the port from its first readiness line, then stops it.

@@ -130,6 +130,28 @@ async fn an_unknown_method_gets_method_not_found_with_its_id() {
     let reply = next_json(&mut socket).await;
     assert_eq!(reply["id"], Value::Null);
     assert_eq!(reply["error"]["code"], -32700);
+
+    // A batch gets one reply per request, in order; its notification gets none.
+    let batch = json!([
+        {"jsonrpc": "2.0", "id": 1, "method": "a"},
+        {"jsonrpc": "2.0", "method": "notified"},
+        {"jsonrpc": "2.0", "id": "two", "method": "b"},
+        7,
+    ]);
+    socket.send(Message::text(batch.to_string())).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    let replies = reply.as_array().expect("a batch reply is an array");
+    assert_eq!(replies.len(), 3, "{reply}");
+    assert_eq!(replies[0]["id"], 1);
+    assert_eq!(replies[0]["error"]["code"], -32601);
+    assert_eq!(replies[1]["id"], "two");
+    assert_eq!(replies[1]["error"]["code"], -32601);
+    assert_eq!(replies[2]["id"], Value::Null);
+    assert_eq!(replies[2]["error"]["code"], -32600);
+
+    socket.send(Message::text("[]")).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(reply["error"]["code"], -32600);
 }
 
 #[tokio::test]
@@ -187,6 +209,8 @@ async fn a_foreign_web_origin_is_refused() {
         format!("http://localhost:{}", addr.port().wrapping_add(1)),
         format!("http://attacker.example:{}", addr.port()),
         "http://[::1".to_string(),
+        format!("http://localhost:{}@attacker.example", addr.port()),
+        format!("http://attacker.example@localhost:{}x", addr.port()),
     ] {
         let mut request = ws_request(addr, &format!("?token={TOKEN}"));
         request
