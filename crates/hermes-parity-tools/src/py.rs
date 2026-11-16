@@ -331,25 +331,45 @@ pub fn expanduser(raw: &str) -> Result<PathBuf, String> {
     Ok(PathBuf::from(if joined.is_empty() { "/" } else { &joined }))
 }
 
-/// `posixpath.expanduser`: `$HOME` for `~`, the passwd entry otherwise.
+/// `posixpath.expanduser`: `$HOME` for `~` (else the current user's passwd
+/// entry, as `getpwuid(getuid())`), the named user's passwd entry otherwise.
 fn posix_home(user: &str) -> Option<String> {
     if user.is_empty() {
         if let Some(home) = std::env::var_os("HOME") {
             return Some(home.to_string_lossy().into_owned());
         }
     }
-    let name = if user.is_empty() {
-        std::env::var("USER").ok()?
+    let uid = if user.is_empty() {
+        Some(current_uid()?.to_string())
     } else {
-        user.to_string()
+        None
     };
-    // shortcut: reads /etc/passwd where Python asks NSS (getpwnam); users
-    // known only to LDAP or similar are not found.
+    // shortcut: reads /etc/passwd where Python asks NSS (getpwnam,
+    // getpwuid); users known only to LDAP or similar are not found.
     let passwd = std::fs::read_to_string("/etc/passwd").ok()?;
     passwd.lines().find_map(|line| {
         let fields: Vec<&str> = line.split(':').collect();
-        (fields.len() >= 7 && fields[0] == name).then(|| fields[5].to_string())
+        let found = match &uid {
+            Some(uid) => fields.get(2) == Some(&uid.as_str()),
+            None => fields[0] == user,
+        };
+        (fields.len() >= 7 && found).then(|| fields[5].to_string())
     })
+}
+
+/// The process's user id, which owns `/proc/self`.
+#[cfg(unix)]
+fn current_uid() -> Option<u32> {
+    use std::os::unix::fs::MetadataExt;
+    // shortcut: /proc/self gives the effective id where Python asks the
+    // real one (they differ only under setuid), and is missing on macOS,
+    // where a bare `~` without $HOME is then an error.
+    std::fs::metadata("/proc/self").ok().map(|m| m.uid())
+}
+
+#[cfg(not(unix))]
+fn current_uid() -> Option<u32> {
+    None
 }
 
 /// `ntpath.expanduser`: `%USERPROFILE%` (else `%HOMEDRIVE%%HOMEPATH%`), and
