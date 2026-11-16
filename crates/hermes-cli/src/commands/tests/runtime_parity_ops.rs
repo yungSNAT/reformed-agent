@@ -1264,8 +1264,11 @@ async fn cli_sessions_delete_removes_the_conversation_from_the_store() {
         .expect("persist");
     let sessions_dir = home.join("sessions");
     std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
-    std::fs::write(sessions_dir.join(format!("{id}.json")), r#"{"messages":[]}"#)
-        .expect("session snapshot");
+    std::fs::write(
+        sessions_dir.join(format!("{id}.json")),
+        r#"{"messages":[]}"#,
+    )
+    .expect("session snapshot");
 
     handle_cli_sessions(CliSessionsOptions {
         action: Some("delete".to_string()),
