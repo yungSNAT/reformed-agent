@@ -617,8 +617,27 @@ async fn ops_eval_run_uses_native_report_not_python_script() {
     }
 }
 
-/// A `cargo install` binary finds its cargo git checkout as the repo root; the
-/// session eval report must still go to the state root, never into that checkout.
+/// `cargo install --git` builds from a copy cargo unpacked (marked `.cargo-ok`)
+/// that has a checkout's markers; `/ops gate`, `evolve` and `autopilot` must not
+/// take it for a source checkout and write `.sync-reports` into cargo's cache.
+#[test]
+fn source_checkout_root_skips_cargo_unpacked_copies() {
+    let checkout = tempdir().expect("checkout");
+    std::fs::create_dir_all(checkout.path().join("docs/parity")).expect("docs/parity");
+    std::fs::write(checkout.path().join("README.md"), "# checkout\n").expect("README");
+    let crate_dir = checkout.path().join("crates/hermes-cli");
+    std::fs::create_dir_all(&crate_dir).expect("crate dir");
+    assert_eq!(
+        source_checkout_root(&crate_dir).as_deref(),
+        Some(checkout.path())
+    );
+
+    std::fs::write(checkout.path().join(".cargo-ok"), "{\"v\":1}").expect(".cargo-ok");
+    assert_eq!(source_checkout_root(&crate_dir), None);
+}
+
+/// Even with a source checkout found as the repo root, the session eval report
+/// goes to the state root, never into that checkout.
 #[tokio::test]
 async fn ops_eval_run_writes_report_under_hermes_home_not_repo_checkout() {
     let _guard = test_env_lock::lock_async().await;
