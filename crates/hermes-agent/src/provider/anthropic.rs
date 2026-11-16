@@ -682,7 +682,7 @@ impl LlmProvider for AnthropicProvider {
             }
 
             let mut byte_stream = resp.bytes_stream();
-            let mut buffer = String::new();
+            let mut buffer = SseBuffer::default();
             // Track current tool_use block index for delta accumulation
             let mut current_tool_index: u32 = 0;
 
@@ -695,12 +695,9 @@ impl LlmProvider for AnthropicProvider {
                     }
                 };
 
-                buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+                buffer.push(&chunk_bytes);
 
-                while let Some(event_end) = buffer.find("\n\n") {
-                    let event_block = buffer[..event_end].to_string();
-                    buffer = buffer[event_end + 2..].to_string();
-
+                while let Some(event_block) = buffer.next_event() {
                     let mut event_type = String::new();
                     let mut event_data = String::new();
 

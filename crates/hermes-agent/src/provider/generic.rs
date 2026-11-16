@@ -914,7 +914,7 @@ impl LlmProvider for GenericProvider {
 
             // Read the SSE byte stream line by line
             let mut byte_stream = resp.bytes_stream();
-            let mut buffer = String::new();
+            let mut buffer = SseBuffer::default();
 
             while let Some(chunk_result) = byte_stream.next().await {
                 let chunk_bytes = match chunk_result {
@@ -925,13 +925,10 @@ impl LlmProvider for GenericProvider {
                     }
                 };
 
-                buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+                buffer.push(&chunk_bytes);
 
                 // Process complete SSE events (separated by double newlines)
-                while let Some(event_end) = buffer.find("\n\n") {
-                    let event_block = buffer[..event_end].to_string();
-                    buffer = buffer[event_end + 2..].to_string();
-
+                while let Some(event_block) = buffer.next_event() {
                     for line in event_block.lines() {
                         let line = line.trim();
                         if line.is_empty() || line.starts_with(':') {
@@ -959,8 +956,9 @@ impl LlmProvider for GenericProvider {
             }
 
             // Process any remaining data in the buffer
-            if !buffer.trim().is_empty() {
-                for line in buffer.lines() {
+            let rest = buffer.rest();
+            if !rest.trim().is_empty() {
+                for line in rest.lines() {
                     let line = line.trim();
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
@@ -979,4 +977,3 @@ impl LlmProvider for GenericProvider {
         .boxed()
     }
 }
-

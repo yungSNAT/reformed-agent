@@ -25,6 +25,7 @@ use crate::provider::{
     OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
 };
 use crate::rate_limit::RateLimitTracker;
+use crate::sse_buffer::SseBuffer;
 
 const CODEX_RESPONSES_BETA_HEADER: &str = "responses=2026-02-06";
 
@@ -484,18 +485,16 @@ impl CodexProvider {
         effective_model: &str,
     ) -> Result<LlmResponse, AgentError> {
         let mut byte_stream = resp.bytes_stream();
-        let mut buffer = String::new();
+        let mut buffer = SseBuffer::default();
         let mut content_text = String::new();
         let mut completed_response: Option<Value> = None;
 
         while let Some(chunk_result) = byte_stream.next().await {
             let chunk_bytes =
                 chunk_result.map_err(|e| AgentError::LlmApi(format!("Stream read error: {e}")))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+            buffer.push(&chunk_bytes);
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
+            while let Some(event_block) = buffer.next_event() {
                 let Some((event_type, json)) = Self::parse_sse_event_block(&event_block) else {
                     continue;
                 };
@@ -661,7 +660,7 @@ impl LlmProvider for CodexProvider {
             }
 
             let mut byte_stream = resp.bytes_stream();
-            let mut buffer = String::new();
+            let mut buffer = SseBuffer::default();
 
             while let Some(chunk_result) = byte_stream.next().await {
                 let chunk_bytes = match chunk_result {
@@ -672,12 +671,9 @@ impl LlmProvider for CodexProvider {
                     }
                 };
 
-                buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+                buffer.push(&chunk_bytes);
 
-                while let Some(event_end) = buffer.find("\n\n") {
-                    let event_block = buffer[..event_end].to_string();
-                    buffer = buffer[event_end + 2..].to_string();
-
+                while let Some(event_block) = buffer.next_event() {
                     let Some((event_type, json)) = CodexProvider::parse_sse_event_block(&event_block) else {
                         continue;
                     };
