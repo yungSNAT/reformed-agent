@@ -78,6 +78,37 @@
         assert_eq!(mode, 0o700, "background_jobs mode {mode:o}");
     }
 
+    /// The CLI does not start with a jobs folder it cannot make owner-only:
+    /// its job files would stay readable by other users while it runs.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn the_app_refuses_to_start_when_the_jobs_folder_cannot_be_narrowed() {
+        // Root may change the mode of `/`, so the failure cannot be staged.
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        // A folder owned by another user: its mode cannot be changed.
+        std::os::unix::fs::symlink("/", tmp.path().join("background_jobs")).unwrap();
+        let config_dir = tmp.path().join("config");
+        std::fs::create_dir_all(&config_dir).unwrap();
+        let cli = crate::cli::Cli::try_parse_from([
+            "hermes",
+            "-C",
+            config_dir.to_str().unwrap(),
+            "--ignore-user-config",
+            "--ignore-rules",
+        ])
+        .expect("parse cli");
+
+        match App::new(cli).await {
+            Ok(_) => panic!("the app started with a jobs folder open to other users"),
+            Err(err) => assert!(err.to_string().contains("background_jobs"), "{err}"),
+        }
+    }
+
     /// `--query -` takes the query from standard input; any other query, or
     /// none, is left as given, and an empty input is refused.
     #[test]
