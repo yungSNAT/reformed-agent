@@ -6,6 +6,10 @@ description: "Reinforcement learning on agent behaviors with Tinker-Atropos — 
 
 # RL Training
 
+:::note Reformed Agent
+This page describes Hermes Agent. Reformed Agent does not include the `rl_*` tools or the RL training pipeline.
+:::
+
 Hermes Agent includes an integrated RL (Reinforcement Learning) training pipeline built on **Tinker-Atropos**. This enables training language models on environment-specific tasks using GRPO (Group Relative Policy Optimization) with LoRA adapters, orchestrated entirely through the agent's tool interface.
 
 ## Overview

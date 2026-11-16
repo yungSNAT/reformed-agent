@@ -628,97 +628,6 @@ fn register_builtin_tools_with_data_dir(
         vec![],
     );
 
-    // -- RL training ---------------------------------------------------------
-    {
-        let state = crate::tools::rl_training::RlState::new(data_dir.join("rl_training"));
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlListEnvironmentsHandler),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlSelectEnvironmentHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlGetCurrentConfigHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlEditConfigHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlStartTrainingHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlCheckStatusHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlStopTrainingHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlGetResultsHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlListRunsHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlTestInferenceHandler { state }),
-            "🏋️",
-            vec![],
-        );
-    }
-
     // -- Env passthrough -----------------------------------------------------
     reg(
         registry,
@@ -1336,16 +1245,6 @@ pub(crate) mod tests {
             "browser_get_images",
             "browser_vision",
             "browser_console",
-            "rl_list_environments",
-            "rl_select_environment",
-            "rl_get_current_config",
-            "rl_edit_config",
-            "rl_start_training",
-            "rl_check_status",
-            "rl_stop_training",
-            "rl_get_results",
-            "rl_list_runs",
-            "rl_test_inference",
             "ultra-feature-1",
             "ultra-feature-2",
             "ultra-feature-3",
