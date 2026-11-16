@@ -226,9 +226,11 @@ impl BrowserBackend for CdpBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for CamoFoxBrowserBackend {
-    /// Upstream counts Camofox as local whatever the terminal backend.
+    /// Upstream counts Camofox as local whatever the terminal backend; here
+    /// it follows the CDP rule, so a container or remote terminal keeps the
+    /// navigation checks on.
     fn is_local_backend(&self) -> bool {
-        self.inner.local
+        self.inner.is_local_backend()
     }
     async fn blank_page(&self) -> Result<String, ToolError> {
         self.inner.blank_page().await

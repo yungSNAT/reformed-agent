@@ -1626,10 +1626,11 @@ fn only_a_default_browser_beside_a_local_terminal_is_local() {
     assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
     assert!(!CdpBrowserBackend::new("http://localhost:9222".into()).is_local_backend());
 
-    // Camofox is local whatever the terminal, as upstream has it.
+    // Upstream counts Camofox as local whatever the terminal; here a
+    // container or remote terminal makes it remote, as it does plain CDP.
     std::env::set_var("TERMINAL_ENV", "docker");
     assert!(!CdpBrowserBackend::from_env().is_local_backend());
-    assert!(CamoFoxBrowserBackend::from_env().is_local_backend());
+    assert!(!CamoFoxBrowserBackend::from_env().is_local_backend());
 
     std::env::set_var("TERMINAL_ENV", "local");
     std::env::set_var("CHROME_CDP_URL", "ws://10.0.0.9:9222/devtools/browser/B");
