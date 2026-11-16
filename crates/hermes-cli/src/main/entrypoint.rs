@@ -66,6 +66,40 @@ async fn run_main() {
     if let (Some(config_dir), Ok(home)) = (cli.config_dir.as_mut(), std::env::var("HERMES_HOME")) {
         *config_dir = home;
     }
+    // Before configuration, secrets or tracing touch either home.
+    if let CliCommand::Migrate(MigrateArgs {
+        from,
+        to,
+        apply,
+        into_existing,
+    }) = &effective_command
+    {
+        let from = from
+            .clone()
+            .unwrap_or_else(hermes_cli::commands::default_hermes_home);
+        let to = to.clone().unwrap_or_else(hermes_config::hermes_home);
+        let request = hermes_cli::commands::MigrateRequest {
+            from: &from,
+            to: &to,
+            apply: *apply,
+            into_existing: *into_existing,
+        };
+        match hermes_cli::commands::migrate_hermes(&request) {
+            Ok(report) => {
+                for line in &report.lines {
+                    println!("{line}");
+                }
+                if report.failed {
+                    std::process::exit(1);
+                }
+            }
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
+        }
+        return;
+    }
     if cli.ignore_user_config {
         std::env::set_var("HERMES_IGNORE_USER_CONFIG", "1");
     }
@@ -655,6 +689,7 @@ async fn run_main() {
             hermes_cli::commands::handle_cli_import(path).await
         }
         CliCommand::ImportHermesSessions(_) => unreachable!("offline import already handled"),
+        CliCommand::Migrate(_) => unreachable!("migration already handled"),
         CliCommand::Version => hermes_cli::commands::handle_cli_version(),
         CliCommand::Cron(CronArgs {
             action,
