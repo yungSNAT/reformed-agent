@@ -8,16 +8,18 @@ use super::{emit_command_output, queue_background_job, AgentError, App, CommandR
 
 /// Recent user and assistant messages the reviewer gets.
 const CONTEXT_MESSAGES: usize = 10;
-/// Characters kept from one message.
-const MESSAGE_CHAR_CAP: usize = 12_000;
+/// Text kept from one message. Sizes here are UTF-16 code units, as
+/// Windows counts a command line.
+const MESSAGE_CAP: usize = 12_000;
 /// shortcut: a background job takes its task as one command-line argument,
-/// and Windows caps a command line at 32,767 characters, so the briefing
-/// keeps the newest messages within this many. Passing the task on standard
-/// input or in a file would lift the cap.
-const BRIEFING_CHAR_CAP: usize = 24_000;
+/// and Windows caps a command line at 32,767 UTF-16 units, so the briefing
+/// keeps the newest messages within this many, leaving room for the
+/// program path and argument quoting. Passing the task on standard input or
+/// in a file would lift the cap.
+const BRIEFING_CAP: usize = 24_000;
 /// Room the user's instructions must leave for the conversation.
-const MIN_EXCERPT_CHARS: usize = 2_000;
-/// Marks a cut message; ASCII, so its length is its character count.
+const MIN_EXCERPT: usize = 2_000;
+/// Marks a cut message; ASCII, so its length is its unit count.
 const TRUNCATED: &str = "\n[... truncated ...]";
 
 const REVIEW_GOAL: &str = "Act as an independent senior reviewer. Thoroughly review the work presented in the conversation excerpt below: investigate any code, pull request, branch, commit, documentation, design, or other artifact it references (open the PR, read the diff, run the code or tests where feasible) rather than judging from the excerpt alone. Produce a full, structured review: what the work does, whether it is correct and complete, concrete defects or risks found (with file/line references where possible), what was verified vs. only read, and a clear final verdict with recommended next steps.";
@@ -48,9 +50,26 @@ pub(super) fn handle_review_command(
     Ok(CommandResult::Handled)
 }
 
+/// `text`'s length in UTF-16 code units.
+fn units(text: &str) -> usize {
+    text.encode_utf16().count()
+}
+
+/// The longest start of `text` within `limit` UTF-16 units.
+fn cut(text: &str, limit: usize) -> &str {
+    let mut used = 0;
+    for (at, c) in text.char_indices() {
+        used += c.len_utf16();
+        if used > limit {
+            return &text[..at];
+        }
+    }
+    text
+}
+
 /// The reviewer's briefing: the goal, the newest user and assistant
 /// messages (oldest first) and the user's instructions, within
-/// [`BRIEFING_CHAR_CAP`] characters. `Err` holds the message to show.
+/// [`BRIEFING_CAP`] units. `Err` holds the message to show.
 pub(super) fn build_review_task(
     messages: &[Message],
     instructions: &str,
@@ -70,16 +89,12 @@ pub(super) fn build_review_task(
         ]
     };
     // Each line and the newline after it.
-    let fixed: usize = lines
-        .iter()
-        .chain(&tail)
-        .map(|line| line.chars().count() + 1)
-        .sum();
-    let Some(mut budget) = BRIEFING_CHAR_CAP
+    let fixed: usize = lines.iter().chain(&tail).map(|line| units(line) + 1).sum();
+    let Some(mut budget) = BRIEFING_CAP
         .checked_sub(fixed)
-        .filter(|budget| *budget >= MIN_EXCERPT_CHARS)
+        .filter(|budget| *budget >= MIN_EXCERPT)
     else {
-        let limit = BRIEFING_CHAR_CAP + instructions.chars().count() - fixed - MIN_EXCERPT_CHARS;
+        let limit = BRIEFING_CAP + units(instructions) - fixed - MIN_EXCERPT;
         return Err(format!(
             "The review instructions are too long: keep them to {limit} characters."
         ));
@@ -100,18 +115,13 @@ pub(super) fn build_review_task(
         if excerpt.len() == CONTEXT_MESSAGES || budget < overhead + TRUNCATED.len() + 1 {
             break;
         }
-        let room = MESSAGE_CHAR_CAP.min(budget - overhead);
-        let text = if text.chars().count() <= room {
+        let room = MESSAGE_CAP.min(budget - overhead);
+        let text = if units(text) <= room {
             text.to_string()
         } else {
-            let keep = room - TRUNCATED.len();
-            let end = text
-                .char_indices()
-                .nth(keep)
-                .map_or(text.len(), |(end, _)| end);
-            format!("{}{TRUNCATED}", &text[..end])
+            format!("{}{TRUNCATED}", cut(text, room - TRUNCATED.len()))
         };
-        budget -= overhead + text.chars().count();
+        budget -= overhead + units(&text);
         excerpt.push((label, text));
     }
     if excerpt.is_empty() {
@@ -170,18 +180,18 @@ mod tests {
 
     #[test]
     fn long_messages_are_cut_and_the_briefing_stays_within_its_cap() {
+        // `é` is one UTF-16 unit and `😀` two, so the cap is not a char count.
         let messages: Vec<_> = (0..10)
-            .map(|turn| message(MessageRole::User, &format!("{turn}{}", "é".repeat(15_000))))
+            .map(|turn| message(MessageRole::User, &format!("{turn}{}", "é😀".repeat(8_000))))
             .collect();
         let task = build_review_task(&messages, "").unwrap();
-        assert!(
-            task.chars().count() <= BRIEFING_CHAR_CAP,
-            "{}",
-            task.chars().count()
-        );
-        // The newest message is kept, cut to the per-message cap.
-        let kept = "é".repeat(MESSAGE_CHAR_CAP - TRUNCATED.len() - 1);
-        assert!(task.contains(&format!("[USER]\n9{kept}{TRUNCATED}\n")));
+        assert!(units(&task) <= BRIEFING_CAP, "{}", units(&task));
+        // The newest message is kept, cut to the per-message cap without
+        // splitting a character.
+        let newest = task.split("[USER]\n").nth(2).unwrap();
+        let newest = newest.split(TRUNCATED).next().unwrap();
+        assert!(newest.starts_with("9é😀"));
+        assert_eq!(units(newest), MESSAGE_CAP - TRUNCATED.len());
         assert!(
             task.contains("[USER]\n8é"),
             "the next message fills the rest"
@@ -197,7 +207,7 @@ mod tests {
     #[test]
     fn instructions_too_long_for_the_briefing_are_refused() {
         let messages = [message(MessageRole::User, "question")];
-        let reason = build_review_task(&messages, &"x".repeat(BRIEFING_CHAR_CAP)).unwrap_err();
+        let reason = build_review_task(&messages, &"x".repeat(BRIEFING_CAP)).unwrap_err();
         assert!(
             reason.starts_with("The review instructions are too long"),
             "{reason}"
