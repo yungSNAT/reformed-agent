@@ -1217,7 +1217,10 @@ pub(crate) mod tests {
         let _hermes_home =
             EnvGuard::set("HERMES_HOME", hermes_home.path().to_string_lossy().as_ref());
         let names = registered_all_names_with_data_dir(hermes_home.path().to_path_buf());
-        let rl: Vec<_> = names.iter().filter(|name| name.starts_with("rl_")).collect();
+        let rl: Vec<_> = names
+            .iter()
+            .filter(|name| name.starts_with("rl_"))
+            .collect();
         assert!(rl.is_empty(), "RL tools registered: {rl:?}");
 
         let toolsets = crate::toolset::ToolsetManager::new(Arc::new(ToolRegistry::new()));
