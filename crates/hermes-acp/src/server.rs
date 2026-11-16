@@ -576,7 +576,8 @@ mod tests {
             "a streamed reply must not be sent again"
         );
 
-        drop(client.writer);
+        // Dropping one half of a split stream does not close it.
+        client.writer.shutdown().await.unwrap();
         client.server.await.unwrap();
     }
 
@@ -595,7 +596,8 @@ mod tests {
         assert_eq!(response["result"]["stopReason"], "cancelled");
         assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
 
-        drop(client.writer);
+        // Dropping one half of a split stream does not close it.
+        client.writer.shutdown().await.unwrap();
         while let Ok(Some(line)) = client.lines.next_line().await {
             let line: serde_json::Value = serde_json::from_str(&line).unwrap();
             assert!(
