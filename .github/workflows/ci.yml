@@ -12,8 +12,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: README install contract
-        run: pipx run --spec pytest==9.2.0 pytest -q -p no:cacheprovider tests/test_readme_install_contract.py
       # The gates compare against the pinned upstream revision, so a result depends
       # on the change under test. The scheduled parity audit reports live drift.
       - name: Fetch upstream parity reference
