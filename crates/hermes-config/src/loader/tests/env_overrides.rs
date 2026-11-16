@@ -476,3 +476,22 @@ fn load_config_ignore_user_config_uses_defaults_when_files_exist() {
         std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
     }
 }
+
+#[test]
+fn load_config_reads_the_env_file_of_the_home_it_is_given() {
+    use tempfile::tempdir;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let given = tempdir().expect("tempdir");
+    let other = tempdir().expect("tempdir");
+    std::fs::write(given.path().join(".env"), "R2952_DOTENV_PROBE=given\n").expect("write");
+    std::fs::write(other.path().join(".env"), "R2952_DOTENV_PROBE=other\n").expect("write");
+    remove_test_env("R2952_DOTENV_PROBE");
+    set_test_env("HERMES_HOME", other.path());
+    let loaded = load_config(Some(given.path().to_string_lossy().as_ref()));
+    remove_test_env("HERMES_HOME");
+    let probe = std::env::var("R2952_DOTENV_PROBE");
+    remove_test_env("R2952_DOTENV_PROBE");
+    loaded.expect("load config");
+    assert_eq!(probe.as_deref(), Ok("given"));
+}

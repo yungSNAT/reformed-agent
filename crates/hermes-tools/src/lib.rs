@@ -90,11 +90,6 @@ pub use tools::process_registry::ProcessRegistryHandler;
 pub use tools::project_workspace::{ProjectFactsHandler, ProjectTreeHandler};
 pub use tools::raw_trace_control::RawTraceControlHandler;
 pub use tools::replay_trace_control::ReplayTraceControlHandler;
-pub use tools::rl_training::{
-    RlCheckStatusHandler, RlEditConfigHandler, RlGetCurrentConfigHandler, RlGetResultsHandler,
-    RlListEnvironmentsHandler, RlListRunsHandler, RlSelectEnvironmentHandler,
-    RlStartTrainingHandler, RlState, RlStopTrainingHandler, RlTestInferenceHandler,
-};
 pub use tools::runbook::RunbookControlHandler;
 pub use tools::session_search::{SessionSearchBackend, SessionSearchHandler};
 pub use tools::skill_commands;

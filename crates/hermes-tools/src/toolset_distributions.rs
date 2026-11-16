@@ -83,7 +83,6 @@ fn base_weights() -> HashMap<String, f64> {
     w.insert("code_execution".into(), 0.7);
     w.insert("delegation".into(), 0.3);
     w.insert("cronjob".into(), 0.2);
-    w.insert("rl_training".into(), 0.2);
     w.insert("homeassistant".into(), 0.1);
     w.insert("tts".into(), 0.1);
     w.insert("voice".into(), 0.1);
@@ -135,7 +134,6 @@ fn make_science() -> ToolsetDistribution {
     w.insert("file".into(), 1.0);
     w.insert("vision".into(), 0.8);
     w.insert("terminal".into(), 0.7);
-    w.insert("rl_training".into(), 0.7);
     ToolsetDistribution {
         name: "science".into(),
         description: "Scientific computing with emphasis on code execution and data".into(),
@@ -151,7 +149,6 @@ fn make_development() -> ToolsetDistribution {
     w.insert("web".into(), 0.7);
     w.insert("skills".into(), 0.9);
     w.insert("todo".into(), 1.0);
-    w.insert("rl_training".into(), 0.4);
     w.insert("browser".into(), 0.2);
     w.insert("ultra_features".into(), 0.9);
     ToolsetDistribution {
@@ -198,7 +195,6 @@ fn make_balanced() -> ToolsetDistribution {
         "clarify",
         "code_execution",
         "mixture_of_agents",
-        "rl_training",
         "ultra_features",
     ] {
         w.insert(key.into(), 0.5);

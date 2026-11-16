@@ -511,37 +511,6 @@ pub fn build_tool_preview_from_value(
         ));
     }
 
-    if tool_name.starts_with("rl_") {
-        let preview = match tool_name {
-            "rl_list_environments" => Some("listing envs".to_string()),
-            "rl_select_environment" => map.get("name").and_then(value_to_scalar_string),
-            "rl_get_current_config" => Some("reading config".to_string()),
-            "rl_edit_config" => Some(format!(
-                "{}={}",
-                map.get("field")
-                    .and_then(value_to_scalar_string)
-                    .unwrap_or_default(),
-                map.get("value")
-                    .and_then(value_to_scalar_string)
-                    .unwrap_or_default()
-            )),
-            "rl_start_training" => Some("starting".to_string()),
-            "rl_check_status" | "rl_get_results" | "rl_stop_training" => map
-                .get("run_id")
-                .and_then(value_to_scalar_string)
-                .map(|v| truncate_chars(&v, 16)),
-            "rl_list_runs" => Some("listing runs".to_string()),
-            "rl_test_inference" => Some(format!(
-                "{} steps",
-                map.get("num_steps")
-                    .and_then(value_to_scalar_string)
-                    .unwrap_or_else(|| "3".to_string())
-            )),
-            _ => None,
-        };
-        return preview.filter(|s| !s.trim().is_empty());
-    }
-
     if matches!(tool_name, "terminal" | "execute_code") {
         let key = if tool_name == "execute_code" {
             "code"
@@ -742,16 +711,7 @@ mod tests {
     }
 
     #[test]
-    fn rl_preview_and_fallback_preview_work() {
-        let rl_preview = build_tool_preview_from_value(
-            "rl_check_status",
-            &json!({"run_id":"run_12345678901234567890"}),
-            40,
-        )
-        .unwrap();
-        assert!(rl_preview.starts_with("run_"));
-        assert!(rl_preview.len() <= 16);
-
+    fn fallback_preview_works() {
         let fallback =
             build_tool_preview_from_value("web_search", &json!({"query":"example search"}), 40)
                 .unwrap();

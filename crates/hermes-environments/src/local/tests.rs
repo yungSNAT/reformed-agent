@@ -407,6 +407,52 @@ async fn test_execute_command_echo() {
     assert!(output.stdout.trim().contains("hello"));
 }
 
+/// A foreground command must not read the agent's stdin, which under ACP or
+/// `mcp serve` is the JSON-RPC stream. A child copy of this test binary gets
+/// a stdin that holds a line and stays open, and runs `cat` in the foreground:
+/// with the agent's stdin, `cat` echoes the line and then waits for more.
+#[test]
+fn a_foreground_command_cannot_read_the_agent_stdin() {
+    const MARK: &str = "agent-stdin-line";
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        let output =
+            block_on(LocalBackend::default().execute_command("cat", None, None, false, false))
+                .expect("cat");
+        assert!(!output.stdout.contains(MARK), "{}", output.stdout);
+        return;
+    }
+    use std::io::Write;
+    let mut child = std::process::Command::new(std::env::current_exe().unwrap())
+        .args([
+            "--exact",
+            "local::tests::a_foreground_command_cannot_read_the_agent_stdin",
+            "--test-threads=1",
+        ])
+        .env("REFORMED_TEST_CHILD", "1")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = child.stdin.take().unwrap();
+    stdin.write_all(format!("{MARK}\n").as_bytes()).unwrap();
+    stdin.flush().unwrap();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(60);
+    while child.try_wait().unwrap().is_none() {
+        if std::time::Instant::now() > deadline {
+            let _ = child.kill();
+            panic!("the foreground command read the agent's stdin and waited on it");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    drop(stdin);
+    let output = child.wait_with_output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        output.status.success() && stdout.contains("1 passed"),
+        "{stdout}"
+    );
+}
+
 #[tokio::test]
 async fn test_execute_command_with_stdin_data() {
     let backend = LocalBackend::default();
@@ -930,4 +976,65 @@ async fn test_background_process_not_found_contract() {
 
     let kill = backend.kill_process("proc_missing").await.unwrap();
     assert_eq!(kill["status"], "not_found");
+}
+
+/// A value no UTF-8 string can hold: a lone 0xFF byte on Unix, a lone
+/// surrogate on Windows.
+fn not_utf8(prefix: &str) -> std::ffi::OsString {
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        let mut bytes = prefix.as_bytes().to_vec();
+        bytes.push(0xff);
+        std::ffi::OsString::from_vec(bytes)
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::ffi::OsStringExt;
+        let mut wide: Vec<u16> = prefix.encode_utf16().collect();
+        wide.push(0xD800);
+        std::ffi::OsString::from_wide(&wide)
+    }
+}
+
+/// Runs `test` (its full path) in a child copy of this test binary with
+/// `envs` added, so a variable that is not UTF-8 never enters this process,
+/// whose other tests read the environment. True when the child ran it and it
+/// passed.
+fn passes_in_child(test: &str, envs: &[(std::ffi::OsString, std::ffi::OsString)]) -> bool {
+    let output = std::process::Command::new(std::env::current_exe().unwrap())
+        .args(["--exact", test, "--test-threads=1"])
+        .env("REFORMED_TEST_CHILD", "1")
+        .envs(envs.iter().map(|(k, v)| (k, v)))
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    output.status.success() && stdout.contains("1 passed")
+}
+
+#[test]
+fn scrubbing_survives_a_variable_that_is_not_utf8() {
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        let mut cmd = TokioCommand::new("true");
+        scrub_subprocess_env(&mut cmd, &[]);
+        let removed: Vec<String> = cmd
+            .as_std()
+            .get_envs()
+            .filter(|(_, value)| value.is_none())
+            .map(|(key, _)| key.to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            removed.iter().any(|key| key == "OPENAI_API_KEY"),
+            "{removed:?}"
+        );
+        return;
+    }
+    assert!(passes_in_child(
+        "local::tests::scrubbing_survives_a_variable_that_is_not_utf8",
+        &[
+            ("OPENAI_API_KEY".into(), "sk-test".into()),
+            ("REFORMED_TEST_BAD_VALUE".into(), not_utf8("x")),
+            (not_utf8("REFORMED_TEST_BAD_NAME"), "x".into()),
+        ],
+    ));
 }

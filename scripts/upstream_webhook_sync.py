@@ -885,8 +885,10 @@ def gh_issue_create(
 def run_python_script(
     repo_root: str, argv: list[str], timeout_sec: int = 1800
 ) -> tuple[int, str]:
+    # Scripts ported to Rust run as their own command line.
+    command = ["python3", *argv] if argv[0].endswith(".py") else argv
     proc = subprocess.run(
-        ["python3", *argv],
+        command,
         cwd=repo_root,
         text=True,
         capture_output=True,
@@ -916,7 +918,10 @@ def maybe_check_global_parity_drift(
         ["scripts/generate-test-intent-mapping.py"],
         ["scripts/generate-test-coverage-audit.py", "--check"],
         ["scripts/generate-adapter-matrix.py"],
-        ["scripts/validate-intentional-divergence.py", "--check", "--allow-warnings"],
+        [
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "validate-intentional-divergence", "--check", "--allow-warnings",
+        ],
         [
             "scripts/generate-upstream-patch-queue.py",
             "--max-commits",

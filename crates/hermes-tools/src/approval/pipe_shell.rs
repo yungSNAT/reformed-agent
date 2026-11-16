@@ -19,7 +19,15 @@
 //! holding one wherever the fetch is. [`runs_downloaded_script`] flags a
 //! file the fetch saved (an output option, a redirection or the URL's last
 //! path segment) that the same command then runs by path or through a
-//! shell, `source` or `.`, matched by file name.
+//! shell, `source` or `.`, matched by file name. The fetched bytes are
+//! followed into a redirection of a command they are piped to, of a
+//! compound command or substitution holding the fetch, of `exec` for later
+//! commands, and of a command whose code (`eval`, `bash -c`, a shell's
+//! here-document) runs the fetch. Output to a descriptor other than stdout
+//! (`>&3`, `>/dev/fd/3`, `-o /dev/fd/$FD`, another process's
+//! `/proc/<pid>/fd/1`) lands where the check cannot name, so every script
+//! run after it is flagged; a fetch's `-`, `/dev/stdout` and its own
+//! `/dev/fd/1` are stdout, not files.
 //!
 //! Out of scope: other downloaders and interpreters, a fetch named at run
 //! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
@@ -36,7 +44,12 @@
 //! flags, so `wget -q https://x/data.json > install.sh && bash install.sh`
 //! asks although wget saves the body to `data.json`. Narrowing it needs
 //! knowing where each fetch tool writes for every flag form, and each miss
-//! there is a bypass.
+//! there is a bypass. File names compare without ASCII case, as the default
+//! filesystems on macOS and Windows and some Linux mounts ignore it, so
+//! `curl -o INSTALL.SH … && bash install.sh` asks on Linux too. A fetch in
+//! code another command runs counts that command's redirection even when a
+//! compound command inside the code redirects elsewhere
+//! (`eval '{ curl x; } > other' > i.sh`).
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
@@ -125,7 +138,14 @@ pub(super) fn sources_remote_process_substitution(command: &str) -> bool {
     let Some(fetch_end) = first_fetch_end(command) else {
         return false;
     };
-    Scan::run(command, Some(fetch_end), 0, Saved::default()).sources
+    Scan::run(
+        command,
+        Some(fetch_end),
+        0,
+        Saved::default(),
+        Stdout::default(),
+    )
+    .sources
 }
 
 /// Whether `command` pipes `curl`/`wget` output into a shell.
@@ -136,7 +156,13 @@ pub(super) fn pipes_remote_content_to_shell(command: &str) -> bool {
     if BARE_SINK.is_match(command) {
         return true;
     }
-    let scan = Scan::run(command, Some(fetch_end), 0, Saved::default());
+    let scan = Scan::run(
+        command,
+        Some(fetch_end),
+        0,
+        Saved::default(),
+        Stdout::default(),
+    );
     scan.pipes || scan.opaque
 }
 
@@ -146,7 +172,14 @@ pub(super) fn runs_downloaded_script(command: &str) -> bool {
     let Some(fetch_end) = first_fetch_end(command) else {
         return false;
     };
-    Scan::run(command, Some(fetch_end), 0, Saved::default()).runs
+    Scan::run(
+        command,
+        Some(fetch_end),
+        0,
+        Saved::default(),
+        Stdout::default(),
+    )
+    .runs
 }
 
 /// What one scan found.
@@ -171,6 +204,8 @@ struct Saved {
     names: Vec<String>,
     /// An output name is computed at run time.
     computed: bool,
+    /// A fetch wrote to a descriptor whose file is not known here.
+    unknown: bool,
 }
 
 impl Saved {
@@ -197,16 +232,71 @@ fn names_descriptor(word: &Word, dup: bool) -> bool {
         .any(|dir| value.strip_prefix(dir).is_some_and(|fd| fd != "0"))
 }
 
+/// `>&` target text that names a descriptor: digits, digits then `-`, or `-`.
+fn is_descriptor(value: &str) -> bool {
+    let fd = value.strip_suffix('-').unwrap_or(value);
+    fd.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Where output written to a path lands.
+enum Output {
+    /// The writer's own stdout.
+    Stdout,
+    /// A descriptor whose file is not known here: `/dev/stderr`,
+    /// `/dev/fd/3`, another process's `/proc/<pid>/fd/1`, or a device path
+    /// computed at run time (`/dev/fd/$FD`).
+    Descriptor,
+    File,
+}
+
+/// Where writing to `path` sends the output; `computed` when part of the
+/// path is expanded at run time. `-` is a file named `-` here: only a
+/// fetch's output option reads it as stdout.
+fn output_target(path: &str, computed: bool) -> Output {
+    if computed && (path.starts_with("/dev/") || path.starts_with("/proc/")) {
+        return Output::Descriptor;
+    }
+    match path {
+        "/dev/stdout" => return Output::Stdout,
+        "/dev/stderr" => return Output::Descriptor,
+        _ => {}
+    }
+    let own = ["/dev/fd/", "/proc/self/fd/", "/proc/thread-self/fd/"]
+        .iter()
+        .find_map(|dir| path.strip_prefix(dir));
+    match own {
+        Some("1") => Output::Stdout,
+        Some(_) => Output::Descriptor,
+        None if path.starts_with("/proc/") && path.contains("/fd/") => Output::Descriptor,
+        None => Output::File,
+    }
+}
+
+/// Where a command's stdout goes, read from its redirections, or inherited
+/// by code another command runs.
+#[derive(Default, Clone)]
+struct Stdout {
+    /// File names; `None` when computed.
+    names: Vec<Option<String>>,
+    /// A descriptor whose file is not known here (`>&3`, `>/dev/fd/3`).
+    descriptor: bool,
+}
+
+impl Stdout {
+    fn redirected(&self) -> bool {
+        !self.names.is_empty() || self.descriptor
+    }
+}
+
 /// A redirection's kind, read from its operator.
 #[derive(Default, Clone, Copy)]
 enum Redirect {
     #[default]
     Other,
     /// Onto stdin; `dup` for `<&`.
-    Stdin {
-        dup: bool,
-    },
-    Stdout,
+    Stdin { dup: bool },
+    /// Onto stdout; `dup` for `>&`, whose target may be a descriptor.
+    Stdout { dup: bool },
 }
 
 /// A command list being walked: the top level or one frame.
@@ -218,9 +308,14 @@ struct List {
     /// The compound depth of the pipe that feeds the current pipeline
     /// element, while one does.
     region: Option<usize>,
-    /// One entry per open compound command: whether a command in it may
-    /// run its stdin as code.
-    compounds: Vec<bool>,
+    /// The frame reads fetched bytes: it is a subshell or `>(...)` given
+    /// the output of a fetch.
+    fed_frame: bool,
+    /// The compound depth of a pipe whose left side wrote fetched bytes,
+    /// while its pipeline lasts.
+    fed: Option<usize>,
+    /// One entry per open compound command.
+    compounds: Vec<Compound>,
     /// A command in this list, or in a frame inside it, may run its stdin
     /// as code.
     sink_seen: bool,
@@ -229,20 +324,34 @@ struct List {
     /// A here-document frame whose body a shell, `source` or `.` reads as
     /// code.
     body_is_code: bool,
+    /// Where code in that body writes its stdout.
+    body_stdout: Stdout,
     command: Command,
 }
 
+/// An open compound command.
+#[derive(Default, Clone, Copy)]
+struct Compound {
+    /// A command in it may run its stdin as code.
+    sink: bool,
+    /// A command in it, or in a frame or code inside it, runs a fetch.
+    fetch: bool,
+}
+
 impl List {
-    fn new(frame: Option<Frame>, arith: bool, inherited: bool) -> Self {
+    fn new(frame: Option<Frame>, arith: bool, inherited: bool, fed_frame: bool) -> Self {
         Self {
             frame,
             arith,
             inherited,
             region: None,
+            fed_frame,
+            fed: None,
             compounds: Vec::new(),
             sink_seen: false,
             ran_fetch: false,
             body_is_code: false,
+            body_stdout: Stdout::default(),
             command: Command::default(),
         }
     }
@@ -255,15 +364,25 @@ impl List {
     fn saw_sink(&mut self) {
         self.sink_seen = true;
         if let Some(open) = self.compounds.last_mut() {
-            *open = true;
+            open.sink = true;
         }
     }
 
-    /// Notes where the simple command starts and whether it is piped.
+    /// Notes a fetch run in this list, a frame inside it or code it runs.
+    fn saw_fetch(&mut self) {
+        self.ran_fetch = true;
+        if let Some(open) = self.compounds.last_mut() {
+            open.fetch = true;
+        }
+    }
+
+    /// Notes where the simple command starts, whether it is piped and
+    /// whether fetched bytes reach its stdin.
     fn begin(&mut self, at: usize) {
         if self.command.start.is_none() {
             self.command.start = Some(at);
             self.command.piped = self.piped();
+            self.command.fed = self.fed_frame || self.fed.is_some();
         }
     }
 }
@@ -312,8 +431,13 @@ struct Command {
     remote_name: bool,
     /// The last path segments of the fetch's URLs; `None` when computed.
     urls: Vec<Option<String>>,
-    /// Its stdout redirections' file names; `None` when computed.
-    stdout: Vec<Option<String>>,
+    /// Its stdout redirections.
+    stdout: Stdout,
+    /// It ends a compound command that ran a fetch, so its redirections
+    /// hold the fetched bytes.
+    holds_fetch: bool,
+    /// A pipe or frame gives it the output of a fetch.
+    fed: bool,
     /// `-s`: the shell reads its script from stdin, so it has no script operand.
     no_script: bool,
     /// A shell without `-c`, `source` or `.`: its first operand may be a script.
@@ -363,16 +487,25 @@ struct Carrier {
 }
 
 impl Scan {
-    fn run(text: &str, fetch_end: Option<usize>, depth: usize, saved: Saved) -> Self {
+    /// Walks `text`, code whose commands write their stdout to `stdout`
+    /// unless they redirect it.
+    fn run(
+        text: &str,
+        fetch_end: Option<usize>,
+        depth: usize,
+        saved: Saved,
+        stdout: Stdout,
+    ) -> Self {
         let mut walk = Walk {
             text,
             fetch_end,
             depth,
+            stdout,
             scan: Scan {
                 saved,
                 ..Scan::default()
             },
-            lists: vec![List::new(None, false, false)],
+            lists: vec![List::new(None, false, false, false)],
             here_documents: std::collections::VecDeque::new(),
         };
         let tokens = lexer::tokens(text);
@@ -407,6 +540,9 @@ struct Walk<'a> {
     text: &'a str,
     fetch_end: Option<usize>,
     depth: usize,
+    /// Where commands write stdout they do not redirect: the redirections
+    /// of the command that runs this code.
+    stdout: Stdout,
     scan: Scan,
     lists: Vec<List>,
     /// Here-documents whose bodies have not been read yet.
@@ -420,6 +556,8 @@ struct HereDocument {
     piped: bool,
     /// Its command is a shell, `source` or `.`, which reads it as code.
     interpreter: bool,
+    /// Where that command writes its stdout.
+    stdout: Stdout,
 }
 
 impl Walk<'_> {
@@ -436,21 +574,33 @@ impl Walk<'_> {
             Token::Word(word) => self.word(word),
             Token::Op { op, at } => self.op(op, at),
             Token::Open { frame, arith, at } => {
-                let mut body_is_code = false;
+                let mut document = None;
                 let inherited = match frame {
                     Frame::HereDoc => {
-                        let document = self.here_documents.pop_front().unwrap_or_default();
-                        body_is_code = document.interpreter;
-                        document.piped
+                        let queued = self.here_documents.pop_front().unwrap_or_default();
+                        let piped = queued.piped;
+                        document = Some(queued);
+                        piped
                     }
                     // The fetch may write to it later through a descriptor
                     // (`exec 3> >(bash); curl x >&3`).
                     Frame::ProcessOut => self.list().piped() || self.fetch_end.is_some(),
                     _ => self.list().piped(),
                 };
-                self.list().begin(at);
-                let mut list = List::new(Some(frame), arith, inherited);
-                list.body_is_code = body_is_code;
+                let parent = self.list();
+                parent.begin(at);
+                let fed = match frame {
+                    Frame::Subshell => parent.command.fed,
+                    Frame::ProcessOut => {
+                        parent.command.fed || parent.command.fetch || parent.command.holds_fetch
+                    }
+                    _ => false,
+                };
+                let mut list = List::new(Some(frame), arith, inherited, fed);
+                if let Some(document) = document {
+                    list.body_is_code = document.interpreter;
+                    list.body_stdout = document.stdout;
+                }
                 self.lists.push(list);
             }
             Token::Body {
@@ -461,7 +611,8 @@ impl Walk<'_> {
             } => {
                 if self.list().body_is_code {
                     let text = self.text;
-                    self.code(&text[start..end], start, end, computed);
+                    let stdout = self.list().body_stdout.clone();
+                    self.code(&text[start..end], start, end, computed, stdout);
                 }
             }
             Token::Close => self.close(),
@@ -481,7 +632,15 @@ impl Walk<'_> {
             child.saw_sink();
         }
         let parent = self.list();
-        parent.ran_fetch |= child.ran_fetch;
+        if child.ran_fetch {
+            parent.saw_fetch();
+            // A subshell's output, or a substitution's text, is the
+            // command's own output (`(curl x) > f`, `echo "$(curl x)" > f`).
+            parent.command.holds_fetch |= matches!(
+                child.frame,
+                Some(Frame::Subshell | Frame::Command | Frame::Backtick | Frame::ProcessIn)
+            );
+        }
         if child.frame == Some(Frame::ProcessIn) && child.ran_fetch {
             parent.command.fetching_file = true;
         }
@@ -509,7 +668,10 @@ impl Walk<'_> {
                     ("" | "0", Some(b'<')) => Redirect::Stdin {
                         dup: operator.starts_with("<&"),
                     },
-                    ("" | "1", Some(b'>')) | ("", Some(b'&')) => Redirect::Stdout,
+                    ("" | "1", Some(b'>')) => Redirect::Stdout {
+                        dup: operator.starts_with(">&"),
+                    },
+                    ("", Some(b'&')) => Redirect::Stdout { dup: false },
                     _ => Redirect::Other,
                 };
             }
@@ -523,12 +685,16 @@ impl Walk<'_> {
                 let document = HereDocument {
                     piped: list.piped(),
                     interpreter: list.command.interpreter,
+                    stdout: Stdout::default(),
                 };
                 list.command.target = true;
                 list.command.here_documents += 1;
                 self.here_documents.push_back(document);
             }
             Op::Pipe | Op::Terminator => {
+                // The command before a pipe writes fetched bytes into it.
+                let command = &self.list().command;
+                let carries = command.fetch || command.fed || command.holds_fetch;
                 let sink = self.end_command();
                 let after_fetch = self.after_fetch(at);
                 let list = self.list();
@@ -540,6 +706,11 @@ impl Walk<'_> {
                     list.region = Some(list.region.map_or(depth, |r| r.min(depth)));
                 } else if op == Op::Terminator && list.region == Some(depth) {
                     list.region = None;
+                }
+                if op == Op::Pipe && carries {
+                    list.fed = Some(list.fed.map_or(depth, |r| r.min(depth)));
+                } else if op == Op::Terminator && list.fed == Some(depth) {
+                    list.fed = None;
                 }
             }
         }
@@ -554,10 +725,20 @@ impl Walk<'_> {
             match std::mem::take(&mut command.redirect) {
                 Redirect::Stdin { dup } => command.reads_descriptor |= names_descriptor(&word, dup),
                 // Kept until the end: `>i.sh curl ...` names the fetch later.
-                Redirect::Stdout => {
-                    let name = self.static_name(&word).map(str::to_string);
-                    self.list().command.stdout.push(name);
+                // `>&2` and `>&-` are descriptors; `>&file` is a file, as `&>file`.
+                Redirect::Stdout { dup: true } if word.computed || is_descriptor(&word.value) => {
+                    let fd = word.value.strip_suffix('-').unwrap_or(&word.value);
+                    self.list().command.stdout.descriptor |=
+                        word.computed || !matches!(fd, "" | "1");
                 }
+                Redirect::Stdout { .. } => match output_target(&word.value, word.computed) {
+                    Output::Stdout => {}
+                    Output::Descriptor => self.list().command.stdout.descriptor = true,
+                    Output::File => {
+                        let name = self.static_name(&word).map(str::to_string);
+                        self.list().command.stdout.names.push(name);
+                    }
+                },
                 _ => {}
             }
             let command = &mut self.list().command;
@@ -642,8 +823,7 @@ impl Walk<'_> {
     fn save(&mut self, word: &Word, output: bool) {
         if output {
             self.list().command.output_given = true;
-            let name = self.static_name(word);
-            self.saved_name(name);
+            self.output_file(word, &word.value);
             return;
         }
         let value = word.value.as_str();
@@ -701,17 +881,36 @@ impl Walk<'_> {
         };
         if let Some(attached) = attached {
             self.list().command.output_given = true;
-            let name = self
-                .static_name(word)
-                .map(|_| file_name(attached))
-                .filter(|name| !name.is_empty());
-            self.saved_name(name);
+            self.output_file(word, attached);
+        }
+    }
+
+    /// Notes the output file `path` of a fetch's output option `word`.
+    fn output_file(&mut self, word: &Word, path: &str) {
+        let target = if path == "-" {
+            Output::Stdout
+        } else {
+            output_target(path, word.computed)
+        };
+        match target {
+            Output::Stdout => {}
+            Output::Descriptor => self.scan.saved.unknown = true,
+            Output::File => {
+                let name = self
+                    .static_name(word)
+                    .map(|_| file_name(path))
+                    .filter(|name| !name.is_empty());
+                self.saved_name(name);
+            }
         }
     }
 
     /// Whether `word`, a script or a command run by path, names a file a
     /// fetch saved.
     fn runs_saved(&self, word: &Word) -> bool {
+        if self.scan.saved.unknown {
+            return true;
+        }
         match self.static_name(word) {
             Some(name) => self.scan.saved.has(name),
             None => self.scan.saved.computed,
@@ -738,12 +937,12 @@ impl Walk<'_> {
             }
             "{" | "if" | "while" | "until" | "then" | "do" | "else" | "elif" | "!" | "coproc" => {
                 if matches!(reserved, "{" | "if" | "while" | "until") {
-                    list.compounds.push(false);
+                    list.compounds.push(Compound::default());
                 }
                 return;
             }
             "for" | "select" | "case" => {
-                list.compounds.push(false);
+                list.compounds.push(Compound::default());
                 list.command.state = State::Arguments;
                 if reserved == "case" && list.frame.is_some() {
                     // Its patterns' `)` would close this frame early.
@@ -752,14 +951,19 @@ impl Walk<'_> {
                 return;
             }
             "}" | "fi" | "done" | "esac" => {
-                let sink = list.compounds.pop().unwrap_or(false);
+                let closed = list.compounds.pop().unwrap_or_default();
                 if let Some(open) = list.compounds.last_mut() {
-                    *open |= sink;
+                    open.sink |= closed.sink;
+                    open.fetch |= closed.fetch;
                 }
-                list.command.after_compound = sink;
+                list.command.holds_fetch = closed.fetch;
+                list.command.after_compound = closed.sink;
                 let depth = list.compounds.len();
                 if list.region.is_some_and(|r| r > depth) {
                     list.region = None;
+                }
+                if list.fed.is_some_and(|r| r > depth) {
+                    list.fed = None;
                 }
                 return;
             }
@@ -802,7 +1006,7 @@ impl Walk<'_> {
                 self.scan.pipes = true;
             }
         } else if name.is(FETCH_NAMES) {
-            list.ran_fetch = true;
+            list.saw_fetch();
             list.command.fetch = true;
             list.command.wget = name.is(&["wget"]);
         }
@@ -875,12 +1079,21 @@ impl Walk<'_> {
             matches!(&command.state, State::Launcher(launcher) if launcher.name == "exec");
         let interpreter =
             command.interpreter || shell_launcher || exec_alone || command.after_compound;
+        // Without a redirection of its own, it writes where the code it is
+        // part of writes.
+        let stdout = if command.stdout.redirected() {
+            &command.stdout
+        } else {
+            &self.stdout
+        }
+        .clone();
         // Its here-documents are the last queued; a newline inside the
         // command that read them earlier fails closed in the lexer.
         let queued = command.here_documents.min(self.here_documents.len());
         let from = self.here_documents.len() - queued;
         for document in self.here_documents.range_mut(from..) {
             document.interpreter |= interpreter;
+            document.stdout = stdout.clone();
         }
         if interpreter && command.fetching_file {
             self.scan.sources = true;
@@ -890,23 +1103,31 @@ impl Walk<'_> {
                 self.saved_name(name.as_deref());
             }
         }
-        if command.fetch {
-            for name in &command.stdout {
+        // Where the fetched bytes land: the fetch's stdout, that of a
+        // command they are piped to, of a compound command or substitution
+        // holding the fetch, and `exec`'s for every later command.
+        if command.fetch
+            || command.fed
+            || command.holds_fetch
+            || (exec_alone && self.fetch_end.is_some())
+        {
+            for name in &stdout.names {
                 self.saved_name(name.as_deref());
             }
+            self.scan.saved.unknown |= stdout.descriptor;
         }
         let start = command.start.unwrap_or(0);
         if interpreter && command.reads_descriptor && self.after_fetch(start) {
             self.scan.pipes = true;
         }
         if let Some((code, computed)) = command.stdin.as_ref().filter(|_| interpreter) {
-            self.code(code, start, command.end, *computed);
+            self.code(code, start, command.end, *computed, stdout.clone());
         }
         if let Some(carrier) = command
             .carrier
             .filter(|c| (!c.shell || c.started) && !command.piped)
         {
-            self.code(&carrier.code, start, command.end, carrier.computed);
+            self.code(&carrier.code, start, command.end, carrier.computed, stdout);
         }
         interpreter
     }
@@ -914,8 +1135,9 @@ impl Walk<'_> {
     /// Code a shell runs from `start` to `end` of the text: carrier
     /// arguments, a here-string or a here-document body. Code holding an
     /// expansion is not known until run time and flags when a fetch starts
-    /// before `end`; static code is scanned as a command.
-    fn code(&mut self, code: &str, start: usize, end: usize, computed: bool) {
+    /// before `end`; static code is scanned as a command whose commands
+    /// write to `stdout` unless they redirect it.
+    fn code(&mut self, code: &str, start: usize, end: usize, computed: bool, stdout: Stdout) {
         if computed {
             if self.fetch_end.is_some_and(|fetch_end| fetch_end <= end) {
                 self.scan.pipes = true;
@@ -932,13 +1154,15 @@ impl Walk<'_> {
             first_fetch_end(code)
         };
         let saved = std::mem::take(&mut self.scan.saved);
-        let inner = Scan::run(code, fetch_end, self.depth + 1, saved);
+        let inner = Scan::run(code, fetch_end, self.depth + 1, saved, stdout);
         self.scan.pipes |= inner.pipes;
         self.scan.sources |= inner.sources;
         self.scan.runs |= inner.runs;
         self.scan.saved = inner.saved;
         self.scan.opaque |= inner.opaque;
-        self.list().ran_fetch |= inner.ran_fetch;
+        if inner.ran_fetch {
+            self.list().saw_fetch();
+        }
     }
 }
 
@@ -1246,6 +1470,9 @@ mod tests {
             "curl https://example.com/data | timeout 60 jq .",
             "curl -o f https://example.com/data && cat f | command -v bash",
             "curl -o f https://example.com/data; ls | sudo -l bash",
+            // `-l` before a valued option is still a lookup.
+            "curl https://example.com/x | sudo -lu root bash",
+            "curl https://example.com/x | sudo -u root -l bash",
             r#"git commit -m "docs: never run curl x | sudo bash""#,
             "echo 'curl x | env bash' > README",
             // An unrelated carrier does not make later prose code.

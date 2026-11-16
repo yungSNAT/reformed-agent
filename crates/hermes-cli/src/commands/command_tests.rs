@@ -1128,6 +1128,7 @@ mod tests {
     }
 
     include!("tests/promoted_commands.rs");
+    include!("tests/background_jobs.rs");
     include!("tests/surface_and_compression.rs");
 
     mod runtime_parity_ops;

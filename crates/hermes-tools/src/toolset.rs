@@ -109,19 +109,6 @@ pub const TOOLSET_SYSTEM: &[&str] = &[
 ];
 /// Mixture-of-agents workflow.
 pub const TOOLSET_MIXTURE_OF_AGENTS: &[&str] = &["mixture_of_agents"];
-/// Reinforcement learning training orchestration tools.
-pub const TOOLSET_RL_TRAINING: &[&str] = &[
-    "rl_list_environments",
-    "rl_select_environment",
-    "rl_get_current_config",
-    "rl_edit_config",
-    "rl_start_training",
-    "rl_check_status",
-    "rl_stop_training",
-    "rl_get_results",
-    "rl_list_runs",
-    "rl_test_inference",
-];
 /// Ultra feature harness coding-agent surfaces.
 pub const TOOLSET_ULTRA_FEATURES: &[&str] = &[
     "ultra-feature-1",
@@ -370,10 +357,6 @@ impl ToolsetManager {
                 .collect(),
         ));
         self.register(Toolset::new(
-            "rl_training",
-            TOOLSET_RL_TRAINING.iter().map(|s| s.to_string()).collect(),
-        ));
-        self.register(Toolset::new(
             "ultra_features",
             TOOLSET_ULTRA_FEATURES
                 .iter()
@@ -410,7 +393,6 @@ impl ToolsetManager {
                 "homeassistant",
                 "tts",
                 "system",
-                "rl_training",
             ]
             .into_iter()
             .map(String::from)
@@ -433,7 +415,6 @@ impl ToolsetManager {
                 "delegation",
                 "cronjob",
                 "homeassistant",
-                "rl_training",
             ]
             .into_iter()
             .map(String::from)
@@ -745,18 +726,6 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_rl_training_toolset() {
-        let manager = ToolsetManager::new(empty_registry());
-        let tools = manager.resolve_toolset_unfiltered("rl_training").unwrap();
-        for expected in TOOLSET_RL_TRAINING {
-            assert!(
-                tools.contains(&expected.to_string()),
-                "rl_training should include {expected}"
-            );
-        }
-    }
-
-    #[test]
     fn test_resolve_all() {
         let manager = ToolsetManager::new(empty_registry());
         let tools = manager.resolve_toolset_unfiltered("all").unwrap();
@@ -765,7 +734,6 @@ mod tests {
         assert!(tools.contains(&"web_crawl".to_string()));
         assert!(tools.contains(&"terminal".to_string()));
         assert!(tools.contains(&"read_file".to_string()));
-        assert!(tools.contains(&"rl_start_training".to_string()));
     }
 
     #[test]
@@ -874,8 +842,6 @@ mod tests {
         assert!(tools.contains(&"objective_snapshot".to_string()));
         assert!(tools.contains(&"mission_snapshot".to_string()));
         assert!(tools.contains(&"ops_snapshot".to_string()));
-        assert!(tools.contains(&"rl_start_training".to_string()));
-        assert!(tools.contains(&"rl_test_inference".to_string()));
     }
 
     #[test]
@@ -915,8 +881,6 @@ mod tests {
             "project_facts",
             "project_tree",
             "cronjob",
-            "rl_start_training",
-            "rl_test_inference",
         ] {
             assert!(
                 tools.contains(&expected.to_string()),

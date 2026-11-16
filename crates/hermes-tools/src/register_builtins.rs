@@ -628,97 +628,6 @@ fn register_builtin_tools_with_data_dir(
         vec![],
     );
 
-    // -- RL training ---------------------------------------------------------
-    {
-        let state = crate::tools::rl_training::RlState::new(data_dir.join("rl_training"));
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlListEnvironmentsHandler),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlSelectEnvironmentHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlGetCurrentConfigHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlEditConfigHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlStartTrainingHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlCheckStatusHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlStopTrainingHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlGetResultsHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlListRunsHandler {
-                state: state.clone(),
-            }),
-            "🏋️",
-            vec![],
-        );
-        reg(
-            registry,
-            "rl_training",
-            Arc::new(crate::tools::rl_training::RlTestInferenceHandler { state }),
-            "🏋️",
-            vec![],
-        );
-    }
-
     // -- Env passthrough -----------------------------------------------------
     reg(
         registry,
@@ -1206,6 +1115,36 @@ pub(crate) mod tests {
         );
     }
 
+    /// The fork has no trainer or model behind RL training, so no tool may
+    /// offer it: the old rl_* tools reported simulated runs and canned
+    /// inference as real.
+    #[test]
+    fn no_builtin_tool_or_toolset_offers_rl_training() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let hermes_home = tempfile::tempdir().expect("temp hermes home");
+        let _hermes_home =
+            EnvGuard::set("HERMES_HOME", hermes_home.path().to_string_lossy().as_ref());
+        let names = registered_all_names_with_data_dir(hermes_home.path().to_path_buf());
+        let rl: Vec<_> = names
+            .iter()
+            .filter(|name| name.starts_with("rl_"))
+            .collect();
+        assert!(rl.is_empty(), "RL tools registered: {rl:?}");
+
+        let toolsets = crate::toolset::ToolsetManager::new(Arc::new(ToolRegistry::new()));
+        assert!(toolsets.resolve_toolset_unfiltered("rl_training").is_err());
+        for composite in ["hermes-cli", "hermes-api-server"] {
+            let tools = toolsets
+                .resolve_toolset_unfiltered(composite)
+                .expect("composite toolset");
+            assert!(
+                !tools.iter().any(|tool| tool.starts_with("rl_")),
+                "{composite} offers RL tools"
+            );
+        }
+    }
+
     #[test]
     fn data_dir_defaults_to_the_own_home_not_upstreams() {
         let _global_env = hermes_config::managed_gateway::test_lock::lock();
@@ -1306,16 +1245,6 @@ pub(crate) mod tests {
             "browser_get_images",
             "browser_vision",
             "browser_console",
-            "rl_list_environments",
-            "rl_select_environment",
-            "rl_get_current_config",
-            "rl_edit_config",
-            "rl_start_training",
-            "rl_check_status",
-            "rl_stop_training",
-            "rl_get_results",
-            "rl_list_runs",
-            "rl_test_inference",
             "ultra-feature-1",
             "ultra-feature-2",
             "ultra-feature-3",
