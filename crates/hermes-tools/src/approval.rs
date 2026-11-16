@@ -1247,6 +1247,7 @@ impl ApprovalManager {
         if delete_without_where(&normalized)
             || pipe_shell::pipes_remote_content_to_shell(command)
             || pipe_shell::sources_remote_process_substitution(command)
+            || pipe_shell::runs_downloaded_script(command)
         {
             return ApprovalDecision::RequiresConfirmation;
         }

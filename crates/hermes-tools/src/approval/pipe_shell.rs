@@ -13,11 +13,30 @@
 //! too, and code not known until run time fails closed after a fetch.
 //! Lookups (`command -v bash`, `sudo -l bash`) run nothing.
 //!
+//! Input on another descriptor is a pipe too: `coproc` in a command that
+//! fetches, a shell given its stdin from another descriptor (`<&3`,
+//! `< /dev/fd/3`) or `/dev/fd/3` as its script after a fetch, and a `>(...)`
+//! holding one wherever the fetch is. [`runs_downloaded_script`] flags a
+//! file the fetch saved (an output option, a redirection or the URL's last
+//! path segment) that the same command then runs by path or through a
+//! shell, `source` or `.`, matched by file name.
+//!
 //! Out of scope: other downloaders and interpreters, a fetch named at run
 //! time, aliases and functions, `xargs`, `ssh` and `su -c` payloads beyond
-//! the bare-sink regex, a fetch written to a file and run later, input
-//! passed on a descriptor other than stdin (`coproc`, `<&3`), zsh-only
+//! the bare-sink regex, a downloaded file run in a later command, after a
+//! copy or rename, or under a name the server chooses (`curl -J`), zsh-only
 //! syntax other than `=cmd`, and PowerShell.
+//!
+//! Accepted false positives, all failing safe. R3389: `eval "$(cat)"
+//! <<EOF` scans the body as code although bash expands `$(cat)` before a
+//! simple command's here-document is attached, and `cat <<'EOF' | bash`
+//! flags a body that only saves a file with `curl -o`. Telling either apart
+//! needs expansion-order modelling the lexer does not have. R3388: a fetch's
+//! stdout redirection target counts as a saved name whatever its output
+//! flags, so `wget -q https://x/data.json > install.sh && bash install.sh`
+//! asks although wget saves the body to `data.json`. Narrowing it needs
+//! knowing where each fetch tool writes for every flag form, and each miss
+//! there is a bypass.
 //!
 //! [`lexer`] reads the command in one pass; [`Scan`] walks its tokens once.
 //! Where bash versions differ or the lexer does not model a construct, the
@@ -106,7 +125,7 @@ pub(super) fn sources_remote_process_substitution(command: &str) -> bool {
     let Some(fetch_end) = first_fetch_end(command) else {
         return false;
     };
-    Scan::run(command, Some(fetch_end), 0).sources
+    Scan::run(command, Some(fetch_end), 0, Saved::default()).sources
 }
 
 /// Whether `command` pipes `curl`/`wget` output into a shell.
@@ -117,8 +136,17 @@ pub(super) fn pipes_remote_content_to_shell(command: &str) -> bool {
     if BARE_SINK.is_match(command) {
         return true;
     }
-    let scan = Scan::run(command, Some(fetch_end), 0);
+    let scan = Scan::run(command, Some(fetch_end), 0, Saved::default());
     scan.pipes || scan.opaque
+}
+
+/// Whether `command` saves a `curl`/`wget` download and then runs that file
+/// by path (`./i.sh`) or through a shell, `source` or `.`.
+pub(super) fn runs_downloaded_script(command: &str) -> bool {
+    let Some(fetch_end) = first_fetch_end(command) else {
+        return false;
+    };
+    Scan::run(command, Some(fetch_end), 0, Saved::default()).runs
 }
 
 /// What one scan found.
@@ -126,10 +154,59 @@ pub(super) fn pipes_remote_content_to_shell(command: &str) -> bool {
 struct Scan {
     pipes: bool,
     sources: bool,
+    /// A file a fetch saved is run.
+    runs: bool,
     /// A construct the lexer does not model, or nesting past a limit.
     opaque: bool,
     /// A command in it names `curl`/`wget`.
     ran_fetch: bool,
+    saved: Saved,
+}
+
+/// Files the fetches read so far may have saved, shared with carrier code.
+#[derive(Default, Clone)]
+struct Saved {
+    /// File names: a fetch's output option or redirection, or a URL's last
+    /// path segment when curl runs with `-O` or wget without `-O`.
+    names: Vec<String>,
+    /// An output name is computed at run time.
+    computed: bool,
+}
+
+impl Saved {
+    fn has(&self, path: &str) -> bool {
+        let name = file_name(path);
+        !name.is_empty() && self.names.iter().any(|n| n.eq_ignore_ascii_case(name))
+    }
+}
+
+/// The last component of a path, `/` or `\` separated.
+fn file_name(path: &str) -> &str {
+    path.rsplit(['/', '\\']).next().unwrap_or(path)
+}
+
+/// Whether a stdin redirection's target (`dup` for `<&`) or a script names a
+/// descriptor other than stdin: `<&3`, `<&"${COPROC[0]}"`, `/dev/fd/3`.
+fn names_descriptor(word: &Word, dup: bool) -> bool {
+    let value = word.value.as_str();
+    if dup {
+        return word.computed || !matches!(value, "0" | "-" | "0-");
+    }
+    ["/dev/fd/", "/proc/self/fd/"]
+        .iter()
+        .any(|dir| value.strip_prefix(dir).is_some_and(|fd| fd != "0"))
+}
+
+/// A redirection's kind, read from its operator.
+#[derive(Default, Clone, Copy)]
+enum Redirect {
+    #[default]
+    Other,
+    /// Onto stdin; `dup` for `<&`.
+    Stdin {
+        dup: bool,
+    },
+    Stdout,
 }
 
 /// A command list being walked: the top level or one frame.
@@ -220,6 +297,33 @@ struct Command {
     state: State,
     /// The next word is a redirection's target or a here-document delimiter.
     target: bool,
+    redirect: Redirect,
+    /// Its stdin, or the script it runs, is another descriptor.
+    reads_descriptor: bool,
+    /// It is `curl` or `wget`.
+    fetch: bool,
+    /// The fetch is wget, whose `-O` names the output file (curl's is `-o`).
+    wget: bool,
+    /// The next word is a fetch's output file.
+    output_next: bool,
+    /// The fetch names its output file.
+    output_given: bool,
+    /// curl `-O` or `--remote-name`: save under the URL's last segment.
+    remote_name: bool,
+    /// The last path segments of the fetch's URLs; `None` when computed.
+    urls: Vec<Option<String>>,
+    /// Its stdout redirections' file names; `None` when computed.
+    stdout: Vec<Option<String>>,
+    /// `-s`: the shell reads its script from stdin, so it has no script operand.
+    no_script: bool,
+    /// A shell without `-c`, `source` or `.`: its first operand may be a script.
+    runs_file: bool,
+    /// After `--`: every later argument is an operand, not an option.
+    operands: bool,
+    /// The next argument is the value of a shell option (`-o pipefail`).
+    option_value: bool,
+    /// The script operand has been read; later arguments are its own.
+    script_read: bool,
     /// That target is a here-string's text.
     here_string: bool,
     /// The command may run a file argument or its stdin as shell code: a
@@ -252,17 +356,22 @@ struct Carrier {
     started: bool,
     /// Leading option words of the code are still being skipped.
     options: bool,
+    /// A shell's code word has been read; later words are `$0` and on.
+    taken: bool,
     code: String,
     computed: bool,
 }
 
 impl Scan {
-    fn run(text: &str, fetch_end: Option<usize>, depth: usize) -> Self {
+    fn run(text: &str, fetch_end: Option<usize>, depth: usize, saved: Saved) -> Self {
         let mut walk = Walk {
             text,
             fetch_end,
             depth,
-            scan: Scan::default(),
+            scan: Scan {
+                saved,
+                ..Scan::default()
+            },
             lists: vec![List::new(None, false, false)],
             here_documents: std::collections::VecDeque::new(),
         };
@@ -334,7 +443,9 @@ impl Walk<'_> {
                         body_is_code = document.interpreter;
                         document.piped
                     }
-                    Frame::ProcessOut => self.list().piped() || self.after_fetch(at),
+                    // The fetch may write to it later through a descriptor
+                    // (`exec 3> >(bash); curl x >&3`).
+                    Frame::ProcessOut => self.list().piped() || self.fetch_end.is_some(),
                     _ => self.list().piped(),
                 };
                 self.list().begin(at);
@@ -388,7 +499,20 @@ impl Walk<'_> {
 
     fn op(&mut self, op: Op, at: usize) {
         match op {
-            Op::Redirect => self.list().command.target = true,
+            Op::Redirect => {
+                let text = &self.text[at..];
+                let (fd, operator) =
+                    text.split_at(text.find(|c: char| !c.is_ascii_digit()).unwrap_or(0));
+                let command = &mut self.list().command;
+                command.target = true;
+                command.redirect = match (fd, operator.as_bytes().first()) {
+                    ("" | "0", Some(b'<')) => Redirect::Stdin {
+                        dup: operator.starts_with("<&"),
+                    },
+                    ("" | "1", Some(b'>')) | ("", Some(b'&')) => Redirect::Stdout,
+                    _ => Redirect::Other,
+                };
+            }
             Op::HereString => {
                 let command = &mut self.list().command;
                 command.target = true;
@@ -427,6 +551,16 @@ impl Walk<'_> {
         let command = &mut list.command;
         command.end = word.end;
         if std::mem::take(&mut command.target) {
+            match std::mem::take(&mut command.redirect) {
+                Redirect::Stdin { dup } => command.reads_descriptor |= names_descriptor(&word, dup),
+                // Kept until the end: `>i.sh curl ...` names the fetch later.
+                Redirect::Stdout => {
+                    let name = self.static_name(&word).map(str::to_string);
+                    self.list().command.stdout.push(name);
+                }
+                _ => {}
+            }
+            let command = &mut self.list().command;
             if std::mem::take(&mut command.here_string) {
                 command.stdin = Some((word.value, word.computed));
             }
@@ -436,11 +570,151 @@ impl Walk<'_> {
             State::Start => self.command_word(&word),
             State::Launcher(launcher) => self.launcher_word(launcher, &word),
             State::Arguments => {
-                self.list().command.state = State::Arguments;
-                if let Some(carrier) = &mut self.list().command.carrier {
-                    carrier.add(&word);
+                let command = &mut self.list().command;
+                command.state = State::Arguments;
+                if command.fetch {
+                    let output = std::mem::take(&mut command.output_next);
+                    self.save(&word, output);
+                }
+                let command = &mut self.list().command;
+                let value = word.value.as_str();
+                if command.runs_file
+                    && !command.script_read
+                    && !command.no_script
+                    && command.carrier.as_ref().is_none_or(|c| !c.started)
+                {
+                    if std::mem::take(&mut command.option_value) {
+                        // The value of the option before it, not the script.
+                    } else if command.operands || !value.starts_with(['-', '+']) {
+                        command.script_read = true;
+                        command.reads_descriptor |= names_descriptor(&word, false);
+                        self.scan.runs |= self.runs_saved(&word);
+                    } else if matches!(value, "--" | "-") && !word.computed {
+                        command.operands = true;
+                    } else {
+                        let cluster = !value.starts_with("--");
+                        command.no_script |=
+                            cluster && value.starts_with('-') && value.contains('s');
+                        // `-o`/`-O` take the next word, also inside a cluster (`-oe`).
+                        command.option_value = matches!(value, "--rcfile" | "--init-file")
+                            || (cluster && value.contains(['o', 'O']));
+                    }
+                }
+                // After a shell's script, `-c` is the script's argument.
+                let command = &mut self.list().command;
+                if !(command.runs_file && command.script_read) {
+                    if let Some(carrier) = &mut command.carrier {
+                        carrier.add(&word);
+                    }
                 }
             }
+        }
+    }
+
+    /// The file name `word` ends in when that last component is written out,
+    /// even if folders before it are computed (`"$TMP/i.sh"`).
+    fn static_name<'w>(&self, word: &'w Word) -> Option<&'w str> {
+        if word.computed {
+            let raw = &self.text[word.start..word.end];
+            if raw
+                .rsplit(['/', '\\'])
+                .next()
+                .unwrap_or(raw)
+                .contains(['$', '`'])
+            {
+                return None;
+            }
+        }
+        Some(file_name(&word.value)).filter(|name| !name.is_empty())
+    }
+
+    /// Notes a saved name; `None` is a name computed at run time.
+    fn saved_name(&mut self, name: Option<&str>) {
+        match name {
+            Some(name) => self.scan.saved.names.push(name.to_string()),
+            None => self.scan.saved.computed = true,
+        }
+    }
+
+    /// Reads a fetch's argument, or its output file when `output`: the
+    /// output options of curl (`-o`, `--output`, `-O`, `--remote-name`) and
+    /// wget (`-O`, `--output-document`), and its URLs.
+    fn save(&mut self, word: &Word, output: bool) {
+        if output {
+            self.list().command.output_given = true;
+            let name = self.static_name(word);
+            self.saved_name(name);
+            return;
+        }
+        let value = word.value.as_str();
+        let wget = self.list().command.wget;
+        // An output name written into the option word: `-oi.sh`, `--output=i.sh`.
+        let attached = if let Some(option) = value.strip_prefix("--") {
+            let (key, attached) = option
+                .split_once('=')
+                .map_or((option, None), |(k, v)| (k, Some(v)));
+            let command = &mut self.list().command;
+            match key {
+                "output" | "output-document" => match attached {
+                    Some(name) => Some(name),
+                    None => {
+                        command.output_next = true;
+                        None
+                    }
+                },
+                "remote-name" | "remote-name-all" => {
+                    command.remote_name = true;
+                    None
+                }
+                _ => None,
+            }
+        } else if let Some(cluster) = value.strip_prefix('-').filter(|c| !c.is_empty()) {
+            let letter = if wget { 'O' } else { 'o' };
+            let (flags, rest) = cluster
+                .split_once(letter)
+                .map_or((cluster, None), |(flags, rest)| (flags, Some(rest)));
+            let command = &mut self.list().command;
+            command.remote_name |= !wget && flags.contains('O');
+            match rest {
+                Some("") if !word.computed => {
+                    command.output_next = true;
+                    None
+                }
+                rest => rest,
+            }
+        } else {
+            if let Some((_, rest)) = value.split_once("://") {
+                let path = rest.split(['?', '#']).next().unwrap_or_default();
+                let name = file_name(path.split_once('/').map_or("", |(_, path)| path));
+                // The query may be computed whilst the file name is written out.
+                let text = self.text;
+                let raw = &text[word.start..word.end];
+                let raw_path = raw.split(['?', '#']).next().unwrap_or(raw);
+                let urls = &mut self.list().command.urls;
+                if word.computed && file_name(raw_path).contains(['$', '`']) {
+                    urls.push(None);
+                } else if !name.is_empty() {
+                    urls.push(Some(name.to_string()));
+                }
+            }
+            None
+        };
+        if let Some(attached) = attached {
+            self.list().command.output_given = true;
+            let name = self
+                .static_name(word)
+                .map(|_| file_name(attached))
+                .filter(|name| !name.is_empty());
+            self.saved_name(name);
+        }
+    }
+
+    /// Whether `word`, a script or a command run by path, names a file a
+    /// fetch saved.
+    fn runs_saved(&self, word: &Word) -> bool {
+        match self.static_name(word) {
+            Some(name) => self.scan.saved.has(name),
+            None => self.scan.saved.computed,
         }
     }
 
@@ -449,10 +723,19 @@ impl Walk<'_> {
         let text = self.text;
         let raw = &text[word.start..word.end];
         let joined = raw.replace("\\\n", "");
+        let fetching = self.fetch_end.is_some();
+        // A file run by path: bash looks a bare name up in PATH.
+        let runs_path =
+            (word.computed || word.value.contains(['/', '\\'])) && self.runs_saved(word);
         let list = self.list();
         let piped = list.piped();
         let reserved = if word.quoted { "" } else { joined.as_str() };
         match reserved {
+            // Its descriptors carry stdin and stdout between commands.
+            "coproc" if fetching => {
+                self.scan.pipes = true;
+                return;
+            }
             "{" | "if" | "while" | "until" | "then" | "do" | "else" | "elif" | "!" | "coproc" => {
                 if matches!(reserved, "{" | "if" | "while" | "until") {
                     list.compounds.push(false);
@@ -485,6 +768,8 @@ impl Walk<'_> {
         if is_assignment(&joined) {
             return;
         }
+        self.scan.runs |= runs_path;
+        let list = self.list();
         let arith = list.arith;
         list.command.state = State::Arguments;
         if word.computed {
@@ -509,6 +794,7 @@ impl Walk<'_> {
         }
         if name.is(PIPE_SHELL_NAMES) || name.is(PIPE_RUNNERS) {
             list.command.interpreter = true;
+            list.command.runs_file = !name.is(&["eval", "su"]);
             if name.is(&["eval"]) || name.is(PIPE_SHELL_NAMES) {
                 list.command.carrier = Some(Carrier::new(name.is(PIPE_SHELL_NAMES)));
             }
@@ -517,6 +803,8 @@ impl Walk<'_> {
             }
         } else if name.is(FETCH_NAMES) {
             list.ran_fetch = true;
+            list.command.fetch = true;
+            list.command.wget = name.is(&["wget"]);
         }
     }
 
@@ -597,7 +885,20 @@ impl Walk<'_> {
         if interpreter && command.fetching_file {
             self.scan.sources = true;
         }
+        if command.fetch && (command.remote_name || (command.wget && !command.output_given)) {
+            for name in &command.urls {
+                self.saved_name(name.as_deref());
+            }
+        }
+        if command.fetch {
+            for name in &command.stdout {
+                self.saved_name(name.as_deref());
+            }
+        }
         let start = command.start.unwrap_or(0);
+        if interpreter && command.reads_descriptor && self.after_fetch(start) {
+            self.scan.pipes = true;
+        }
         if let Some((code, computed)) = command.stdin.as_ref().filter(|_| interpreter) {
             self.code(code, start, command.end, *computed);
         }
@@ -630,9 +931,12 @@ impl Walk<'_> {
         } else {
             first_fetch_end(code)
         };
-        let inner = Scan::run(code, fetch_end, self.depth + 1);
+        let saved = std::mem::take(&mut self.scan.saved);
+        let inner = Scan::run(code, fetch_end, self.depth + 1, saved);
         self.scan.pipes |= inner.pipes;
         self.scan.sources |= inner.sources;
+        self.scan.runs |= inner.runs;
+        self.scan.saved = inner.saved;
         self.scan.opaque |= inner.opaque;
         self.list().ran_fetch |= inner.ran_fetch;
     }
@@ -706,6 +1010,7 @@ impl Carrier {
             shell,
             started: !shell,
             options: true,
+            taken: false,
             code: String::new(),
             computed: false,
         }
@@ -725,6 +1030,10 @@ impl Carrier {
         if self.options && self.shell && value.starts_with(['-', '+']) {
             return;
         }
+        if self.taken {
+            return;
+        }
+        self.taken = self.shell;
         self.options = false;
         self.computed |= word.computed;
         if !self.code.is_empty() {
