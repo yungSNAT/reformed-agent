@@ -258,6 +258,7 @@ async fn dispatch_slash_command(
         "/timetravel" => handle_timetravel_command(app, args),
         "/snapshot" => handle_snapshot_command(app, args),
         "/rollback" => handle_rollback_command(app, args),
+        "/diff" => diff_command::handle_diff_command(app, args).await,
         "/queue" => handle_queue_command(app, args),
         "/handoff" => handle_handoff_command(app, args),
         "/steer" => handle_steer_command(app, args),

