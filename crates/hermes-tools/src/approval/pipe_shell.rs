@@ -309,6 +309,8 @@ struct Command {
     urls: Vec<Option<String>>,
     /// Its stdout redirections' file names; `None` when computed.
     stdout: Vec<Option<String>>,
+    /// An output option names stdout (`-o -`, `-O-`).
+    output_stdout: bool,
     /// `-s`: the shell reads its script from stdin, so it has no script operand.
     no_script: bool,
     /// A shell without `-c`, `source` or `.`: its first operand may be a script.
@@ -636,9 +638,8 @@ impl Walk<'_> {
     /// wget (`-O`, `--output-document`), and its URLs.
     fn save(&mut self, word: &Word, output: bool) {
         if output {
-            self.list().command.output_given = true;
             let name = self.static_name(word);
-            self.saved_name(name);
+            self.output_name(name);
             return;
         }
         let value = word.value.as_str();
@@ -695,11 +696,21 @@ impl Walk<'_> {
             None
         };
         if let Some(attached) = attached {
-            self.list().command.output_given = true;
             let name = self
                 .static_name(word)
                 .map(|_| file_name(attached))
                 .filter(|name| !name.is_empty());
+            self.output_name(name);
+        }
+    }
+
+    /// Notes a fetch's output option naming `name`, where `-` is stdout.
+    fn output_name(&mut self, name: Option<&str>) {
+        let command = &mut self.list().command;
+        command.output_given = true;
+        if name == Some("-") {
+            command.output_stdout = true;
+        } else {
             self.saved_name(name);
         }
     }
@@ -885,7 +896,11 @@ impl Walk<'_> {
                 self.saved_name(name.as_deref());
             }
         }
-        if command.fetch {
+        // curl writes the body to stdout unless told to save it; wget only
+        // with `-O -`.
+        let to_stdout =
+            command.output_stdout || !(command.wget || command.output_given || command.remote_name);
+        if command.fetch && to_stdout {
             for name in &command.stdout {
                 self.saved_name(name.as_deref());
             }
