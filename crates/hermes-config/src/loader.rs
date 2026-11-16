@@ -313,7 +313,8 @@ fn opens_block_scalar(trimmed: &str) -> bool {
         _ => head,
     };
     let mut chars = header.chars();
-    (head.ends_with(':') || head.ends_with('-'))
+    // A key, or sequence indicators alone: `text- |` is a plain value.
+    (head.ends_with(':') || head.split(' ').all(|part| part == "-"))
         && matches!(chars.next(), Some('|' | '>'))
         && chars.all(|c| c.is_ascii_digit() || c == '+' || c == '-')
 }
