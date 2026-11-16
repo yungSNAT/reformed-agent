@@ -1,0 +1,16 @@
+# A user's config.yaml with keys this build does not know about.
+model: openrouter:anthropic/claude-sonnet-4.6
+max_turns: 120
+display:
+  skin: default
+  tool_progress: all
+fallback_models:
+- openrouter:openai/gpt-5-mini
+- local-openai:local-model
+future_upstream_section:
+  nested_flag: true
+  ids: [1, 2, 3]
+  note: "keep: me"
+terminal:
+  backend: local
+  timeout: 180

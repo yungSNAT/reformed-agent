@@ -13,7 +13,7 @@ Translations of an earlier README, which predate this fork: [中文](./README_ZH
 - **Drift:** upstream has moved since the pin. The daily [Parity Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/parity-audit.yml) run reports the current gap against upstream `main` in its job summary. Moving the pin forward is the next parity work.
 - **Windows:** hosted CI only cross-builds for Windows. The tests of `hermes-config`, `hermes-cron`, `hermes-environments` and `hermes-tools` pass in a local Windows run (`cargo test -p hermes-config -p hermes-cron -p hermes-environments -p hermes-tools`); the other crates' tests have not been run on Windows. Local shell commands and cron scripts need a POSIX `sh` from Git for Windows or MSYS2 on PATH. They run without shell init files.
 - **Code analysis:** the [SonarCloud](https://sonarcloud.io/project/overview?id=yungSNAT_reformed-agent) ratings cover the Rust crates in `crates/` and the other files outside the excluded paths. Content inherited from Ultra (`scripts/`, `skills/`, `optional-skills/`, `ui-tui/`, `plugins/`, `tests/` and `website/`) and the vendored crates in `third_party/` are excluded from analysis; [`.sonarcloud.properties`](./.sonarcloud.properties) lists each path and why.
-- **Footprint:** measured on 13 November 2026 against Hermes Agent v0.23.1 (see the table below).
+- **Footprint:** measured on 13 November 2026 against Hermes Agent v0.23.1 and on 15 November 2026 against OpenClaw v2026.11.3 (see the tables below).
 
 | Measure | Reformed Agent at `5cdde8fd` | Hermes Agent v0.23.1 (`3b421578`) |
 | --- | --- | --- |
@@ -30,6 +30,17 @@ Method:
 - Builds: Reformed was built with `cargo build --locked --release -p hermes-cli --bin hermes-agent-ultra`. Hermes was installed by its own installer (`install.sh --non-interactive --skip-browser --skip-computer-use`).
 - Figures: wall-clock medians of 5 cold runs (page cache dropped before each) and 10 warm runs. Peak RSS is the largest resident set of any process in the run.
 - Hermes `doctor`: it runs 44 network connectivity checks, so offline it took about 95 s and exited 1. That is not a start-up time.
+
+Against OpenClaw, measured on 15 November 2026 on the same machine with the same method except as noted:
+
+| Measure | Reformed Agent at `a9fa2077` | OpenClaw v2026.11.3 |
+| --- | --- | --- |
+| Installed size | 44.8 MB binary | 546.8 MB npm prefix, 332.9 MB home after install |
+| `--version`, cold page cache | 46.7 ms, 12.4 MiB peak RSS | 577 ms, 65.8 MiB peak RSS |
+| `--version`, warm | 5.2 ms, 12.3 MiB | 98.2 ms, 66.2 MiB |
+
+- OpenClaw was installed by the npm route in its README (`npm install -g openclaw@2026.11.3 --allow-scripts=openclaw`) into a scratch prefix and home, with the machine's Node.js v26.13.1, which the installed size leaves out. Both tools ran with an empty scratch home.
+- The machine was busier than for the Hermes table: the load average was 7.19 before the runs and 5.28 after, so Reformed's figures here differ from the table above.
 
 These are start-up and size figures from 1 machine, not a general speed comparison.
 
@@ -56,6 +67,22 @@ The Rust toolchain is pinned in [`rust-toolchain.toml`](./rust-toolchain.toml). 
 - `Windows`: cron scripts and local shell commands find `sh` through the inherited PATH, cron refuses rooted and drive-relative script paths, text-to-speech command providers run without a shell and debug builds of the CLI no longer overflow the stack.
 - `Container image`: the Dockerfile builds with the pinned toolchain and the image runs as an unprivileged user.
 - `Lint gate`: `cargo clippy --workspace --all-targets -- -D warnings` passes on Linux and Windows, and the warning allowlist is empty.
+
+### Migrating from Hermes
+
+`hermes-ultra migrate` moves a Hermes Agent home into Reformed's:
+
+```bash
+hermes-ultra migrate                            # plan only: lists each item and writes nothing
+hermes-ultra migrate --apply                    # migrate into a new home
+hermes-ultra migrate --apply --into-existing    # add to a home that already exists
+```
+
+- It reads `~/.hermes` (`%LOCALAPPDATA%\hermes` on Windows, with `HERMES_DATA_DIR_SUFFIX`) unless `--from` names another home or a profile, and writes Reformed's home unless `--to` names another.
+- It moves `config.yaml`, `.env`, the sessions in `state.db`, `memories/`, `skills/`, `SOUL.md`, `plugins/`, `cron/jobs.json` and `scripts/`. It does not move `auth.json`: sign in to each provider again.
+- It replaces nothing. An item already in the Reformed home is listed and left unchanged, and a new home is removed again if the run fails. Links are neither followed nor copied, no file content is printed, and on Unix every file written is owner-only.
+- Sessions convert as `import-hermes-sessions` converts an export. `state.db` is opened read-only; if it reports unapplied changes, stop Hermes, or start and stop it once.
+- Cron jobs are written paused, because Reformed reads schedules in UTC. Cron expressions keep their fields, so check each one's time; interval and one-off jobs keep their times; a job Reformed cannot run the same way is skipped with its reason. Start each with `hermes-ultra cron resume <id>`.
 
 Everything below this section is inherited from Ultra and describes the runtime this fork builds on.
 
