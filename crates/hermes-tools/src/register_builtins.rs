@@ -36,16 +36,19 @@ enum HostParam {
 }
 
 impl HostParam {
-    /// The parameter's name when `params` gives it a value that reaches this
-    /// machine. The URL test is case-sensitive, like the handlers'.
+    /// The parameter's name when `params` gives it a value that may reach this
+    /// machine: any value but null, unless it is a URL the parameter allows.
+    /// The URL test is case-sensitive, like the handlers'.
     fn reaching_host(&self, params: &Value) -> Option<&'static str> {
         let (key, url_allowed) = match *self {
             Self::PathOrUrl(key) => (key, true),
             Self::Path(key) => (key, false),
         };
-        let value = params.get(key)?.as_str()?;
+        let value = params.get(key).filter(|value| !value.is_null())?;
         let allowed = url_allowed
-            && (value.is_empty() || value.starts_with("https://") || value.starts_with("http://"));
+            && value.as_str().is_some_and(|value| {
+                value.is_empty() || value.starts_with("https://") || value.starts_with("http://")
+            });
         (!allowed).then_some(key)
     }
 }
