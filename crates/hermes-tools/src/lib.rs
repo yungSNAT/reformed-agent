@@ -9,6 +9,7 @@
 //! - **Tool implementations**: Concrete handlers for web, terminal, file, browser, and more
 //! - **Approval system**: Dangerous command pattern detection for terminal safety
 
+pub mod ansi_strip;
 pub mod approval;
 pub mod backends;
 pub mod dispatch;
