@@ -251,10 +251,10 @@ class SkillScriptTests(PlantedProgramCase):
 class WindowsLookupTests(unittest.TestCase):
     """find_program under Windows path rules on any host, through a fake os with ntpath."""
 
-    def find(self, path: str, files: set[str], name: str = "gws"):
+    def find(self, path: str, files: set[str], name: str = "gws", isabs=ntpath.isabs):
         module = _load(GOOGLE / "_program_path.py")
         fake_path = types.SimpleNamespace(
-            isabs=ntpath.isabs,
+            isabs=isabs,
             splitdrive=ntpath.splitdrive,
             splitext=ntpath.splitext,
             join=ntpath.join,
@@ -277,6 +277,13 @@ class WindowsLookupTests(unittest.TestCase):
         files = {r"\checkout\gws.EXE", r"C:\trusted\gws.EXE"}
         self.assertIsNone(self.find(r"\checkout", files))
         self.assertEqual(self.find(r"\checkout;C:\trusted", files), r"C:\trusted\gws.EXE")
+
+        # Before Python 3.13, ntpath.isabs also accepts a rooted path, so the drive check
+        # must reject it whatever the host's Python.
+        def old_isabs(path: str) -> bool:
+            return path.startswith(("\\", "/")) or ntpath.isabs(path)
+
+        self.assertIsNone(self.find(r"\checkout", files, isabs=old_isabs))
         unc = r"\\server\share\bin"
         self.assertEqual(self.find(unc, {unc + r"\gws.EXE"}), unc + r"\gws.EXE")
 
