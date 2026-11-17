@@ -275,7 +275,9 @@ fn merge_custom_providers_into_llm(map: &mut Mapping) {
     map.insert(llm_key, Value::Mapping(llm));
 }
 
-/// `providers: { openai: { api_key: ... } }` → merge into `llm_providers`.
+/// `providers: { openai: { api_key: ... } }` → merge into `llm_providers`. Upstream's
+/// spellings are read as it reads them: the endpoint is the first of `base_url`, `url` and
+/// `api`, and the key's variable is `key_env`, else `api_key_env`.
 fn merge_providers_into_llm(map: &mut Mapping) {
     let Some(Value::Mapping(providers)) = map.remove(key("providers")) else {
         return;
@@ -298,8 +300,22 @@ fn merge_providers_into_llm(map: &mut Mapping) {
             .or_insert_with(|| Value::Mapping(Mapping::new()));
         if let Value::Mapping(em) = slot {
             if let Value::Mapping(src) = pv {
+                let endpoint = (trimmed_str(src.get(key("base_url"))).is_none())
+                    .then(|| {
+                        ["url", "api"]
+                            .iter()
+                            .find_map(|field| src.get(key(field)).and_then(normalized_base_url))
+                    })
+                    .flatten();
+                let key_env = trimmed_str(src.get(key("key_env"))).map(str::to_string);
                 for (k, v) in src {
                     em.insert(k, v);
+                }
+                if let Some(url) = endpoint {
+                    em.insert(key("base_url"), Value::String(url));
+                }
+                if let Some(env_name) = key_env {
+                    em.insert(key("api_key_env"), Value::String(env_name));
                 }
             }
         }
