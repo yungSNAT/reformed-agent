@@ -695,9 +695,10 @@ fn write_doctor_snapshot(
     }
     let body = serde_json::to_string_pretty(snapshot_payload)
         .map_err(|e| AgentError::Config(format!("serialize doctor snapshot: {}", e)))?;
-    // Diagnostics, so written as the bundle is: to a new file only the owner
-    // can read (0600 on Unix; Windows applies the folder's inherited ACL)
-    // renamed into place, never into a file someone may hold open.
+    // Diagnostics, so written as the bundle is: to a new file with mode 0600
+    // on Unix, renamed into place, never into a file someone may hold open.
+    // An ACL the folder passes to new files (Windows, macOS, POSIX default
+    // ACLs) still applies: the folder's owner chose it.
     let dir = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
