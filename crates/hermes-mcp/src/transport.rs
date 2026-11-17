@@ -819,8 +819,8 @@ impl McpTransport for HttpTransport {
 /// later request.
 ///
 /// As the specification's backwards-compatibility section advises, the first
-/// POST goes to the URL; only when it fails with 400, 404 or 405 and
-/// `<url>/sse` answers is the server treated as the older HTTP+SSE kind this
+/// POST goes to the URL; only when it fails with a 4xx other than 401 or 403
+/// and `<url>/sse` answers is the server treated as the older HTTP+SSE kind this
 /// transport spoke before: messages are then POSTed to the endpoint its
 /// `mcp-message-endpoint` header names (within the server's origin), else
 /// `<url>/message`.
@@ -996,46 +996,56 @@ fn same_origin_redirects() -> reqwest::redirect::Policy {
     })
 }
 
-/// The byte offsets at which the complete SSE events in `body` end, each
-/// after the blank line that closes it; a line ends in CRLF, LF or CR.
-fn sse_event_ends(body: &[u8]) -> Vec<usize> {
-    let mut ends = Vec::new();
-    let (mut i, mut line_start) = (0, 0);
-    while i < body.len() {
-        let width = match body[i] {
-            b'\r' if body.get(i + 1) == Some(&b'\n') => 2,
-            b'\r' | b'\n' => 1,
-            _ => {
-                i += 1;
-                continue;
-            }
-        };
-        if i == line_start {
-            ends.push(i + width);
-        }
-        i += width;
-        line_start = i;
-    }
-    ends
+/// Finds, as an SSE reply's bytes arrive, the end of the first event that
+/// holds a JSON-RPC response. Each byte is looked at once and each complete
+/// event decoded once. A line ends in CRLF, LF or CR; the LF of a CRLF split
+/// across chunks is not taken for another line end.
+#[derive(Default)]
+struct SseResponseFinder {
+    /// The next byte to look at.
+    pos: usize,
+    /// Where the current line starts.
+    line_start: usize,
+    /// The last byte looked at was a CR.
+    after_cr: bool,
+    /// Where the event after the last complete one starts.
+    event_start: usize,
 }
 
-/// The end of the first complete SSE event in `body` that holds a JSON-RPC
-/// response. Events before `checked` were looked at already; it moves past
-/// each complete event without one.
-fn sse_response_end(body: &[u8], checked: &mut usize) -> Result<Option<usize>, McpError> {
-    let base = *checked;
-    for end in sse_event_ends(&body[base..]) {
-        let end = base + end;
-        let event = std::str::from_utf8(&body[*checked..end]).map_err(|e| McpError::Protocol {
-            code: -32700,
-            message: format!("Invalid UTF-8 in response: {}", e),
-        })?;
-        if http_reply_messages(event, true)?.iter().any(is_response) {
-            return Ok(Some(end));
+impl SseResponseFinder {
+    /// The end of the response's event, once `body` (which only grows
+    /// between calls) holds it in full.
+    fn find(&mut self, body: &[u8]) -> Result<Option<usize>, McpError> {
+        while self.pos < body.len() {
+            let byte = body[self.pos];
+            self.pos += 1;
+            if std::mem::take(&mut self.after_cr) && byte == b'\n' {
+                self.line_start = self.pos;
+                continue;
+            }
+            if byte != b'\r' && byte != b'\n' {
+                continue;
+            }
+            self.after_cr = byte == b'\r';
+            let blank = self.pos - 1 == self.line_start;
+            self.line_start = self.pos;
+            if !blank {
+                continue;
+            }
+            let end = self.pos;
+            let event = std::str::from_utf8(&body[self.event_start..end]).map_err(|e| {
+                McpError::Protocol {
+                    code: -32700,
+                    message: format!("Invalid UTF-8 in response: {}", e),
+                }
+            })?;
+            self.event_start = end;
+            if http_reply_messages(event, true)?.iter().any(is_response) {
+                return Ok(Some(end));
+            }
         }
-        *checked = end;
+        Ok(None)
     }
-    Ok(None)
 }
 
 /// Whether `message` is a JSON-RPC response (a result or error for an id).
@@ -1144,7 +1154,7 @@ impl McpTransport for HttpSseTransport {
         // what follows in the same chunk is neither decoded nor counted.
         let max_message_bytes = max_message_bytes_from_env();
         let mut bytes = Vec::new();
-        let mut checked = 0;
+        let mut finder = SseResponseFinder::default();
         while let Some(chunk) = response
             .chunk()
             .await
@@ -1152,7 +1162,7 @@ impl McpTransport for HttpSseTransport {
         {
             bytes.extend_from_slice(&chunk);
             if is_sse {
-                if let Some(end) = sse_response_end(&bytes, &mut checked)? {
+                if let Some(end) = finder.find(&bytes)? {
                     bytes.truncate(end);
                     enforce_message_size(bytes.len(), max_message_bytes)?;
                     break;
@@ -1668,24 +1678,77 @@ mod tests {
             let mut body = head.clone().into_bytes();
             body.extend_from_slice(&"\u{e9}".as_bytes()[..1]);
             body.extend_from_slice(format!("data: {}", "x".repeat(4096)).as_bytes());
-            let mut checked = 0;
-            assert_eq!(
-                sse_response_end(&body, &mut checked).unwrap(),
-                Some(head.len()),
-                "{ending:?}"
+            let end = SseResponseFinder::default()
+                .find(&body)
+                .unwrap()
+                .expect("response found");
+            // At the blank line's end (a CRLF one ends at its CR).
+            assert!(
+                end <= head.len() && head.len() - end <= 1,
+                "{ending:?}: {end}"
             );
-            let messages = http_reply_messages(&head, true).unwrap();
+            let messages =
+                http_reply_messages(std::str::from_utf8(&body[..end]).unwrap(), true).unwrap();
             assert_eq!(messages.len(), 2, "{ending:?}");
             assert_eq!(messages[1]["id"], 3, "{ending:?}");
+
+            // Arriving a byte at a time, so every split falls somewhere,
+            // including between a CR and its LF: the same end.
+            let mut finder = SseResponseFinder::default();
+            let found = (0..=body.len()).find_map(|k| finder.find(&body[..k]).unwrap());
+            assert_eq!(found, Some(end), "{ending:?}");
         }
-        // Not complete yet: nothing found, and only whole events are passed.
+        // Not complete yet: nothing found.
         let partial = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"p\"}\n\ndata: {\"id\":";
-        let mut checked = 0;
-        assert_eq!(sse_response_end(partial, &mut checked).unwrap(), None);
-        assert_eq!(
-            checked,
-            partial.iter().position(|b| *b == b'\n').unwrap() + 2
-        );
+        assert_eq!(SseResponseFinder::default().find(partial).unwrap(), None);
+    }
+
+    #[tokio::test]
+    async fn the_older_kind_is_tried_after_any_4xx_but_an_authentication_refusal() {
+        let sse = "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n\r\n";
+        let initialize = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
+        for (status, tries_older) in [
+            ("400 Bad Request", true),
+            ("405 Method Not Allowed", true),
+            ("406 Not Acceptable", true),
+            ("415 Unsupported Media Type", true),
+            ("401 Unauthorized", false),
+            ("403 Forbidden", false),
+        ] {
+            let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/mcp", server.local_addr().unwrap());
+            let refused = format!("HTTP/1.1 {status}\r\nContent-Length: 0\r\n\r\n");
+            let mut transport = HttpSseTransport::new(&url, None);
+            if tries_older {
+                let script = async {
+                    answer_once(&server, refused).await;
+                    let probe = answer_once(&server, sse.to_string()).await;
+                    let posted = answer_once(
+                        &server,
+                        json_reply(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#),
+                    )
+                    .await;
+                    (probe, posted)
+                };
+                let (sent, (probe, posted)) =
+                    tokio::join!(transport.send(initialize.clone()), script);
+                sent.expect(status);
+                assert!(probe.starts_with("get /mcp/sse "), "{status}: {probe}");
+                assert!(
+                    posted.starts_with("post /mcp/message "),
+                    "{status}: {posted}"
+                );
+            } else {
+                let (sent, _) = tokio::join!(
+                    transport.send(initialize.clone()),
+                    answer_once(&server, refused)
+                );
+                assert!(sent.is_err(), "{status}");
+                let probed =
+                    tokio::time::timeout(Duration::from_millis(300), server.accept()).await;
+                assert!(probed.is_err(), "{status} probed /sse");
+            }
+        }
     }
 
     #[tokio::test]
