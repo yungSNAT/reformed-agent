@@ -105,8 +105,9 @@ impl AgentLoop {
             .unwrap_or_default();
 
         let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
-        // The finalizer contracts below re-ask for a final answer backed by tool evidence. A turn
-        // offered no tools cannot gather any, so its first answer stands.
+        // Five finalizer contracts below re-ask for a final answer backed by tool evidence or
+        // execution. A turn offered no tools cannot gather any, so its first answer stands; the
+        // output-quality rewrite needs no tools and still applies.
         let finalizers_apply = !tool_schemas.is_empty();
         let (advertised_tool_names, advertised_tool_names_display) =
             advertised_tool_name_index(&tool_schemas);
@@ -871,7 +872,7 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizers_apply && finalizer_output_quality_requires_retry(
+                if finalizer_output_quality_requires_retry(
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_output_quality_retries,
                 ) {
