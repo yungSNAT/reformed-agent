@@ -40,6 +40,7 @@ hermes-provider-runtime = { path = "crates/hermes-provider-runtime" }
 hermes-app-runtime = { path = "crates/hermes-app-runtime" }
 hermes-tool-planning = { path = "crates/hermes-tool-planning" }
 hermes-agent = { path = "crates/hermes-agent" }
+hermes-parity-tools = { path = "crates/hermes-parity-tools" }
 hermes-tools = { path = "crates/hermes-tools" }
 hermes-gateway = { path = "crates/hermes-gateway" }
 hermes-cli-ui = { path = "crates/hermes-cli-ui" }

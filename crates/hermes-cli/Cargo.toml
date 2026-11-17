@@ -68,6 +68,7 @@ path = "src/main.rs"
 
 [dependencies]
 hermes-core = { workspace = true }
+hermes-parity-tools = { workspace = true }
 hermes-provider-runtime = { workspace = true }
 hermes-app-runtime = { workspace = true }
 hermes-tool-planning = { workspace = true }

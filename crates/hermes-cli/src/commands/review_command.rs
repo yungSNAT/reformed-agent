@@ -3,6 +3,7 @@
 //! job, as `/btw` does, with the recent conversation as its evidence.
 
 use hermes_core::{Message, MessageRole};
+use hermes_parity_tools::py::{self, Py};
 
 use super::{emit_command_output, queue_background_job, AgentError, App, CommandResult};
 
@@ -60,7 +61,7 @@ pub(super) fn build_review_task(
                 MessageRole::Assistant => "[PRIMARY AGENT]",
                 _ => return None,
             };
-            let text = strip(message.content.as_deref().unwrap_or_default());
+            let text = py::strip(message.content.as_deref().unwrap_or_default());
             let text = match text.char_indices().nth(MESSAGE_CAP) {
                 Some((at, _)) => format!("{}{TRUNCATED}", &text[..at]),
                 None => text.to_string(),
@@ -83,7 +84,7 @@ pub(super) fn build_review_task(
     if let Some(line) = &skills_line {
         lines.extend(["", line.as_str()]);
     }
-    let instructions = strip(instructions);
+    let instructions = py::strip(instructions);
     if !instructions.is_empty() {
         lines.extend(["", INSTRUCTIONS_INTRO, instructions]);
     }
@@ -91,27 +92,21 @@ pub(super) fn build_review_task(
     Ok(lines.join("\n"))
 }
 
-/// `text` without what Python's `str.strip` removes: Unicode whitespace
-/// and the separators U+001C to U+001F.
-fn strip(text: &str) -> &str {
-    text.trim_matches(|c: char| c.is_whitespace() || ('\u{1c}'..='\u{1f}').contains(&c))
-}
-
 /// The skills the agent loaded whole with `skill_view`, in load order,
-/// each once, at most [`SKILL_LIMIT`] (upstream's
-/// `collect_parent_loaded_skills`; the CLI keeps no launch-preloaded marker
-/// to read). As upstream, a call whose `file_path` is truthy read one file
-/// of a skill and does not count, and a truthy name that is not a string
-/// counts as Python's `str` prints it.
+/// each once, at most [`SKILL_LIMIT`]: upstream's
+/// `collect_parent_loaded_skills`, reading each call's arguments as
+/// Python's `json.loads` does and naming a skill as Python's `str()` prints
+/// it. The CLI keeps no launch-preloaded marker to read. A call whose
+/// `file_path` is truthy read one file of a skill, so it does not count.
 fn loaded_skills(messages: &[Message]) -> Vec<String> {
-    use serde_json::Value;
-    let truthy = |value: &Value| match value {
-        Value::Null => false,
-        Value::Bool(value) => *value,
-        Value::Number(value) => value.as_f64() != Some(0.0),
-        Value::String(value) => !value.is_empty(),
-        Value::Array(value) => !value.is_empty(),
-        Value::Object(value) => !value.is_empty(),
+    let truthy = |value: &Py| match value {
+        Py::Null => false,
+        Py::Bool(value) => *value,
+        Py::Int(value) => *value != 0,
+        Py::Float(value) => *value != 0.0,
+        Py::Str(value) => !value.is_empty(),
+        Py::List(value) => !value.is_empty(),
+        Py::Dict(value) => !value.is_empty(),
     };
     let mut names: Vec<String> = Vec::new();
     let calls = messages
@@ -120,22 +115,17 @@ fn loaded_skills(messages: &[Message]) -> Vec<String> {
         .flat_map(|message| message.tool_calls.iter().flatten())
         .filter(|call| call.function.name == "skill_view");
     for call in calls {
-        let Ok(Value::Object(args)) = serde_json::from_str(&call.function.arguments) else {
+        let Ok(args) = py::loads(&call.function.arguments) else {
             continue;
         };
-        if args.get("file_path").is_some_and(truthy) {
+        if !args.is_dict() || args.get("file_path").is_some_and(truthy) {
             continue;
         }
-        // shortcut: an array or object name prints as JSON rather than
-        // Python's repr, and a float or an integer past 64 bits may print
-        // differently; no skill has such a name.
-        let name = match args.get("name").filter(|name| truthy(name)) {
-            Some(Value::String(name)) => name.clone(),
-            Some(Value::Bool(_)) => "True".to_string(),
-            Some(other) => other.to_string(),
-            None => continue,
+        let Some(name) = args.get("name").filter(|name| truthy(name)) else {
+            continue;
         };
-        let name = strip(&name);
+        let name = py::str_of(name);
+        let name = py::strip(&name);
         if !name.is_empty() && !names.iter().any(|known| known == name) {
             names.push(name.to_string());
         }
