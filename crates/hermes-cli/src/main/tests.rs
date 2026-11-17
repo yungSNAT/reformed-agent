@@ -170,10 +170,7 @@ mod tests {
         assert!(err.contains("no browser here"), "{err}");
         let next = browsers.tool_overrides("telegram:1");
         let err = snapshot(&next).await;
-        assert!(
-            err.contains("no browser here"),
-            "a new session got the closed browser: {err}"
-        );
+        assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
     }
 
     /// A terminal backend that must never be reached.
@@ -223,7 +220,8 @@ mod tests {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
         });
-        let terminal_backend: Arc<dyn hermes_core::TerminalBackend> = Arc::new(UnreachableTerminal);
+        let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
+            Arc::new(UnreachableTerminal);
         let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
             session_key: format!("{platform}:cli-turn"),
             platform: platform.into(),
@@ -268,7 +266,9 @@ mod tests {
         ]
         .map(|platform| (platform, "4242"))
         .into_iter()
-        .chain(["1087968824", "136817688", "777000", "unknown"].map(|user| ("telegram", user)));
+        .chain(
+            ["1087968824", "136817688", "777000", "unknown"].map(|user| ("telegram", user)),
+        );
         for (platform, user) in refused {
             let overrides = gateway_turn_tool_overrides(
                 &browsers,
@@ -277,10 +277,7 @@ mod tests {
                 &ctx(platform, user),
             );
             assert!(!overrides.contains_key("terminal"), "{platform} {user}");
-            assert!(
-                overrides.contains_key("browser_snapshot"),
-                "{platform} {user}"
-            );
+            assert!(overrides.contains_key("browser_snapshot"), "{platform} {user}");
         }
     }
 
@@ -1056,7 +1053,8 @@ mod tests {
         let existing = dir.path().join("out").join("bundle.tar.gz");
         std::fs::create_dir_all(existing.parent().unwrap()).expect("mkdir");
         std::fs::write(&existing, "old").expect("existing");
-        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644))
+            .expect("chmod");
         let mut held = std::fs::File::open(&existing).expect("hold open");
 
         let path = build_doctor_support_bundle_with_options(&cli, &snapshot, Some(&existing), true)
@@ -1066,11 +1064,7 @@ mod tests {
         let mut seen = Vec::new();
         held.read_to_end(&mut seen).expect("read held");
         assert_eq!(seen, b"old", "the held handle sees the new bundle");
-        let mode = std::fs::metadata(&existing)
-            .expect("metadata")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = std::fs::metadata(&existing).expect("metadata").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let bundle = std::fs::read(&existing).expect("read bundle");
         assert_eq!(&bundle[..2], &[0x1f, 0x8b], "not a gzip file");
@@ -1078,11 +1072,7 @@ mod tests {
         let fresh = dir.path().join("out").join("fresh.tar.gz");
         build_doctor_support_bundle_with_options(&cli, &snapshot, Some(&fresh), true)
             .expect("fresh bundle");
-        let mode = std::fs::metadata(&fresh)
-            .expect("metadata")
-            .permissions()
-            .mode()
-            & 0o777;
+        let mode = std::fs::metadata(&fresh).expect("metadata").permissions().mode() & 0o777;
         assert_eq!(mode, 0o600);
         let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
             .expect("list")
@@ -1142,4 +1132,5 @@ mod tests {
     include!("tests/uninstall.rs");
 
     mod env_profile_diagnostics;
+
 }

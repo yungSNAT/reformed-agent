@@ -456,7 +456,9 @@ async fn run_doctor(
     );
     println!(
         "  elite gate runner... {} {}",
-        elite["elite_gate"]["runner"].as_str().unwrap_or("unknown"),
+        elite["elite_gate"]["runner"]
+            .as_str()
+            .unwrap_or("unknown"),
         if elite["elite_gate"]["script_available"]
             .as_bool()
             .unwrap_or(false)
@@ -1217,13 +1219,12 @@ fn build_doctor_support_bundle_with_options(
         )?;
     }
 
-    let finalize =
-        |e: std::io::Error| AgentError::Io(format!("finalize {}: {}", bundle_path.display(), e));
-    let file = tar
-        .into_inner()
-        .and_then(|gz| gz.finish())
-        .map_err(finalize)?;
-    file.persist(&bundle_path).map_err(|e| finalize(e.error))?;
+    let finalize = |e: std::io::Error| {
+        AgentError::Io(format!("finalize {}: {}", bundle_path.display(), e))
+    };
+    let file = tar.into_inner().and_then(|gz| gz.finish()).map_err(finalize)?;
+    file.persist(&bundle_path)
+        .map_err(|e| finalize(e.error))?;
     Ok(bundle_path)
 }
 
@@ -1238,11 +1239,7 @@ async fn run_update(_check: bool) -> Result<(), AgentError> {
     Ok(())
 }
 
-async fn run_legacy_elite_check(
-    cmdline: String,
-    json: bool,
-    strict: bool,
-) -> Result<(), AgentError> {
+async fn run_legacy_elite_check(cmdline: String, json: bool, strict: bool) -> Result<(), AgentError> {
     let mut cmdline = cmdline;
     if json {
         cmdline.push_str(" --json");
