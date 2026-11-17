@@ -641,10 +641,12 @@ async fn stalled_turn(addr: SocketAddr) -> (PlainSocket, String) {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     // 4 MiB streamed and the same again in message.complete: more than a loopback socket's
-    // buffers hold, so each stalled connection's writes stop.
-    let reply: &'static str = Box::leak("x".repeat(4 << 20).into_boxed_str());
+    // buffers hold, so each stalled connection's writes stop. The reply streams as 4 frames
+    // of 1 MiB because Windows takes a whole send while less than its send buffer (64 KiB) is
+    // queued, so 2 large frames would both be taken and the slot freed.
+    let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
     let timeout = Duration::from_secs(10);
-    let started = start_with(vec![reply], Duration::ZERO, Some(timeout)).await;
+    let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout)).await;
     let mut stalled = Vec::new();
     for _ in 0..8 {
         stalled.push(stalled_turn(started.addr).await);
