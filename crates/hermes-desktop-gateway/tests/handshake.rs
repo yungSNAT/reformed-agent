@@ -13,7 +13,13 @@ const TOKEN: &str = "0123456789abcdef0123456789abcdef-test-token";
 async fn start() -> SocketAddr {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    tokio::spawn(hermes_desktop_gateway::serve(listener, TOKEN.to_string()));
+    // These tests make no turns, so the chat needs no model.
+    let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
+    tokio::spawn(hermes_desktop_gateway::serve(
+        listener,
+        TOKEN.to_string(),
+        chat,
+    ));
     addr
 }
 
