@@ -996,11 +996,46 @@ fn same_origin_redirects() -> reqwest::redirect::Policy {
     })
 }
 
-/// The length of `body` up to the end of its last complete SSE event.
-fn complete_sse_events(body: &str) -> usize {
-    let lf = body.rfind("\n\n").map_or(0, |i| i + 2);
-    let crlf = body.rfind("\r\n\r\n").map_or(0, |i| i + 4);
-    lf.max(crlf)
+/// The byte offsets at which the complete SSE events in `body` end, each
+/// after the blank line that closes it; a line ends in CRLF, LF or CR.
+fn sse_event_ends(body: &[u8]) -> Vec<usize> {
+    let mut ends = Vec::new();
+    let (mut i, mut line_start) = (0, 0);
+    while i < body.len() {
+        let width = match body[i] {
+            b'\r' if body.get(i + 1) == Some(&b'\n') => 2,
+            b'\r' | b'\n' => 1,
+            _ => {
+                i += 1;
+                continue;
+            }
+        };
+        if i == line_start {
+            ends.push(i + width);
+        }
+        i += width;
+        line_start = i;
+    }
+    ends
+}
+
+/// The end of the first complete SSE event in `body` that holds a JSON-RPC
+/// response. Events before `checked` were looked at already; it moves past
+/// each complete event without one.
+fn sse_response_end(body: &[u8], checked: &mut usize) -> Result<Option<usize>, McpError> {
+    let base = *checked;
+    for end in sse_event_ends(&body[base..]) {
+        let end = base + end;
+        let event = std::str::from_utf8(&body[*checked..end]).map_err(|e| McpError::Protocol {
+            code: -32700,
+            message: format!("Invalid UTF-8 in response: {}", e),
+        })?;
+        if http_reply_messages(event, true)?.iter().any(is_response) {
+            return Ok(Some(end));
+        }
+        *checked = end;
+    }
+    Ok(None)
 }
 
 /// Whether `message` is a JSON-RPC response (a result or error for an id).
@@ -1021,9 +1056,10 @@ fn http_reply_messages(body: &str, is_sse: bool) -> Result<Vec<Value>, McpError>
             value => vec![value],
         });
     }
+    let body = body.replace("\r\n", "\n").replace('\r', "\n");
     let mut messages = Vec::new();
     let mut data: Vec<&str> = Vec::new();
-    for line in body.lines().chain(std::iter::once("")) {
+    for line in body.split('\n').chain(std::iter::once("")) {
         if line.is_empty() {
             if !data.is_empty() {
                 messages.push(serde_json::from_str(&data.join("\n")).map_err(invalid)?);
@@ -1071,7 +1107,11 @@ impl McpTransport for HttpSseTransport {
                 .text()
                 .await
                 .unwrap_or_else(|_| "unknown error".to_string());
-            let fallback = !self.kind_known && matches!(status.as_u16(), 400 | 404 | 405);
+            // A 4xx other than an authentication refusal, as the MCP
+            // specification's backwards-compatibility section gives.
+            let fallback = !self.kind_known
+                && status.is_client_error()
+                && !matches!(status.as_u16(), 401 | 403);
             if !(fallback && self.switch_to_legacy().await?) {
                 return Err(classify_http_status_error(status, &body));
             }
@@ -1100,36 +1140,30 @@ impl McpTransport for HttpSseTransport {
             .is_some_and(|v| v.starts_with("text/event-stream"));
 
         // Read as the body arrives: a server may leave an SSE stream open
-        // after the response, so reading stops at the first one.
+        // after the response, so reading stops at the event holding it, and
+        // what follows in the same chunk is neither decoded nor counted.
         let max_message_bytes = max_message_bytes_from_env();
         let mut bytes = Vec::new();
-        let mut complete = None;
+        let mut checked = 0;
         while let Some(chunk) = response
             .chunk()
             .await
             .map_err(|e| McpError::ConnectionError(format!("Failed to read response: {}", e)))?
         {
             bytes.extend_from_slice(&chunk);
-            enforce_message_size(bytes.len(), max_message_bytes)?;
             if is_sse {
-                let text = String::from_utf8_lossy(&bytes);
-                let end = complete_sse_events(&text);
-                if http_reply_messages(&text[..end], true)?
-                    .iter()
-                    .any(is_response)
-                {
-                    complete = Some(end);
+                if let Some(end) = sse_response_end(&bytes, &mut checked)? {
+                    bytes.truncate(end);
+                    enforce_message_size(bytes.len(), max_message_bytes)?;
                     break;
                 }
             }
+            enforce_message_size(bytes.len(), max_message_bytes)?;
         }
-        let mut body = String::from_utf8(bytes).map_err(|e| McpError::Protocol {
+        let body = String::from_utf8(bytes).map_err(|e| McpError::Protocol {
             code: -32700,
             message: format!("Invalid UTF-8 in response: {}", e),
         })?;
-        if let Some(end) = complete {
-            body.truncate(end);
-        }
         if body.trim().is_empty() {
             // 202 Accepted for a notification or a response: nothing to read.
             return Ok(());
@@ -1621,6 +1655,63 @@ mod tests {
             "notifications/progress"
         );
         assert_eq!(transport.receive().await.unwrap()["id"], 7);
+        held.abort();
+    }
+
+    #[test]
+    fn an_sse_response_ends_at_its_own_event_whatever_the_line_endings() {
+        let response = "data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{}}";
+        for ending in ["\n\n", "\r\n\r\n", "\r\n\n", "\r\r"] {
+            let progress = format!("data: {{\"jsonrpc\":\"2.0\",\"method\":\"p\"}}{ending}");
+            let head = format!("{progress}{response}{ending}");
+            // What follows: half of a 2-byte character, then a large event.
+            let mut body = head.clone().into_bytes();
+            body.extend_from_slice(&"\u{e9}".as_bytes()[..1]);
+            body.extend_from_slice(format!("data: {}", "x".repeat(4096)).as_bytes());
+            let mut checked = 0;
+            assert_eq!(
+                sse_response_end(&body, &mut checked).unwrap(),
+                Some(head.len()),
+                "{ending:?}"
+            );
+            let messages = http_reply_messages(&head, true).unwrap();
+            assert_eq!(messages.len(), 2, "{ending:?}");
+            assert_eq!(messages[1]["id"], 3, "{ending:?}");
+        }
+        // Not complete yet: nothing found, and only whole events are passed.
+        let partial = b"data: {\"jsonrpc\":\"2.0\",\"method\":\"p\"}\n\ndata: {\"id\":";
+        let mut checked = 0;
+        assert_eq!(sse_response_end(partial, &mut checked).unwrap(), None);
+        assert_eq!(
+            checked,
+            partial.iter().position(|b| *b == b'\n').unwrap() + 2
+        );
+    }
+
+    #[tokio::test]
+    async fn an_open_sse_reply_with_a_split_character_after_its_response_is_read() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let held = tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.expect("accept");
+            let mut buf = vec![0; 8192];
+            let _ = stream.read(&mut buf).await;
+            let mut reply = b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n".to_vec();
+            reply.extend_from_slice(b"data: {\"jsonrpc\":\"2.0\",\"id\":9,\"result\":{}}\r\r");
+            reply.extend_from_slice(&"\u{e9}".as_bytes()[..1]);
+            stream.write_all(&reply).await.expect("write");
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let mut transport = HttpSseTransport::new(&url, None);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 9, "method": "tools/list"})),
+        )
+        .await
+        .expect("send waited for the stream to close")
+        .expect("sse reply");
+        assert_eq!(transport.receive().await.unwrap()["id"], 9);
         held.abort();
     }
 }
