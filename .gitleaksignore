@@ -1,7 +1,7 @@
-# Findings in main's history, triaged by rule and file on 18 November 2026. None is in
-# the current tree: each file has since been removed or changed.
+# Findings in main's history, triaged on 18 November 2026 by rule, file and line without
+# reading the values. None is in the current tree: each file has since been removed or changed.
 
-# The vendored matrix-sdk-crypto 0.18.0 patch (removed by #87): key-handling code and its tests.
+# The vendored matrix-sdk-crypto 0.18.0 patch (removed by #87); each line is verbatim in matrix-org/matrix-rust-sdk at tag matrix-sdk-crypto-0.18.0.
 57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/backups/keys/decryption.rs:generic-api-key:289
 57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/backups/mod.rs:generic-api-key:660
 57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/machine/tests/mod.rs:generic-api-key:1631
@@ -50,7 +50,7 @@
 57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/mod.rs:generic-api-key:574
 57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/one_time_keys.rs:generic-api-key:148
 
-# Upstream Hermes Agent's Python sources and example configurations, imported for parity and since removed or rewritten.
+# Upstream Hermes Agent's Python sources and example configurations, imported for parity and since removed or rewritten; each line is verbatim in NousResearch/hermes-agent's history.
 fd76830cc553625030df46400f012575cf905d9e:.env.example:generic-password:212
 fd76830cc553625030df46400f012575cf905d9e:agent/anthropic_adapter.py:generic-api-key:699
 fd76830cc553625030df46400f012575cf905d9e:agent/google_oauth.py:generic-api-key:91
@@ -60,5 +60,5 @@ fd76830cc553625030df46400f012575cf905d9e:cli.py:generic-password:519
 fd76830cc553625030df46400f012575cf905d9e:hermes_cli/auth.py:generic-api-key:78
 fd76830cc553625030df46400f012575cf905d9e:hermes_cli/copilot_auth.py:generic-api-key:33
 
-# The media delivery test media_delivery_blocks_home_credential_subdir_under_home_exception, since changed.
+# A fixture that the media delivery test media_delivery_blocks_home_credential_subdir_under_home_exception writes to a temporary home's .ssh/id_rsa; the test has since changed.
 2d0aa4c5ff203052df6c711b6751bf2f0a4d9d7a:crates/hermes-gateway/src/media.rs:private-key:1025
