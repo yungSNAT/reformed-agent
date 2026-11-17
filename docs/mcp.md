@@ -45,7 +45,7 @@ Validation rules:
 - If both `url` and `command` are present, HTTP wins and the CLI prints a warning.
 - `supports_parallel_tool_calls` is preserved and displayed by `mcp list` and `mcp test`.
 - `keepalive_interval` is optional for HTTP/SSE servers. It defaults to 180 seconds and is floored at 5 seconds; set it below a server's idle session TTL when that server expires sessions aggressively.
-- `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file. A redirect to another origin is not followed, so the headers go only to the server named.
+- `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file. No redirect, and no message endpoint an older server names, leaves the server's origin, so the headers go only to the server named.
 
 ### Hosted tool catalogue
 
@@ -65,7 +65,7 @@ Set `COMPOSIO_CONSUMER_KEY` to the consumer key from Composio's dashboard (an ac
 
 `crates/hermes-mcp` provides:
 
-- stdio and Streamable HTTP transports (servers whose `<url>/sse` answers are spoken to as the older HTTP+SSE kind).
+- stdio and Streamable HTTP transports. As the MCP specification advises, the first message is POSTed to the URL; only when that answers 400, 404 or 405 and `<url>/sse` answers is the server spoken to as the older HTTP+SSE kind.
 - `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, and `prompts/get` client methods.
 - Parallel connection/discovery reporting through `McpManager::connect_all_parallel`.
 - Server-initiated sampling through `sampling/createMessage` with per-client policy, callback wiring, rate limits, token caps, model allowlists, tool-loop limits, and audit counters.

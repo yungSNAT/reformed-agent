@@ -411,7 +411,7 @@ pub struct ToolsSettings {
 }
 
 /// MCP server entry.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct McpServerEntry {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -428,6 +428,23 @@ pub struct McpServerEntry {
     /// Optional HTTP/SSE session keepalive cadence in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keepalive_interval: Option<u64>,
+}
+
+/// Header values can hold API keys: `Debug` names the headers only.
+impl std::fmt::Debug for McpServerEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServerEntry")
+            .field("name", &self.name)
+            .field("command", &self.command)
+            .field("url", &self.url)
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .field(
+                "supports_parallel_tool_calls",
+                &self.supports_parallel_tool_calls,
+            )
+            .field("keepalive_interval", &self.keepalive_interval)
+            .finish()
+    }
 }
 
 /// Active profile info.

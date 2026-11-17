@@ -818,9 +818,12 @@ impl McpTransport for HttpTransport {
 /// `Mcp-Session-Id` the server assigns at `initialize` goes back on every
 /// later request.
 ///
-/// A server whose `<url>/sse` answers at start is treated as the older
-/// HTTP+SSE kind this transport spoke before: messages are POSTed to the
-/// endpoint its `mcp-message-endpoint` header names, else `<url>/message`.
+/// As the specification's backwards-compatibility section advises, the first
+/// POST goes to the URL; only when it fails with 400, 404 or 405 and
+/// `<url>/sse` answers is the server treated as the older HTTP+SSE kind this
+/// transport spoke before: messages are then POSTed to the endpoint its
+/// `mcp-message-endpoint` header names (within the server's origin), else
+/// `<url>/message`.
 pub struct HttpSseTransport {
     /// The base URL of the MCP server.
     url: String,
@@ -835,8 +838,10 @@ pub struct HttpSseTransport {
     started: bool,
     /// Messages from the last POST not yet received, oldest first.
     pending: VecDeque<Value>,
-    /// Whether `<url>/sse` answered at start (the older HTTP+SSE kind).
+    /// Whether the server is the older HTTP+SSE kind.
     legacy_sse: bool,
+    /// Whether a POST has succeeded, settling which kind the server is.
+    kind_known: bool,
     /// The message endpoint the older kind's SSE response named.
     message_endpoint: Option<String>,
     /// The session id a Streamable HTTP server assigned.
@@ -854,10 +859,17 @@ impl HttpSseTransport {
             url: url.to_string(),
             auth_token,
             headers: Vec::new(),
-            client: reqwest::Client::new(),
+            // reqwest drops only Authorization and cookies on a redirect to
+            // another origin; a configured header or the session id would go
+            // along, so no redirect leaves the server's origin.
+            client: reqwest::Client::builder()
+                .redirect(same_origin_redirects())
+                .build()
+                .expect("HTTP client builds as Client::new() does"),
             started: false,
             pending: VecDeque::new(),
             legacy_sse: false,
+            kind_known: false,
             message_endpoint: None,
             session_id: None,
             sse_read_timeout: mcp_sse_read_timeout(),
@@ -868,14 +880,6 @@ impl HttpSseTransport {
     /// Send these headers with every request.
     pub fn with_headers(mut self, headers: impl IntoIterator<Item = (String, String)>) -> Self {
         self.headers = headers.into_iter().collect();
-        if !self.headers.is_empty() {
-            // reqwest drops only Authorization and cookies on a redirect to
-            // another origin; a configured API key header would go along.
-            self.client = reqwest::Client::builder()
-                .redirect(same_origin_redirects())
-                .build()
-                .expect("HTTP client builds as Client::new() does");
-        }
         self
     }
 
@@ -920,6 +924,60 @@ impl HttpSseTransport {
         builder = builder.timeout(self.sse_read_timeout);
         self.with_auth(builder)
     }
+
+    async fn post(&self, message: &Value) -> Result<reqwest::Response, McpError> {
+        self.build_request(reqwest::Method::POST, &self.post_url())
+            .json(message)
+            .send()
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("HTTP send failed: {}", e)))
+    }
+
+    /// Whether the server is the older HTTP+SSE kind: `<url>/sse` answers.
+    /// A message endpoint it names on another origin is refused, as the
+    /// credentials would go there.
+    async fn switch_to_legacy(&mut self) -> Result<bool, McpError> {
+        let sse_url = self.endpoint_url("/sse");
+        let Ok(resp) = self
+            .with_auth(self.client.get(&sse_url))
+            .timeout(self.connect_timeout)
+            .send()
+            .await
+        else {
+            return Ok(false);
+        };
+        if !resp.status().is_success() {
+            return Ok(false);
+        }
+        if let Some(ep) = resp
+            .headers()
+            .get("mcp-message-endpoint")
+            .and_then(|v| v.to_str().ok())
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+        {
+            self.message_endpoint = Some(self.same_origin_endpoint(ep)?);
+        }
+        self.legacy_sse = true;
+        info!("MCP HTTP+SSE transport connected to: {}", self.url);
+        Ok(true)
+    }
+
+    /// `endpoint`, resolved against the server URL, if it keeps its origin.
+    fn same_origin_endpoint(&self, endpoint: &str) -> Result<String, McpError> {
+        let base = reqwest::Url::parse(&self.url)
+            .map_err(|e| McpError::ConnectionError(format!("Invalid MCP server URL: {e}")))?;
+        let resolved = base
+            .join(endpoint)
+            .map_err(|e| McpError::ConnectionError(format!("Invalid MCP message endpoint: {e}")))?;
+        if resolved.origin() != base.origin() {
+            return Err(McpError::ConnectionError(format!(
+                "The MCP server named a message endpoint on another origin ({}); it is not used.",
+                resolved.origin().ascii_serialization()
+            )));
+        }
+        Ok(resolved.into())
+    }
 }
 
 /// Follows up to 10 redirects within the first URL's origin and stops at one
@@ -936,6 +994,18 @@ fn same_origin_redirects() -> reqwest::redirect::Policy {
             attempt.stop()
         }
     })
+}
+
+/// The length of `body` up to the end of its last complete SSE event.
+fn complete_sse_events(body: &str) -> usize {
+    let lf = body.rfind("\n\n").map_or(0, |i| i + 2);
+    let crlf = body.rfind("\r\n\r\n").map_or(0, |i| i + 4);
+    lf.max(crlf)
+}
+
+/// Whether `message` is a JSON-RPC response (a result or error for an id).
+fn is_response(message: &Value) -> bool {
+    message.get("id").is_some() && message.get("method").is_none()
 }
 
 /// The JSON-RPC messages in a POST reply: each SSE event's data, or the JSON
@@ -975,64 +1045,47 @@ impl McpTransport for HttpSseTransport {
             ));
         }
 
-        // An older HTTP+SSE server answers on `<url>/sse`; a Streamable HTTP
-        // server need not answer a GET at all, so only reachability counts.
-        let sse_url = self.endpoint_url("/sse");
-        let sse_builder = self
-            .with_auth(self.client.get(&sse_url))
-            .timeout(self.connect_timeout);
-
-        match sse_builder.send().await {
-            Ok(resp) if resp.status().is_success() => {
-                self.legacy_sse = true;
-                if let Some(ep) = resp
-                    .headers()
-                    .get("mcp-message-endpoint")
-                    .and_then(|v| v.to_str().ok())
-                    .map(str::trim)
-                    .filter(|v| !v.is_empty())
-                {
-                    self.message_endpoint = Some(ep.to_string());
-                }
-                info!("MCP HTTP+SSE transport connected to: {}", self.url);
-            }
-            _ => {
-                let base_url = &self.url;
-                self.with_auth(self.client.get(base_url))
-                    .timeout(self.connect_timeout)
-                    .send()
-                    .await
-                    .map_err(|e| {
-                        McpError::ConnectionError(format!(
-                            "Failed to connect to MCP server at {}: {}",
-                            self.url, e
-                        ))
-                    })?;
-                info!("MCP Streamable HTTP transport connected to: {}", self.url);
-            }
-        }
+        // Reachability only: a Streamable HTTP server need not answer a GET,
+        // and the first POST settles which kind the server is.
+        self.with_auth(self.client.get(&self.url))
+            .timeout(self.connect_timeout)
+            .send()
+            .await
+            .map_err(|e| {
+                McpError::ConnectionError(format!(
+                    "Failed to connect to MCP server at {}: {}",
+                    self.url, e
+                ))
+            })?;
+        info!("MCP HTTP transport connected to: {}", self.url);
 
         self.started = true;
         Ok(())
     }
 
     async fn send(&mut self, message: Value) -> Result<(), McpError> {
-        let url = self.post_url();
-        let builder = self.build_request(reqwest::Method::POST, &url);
-        let response = builder
-            .json(&message)
-            .send()
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("HTTP send failed: {}", e)))?;
-
+        let mut response = self.post(&message).await?;
         let status = response.status();
         if !status.is_success() {
             let body = response
                 .text()
                 .await
                 .unwrap_or_else(|_| "unknown error".to_string());
-            return Err(classify_http_status_error(status, &body));
+            let fallback = !self.kind_known && matches!(status.as_u16(), 400 | 404 | 405);
+            if !(fallback && self.switch_to_legacy().await?) {
+                return Err(classify_http_status_error(status, &body));
+            }
+            response = self.post(&message).await?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response
+                    .text()
+                    .await
+                    .unwrap_or_else(|_| "unknown error".to_string());
+                return Err(classify_http_status_error(status, &body));
+            }
         }
+        self.kind_known = true;
         if let Some(session_id) = response
             .headers()
             .get("mcp-session-id")
@@ -1046,16 +1099,37 @@ impl McpTransport for HttpSseTransport {
             .and_then(|v| v.to_str().ok())
             .is_some_and(|v| v.starts_with("text/event-stream"));
 
-        let body = response
-            .bytes()
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Failed to read response: {}", e)))?;
+        // Read as the body arrives: a server may leave an SSE stream open
+        // after the response, so reading stops at the first one.
         let max_message_bytes = max_message_bytes_from_env();
-        enforce_message_size(body.len(), max_message_bytes)?;
-        let body = String::from_utf8(body.to_vec()).map_err(|e| McpError::Protocol {
+        let mut bytes = Vec::new();
+        let mut complete = None;
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Failed to read response: {}", e)))?
+        {
+            bytes.extend_from_slice(&chunk);
+            enforce_message_size(bytes.len(), max_message_bytes)?;
+            if is_sse {
+                let text = String::from_utf8_lossy(&bytes);
+                let end = complete_sse_events(&text);
+                if http_reply_messages(&text[..end], true)?
+                    .iter()
+                    .any(is_response)
+                {
+                    complete = Some(end);
+                    break;
+                }
+            }
+        }
+        let mut body = String::from_utf8(bytes).map_err(|e| McpError::Protocol {
             code: -32700,
             message: format!("Invalid UTF-8 in response: {}", e),
         })?;
+        if let Some(end) = complete {
+            body.truncate(end);
+        }
         if body.trim().is_empty() {
             // 202 Accepted for a notification or a response: nothing to read.
             return Ok(());
@@ -1080,6 +1154,7 @@ impl McpTransport for HttpSseTransport {
         self.started = false;
         self.pending.clear();
         self.legacy_sse = false;
+        self.kind_known = false;
         self.message_endpoint = None;
         self.session_id = None;
         Ok(())
@@ -1363,7 +1438,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn configured_headers_follow_redirects_only_within_the_origin() {
+    async fn redirects_stay_within_the_origin() {
         let first = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let first_url = format!("http://{}", first.local_addr().unwrap());
@@ -1402,5 +1477,139 @@ mod tests {
         assert!(sent.is_err(), "the 307 itself is the answer");
         let reached = tokio::time::timeout(Duration::from_millis(300), other.accept()).await;
         assert!(reached.is_err(), "the other origin was contacted");
+
+        // Nor without configured headers: the session id stays home too.
+        let mut transport = HttpSseTransport::new(&format!("{first_url}/mcp"), None);
+        transport.session_id = Some("s-1".to_string());
+        let (sent, _) = tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(
+                transport.send(serde_json::json!({"jsonrpc": "2.0", "method": "ping"})),
+                answer_once(&first, redirect(&format!("{other_url}/mcp")))
+            )
+        })
+        .await
+        .expect("the redirect to the other origin was followed");
+        assert!(sent.is_err(), "the 307 itself is the answer");
+        let reached = tokio::time::timeout(Duration::from_millis(300), other.accept()).await;
+        assert!(reached.is_err(), "the other origin was contacted");
+    }
+
+    fn json_reply(body: &str) -> String {
+        format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        )
+    }
+
+    const NOT_FOUND: &str = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+
+    #[tokio::test]
+    async fn the_first_post_goes_to_the_url_even_where_sse_would_answer() {
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let mut transport = HttpSseTransport::new(&url, None);
+        let (sent, head) = tokio::join!(
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"})),
+            answer_once(
+                &server,
+                json_reply(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#)
+            )
+        );
+        sent.expect("streamable reply");
+        assert!(head.starts_with("post /mcp "), "{head}");
+        assert!(!transport.legacy_sse);
+        assert_eq!(transport.receive().await.unwrap()["id"], 1);
+        // Settled: a later 404 is an error, not a reason to probe /sse.
+        let (sent, _) = tokio::join!(
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "ping"})),
+            answer_once(&server, NOT_FOUND.to_string())
+        );
+        assert!(sent.is_err());
+        let probed = tokio::time::timeout(Duration::from_millis(300), server.accept()).await;
+        assert!(probed.is_err(), "a settled transport probed /sse");
+    }
+
+    #[tokio::test]
+    async fn an_older_server_is_found_after_a_404_and_its_endpoint_kept_in_origin() {
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let other = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let sse = |endpoint: &str| {
+            format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nmcp-message-endpoint: {endpoint}\r\nContent-Length: 0\r\n\r\n"
+            )
+        };
+        let initialize = serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"});
+
+        let mut transport = HttpSseTransport::new(&url, None);
+        let script = async {
+            let first = answer_once(&server, NOT_FOUND.to_string()).await;
+            let probe = answer_once(&server, sse("/mcp/message")).await;
+            let posted = answer_once(
+                &server,
+                json_reply(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#),
+            )
+            .await;
+            (first, probe, posted)
+        };
+        let (sent, (first, probe, posted)) =
+            tokio::join!(transport.send(initialize.clone()), script);
+        sent.expect("legacy reply");
+        assert!(first.starts_with("post /mcp "), "{first}");
+        assert!(probe.starts_with("get /mcp/sse "), "{probe}");
+        assert!(posted.starts_with("post /mcp/message "), "{posted}");
+        assert_eq!(transport.receive().await.unwrap()["id"], 1);
+
+        // An endpoint on another origin is refused before anything is sent.
+        let other_endpoint = format!("http://{}/steal", other.local_addr().unwrap());
+        let mut transport = HttpSseTransport::new(&url, Some("token".to_string()));
+        let script = async {
+            answer_once(&server, NOT_FOUND.to_string()).await;
+            answer_once(&server, sse(&other_endpoint)).await
+        };
+        let (sent, _) = tokio::join!(transport.send(initialize), script);
+        let err = sent.expect_err("endpoint on another origin");
+        assert!(err.to_string().contains("another origin"), "{err}");
+        let reached = tokio::time::timeout(Duration::from_millis(300), other.accept()).await;
+        assert!(reached.is_err(), "the other origin was contacted");
+    }
+
+    #[tokio::test]
+    async fn an_sse_reply_left_open_returns_at_its_response() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let held = tokio::spawn(async move {
+            let (mut stream, _) = server.accept().await.expect("accept");
+            let mut buf = vec![0; 8192];
+            let _ = stream.read(&mut buf).await;
+            let events = concat!(
+                "data: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n\n",
+            );
+            stream
+                .write_all(
+                    format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n{events}")
+                        .as_bytes(),
+                )
+                .await
+                .expect("write");
+            // The stream stays open.
+            tokio::time::sleep(Duration::from_secs(30)).await;
+        });
+        let mut transport = HttpSseTransport::new(&url, None);
+        tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 7, "method": "tools/list"})),
+        )
+        .await
+        .expect("send waited for the stream to close")
+        .expect("sse reply");
+        assert_eq!(
+            transport.receive().await.unwrap()["method"],
+            "notifications/progress"
+        );
+        assert_eq!(transport.receive().await.unwrap()["id"], 7);
+        held.abort();
     }
 }
