@@ -789,6 +789,47 @@ model:
         assert_eq!(provider.api_key_env.as_deref(), Some("DEEPSEEK_API_KEY"));
     }
 
+    /// Upstream's `providers:` entries name the endpoint `api` or `url` and the key's
+    /// variable `key_env` (`hermes_cli/config_providers.py`); Hermes Desktop's own tests
+    /// write that shape.
+    #[test]
+    fn python_providers_entry_reads_api_url_and_key_env() {
+        let raw = r#"
+model:
+  default: mock-model
+  provider: mock
+providers:
+  mock:
+    api: http://127.0.0.1:40107/v1/
+    key_env: MOCK_API_KEY
+  byurl:
+    url: http://127.0.0.1:40108/v1
+    api: http://ignored.example/v1
+  both:
+    base_url: http://127.0.0.1:40109/v1
+    api: http://ignored.example/v1
+    key_env: FIRST_KEY
+    api_key_env: SECOND_KEY
+"#;
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+
+        assert_eq!(cfg.model.as_deref(), Some("mock:mock-model"));
+        let mock = cfg.llm_providers.get("mock").expect("mock provider");
+        assert_eq!(mock.base_url.as_deref(), Some("http://127.0.0.1:40107/v1"));
+        assert_eq!(mock.api_key_env.as_deref(), Some("MOCK_API_KEY"));
+        let byurl = cfg.llm_providers.get("byurl").expect("byurl provider");
+        assert_eq!(byurl.base_url.as_deref(), Some("http://127.0.0.1:40108/v1"));
+        // Upstream's order: base_url, url, api; key_env before api_key_env.
+        let both = cfg.llm_providers.get("both").expect("both provider");
+        assert_eq!(both.base_url.as_deref(), Some("http://127.0.0.1:40109/v1"));
+        assert_eq!(both.api_key_env.as_deref(), Some("FIRST_KEY"));
+    }
+
     #[test]
     fn python_custom_providers_merge_into_llm_provider_config() {
         let raw = r#"
