@@ -1081,6 +1081,64 @@ mod tests {
         assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
     }
 
+    /// A doctor snapshot is owner-only, and one written over an existing file
+    /// never reaches a reader who already holds that file open.
+    #[cfg(unix)]
+    #[test]
+    fn doctor_snapshot_is_owner_only_and_unreadable_through_an_open_handle() {
+        use std::io::Read;
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let cli = cli_for_temp_state_root(dir.path());
+        let payload = serde_json::json!({ "marker": "snapshot canary" });
+        let existing = dir.path().join("out").join("snapshot.json");
+        std::fs::create_dir_all(existing.parent().unwrap()).expect("mkdir");
+        std::fs::write(&existing, "old").expect("existing");
+        std::fs::set_permissions(&existing, std::fs::Permissions::from_mode(0o644)).expect("chmod");
+        let mut held = std::fs::File::open(&existing).expect("hold open");
+
+        let path = write_doctor_snapshot(&cli, &payload, existing.to_str()).expect("snapshot");
+
+        assert_eq!(path, existing);
+        let mut seen = Vec::new();
+        held.read_to_end(&mut seen).expect("read held");
+        assert_eq!(seen, b"old", "the held handle sees the new snapshot");
+        let mode = std::fs::metadata(&existing)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&existing).expect("read")).expect("json");
+        assert_eq!(written, payload);
+
+        let fresh = write_doctor_snapshot(&cli, &payload, None).expect("fresh snapshot");
+        let mode = std::fs::metadata(&fresh)
+            .expect("metadata")
+            .permissions()
+            .mode()
+            & 0o777;
+        assert_eq!(mode, 0o600);
+        let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 1, "temporary files left behind: {names:?}");
+
+        let taken = dir.path().join("out").join("taken");
+        std::fs::create_dir(&taken).expect("mkdir taken");
+        std::fs::write(taken.join("keep.txt"), "keep").expect("keep");
+        let err = write_doctor_snapshot(&cli, &payload, taken.to_str()).unwrap_err();
+        assert!(err.to_string().contains(&taken.display().to_string()), "{err}");
+        assert_eq!(std::fs::read_to_string(taken.join("keep.txt")).expect("kept"), "keep");
+        let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
+    }
+
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");
