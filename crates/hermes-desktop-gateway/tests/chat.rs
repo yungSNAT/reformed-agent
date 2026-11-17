@@ -682,32 +682,45 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     drop(stalled);
 }
 
-/// A reader that takes a frame every half second keeps each write well under the 2 second
-/// write timeout, yet its turn's 35 frames would take about 17 seconds to deliver and hold
-/// the turn's slot all that time. A frame not written within the timeout of being queued
-/// closes the connection, so the last event, which carries the slot, is never delivered.
+/// A reader that pauses 4 seconds, takes one frame and pauses 4 more never makes a single
+/// write wait the 6 second write timeout, yet the turn's last event, which carries its slot,
+/// waits 8 seconds. A frame not written within the timeout of being queued closes the
+/// connection, so that event is never delivered.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
-    // 16 MiB streamed as 16 frames of 1 MiB, and the same again in message.complete: more
-    // than a loopback socket's buffers hold, so most frames wait for the reader.
+    // 8 MiB streamed as 8 frames of 1 MiB, and the same again in message.complete: more than
+    // a loopback socket's buffers hold, so later frames wait for the reader.
     let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
-    let timeout = Duration::from_secs(2);
-    let started = start_with(vec![piece; 16], Duration::ZERO, Some(timeout)).await;
-    let (mut ws, _) = stalled_turn(started.addr).await;
-    let begun = tokio::time::Instant::now();
+    let timeout = Duration::from_secs(6);
+    let pause = Duration::from_secs(4);
+    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    // Every frame of the turn is queued once its reply is saved.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while history(started.addr, &session).await.len() < 2 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the turn did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    tokio::time::sleep(pause).await;
+    while client.next_json().await["params"]["type"] != "message.delta" {}
+    tokio::time::sleep(pause).await;
     loop {
-        tokio::time::sleep(timeout / 4).await;
-        let frame = tokio::time::timeout(Duration::from_secs(20), ws.next())
+        let frame = tokio::time::timeout(Duration::from_secs(20), client.socket.next())
             .await
             .expect("no frame and no close within 20 seconds");
         match frame {
             Some(Ok(Message::Text(text))) => {
                 let frame: Value = serde_json::from_str(&text).unwrap();
                 assert_ne!(
-                    frame["params"]["type"],
-                    "message.complete",
-                    "the whole turn reached a reader that took {:?}",
-                    begun.elapsed()
+                    frame["params"]["type"], "message.complete",
+                    "the turn's last event reached a reader that paused twice for {pause:?}"
                 );
             }
             Some(Ok(Message::Close(_)) | Err(_)) | None => break,
