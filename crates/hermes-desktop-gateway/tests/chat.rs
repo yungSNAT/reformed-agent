@@ -68,7 +68,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
 struct Started {
     addr: SocketAddr,
     requests: Arc<Mutex<Vec<Value>>>,
-    _home: tempfile::TempDir,
+    home: tempfile::TempDir,
 }
 
 /// Starts the scripted model and a gateway whose Hermes home names it as upstream's tests do
@@ -109,7 +109,7 @@ async fn start(pieces: Vec<&'static str>, delay: Duration) -> Started {
     Started {
         addr,
         requests,
-        _home: home,
+        home,
     }
 }
 
@@ -556,4 +556,34 @@ async fn a_failed_turn_keeps_the_prompt() {
         .filter_map(|m| m["content"].as_str())
         .collect();
     assert_eq!(said, ["FAIL please", "again"]);
+}
+
+/// A failure after a saved turn rewrites the session's rows as the stored ones, the system
+/// prompt included, each once, then the failed prompt.
+#[tokio::test]
+async fn a_failed_turn_keeps_the_saved_rows_once() {
+    let started = start(vec!["B"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    client.submit(2, &session, "first").await;
+    client.turn_events(&session).await;
+    let store = hermes_agent::SessionPersistence::new(started.home.path());
+    let roles = |rows: Vec<hermes_core::Message>| {
+        rows.into_iter()
+            .map(|m| (format!("{:?}", m.role), m.content.unwrap_or_default()))
+            .collect::<Vec<_>>()
+    };
+    let saved = roles(store.load_session(&session).unwrap());
+    assert_eq!(
+        saved.first().map(|r| r.0.as_str()),
+        Some("System"),
+        "{saved:?}"
+    );
+
+    client.submit(3, &session, "FAIL now").await;
+    let events = client.turn_events(&session).await;
+    assert_eq!(events.last().unwrap().1["status"], "error");
+    let mut expected = saved.clone();
+    expected.push(("User".to_string(), "FAIL now".to_string()));
+    assert_eq!(roles(store.load_session(&session).unwrap()), expected);
 }
