@@ -96,6 +96,8 @@
             config: Arc::new(GatewayConfig::default()),
             tool_registry: Arc::new(hermes_tools::ToolRegistry::new()),
             interrupts,
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let session = hermes_acp::SessionState::new(session_id, ".".to_string());
 
@@ -185,6 +187,8 @@
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let file_schema = hermes_core::tool_schema(
             "read_file",
@@ -249,6 +253,8 @@
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let schema = hermes_core::tool_schema(
             "mcp_srv_ping",
@@ -574,6 +580,44 @@
     }
 
     #[test]
+    fn test_acp_cancel_before_a_turn_registers_its_interrupt_still_interrupts_it() {
+        let sessions = hermes_acp::SessionManager::new();
+        let interrupts = Mutex::new(HashMap::new());
+        let id = sessions.create_session(".").session_id;
+
+        // No cancel: the turn runs.
+        let first = sessions.prompt_received(&id).unwrap();
+        assert!(matches!(
+            sessions.begin_turn(&id, Some(first)),
+            hermes_acp::TurnStart::Started(_)
+        ));
+        assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
+
+        // A cancel recorded before the turn registers its interrupt (the
+        // handler records one before looking for an interrupt): the new
+        // interrupt starts interrupted.
+        sessions.request_cancel(&id);
+        assert!(register_interrupt(&interrupts, &sessions, &id).is_interrupted());
+
+        // The cancel covered that turn only: the next one is not cancelled.
+        sessions.finish_turn(&id, first, hermes_acp::SessionPhase::Idle);
+        let second = sessions.prompt_received(&id).unwrap();
+        sessions.begin_turn(&id, Some(second));
+        assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
+    }
+
+    #[test]
+    fn test_acp_history_to_messages_sends_text_only_user_content_as_text() {
+        let history = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "text", "text": "say hello"}]
+        })];
+        let messages = acp_history_to_messages(&history, "");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content.as_deref(), Some("say hello"));
+    }
+
+    #[test]
     fn test_acp_history_to_messages_flattens_assistant_parts_to_text() {
         let history = vec![serde_json::json!({
             "role": "assistant",
@@ -665,15 +709,17 @@
 
     #[test]
     fn test_acp_stream_callbacks_route_reasoning_and_message_deltas() {
-        let events = Arc::new(Mutex::new(Vec::new()));
-        let callbacks = acp_stream_callbacks("session-1", events.clone());
+        let sink = Arc::new(hermes_acp::EventSink::default());
+        let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callbacks = acp_stream_callbacks("session-1", sink.clone(), streamed.clone());
 
         callbacks.on_thinking.as_ref().unwrap()("actual reasoning");
         callbacks.on_stream_delta.as_ref().unwrap()("streamed answer");
         callbacks.on_thinking.as_ref().unwrap()("   ");
         callbacks.on_stream_delta.as_ref().unwrap()("");
 
-        let events = events.lock().unwrap();
+        assert!(streamed.load(std::sync::atomic::Ordering::Acquire));
+        let events = sink.drain_all();
         assert_eq!(events.len(), 2);
         assert_eq!(events[0].kind, hermes_acp::AcpEventKind::AgentThoughtChunk);
         assert_eq!(

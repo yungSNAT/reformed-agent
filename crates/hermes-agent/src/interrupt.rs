@@ -34,6 +34,8 @@ pub struct InterruptController {
     flag: Arc<AtomicBool>,
     /// Optional redirect message that triggered the interrupt.
     redirect_message: Arc<Mutex<Option<String>>>,
+    /// Wakes [`Self::interrupted`] waiters when an interrupt is requested.
+    notify: Arc<tokio::sync::Notify>,
 }
 
 impl InterruptController {
@@ -42,6 +44,7 @@ impl InterruptController {
         Self {
             flag: Arc::new(AtomicBool::new(false)),
             redirect_message: Arc::new(Mutex::new(None)),
+            notify: Arc::new(tokio::sync::Notify::new()),
         }
     }
 
@@ -56,6 +59,23 @@ impl InterruptController {
         // Set the flag AFTER storing the message so readers always see
         // a consistent (flag=true, message=Some) pair.
         self.flag.store(true, Ordering::Release);
+        self.notify.notify_waiters();
+    }
+
+    /// Resolves once an interrupt is pending, so a wait (such as for the
+    /// next chunk of a stream) can end on it instead of polling the flag.
+    pub async fn interrupted(&self) {
+        loop {
+            let notified = self.notify.notified();
+            tokio::pin!(notified);
+            // Registered before the check, so an interrupt between the two
+            // still wakes this waiter.
+            notified.as_mut().enable();
+            if self.is_interrupted() {
+                return;
+            }
+            notified.await;
+        }
     }
 
     /// Clear any pending interrupt request.
@@ -168,6 +188,25 @@ mod tests {
         // Second take returns None
         let msg2 = ctrl.take_redirect_message();
         assert!(msg2.is_none());
+    }
+
+    #[tokio::test]
+    async fn interrupted_wakes_a_waiter() {
+        let ctrl = InterruptController::new();
+        let waiter = tokio::spawn({
+            let ctrl = ctrl.clone();
+            async move { ctrl.interrupted().await }
+        });
+        tokio::task::yield_now().await;
+        ctrl.interrupt(None);
+        tokio::time::timeout(std::time::Duration::from_secs(5), waiter)
+            .await
+            .expect("the waiter woke")
+            .expect("waiter task");
+        // Already pending: resolves at once.
+        tokio::time::timeout(std::time::Duration::from_secs(1), ctrl.interrupted())
+            .await
+            .expect("pending interrupt");
     }
 
     #[test]
