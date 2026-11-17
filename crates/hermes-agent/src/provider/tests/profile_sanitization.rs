@@ -515,6 +515,11 @@ fn test_provider_profile_request_body_deepseek_reasoning_contract() {
             "{model}"
         );
     }
+    // `deepseek-chat` is a model, not a provider id: only `deepseek` gets the profile.
+    assert_eq!(
+        crate::provider_profiles::canonical_provider_profile_id("deepseek-chat"),
+        None
+    );
 
     // A DeepSeek model through OpenRouter keeps OpenRouter's reasoning object.
     let model = "deepseek/deepseek-v4-pro";

@@ -88,7 +88,7 @@ pub fn canonical_provider_profile_id(provider: &str) -> Option<&'static str> {
         }
         "qwen" | "qwen-oauth" | "qwen-portal" | "qwen-cli" => Some("qwen-oauth"),
         "xiaomi" | "mimo" | "xiaomi-mimo" => Some("xiaomi"),
-        "deepseek" | "deepseek-chat" => Some("deepseek"),
+        "deepseek" => Some("deepseek"),
         "custom"
         | "ollama"
         | "ollama-local"
