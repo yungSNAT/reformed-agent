@@ -58,12 +58,22 @@ pub struct AgentImportReport {
     pub failed: bool,
 }
 
+/// Saves `config.yaml`; tests replace it to make the save fail.
+type SaveConfig = fn(&Path, &hermes_config::GatewayConfig) -> Result<(), String>;
+
 /// Plans, or with `apply` performs, the import and reports each item.
 pub fn import_agent(request: &AgentImportRequest<'_>) -> AgentImportReport {
+    import_with(request, |path, config| {
+        hermes_config::save_config_yaml(path, config).map_err(|err| err.to_string())
+    })
+}
+
+fn import_with(request: &AgentImportRequest<'_>, save_config: SaveConfig) -> AgentImportReport {
     let mut import = Importer {
         request,
         report: AgentImportReport::default(),
         left_out: Vec::new(),
+        save_config,
     };
     import.report.lines.push(if request.apply {
         format!(
@@ -113,6 +123,7 @@ struct Importer<'a> {
     report: AgentImportReport,
     /// Secret-looking MCP settings left out, as `mcp_servers.<name>.env.<KEY>`.
     left_out: Vec<String>,
+    save_config: SaveConfig,
 }
 
 impl Importer<'_> {
@@ -356,10 +367,8 @@ impl Importer<'_> {
         }
         if self.request.apply {
             config.mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
-            let written = write_file(&records_path, &records_text).and_then(|()| {
-                hermes_config::save_config_yaml(&config_path, &config)
-                    .map_err(|err| err.to_string())
-            });
+            let written = write_file(&records_path, &records_text)
+                .and_then(|()| (self.save_config)(&config_path, &config));
             if let Err(err) = written {
                 self.record(
                     Status::Error,
@@ -906,11 +915,12 @@ mod tests {
         let text = plan.lines.join("\n");
         for expected in [
             "would import CLAUDE.md: 2 of 2 entries",
-            "would import MCP server files: npx -y @scope/files /work dir",
-            "would import MCP server catalogue: https://catalogue.example/mcp",
+            "would import MCP server files: npx (3 arguments)",
+            "would import MCP server catalogue: https://catalogue.example\n",
             "skipped      MCP server broken: it has neither a command nor a URL",
             "would import skill review",
-            "skipped      permissions: 1 allow and 1 deny rules",
+            "skipped      permissions: 2 rules this agent cannot use",
+            "allow Bash(cargo test:*); deny Bash(rm -rf:*)",
             "skipped      commands:",
             "mcp_servers.catalogue.headers.Authorization, mcp_servers.catalogue.headers.x-api-key, mcp_servers.files.env.GITHUB_TOKEN",
         ] {
@@ -1001,5 +1011,176 @@ mod tests {
             "mcp_servers: [unclosed\n"
         );
         assert!(!home.join("mcp_servers.json").exists());
+    }
+
+    fn claude_request<'a>(source: &'a Path, home: &'a Path, apply: bool) -> AgentImportRequest<'a> {
+        AgentImportRequest {
+            agent: SourceAgent::ClaudeCode,
+            source,
+            home,
+            apply,
+        }
+    }
+
+    /// Every file under `dir`, as text.
+    fn all_text(dir: &Path) -> String {
+        let mut text = String::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                text.push_str(&all_text(&path));
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                text.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        text
+    }
+
+    #[test]
+    fn credentials_reach_neither_the_report_nor_the_home() {
+        let root = tempfile::tempdir().expect("temp root");
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            source.join("settings.json"),
+            r#"{"mcpServers": {
+              "flag": {"command": "srv", "args": ["--token", "plain-arg-1"]},
+              "flag-equals": {"command": "srv", "args": ["--api-key=plain-arg-2"]},
+              "known-prefix": {"command": "srv", "args": ["ghp_fixtureArg03"]},
+              "query": {"url": "https://q.example/mcp?api_key=plain-url-1"},
+              "userinfo": {"url": "https://me:plain-url-2@u.example/mcp"},
+              "headers": {"url": "https://h.example/mcp",
+                          "headers": {"X-Authorization": "plain-hdr-1", "X-Region": "ghp_fixtureHdr02", "X-Zone": "eu"}},
+              "env": {"command": "env-server", "env": {"PLAIN": "ghp_fixtureEnv01", "ROOT": "/w"}},
+              "folder": {"command": "./run-server", "cwd": "/srv/tools"}
+            }}"#,
+        )
+        .unwrap();
+        let secrets = [
+            "plain-arg-1",
+            "plain-arg-2",
+            "ghp_fixtureArg03",
+            "plain-url-1",
+            "plain-url-2",
+            "plain-hdr-1",
+            "ghp_fixtureHdr02",
+            "ghp_fixtureEnv01",
+        ];
+
+        let plan = import_agent(&claude_request(&source, &home, false));
+        let applied = import_agent(&claude_request(&source, &home, true));
+        assert!(!applied.failed, "{:#?}", applied.lines);
+        let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
+        let files = all_text(&home);
+        for secret in secrets {
+            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
+            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+        }
+        for expected in [
+            "skipped      MCP server flag: an argument looks like a credential",
+            "skipped      MCP server flag-equals: an argument looks like a credential",
+            "skipped      MCP server known-prefix: an argument looks like a credential",
+            "skipped      MCP server query: its URL carries a credential",
+            "skipped      MCP server userinfo: its URL carries a credential",
+            "skipped      MCP server folder: it sets a working folder (cwd)",
+            "imported     MCP server headers: https://h.example\n",
+            "imported     MCP server env: env-server\n",
+            "mcp_servers.env.env.PLAIN, mcp_servers.headers.headers.X-Authorization, mcp_servers.headers.headers.X-Region",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
+        let names: Vec<_> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["env", "headers"]);
+        assert_eq!(
+            config.mcp_servers[1].headers.keys().collect::<Vec<_>>(),
+            vec!["X-Zone"]
+        );
+    }
+
+    #[test]
+    fn a_failed_config_save_leaves_both_files_as_they_were() {
+        let root = claude_fixture();
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let records = "{\n  \"kept\": {\"command\": \"kept-server\"}\n}\n";
+        let config = "mcp_servers: []\n";
+        std::fs::write(home.join("mcp_servers.json"), records).unwrap();
+        std::fs::write(home.join("config.yaml"), config).unwrap();
+
+        let report = import_with(&claude_request(&source, &home, true), |_, _| {
+            Err("disk full".to_string())
+        });
+        assert!(report.failed);
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains(
+                "error        MCP servers: could not write them: disk full; mcp_servers.json is restored"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("mcp_servers.json")).unwrap(),
+            records
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("config.yaml")).unwrap(),
+            config
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_are_followed_neither_out_of_the_source_nor_out_of_the_home() {
+        use std::os::unix::fs::symlink;
+        let root = claude_fixture();
+        let source = root.path().join(".claude");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(outside.join("skill")).unwrap();
+        std::fs::write(outside.join("skill/SKILL.md"), "outside\n").unwrap();
+        std::fs::write(outside.join("SKILL.md"), "outside\n").unwrap();
+        symlink(outside.join("skill"), source.join("skills/linked")).unwrap();
+        std::fs::create_dir_all(source.join("skills/linked-md")).unwrap();
+        symlink(
+            outside.join("SKILL.md"),
+            source.join("skills/linked-md/SKILL.md"),
+        )
+        .unwrap();
+
+        let home = root.path().join("home");
+        let elsewhere = root.path().join("elsewhere");
+        std::fs::create_dir_all(home.join("memories")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        symlink(&elsewhere, home.join("skills")).unwrap();
+        let missing = root.path().join("missing.md");
+        symlink(&missing, home.join("memories/MEMORY.md")).unwrap();
+
+        for apply in [false, true] {
+            let report = import_agent(&claude_request(&source, &home, apply));
+            assert!(report.failed);
+            let text = report.lines.join("\n");
+            for expected in [
+                "skipped      skill linked: it is a link, which this import does not follow",
+                "skipped      skill linked-md: its SKILL.md is a link",
+                "error        skill review: ",
+                "error        CLAUDE.md: ",
+            ] {
+                assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+            }
+            assert_eq!(
+                text.matches("is a link, so it is left unchanged").count(),
+                2,
+                "{text}"
+            );
+        }
+        assert_eq!(std::fs::read_dir(&elsewhere).unwrap().count(), 0);
+        assert!(std::fs::symlink_metadata(home.join("memories/MEMORY.md"))
+            .unwrap()
+            .file_type()
+            .is_symlink());
+        assert!(!missing.exists());
     }
 }
