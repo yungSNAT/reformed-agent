@@ -323,12 +323,39 @@ mod tests {
             (r#"{"name":"rust","file_path":null}"#, "rust"),
             (r#"{"name":"rust","file_path":false}"#, "rust"),
             (r#"{"name":"rust","file_path":[]}"#, "rust"),
+            // Python's str() of what its json.loads reads: key order kept,
+            // integers whole, floats as repr, and NaN accepted.
+            (
+                r#"{"name":{"b":1,"a":[null,"x"]}}"#,
+                "{'b': 1, 'a': [None, 'x']}",
+            ),
+            (
+                r#"{"name":123456789012345678901234567890}"#,
+                "123456789012345678901234567890",
+            ),
+            (r#"{"name":0.00001}"#, "1e-05"),
+            (r#"{"name":1e100}"#, "1e+100"),
+            (r#"{"name":"rust","x":NaN}"#, "rust"),
+            (r#"{"name":NaN}"#, "nan"),
         ] {
             assert!(
                 task(arguments).contains(&format!("loaded skills: {listed}. Before")),
                 "{arguments}"
             );
         }
+        // Two calls upstream names alike are listed once.
+        let task = build_review_task(
+            &[
+                message(MessageRole::User, "q"),
+                tool_turn(&[
+                    ("skill_view", r#"{"name":[true]}"#),
+                    ("skill_view", r#"{"name":"[True]"}"#),
+                ]),
+            ],
+            "",
+        )
+        .unwrap();
+        assert!(task.contains("loaded skills: [True]. Before"), "{task}");
     }
 
     #[test]
