@@ -32,6 +32,19 @@ pub enum SessionPhase {
     Failed,
 }
 
+/// What [`SessionManager::begin_turn`] did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStart {
+    /// The turn is running; end it with [`SessionManager::end_turn`].
+    Started,
+    /// Another turn of the session is running.
+    Busy,
+    /// A pending cancel was for this turn: it did not start.
+    Cancelled,
+    /// No such session.
+    Missing,
+}
+
 // ---------------------------------------------------------------------------
 // SessionState
 // ---------------------------------------------------------------------------
@@ -56,10 +69,14 @@ pub struct SessionState {
     pub queued_prompts: Vec<String>,
     /// Last interrupted prompt text that `/steer` can replay with guidance.
     pub interrupted_prompt_text: Option<String>,
+    /// A turn of this session is running. Kept apart from `phase`, which a
+    /// cancel sets whilst the turn still runs.
+    pub turn_running: bool,
     /// Prompts the server has read for this session and not yet answered.
     pub prompts_in_flight: usize,
-    /// A `session/cancel` came whilst a prompt was in flight: a turn that
-    /// starts, or registers its interrupt, after it ends at once.
+    /// A `session/cancel` came whilst a turn ran or a prompt was in flight:
+    /// the running turn, or else the next turn to start, ends at once. Spent
+    /// when that turn ends or starts, or when no prompt is in flight.
     pub cancel_pending: bool,
     pub created_at: u64,
     pub updated_at: u64,
@@ -109,6 +126,7 @@ impl SessionState {
             config_options: HashMap::new(),
             queued_prompts: Vec::new(),
             interrupted_prompt_text: None,
+            turn_running: false,
             prompts_in_flight: 0,
             cancel_pending: false,
             created_at: now,
@@ -306,17 +324,36 @@ impl SessionManager {
         }
     }
 
-    /// Mark the session's turn as running unless one already is. Checked and
-    /// set under one lock, so two prompts for a session cannot both start.
-    pub fn begin_turn(&self, session_id: &str) -> bool {
+    /// Start a turn of the session unless one is running. Checked and set
+    /// under one lock, so two prompts for a session cannot both start; a
+    /// pending cancel is spent on the turn instead.
+    pub fn begin_turn(&self, session_id: &str) -> TurnStart {
         let mut sessions = self.sessions.lock().unwrap();
-        match sessions.get_mut(session_id) {
-            Some(state) if state.phase != SessionPhase::Active => {
-                state.phase = SessionPhase::Active;
-                state.touch();
-                true
-            }
-            _ => false,
+        let Some(state) = sessions.get_mut(session_id) else {
+            return TurnStart::Missing;
+        };
+        if state.turn_running {
+            return TurnStart::Busy;
+        }
+        state.touch();
+        if std::mem::take(&mut state.cancel_pending) {
+            state.phase = SessionPhase::Idle;
+            return TurnStart::Cancelled;
+        }
+        state.turn_running = true;
+        state.phase = SessionPhase::Active;
+        TurnStart::Started
+    }
+
+    /// End the session's running turn, leaving it in `phase`. A cancel that
+    /// came during the turn is spent with it.
+    pub fn end_turn(&self, session_id: &str, phase: SessionPhase) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.turn_running = false;
+            state.cancel_pending = false;
+            state.phase = phase;
+            state.touch();
         }
     }
 
@@ -340,14 +377,14 @@ impl SessionManager {
         }
     }
 
-    /// Mark the session cancelled, and the cancel pending whilst a prompt is
-    /// in flight. Returns the session as it was before.
+    /// Mark the session cancelled, and the cancel pending whilst a turn runs
+    /// or a prompt is in flight. Returns the session as it was before.
     pub fn request_cancel(&self, session_id: &str) -> Option<SessionState> {
         let mut sessions = self.sessions.lock().unwrap();
         let state = sessions.get_mut(session_id)?;
         let before = state.clone();
         state.phase = SessionPhase::Cancelled;
-        state.cancel_pending |= state.prompts_in_flight > 0;
+        state.cancel_pending |= state.turn_running || state.prompts_in_flight > 0;
         state.touch();
         Some(before)
     }
@@ -555,11 +592,15 @@ mod tests {
     fn only_one_turn_of_a_session_starts_at_a_time() {
         let sessions = SessionManager::new();
         let id = sessions.create_session(".").session_id;
-        assert!(sessions.begin_turn(&id));
-        assert!(!sessions.begin_turn(&id));
-        sessions.set_phase(&id, SessionPhase::Cancelled);
-        assert!(sessions.begin_turn(&id));
-        assert!(!sessions.begin_turn("no-such-session"));
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Busy);
+        // A cancel marks the phase, but the turn still owns the session.
+        sessions.request_cancel(&id);
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Busy);
+        sessions.end_turn(&id, SessionPhase::Idle);
+        // The cancel was spent with the turn it ended.
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
+        assert_eq!(sessions.begin_turn("no-such-session"), TurnStart::Missing);
     }
 
     #[test]
@@ -576,6 +617,12 @@ mod tests {
         assert!(sessions.cancel_pending(&id));
         sessions.prompt_answered(&id);
         assert!(!sessions.cancel_pending(&id));
+
+        // Before its turn starts: that turn is cancelled, and the next runs.
+        sessions.prompt_received(&id);
+        sessions.request_cancel(&id);
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Cancelled);
+        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
     }
 
     #[test]

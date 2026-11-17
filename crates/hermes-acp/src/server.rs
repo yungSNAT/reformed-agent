@@ -145,8 +145,10 @@ impl AcpServer {
         tracing::error!("ACP prompt task failed: {error}");
         let (request_id, session_id) = prompts.requests.remove(&error.id()).unwrap_or_default();
         self.session_manager.prompt_answered(&session_id);
+        // shortcut: ends whatever turn the session runs, which is this task's
+        // unless it panicked whilst only queueing behind another turn.
         self.session_manager
-            .set_phase(&session_id, SessionPhase::Failed);
+            .end_turn(&session_id, SessionPhase::Failed);
         if request_id.is_some() {
             send(
                 &lock(outbox),
@@ -689,6 +691,84 @@ mod tests {
         client.server.await.unwrap();
     }
 
+    /// Records each prompt and holds its turn until released; a cancel does
+    /// not release it, as a model call that ignores the interrupt would not.
+    struct HoldingExecutor {
+        event_sink: Arc<EventSink>,
+        release: Arc<tokio::sync::Notify>,
+        runs: Arc<Mutex<Vec<String>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::handler::AcpPromptExecutor for HoldingExecutor {
+        async fn execute_prompt(
+            &self,
+            session: &crate::session::SessionState,
+            user_text: &str,
+            _history: &[serde_json::Value],
+        ) -> Result<crate::handler::PromptExecutionOutput, String> {
+            self.runs.lock().unwrap().push(user_text.to_string());
+            self.event_sink
+                .push(AcpEvent::message_delta(&session.session_id, "partial"));
+            self.release.notified().await;
+            Ok(crate::handler::PromptExecutionOutput {
+                response_text: "partial".to_string(),
+                streamed_text: true,
+                ..Default::default()
+            })
+        }
+    }
+
+    fn text_prompt(session_id: &str, id: u64, text: &str) -> serde_json::Value {
+        serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": id,
+            "method": "session/prompt",
+            "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": text}]},
+        })
+    }
+
+    #[tokio::test]
+    async fn run_on_keeps_a_cancelled_turn_its_own_and_runs_no_follow_up() {
+        let event_sink = Arc::new(EventSink::default());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let runs = Arc::new(Mutex::new(Vec::new()));
+        let mut client = client_with(
+            Arc::new(HoldingExecutor {
+                event_sink: event_sink.clone(),
+                release: release.clone(),
+                runs: runs.clone(),
+            }),
+            event_sink,
+        );
+        let session_id = new_session(&mut client).await;
+        client.send(text_prompt(&session_id, 2, "first")).await;
+        while !is_reply_chunk(&client.next().await, "partial") {}
+
+        client
+            .send(text_prompt(&session_id, 3, "/queue follow up"))
+            .await;
+        let (_, queued) = client.until_response(3).await;
+        assert_eq!(queued["result"]["stopReason"], "end_turn");
+
+        // A cancel whilst the turn still runs, then another prompt: it is
+        // queued behind the turn, not run and not cancelled.
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session_id}}))
+            .await;
+        client.send(text_prompt(&session_id, 4, "second")).await;
+        let (_, second) = client.until_response(4).await;
+        assert_eq!(second["result"]["stopReason"], "end_turn", "{second}");
+
+        release.notify_one();
+        let (_, first) = client.until_response(2).await;
+        assert_eq!(first["result"]["stopReason"], "cancelled", "{first}");
+        assert_eq!(runs.lock().unwrap().as_slice(), ["first"]);
+
+        client.writer.shutdown().await.unwrap();
+        client.server.await.unwrap();
+    }
+
     struct PanickingExecutor;
 
     #[async_trait::async_trait]
@@ -768,6 +848,14 @@ mod tests {
             AcpEvent::tool_call_complete("s1", "tc3", "patch", None),
             AcpEvent::plan_update("s1", plan),
             AcpEvent::usage_update("s1", 200_000, 1_234),
+            AcpEvent::available_commands_update(
+                "s1",
+                vec![crate::protocol::AvailableCommand {
+                    name: "queue".into(),
+                    description: "Queue a prompt for the next turn".into(),
+                    input_hint: Some("prompt".into()),
+                }],
+            ),
             AcpEvent::session_info_update(
                 "s1",
                 Some("Fix the build".into()),

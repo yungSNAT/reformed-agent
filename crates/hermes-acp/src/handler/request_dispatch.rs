@@ -308,7 +308,21 @@ impl AcpHandler for HermesAcpHandler {
                     }
                 }
 
-                if !self.session_manager.begin_turn(session_id) {
+                match self.session_manager.begin_turn(session_id) {
+                    TurnStart::Started => {}
+                    TurnStart::Cancelled => {
+                        return AcpResponse::success(
+                            request.id,
+                            prompt_response_value(StopReason::Cancelled, None),
+                        );
+                    }
+                    TurnStart::Missing => {
+                        return AcpResponse::success(
+                            request.id,
+                            prompt_response_value(StopReason::Refusal, None),
+                        );
+                    }
+                    TurnStart::Busy => {
                     let queued_text = if user_text.trim().is_empty() {
                         "[Image attachment]"
                     } else {
@@ -324,16 +338,7 @@ impl AcpHandler for HermesAcpHandler {
                         request.id,
                         prompt_response_value(StopReason::EndTurn, None),
                     );
-                }
-
-                if self.session_manager.cancel_pending(session_id) {
-                    // Cancelled before the turn began.
-                    self.session_manager
-                        .set_phase(session_id, SessionPhase::Idle);
-                    return AcpResponse::success(
-                        request.id,
-                        prompt_response_value(StopReason::Cancelled, None),
-                    );
+                    }
                 }
 
                 let mut usage = match self
@@ -344,7 +349,7 @@ impl AcpHandler for HermesAcpHandler {
                     Err(err) => {
                         self.event_sink.push(AcpEvent::error(session_id, &err));
                         self.session_manager
-                            .set_phase(session_id, SessionPhase::Failed);
+                            .end_turn(session_id, SessionPhase::Failed);
                         return AcpResponse::error(request.id, -32000, err);
                     }
                 };
@@ -372,7 +377,7 @@ impl AcpHandler for HermesAcpHandler {
                         Err(err) => {
                             self.event_sink.push(AcpEvent::error(session_id, &err));
                             self.session_manager
-                                .set_phase(session_id, SessionPhase::Failed);
+                                .end_turn(session_id, SessionPhase::Failed);
                             return AcpResponse::error(request.id, -32000, err);
                         }
                     };
@@ -385,7 +390,7 @@ impl AcpHandler for HermesAcpHandler {
                     StopReason::EndTurn
                 };
                 self.session_manager
-                    .set_phase(session_id, SessionPhase::Idle);
+                    .end_turn(session_id, SessionPhase::Idle);
                 self.emit_usage_update(session_id);
 
                 AcpResponse::success(request.id, prompt_response_value(stop_reason, usage))
