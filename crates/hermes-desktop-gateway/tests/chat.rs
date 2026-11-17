@@ -21,7 +21,8 @@ const TOKEN: &str = "0123456789abcdef0123456789abcdef-test-token";
 type Socket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
-/// A scripted model: every completion streams `pieces`, after `delay`; each request body is kept.
+/// A scripted model: every completion streams `pieces`, after `delay`, and fails with 400 when
+/// the last message contains `FAIL`; each request body is kept.
 #[derive(Clone)]
 struct Model {
     pieces: Vec<&'static str>,
@@ -31,8 +32,18 @@ struct Model {
 
 async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Response {
     let stream = body["stream"] == true;
+    let fail = body["messages"]
+        .as_array()
+        .and_then(|m| m.last())
+        .and_then(|m| m["content"].as_str())
+        .is_some_and(|text| text.contains("FAIL"));
     model.requests.lock().unwrap().push(body);
     tokio::time::sleep(model.delay).await;
+    if fail {
+        let error =
+            json!({"error": {"message": "scripted failure", "type": "invalid_request_error"}});
+        return (axum::http::StatusCode::BAD_REQUEST, Json(error)).into_response();
+    }
     if !stream {
         let text: String = model.pieces.concat();
         return Json(json!({
@@ -143,6 +154,11 @@ impl Client {
         if !params.is_null() {
             request["params"] = params;
         }
+        self.send(id, request).await
+    }
+
+    /// Sends `request` as it is and returns the reply with `id`.
+    async fn send(&mut self, id: u64, request: Value) -> Value {
         self.socket
             .send(Message::text(request.to_string()))
             .await
@@ -233,7 +249,8 @@ async fn history(addr: SocketAddr, session: &str) -> Vec<(String, String)> {
 
 #[tokio::test]
 async fn a_turn_streams_its_reply_and_is_saved() {
-    let started = start(vec!["Hello ", "wörld", "!"], Duration::ZERO).await;
+    // A character outside the BMP is 2 UTF-16 units, so the offsets differ from char counts.
+    let started = start(vec!["Hello ", "wörld 😀", "!"], Duration::ZERO).await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
 
@@ -248,6 +265,8 @@ async fn a_turn_streams_its_reply_and_is_saved() {
     assert!(started.requests.lock().unwrap().is_empty());
     let reply = client.submit(3, &session, "U1-x7 hi").await;
     assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    // The reply was written before any of the turn's events.
+    assert!(client.events.is_empty(), "{:?}", client.events);
 
     let events = client.turn_events(&session).await;
     let kinds: Vec<&str> = events.iter().map(|(k, _, _)| k.as_str()).collect();
@@ -265,10 +284,10 @@ async fn a_turn_streams_its_reply_and_is_saved() {
         assert_eq!(payload["offset"], streamed.encode_utf16().count());
         streamed.push_str(payload["text"].as_str().unwrap());
     }
-    assert_eq!(streamed, "Hello wörld!");
+    assert_eq!(streamed, "Hello wörld 😀!");
     let complete = &events.last().unwrap().1;
     assert_eq!(complete["status"], "complete");
-    assert_eq!(complete["text"], "Hello wörld!");
+    assert_eq!(complete["text"], "Hello wörld 😀!");
 
     // The model was asked once, saw the user's words and was offered no tools. The reply
     // lacks the prompt's `U1-x7`, which the agent re-asks for only when tools are offered.
@@ -286,7 +305,7 @@ async fn a_turn_streams_its_reply_and_is_saved() {
         history(started.addr, &session).await,
         vec![
             ("user".to_string(), "U1-x7 hi".to_string()),
-            ("assistant".to_string(), "Hello wörld!".to_string()),
+            ("assistant".to_string(), "Hello wörld 😀!".to_string()),
         ]
     );
 }
@@ -341,6 +360,16 @@ async fn prompt_submit_refuses_bad_requests() {
             .await;
         assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
     }
+
+    // Params that are not an object are refused at the wire, before any method runs.
+    for (n, params) in [Value::Null, json!(5)].into_iter().enumerate() {
+        let id = 20 + n as u64;
+        let request =
+            json!({"jsonrpc": "2.0", "id": id, "method": "prompt.submit", "params": params});
+        let reply = client.send(id, request).await;
+        assert_eq!(reply["error"]["code"], -32600, "{reply}");
+    }
+    assert!(started.requests.lock().unwrap().is_empty());
 
     // One turn at a time per session: a second submit while the first runs is refused.
     let reply = client.submit(30, &session, "one").await;
@@ -470,4 +499,61 @@ async fn history_order_and_limit() {
     assert_eq!(page("order=latest&limit=2").await, ["second", "A"]);
     assert_eq!(page("order=oldest&limit=1").await, ["first"]);
     assert_eq!(page("limit=nonsense").await.len(), 4);
+}
+
+/// At most 8 turns run at once across the gateway; a ninth is refused until one ends.
+#[tokio::test]
+async fn turns_beyond_the_cap_are_refused() {
+    let started = start(vec!["slow"], Duration::from_millis(1500)).await;
+    let mut client = connect(started.addr).await;
+    let mut sessions = Vec::new();
+    for _ in 0..9 {
+        sessions.push(client.create().await);
+    }
+    for (n, session) in sessions[..8].iter().enumerate() {
+        let reply = client.submit(10 + n as u64, session, "hi").await;
+        assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    }
+    let reply = client.submit(30, &sessions[8], "hi").await;
+    assert_eq!(reply["error"]["code"], 4090, "{reply}");
+    // A slot frees once one of the 8 turns ends (each takes about 1.5 s).
+    let mut reply = client.submit(31, &sessions[8], "hi").await;
+    for id in 32..60 {
+        if reply["result"]["status"] == "streaming" {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        reply = client.submit(id, &sessions[8], "hi").await;
+    }
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+}
+
+/// A failed turn reports the error and keeps the user's prompt, which the next turn sends.
+#[tokio::test]
+async fn a_failed_turn_keeps_the_prompt() {
+    let started = start(vec!["B"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+
+    client.submit(2, &session, "FAIL please").await;
+    let events = client.turn_events(&session).await;
+    let complete = &events.last().unwrap().1;
+    assert_eq!(complete["status"], "error", "{complete}");
+    assert_eq!(
+        history(started.addr, &session).await,
+        vec![("user".to_string(), "FAIL please".to_string())]
+    );
+
+    client.submit(3, &session, "again").await;
+    let events = client.turn_events(&session).await;
+    assert_eq!(events.last().unwrap().1["status"], "complete");
+    let last = started.requests.lock().unwrap().last().unwrap().clone();
+    let said: Vec<&str> = last["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .filter_map(|m| m["content"].as_str())
+        .collect();
+    assert_eq!(said, ["FAIL please", "again"]);
 }
