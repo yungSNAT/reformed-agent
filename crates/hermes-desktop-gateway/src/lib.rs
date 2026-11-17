@@ -2,19 +2,22 @@
 //!
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
-//! `gateway.ready` event. This crate serves that handshake. It answers every method with
-//! JSON-RPC 'method not found' until the session methods are added.
+//! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
+//! a session's saved messages at `GET /api/sessions/{id}/messages`. Other methods get
+//! JSON-RPC 'method not found'.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
-//! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token and an
-//! `Origin` that is absent (no browser), exactly `file://` (the packaged desktop) or an
-//! http(s) origin naming this listener. Each refusal happens before the upgrade.
+//! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
+//! query and the messages route needs it in `X-Hermes-Session-Token`, as the desktop sends
+//! them; both need an `Origin` that is absent (no browser), exactly `file://` (the packaged
+//! desktop) or an http(s) origin naming this listener. Each refusal happens before any
+//! session is touched.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
-use axum::extract::{Query, Request, State};
+use axum::extract::{Path, Query, Request, State};
 use axum::http::{header, HeaderMap, StatusCode};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -22,6 +25,12 @@ use axum::routing::get;
 use axum::{Json, Router};
 use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
+use tokio::sync::mpsc;
+
+pub mod chat;
+
+pub use chat::Chat;
+use chat::RpcError;
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
 pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
@@ -46,10 +55,17 @@ pub const MAX_BATCH: usize = 100;
 
 const LOOPBACK_NAMES: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 
+/// Header that carries the token on HTTP routes other than the public probes.
+const TOKEN_HEADER: &str = "x-hermes-session-token";
+
+/// Most messages one history request returns.
+const MAX_HISTORY: usize = 1000;
+
 struct Gateway {
     token: String,
     port: u16,
     replay_epoch: String,
+    chat: Arc<Chat>,
 }
 
 /// A new random token: 64 hexadecimal characters from 2 version 4 UUIDs (244 random bits).
@@ -62,21 +78,30 @@ pub fn new_token() -> String {
 }
 
 /// Serves the desktop gateway on `listener`, which the caller has bound to a loopback address.
-pub async fn serve(listener: tokio::net::TcpListener, token: String) -> std::io::Result<()> {
+pub async fn serve(
+    listener: tokio::net::TcpListener,
+    token: String,
+    chat: Chat,
+) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
-    axum::serve(listener, router(token, port)).await
+    axum::serve(listener, router(token, port, chat)).await
 }
 
-fn router(token: String, port: u16) -> Router {
+fn router(token: String, port: u16, chat: Chat) -> Router {
     let gateway = Arc::new(Gateway {
         token,
         port,
         replay_epoch: uuid::Uuid::new_v4().simple().to_string(),
+        chat: Arc::new(chat),
     });
+    let private = Router::new()
+        .route("/api/sessions/{session_id}/messages", get(messages))
+        .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
     Router::new()
         .route("/api/health", get(health))
         .route("/api/status", get(status))
         .route("/api/ws", get(upgrade))
+        .merge(private)
         .layer(middleware::from_fn_with_state(gateway.clone(), host_guard))
         .with_state(gateway)
 }
@@ -147,26 +172,75 @@ async fn status() -> Json<Value> {
     }))
 }
 
+fn token_matches(given: Option<&str>, token: &str) -> bool {
+    bool::from(given.unwrap_or_default().as_bytes().ct_eq(token.as_bytes()))
+}
+
+/// The token check, then the Origin check, as for the WebSocket upgrade.
+async fn token_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next) -> Response {
+    let headers = request.headers();
+    let given = headers.get(TOKEN_HEADER).and_then(|v| v.to_str().ok());
+    if !token_matches(given, &gw.token) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !origin_allowed(headers, gw.port) {
+        return StatusCode::FORBIDDEN.into_response();
+    }
+    next.run(request).await
+}
+
+/// A session's saved user and assistant messages, oldest first: the first `limit` with
+/// `order=oldest` (the default), the last `limit` with `order=latest`. Unknown query keys,
+/// such as the desktop's `profile`, are ignored.
+async fn messages(
+    State(gw): State<Arc<Gateway>>,
+    Path(session_id): Path<String>,
+    Query(query): Query<HashMap<String, String>>,
+) -> Response {
+    let limit = query
+        .get("limit")
+        .and_then(|l| l.parse::<usize>().ok())
+        .unwrap_or(MAX_HISTORY)
+        .clamp(1, MAX_HISTORY);
+    let mut rows = match gw.chat.history(&session_id) {
+        None => return StatusCode::NOT_FOUND.into_response(),
+        Some(Err(err)) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({"detail": err})),
+            )
+                .into_response()
+        }
+        Some(Ok(rows)) => rows,
+    };
+    if query.get("order").map(String::as_str) == Some("latest") {
+        rows.drain(..rows.len().saturating_sub(limit));
+    } else {
+        rows.truncate(limit);
+    }
+    Json(json!({"session_id": session_id, "messages": rows})).into_response()
+}
+
 async fn upgrade(
     State(gw): State<Arc<Gateway>>,
     Query(query): Query<HashMap<String, String>>,
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    let given = query.get("token").map(String::as_bytes).unwrap_or_default();
-    if !bool::from(given.ct_eq(gw.token.as_bytes())) {
+    if !token_matches(query.get("token").map(String::as_str), &gw.token) {
         return StatusCode::UNAUTHORIZED.into_response();
     }
     if !origin_allowed(&headers, gw.port) {
         return StatusCode::FORBIDDEN.into_response();
     }
     let epoch = gw.replay_epoch.clone();
+    let chat = Arc::clone(&gw.chat);
     ws.max_message_size(MAX_MESSAGE_BYTES)
         .max_frame_size(MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, epoch))
+        .on_upgrade(move |socket| session(socket, epoch, chat))
 }
 
-async fn session(mut socket: WebSocket, replay_epoch: String) {
+async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
     let ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
@@ -185,15 +259,22 @@ async fn session(mut socket: WebSocket, replay_epoch: String) {
     {
         return;
     }
-    while let Some(Ok(message)) = socket.recv().await {
-        let reply = match message {
-            Message::Text(text) => reply_to(&text),
-            Message::Close(_) => break,
-            _ => None,
+    // Turns stream their events through this connection's outbox; replies go out first, as
+    // each is written before the next outbox frame is read.
+    let (outbox, mut events) = mpsc::unbounded_channel();
+    let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
+    loop {
+        let frame = tokio::select! {
+            inbound = socket.recv() => match inbound {
+                Some(Ok(Message::Text(text))) => reply_to(&text, &call),
+                Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+                Some(Ok(_)) => None,
+            },
+            Some(event) = events.recv() => Some(event),
         };
-        if let Some(reply) = reply {
+        if let Some(frame) = frame {
             if socket
-                .send(Message::Text(reply.to_string().into()))
+                .send(Message::Text(frame.to_string().into()))
                 .await
                 .is_err()
             {
@@ -207,8 +288,11 @@ fn rpc_error(id: Value, code: i64, message: String) -> Value {
     json!({"jsonrpc": "2.0", "id": id, "error": {"code": code, "message": message}})
 }
 
+/// Runs one request's method; the error is a JSON-RPC code and message.
+type Call<'a> = dyn Fn(&str, &Value) -> Result<Value, RpcError> + 'a;
+
 /// The reply to one inbound frame: one request or a JSON-RPC batch of them.
-fn reply_to(text: &str) -> Option<Value> {
+fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
     let Ok(frame) = serde_json::from_str::<Value>(text) else {
         return Some(rpc_error(Value::Null, -32700, "parse error".into()));
     };
@@ -224,24 +308,27 @@ fn reply_to(text: &str) -> Option<Value> {
             format!("invalid request: a batch holds at most {MAX_BATCH} requests"),
         )),
         Value::Array(items) => {
-            let replies: Vec<Value> = items.iter().filter_map(reply_to_one).collect();
+            let replies: Vec<Value> = items
+                .iter()
+                .filter_map(|item| reply_to_one(item, call))
+                .collect();
             (!replies.is_empty()).then_some(Value::Array(replies))
         }
-        single => reply_to_one(&single),
+        single => reply_to_one(&single, call),
     }
 }
 
 /// A request carries "jsonrpc": "2.0", a non-empty string method, an id that is a string, a
 /// number or null when present, and params that are an array or an object when present. A
-/// request without an id is a notification and gets no reply, as does a response to our own
-/// requests (an id with a result or an error). Anything else gets -32600, with its id only
-/// when that id has a valid type.
+/// request without an id is a notification: it is not run and gets no reply, as does a
+/// response to our own requests (an id with a result or an error). Anything else gets
+/// -32600, with its id only when that id has a valid type.
 ///
 /// One departure from JSON-RPC 2.0 is deliberate: a notification with an empty method gets
 /// -32600, where the specification allows no reply to any notification. Upstream's gateway
 /// (`_normalize_request` in tui_gateway/server.py) answers an empty method that way with or
 /// without an id, and Hermes Desktop never sends one.
-fn reply_to_one(frame: &Value) -> Option<Value> {
+fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
     let invalid = |id: Value| Some(rpc_error(id, -32600, "invalid request".into()));
     let Some(request) = frame.as_object() else {
         return invalid(Value::Null);
@@ -264,7 +351,12 @@ fn reply_to_one(frame: &Value) -> Option<Value> {
         Some(Value::String(method))
             if version_2 && !method.is_empty() && id_valid && params_valid =>
         {
-            id.map(|_| rpc_error(reply_id, -32601, format!("method not found: {method}")))
+            id?;
+            let params = request.get("params").unwrap_or(&Value::Null);
+            Some(match call(method, params) {
+                Ok(result) => json!({"jsonrpc": "2.0", "id": reply_id, "result": result}),
+                Err((code, message)) => rpc_error(reply_id, code, message),
+            })
         }
         Some(_) => invalid(reply_id),
         None if id.is_some()
@@ -325,11 +417,18 @@ mod tests {
     }
 
     #[test]
-    fn notifications_and_responses_get_no_reply() {
-        assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#), None);
-        assert_eq!(reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#), None);
+    fn notifications_and_responses_get_no_reply_and_run_nothing() {
+        let call: &Call<'_> = &|method, _| panic!("{method} was run");
+        assert_eq!(reply_to(r#"{"jsonrpc":"2.0","method":"x"}"#, call), None);
         assert_eq!(
-            reply_to(r#"[{"jsonrpc":"2.0","method":"x"},{"id":2,"result":{}}]"#),
+            reply_to(r#"{"jsonrpc":"2.0","id":1,"result":{}}"#, call),
+            None
+        );
+        assert_eq!(
+            reply_to(
+                r#"[{"jsonrpc":"2.0","method":"x"},{"id":2,"result":{}}]"#,
+                call
+            ),
             None
         );
     }
