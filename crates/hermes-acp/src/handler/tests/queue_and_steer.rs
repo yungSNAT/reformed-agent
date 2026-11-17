@@ -136,9 +136,11 @@ async fn test_acp_regular_prompt_queues_while_session_is_active() {
     let executor = Arc::new(SteeringPromptExecutor::default());
     let handler = make_handler().with_prompt_executor(executor.clone());
     let session_id = create_session(&handler).await;
-    handler
-        .session_manager
-        .set_phase(&session_id, SessionPhase::Active);
+    // A turn is running.
+    assert_eq!(
+        handler.session_manager.begin_turn(&session_id),
+        crate::session::TurnStart::Started
+    );
 
     let resp = handler
         .handle_request(AcpRequest {
