@@ -695,7 +695,8 @@ fn write_doctor_snapshot(
     }
     let body = serde_json::to_string_pretty(snapshot_payload)
         .map_err(|e| AgentError::Config(format!("serialize doctor snapshot: {}", e)))?;
-    // Diagnostics, so written as the bundle is: to a new owner-only file
+    // Diagnostics, so written as the bundle is: to a new file only the owner
+    // can read (0600 on Unix; Windows applies the folder's inherited ACL)
     // renamed into place, never into a file someone may hold open.
     let dir = path
         .parent()

@@ -1125,6 +1125,18 @@ mod tests {
             .map(|entry| entry.expect("entry").file_name())
             .collect();
         assert_eq!(names.len(), 1, "temporary files left behind: {names:?}");
+
+        let taken = dir.path().join("out").join("taken");
+        std::fs::create_dir(&taken).expect("mkdir taken");
+        std::fs::write(taken.join("keep.txt"), "keep").expect("keep");
+        let err = write_doctor_snapshot(&cli, &payload, taken.to_str()).unwrap_err();
+        assert!(err.to_string().contains(&taken.display().to_string()), "{err}");
+        assert_eq!(std::fs::read_to_string(taken.join("keep.txt")).expect("kept"), "keep");
+        let names: Vec<_> = std::fs::read_dir(existing.parent().unwrap())
+            .expect("list")
+            .map(|entry| entry.expect("entry").file_name())
+            .collect();
+        assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
     }
 
     include!("tests/provider_setup.rs");
