@@ -792,7 +792,7 @@ pub struct TeamsPipelineArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct ChatArgs {
-    /// Single-shot query (non-interactive).
+    /// Single-shot query (non-interactive); `-` reads it from standard input.
     #[arg(short, long)]
     pub query: Option<String>,
     /// Preload a skill before chatting.

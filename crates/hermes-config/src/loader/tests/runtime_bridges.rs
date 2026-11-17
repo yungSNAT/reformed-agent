@@ -388,3 +388,26 @@ vertex:
         std::env::remove_var("VERTEX_REGION");
     }
 }
+
+/// The browser tools read `TERMINAL_ENV` (else `TERMINAL_BACKEND`) to decide
+/// whether the terminal is local, so a backend chosen in config.yaml alone
+/// must reach `TERMINAL_ENV`.
+#[test]
+fn load_config_names_a_yaml_terminal_in_terminal_env() {
+    use tempfile::tempdir;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for want in ["docker", "ssh"] {
+        clear_terminal_env_bridge_vars();
+        let home = tempdir().unwrap();
+        let yaml = format!("terminal:\n  backend: {want}\n");
+        std::fs::write(home.path().join("config.yaml"), yaml).unwrap();
+        set_test_env("HERMES_HOME", home.path());
+        let loaded = load_config(Some(home.path().to_string_lossy().as_ref()));
+        let terminal_env = std::env::var("TERMINAL_ENV");
+        remove_test_env("HERMES_HOME");
+        clear_terminal_env_bridge_vars();
+        loaded.unwrap();
+        assert_eq!(terminal_env.as_deref(), Ok(want));
+    }
+}

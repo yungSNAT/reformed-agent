@@ -1033,6 +1033,92 @@ fn resolve_resume_session_id_walks_compression_chain_to_latest_tip() {
 }
 
 #[test]
+fn delete_session_removes_rows_search_entries_and_transcript() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let messages = [Message::user("remember the falcon")];
+    for id in ["gone", "kept", "branch"] {
+        sp.persist_session(id, &messages, Some("gpt-4o"), Some("cli"), None, None)
+            .unwrap();
+    }
+    set_session_lineage(
+        &sp,
+        "branch",
+        Some("gone"),
+        None,
+        &Utc::now().to_rfc3339(),
+        None,
+    );
+    std::fs::create_dir_all(tmp.path().join("sessions")).unwrap();
+    let transcript = tmp.path().join("sessions").join("gone.jsonl");
+    std::fs::write(&transcript, "{}\n").unwrap();
+
+    assert!(sp.delete_session("gone").unwrap());
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let count = |sql: &str| -> i64 { conn.query_row(sql, [], |row| row.get(0)).unwrap() };
+    assert_eq!(count("SELECT COUNT(*) FROM sessions WHERE id = 'gone'"), 0);
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages WHERE session_id = 'gone'"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages_fts WHERE session_id = 'gone'"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages WHERE session_id = 'kept'"),
+        1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM messages_fts WHERE session_id = 'kept'"),
+        1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM sessions WHERE id = 'branch' AND parent_session_id IS NULL"),
+        1
+    );
+    assert!(!transcript.exists());
+    assert!(!sp.delete_session("gone").unwrap());
+    assert!(sp.delete_session("../gone").is_err());
+}
+
+#[test]
+fn delete_session_changes_nothing_when_the_store_lacks_the_session() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    sp.persist_session(
+        "child",
+        &[Message::user("hi")],
+        Some("gpt-4o"),
+        Some("cli"),
+        None,
+        None,
+    )
+    .unwrap();
+    set_session_lineage(
+        &sp,
+        "child",
+        Some("ghost"),
+        None,
+        &Utc::now().to_rfc3339(),
+        None,
+    );
+
+    assert!(!sp.delete_session("ghost").unwrap());
+
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    let linked: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM sessions WHERE id = 'child' AND parent_session_id = 'ghost'",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap();
+    assert_eq!(linked, 1);
+}
+
+#[test]
 fn delete_session_if_empty_deletes_empty_untitled_row_and_snapshot() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());

@@ -57,6 +57,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
         "Stage a markdown prompt draft in the composer (`/prompt [initial text]`)",
     ),
     ("/compose", "Alias for /prompt"),
+    (
+        "/init",
+        "Generate or update AGENTS.md project instructions from a repo scan (`/init [notes]`)",
+    ),
     ("/undo", "Undo the last N user turns and prefill the latest undone prompt"),
     ("/rewind", "Alias for /undo [N]"),
     ("/history", "Show recent conversation history"),
@@ -242,6 +246,10 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/question", "Alias for /ask"),
     ("/steer", "Inject non-interrupt steering instruction"),
     ("/btw", "Run an ephemeral side-question"),
+    (
+        "/review",
+        "Start an independent reviewer of the work just discussed as a background job (`/review [instructions]`)",
+    ),
     (
         "/plan",
         "Queue planning work or inspect planner queue status (`/plan caps ...`, `/plan depth ...`)",

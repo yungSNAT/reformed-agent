@@ -1760,6 +1760,7 @@ dependencies = [
  "hermes-gateway",
  "hermes-intelligence",
  "hermes-mcp",
+ "hermes-parity-tools",
  "hermes-provider-runtime",
  "hermes-skills",
  "hermes-telemetry",
@@ -1865,6 +1866,21 @@ dependencies = [
  "tracing",
  "uuid",
  "yaml_serde",
+]
+
+[[package]]
+name = "hermes-desktop-gateway"
+version = "0.22.0"
+dependencies = [
+ "axum",
+ "clap",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
 ]
 
 [[package]]

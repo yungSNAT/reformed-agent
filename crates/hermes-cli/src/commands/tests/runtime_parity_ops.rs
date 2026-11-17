@@ -1245,6 +1245,53 @@ fn cli_sessions_delete_resolves_unique_prefix_and_removes_snapshot() {
     assert!(!path.exists());
 }
 
+#[tokio::test]
+async fn cli_sessions_delete_removes_the_conversation_from_the_store() {
+    let _guard = test_env_lock::lock_async().await;
+    let tmp = tempdir().expect("tempdir");
+    let _home_guard = TempHomeGuard::new(tmp.path());
+    let home = hermes_config::hermes_home();
+    let store = hermes_agent::SessionPersistence::new(&home);
+    let id = "20260315_092437_c9a6ff";
+    store
+        .persist_session(
+            id,
+            &[hermes_core::Message::user("remember the falcon")],
+            Some("gpt-4o"),
+            Some("cli"),
+            None,
+            None,
+        )
+        .expect("persist");
+    let sessions_dir = home.join("sessions");
+    std::fs::create_dir_all(&sessions_dir).expect("sessions dir");
+    std::fs::write(
+        sessions_dir.join(format!("{id}.json")),
+        r#"{"messages":[]}"#,
+    )
+    .expect("session snapshot");
+
+    handle_cli_sessions(CliSessionsOptions {
+        action: Some("delete".to_string()),
+        session: None,
+        id: Some(id.to_string()),
+        session_id: None,
+        name: None,
+        format: None,
+        only: None,
+        output: None,
+        redact: false,
+        yes: true,
+        source: None,
+        older_than: None,
+    })
+    .await
+    .expect("delete");
+
+    assert!(!sessions_dir.join(format!("{id}.json")).exists());
+    assert!(store.load_session(id).expect("load").is_empty());
+}
+
 #[test]
 fn cli_sessions_prune_uses_90_day_default_and_source_all_ages() {
     assert_eq!(prune_cutoff_for_sessions(None, None, None), Some(90));

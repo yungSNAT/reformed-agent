@@ -690,7 +690,8 @@ mod tests {
     type StubRequests = Arc<Mutex<Vec<(String, HashMap<String, String>)>>>;
 
     /// A Streamable HTTP MCP server on 127.0.0.1, as hosted tool catalogues
-    /// run: it records each POST's JSON-RPC method and headers, answers
+    /// run: it records every request's headers, under its JSON-RPC method for
+    /// a POST to the URL and its request line otherwise, answers
     /// `initialize` as an SSE stream that assigns a session id, a
     /// notification with 202, `tools/list` as JSON and `tools/call` as an SSE
     /// stream with a progress notification before the result. Any other request
@@ -794,6 +795,10 @@ mod tests {
                                 ),
                             }
                         } else {
+                            let line = request_line.trim_end().trim_end_matches(" HTTP/1.1");
+                            seen.lock()
+                                .expect("requests")
+                                .push((line.to_string(), headers));
                             ("404 Not Found", "text/plain", "", String::new())
                         };
                         let response = format!(
@@ -862,24 +867,68 @@ mod tests {
                 "{method} missing from {methods:?}"
             );
         }
-        for (method, headers) in requests.iter() {
+        // Streamable HTTP first: no probe of the older kind's `/sse`.
+        assert!(
+            !methods.iter().any(|method| method.contains("/sse")),
+            "{methods:?}"
+        );
+        let initialize = methods
+            .iter()
+            .position(|method| *method == "initialize")
+            .expect("initialize");
+        for (index, (method, headers)) in requests.iter().enumerate() {
             assert_eq!(
                 headers.get("x-consumer-api-key").map(String::as_str),
                 Some("key-from-env"),
                 "{method}"
             );
-            assert!(
-                headers
-                    .get("accept")
-                    .is_some_and(|v| v.contains("text/event-stream")),
-                "{method}"
-            );
+            if !method.starts_with("GET ") {
+                assert!(
+                    headers
+                        .get("accept")
+                        .is_some_and(|v| v.contains("text/event-stream")),
+                    "{method}"
+                );
+            }
             let session = headers.get("mcp-session-id").map(String::as_str);
-            if method == "initialize" {
-                assert_eq!(session, None);
+            if index <= initialize {
+                assert_eq!(session, None, "{method}");
             } else {
                 assert_eq!(session, Some("stub-session"), "{method}");
             }
         }
+    }
+
+    /// A command that loads config.yaml to change it and saves it writes the
+    /// header's `${VAR}` back, not the key; and `Debug` names headers only.
+    #[test]
+    fn catalogue_header_stays_a_reference_through_a_save_and_out_of_debug() {
+        let _env = crate::test_env_lock::lock();
+        let home = TempDir::new().expect("home");
+        let path = home.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "mcp_servers:\n  - name: composio\n    url: \"https://connect.composio.dev/mcp\"\n    headers:\n      x-consumer-api-key: \"${HERMES_TEST_CATALOGUE_KEY}\"\n",
+        )
+        .expect("write config");
+        std::env::set_var("HERMES_TEST_CATALOGUE_KEY", "key-from-env");
+        let edited = hermes_config::load_user_config_file(&path).expect("load to edit");
+        hermes_config::save_config_yaml(&path, &edited).expect("save");
+        let loaded = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")));
+        std::env::remove_var("HERMES_TEST_CATALOGUE_KEY");
+
+        let saved = std::fs::read_to_string(&path).expect("read config");
+        assert!(saved.contains("${HERMES_TEST_CATALOGUE_KEY}"), "{saved}");
+        assert!(!saved.contains("key-from-env"), "{saved}");
+        let loaded = loaded.expect("config loads");
+        let entry = loaded
+            .mcp_servers
+            .iter()
+            .find(|server| server.name == "composio")
+            .expect("composio entry");
+        assert_eq!(entry.headers["x-consumer-api-key"], "key-from-env");
+        let shown = format!("{entry:?} {loaded:?}");
+        assert!(!shown.contains("key-from-env"), "{shown}");
+        assert!(shown.contains("x-consumer-api-key"), "{shown}");
     }
 }
