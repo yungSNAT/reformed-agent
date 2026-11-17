@@ -294,27 +294,43 @@ fn request_of_len(len: usize) -> String {
     request
 }
 
+/// Sends `text` as one message split across 2 frames, each under the frame limit, so only
+/// the message limit applies to it.
+async fn send_in_2_frames(socket: &mut Socket, text: String) -> Result<(), tungstenite::Error> {
+    use tungstenite::protocol::frame::coding::{Data, OpCode};
+    use tungstenite::protocol::frame::Frame;
+    let bytes = text.into_bytes();
+    let (head, tail) = bytes.split_at(bytes.len() / 2);
+    let first = Frame::message(head.to_vec(), OpCode::Data(Data::Text), false);
+    let last = Frame::message(tail.to_vec(), OpCode::Data(Data::Continue), true);
+    socket.send(Message::Frame(first)).await?;
+    socket.send(Message::Frame(last)).await
+}
+
 #[tokio::test]
 async fn a_message_over_the_size_limit_closes_the_socket() {
     use hermes_desktop_gateway::MAX_MESSAGE_BYTES;
     let mut socket = connected().await;
+    // At the limit, in one frame and in 2.
     socket
         .send(Message::text(request_of_len(MAX_MESSAGE_BYTES)))
         .await
         .unwrap();
     assert_eq!(next_json(&mut socket).await["error"]["code"], -32601);
+    send_in_2_frames(&mut socket, request_of_len(MAX_MESSAGE_BYTES))
+        .await
+        .unwrap();
+    assert_eq!(next_json(&mut socket).await["error"]["code"], -32601);
 
     // The send itself may fail once the server drops the connection.
-    let _ = socket
-        .send(Message::text(request_of_len(MAX_MESSAGE_BYTES + 1)))
-        .await;
+    let _ = send_in_2_frames(&mut socket, request_of_len(MAX_MESSAGE_BYTES + 1)).await;
     let next = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
         .await
         .expect("the socket neither replied nor closed within 10 seconds");
-    assert!(
-        matches!(next, None | Some(Err(_)) | Some(Ok(Message::Close(_)))),
-        "expected the socket to close, got {next:?}"
-    );
+    let closed = matches!(next, None | Some(Err(_)) | Some(Ok(Message::Close(_))));
+    assert!(closed, "expected the socket to close, got a {} reply", {
+        next.and_then(Result::ok).map_or(0, |m| m.len())
+    });
 }
 
 #[tokio::test]
