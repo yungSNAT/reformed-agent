@@ -220,6 +220,80 @@
         "plugins/image_gen/openrouter/",
         "plugins/image_gen/krea/"
       ]
+    },
+    {
+      "id": "rust-direct-provider-plugin-parity",
+      "status": "approved",
+      "workstream": "WS3",
+      "summary": "Upstream's DeepInfra, Fireworks AI and Upstage Solar Python provider plugins stay reference-only; the 3 providers are ported to Rust provider profiles.",
+      "owner": "yungSNAT",
+      "ticket": 3524,
+      "last_reviewed": "2026-11-17",
+      "review_date": "2027-02-17",
+      "rationale": "crates/hermes-agent/src/provider_profiles.rs carries each provider's base URL, aliases, API key variable and reasoning_effort contract (DeepInfra clamps to the model's levels, Fireworks passes the effort as written, Upstage defaults to medium), with setup entries, model fallbacks, live catalogues and auxiliary models in hermes-cli and hermes-agent. Fireworks attribution headers are not ported. The Python plugin files are reference-only.",
+      "path_prefixes": [
+        "plugins/model-providers/deepinfra/",
+        "plugins/model-providers/fireworks/",
+        "plugins/model-providers/upstage/"
+      ]
+    },
+    {
+      "id": "rust-no-deepinfra-media-generation",
+      "status": "temporary",
+      "workstream": "WS3",
+      "summary": "Upstream's DeepInfra image and video generation plugins are not ported.",
+      "owner": "yungSNAT",
+      "ticket": 3524,
+      "last_reviewed": "2026-11-17",
+      "review_date": "2026-12-17",
+      "rationale": "The Rust image and video tools have no DeepInfra backend; DeepInfra is available here for chat only. Port when a user needs DeepInfra media models.",
+      "path_prefixes": [
+        "plugins/image_gen/deepinfra/",
+        "plugins/video_gen/deepinfra/"
+      ]
+    },
+    {
+      "id": "rust-no-memory-query-rewrite",
+      "status": "temporary",
+      "workstream": "WS3",
+      "summary": "Upstream's model-written memory retrieval query is not ported.",
+      "owner": "yungSNAT",
+      "ticket": 3524,
+      "last_reviewed": "2026-11-17",
+      "review_date": "2026-12-17",
+      "rationale": "Upstream's plugins/memory/query_rewrite.py has an auxiliary model rewrite the latest user message into a memory search query. The Rust memory providers search with the message as written. Port with the auxiliary.memory_query_rewrite setting.",
+      "path_prefixes": [
+        "plugins/memory/query_rewrite.py"
+      ]
+    },
+    {
+      "id": "rust-no-gateway-profile-routing",
+      "status": "temporary",
+      "workstream": "WS3",
+      "summary": "Upstream's per-source profile routing for one gateway is not ported, so its design note is not carried.",
+      "owner": "yungSNAT",
+      "ticket": 3524,
+      "last_reviewed": "2026-11-17",
+      "review_date": "2026-12-17",
+      "rationale": "docs/profile-routing.md documents gateway/profile_routing.py, which picks a profile per platform, server, channel or thread. The Rust gateway serves one profile per run; run one gateway per profile instead.",
+      "path_prefixes": [
+        "docs/profile-routing.md"
+      ]
+    },
+    {
+      "id": "rust-no-nous-billing-or-desktop-app",
+      "status": "approved",
+      "workstream": "WS3",
+      "summary": "Nous Portal billing and the Hermes desktop app are upstream products this port does not ship.",
+      "owner": "yungSNAT",
+      "ticket": 3524,
+      "last_reviewed": "2026-11-17",
+      "review_date": "2027-02-17",
+      "rationale": "docs/billing-lifecycle.md maps the TUI's /subscription and /topup states to Nous's billing service, and skills/hermes-desktop-plugins teaches plugins for the Hermes desktop app. This port takes no payments and has no desktop app, so the slash commands are allowlisted in slash-command-divergence.json and these files stay upstream's.",
+      "path_prefixes": [
+        "docs/billing-lifecycle.md",
+        "skills/hermes-desktop-plugins/"
+      ]
     }
   ]
 }
