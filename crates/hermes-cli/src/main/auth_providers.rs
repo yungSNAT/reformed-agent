@@ -85,7 +85,9 @@ fn normalize_auth_provider(provider: &str) -> String {
         "mm" => "mattermost".to_string(),
         "github-copilot" | "github-models" => "copilot".to_string(),
         "github-copilot-acp" | "copilot-acp-agent" => "copilot-acp".to_string(),
-        other => other.to_string(),
+        other => hermes_core::providers::provider_for_alias(other)
+            .unwrap_or(other)
+            .to_string(),
     }
 }
 
@@ -158,7 +160,7 @@ fn normalize_secret_provider(provider: &str) -> String {
         "alibaba_coding" | "alibaba-coding" | "alibaba_coding_plan" => {
             "alibaba-coding-plan".to_string()
         }
-        _ => p,
+        _ => hermes_core::providers::provider_for_alias(&p).map_or(p, str::to_string),
     }
 }
 
@@ -287,7 +289,10 @@ fn secret_provider_aliases(provider: &str) -> Vec<String> {
             "exllama".to_string(),
             "exllamav2".to_string(),
         ],
-        p => vec![p.to_string()],
+        p => std::iter::once(p)
+            .chain(hermes_core::providers::provider_aliases(p).iter().copied())
+            .map(str::to_string)
+            .collect(),
     }
 }
 
@@ -319,6 +324,9 @@ fn provider_env_var(provider: &str) -> Option<&'static str> {
         "copilot" => Some("COPILOT_GITHUB_TOKEN"),
         "ai-gateway" => Some("AI_GATEWAY_API_KEY"),
         "arcee" => Some("ARCEEAI_API_KEY"),
+        "deepinfra" => Some("DEEPINFRA_API_KEY"),
+        "fireworks" => Some("FIREWORKS_API_KEY"),
+        "upstage" => Some("UPSTAGE_API_KEY"),
         "deepseek" => Some("DEEPSEEK_API_KEY"),
         "huggingface" => Some("HF_TOKEN"),
         "gmi" => Some("GMI_API_KEY"),
@@ -547,6 +555,9 @@ async fn hydrate_provider_env_from_vault_for_cli_with_options(
         ("AI_GATEWAY_API_KEY", "ai-gateway"),
         ("ARCEEAI_API_KEY", "arcee"),
         ("ARCEE_API_KEY", "arcee"),
+        ("DEEPINFRA_API_KEY", "deepinfra"),
+        ("FIREWORKS_API_KEY", "fireworks"),
+        ("UPSTAGE_API_KEY", "upstage"),
         ("DEEPSEEK_API_KEY", "deepseek"),
         ("HF_TOKEN", "huggingface"),
         ("KILOCODE_API_KEY", "kilocode"),

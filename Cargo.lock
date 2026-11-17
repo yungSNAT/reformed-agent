@@ -1760,8 +1760,8 @@ dependencies = [
  "hermes-gateway",
  "hermes-intelligence",
  "hermes-mcp",
- "hermes-parity-tools",
  "hermes-provider-runtime",
+ "hermes-py",
  "hermes-skills",
  "hermes-telemetry",
  "hermes-tool-planning",
@@ -2056,6 +2056,7 @@ version = "0.22.0"
 dependencies = [
  "chrono",
  "clap",
+ "hermes-py",
  "regex",
  "serde_json",
  "tempfile",
@@ -2091,6 +2092,14 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "hermes-py"
+version = "0.22.0"
+dependencies = [
+ "chrono",
+ "tempfile",
 ]
 
 [[package]]

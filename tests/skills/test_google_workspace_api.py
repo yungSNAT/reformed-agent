@@ -109,8 +109,9 @@ def test_bridge_exits_on_missing_token(bridge_module):
         bridge_module.get_valid_token()
 
 
-def test_bridge_main_injects_token_env(bridge_module, tmp_path):
+def test_bridge_main_injects_token_env(bridge_module, tmp_path, monkeypatch):
     """main() sets GOOGLE_WORKSPACE_CLI_TOKEN in subprocess env."""
+    monkeypatch.setattr(bridge_module, "find_program", lambda name: f"/usr/bin/{name}")
     future = (datetime.now(timezone.utc) + timedelta(hours=1)).isoformat()
     token_path = bridge_module.get_token_path()
     _write_token(token_path, token="ya29.injected", expiry=future)
@@ -128,7 +129,7 @@ def test_bridge_main_injects_token_env(bridge_module, tmp_path):
                 bridge_module.main()
 
     assert captured["env"]["GOOGLE_WORKSPACE_CLI_TOKEN"] == "ya29.injected"
-    assert captured["cmd"] == ["gws", "gmail", "+triage"]
+    assert captured["cmd"] == ["/usr/bin/gws", "gmail", "+triage"]
 
 
 def test_api_calendar_list_uses_events_list(api_module):

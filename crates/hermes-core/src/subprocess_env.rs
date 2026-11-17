@@ -94,6 +94,7 @@ pub const SUBPROCESS_ENV_BLOCKLIST_EXACT: &[&str] = &[
     "CLAUDE_CODE_OAUTH_TOKEN",
     "COHERE_API_KEY",
     "DAYTONA_API_KEY",
+    "DEEPINFRA_API_KEY",
     "DEEPSEEK_API_KEY",
     "DISCORD_BOT_TOKEN",
     "DISCORD_FREE_RESPONSE_CHANNELS",
@@ -156,6 +157,7 @@ pub const SUBPROCESS_ENV_BLOCKLIST_EXACT: &[&str] = &[
     "TELEGRAM_HOME_CHANNEL",
     "TELEGRAM_HOME_CHANNEL_NAME",
     "TOGETHER_API_KEY",
+    "UPSTAGE_API_KEY",
     "VERTEX_CREDENTIALS_PATH",
     "WHATSAPP_ALLOWED_USERS",
     "WHATSAPP_ENABLED",
@@ -337,6 +339,21 @@ mod tests {
         assert!(!env.contains_key("OPENAI_API_KEY"));
         assert!(!env.contains_key("HERMES_OPENAI_API_KEY"));
         assert!(!env.contains_key("ANTHROPIC_API_KEY"));
+    }
+
+    #[test]
+    fn direct_provider_keys_are_stripped_by_default() {
+        let env = build(
+            &[
+                ("DEEPINFRA_API_KEY", "di-test"),
+                ("FIREWORKS_API_KEY", "fw-test"),
+                ("UPSTAGE_API_KEY", "up-test"),
+            ],
+            false,
+        );
+        assert!(!env.contains_key("DEEPINFRA_API_KEY"));
+        assert!(!env.contains_key("FIREWORKS_API_KEY"));
+        assert!(!env.contains_key("UPSTAGE_API_KEY"));
     }
 
     #[test]

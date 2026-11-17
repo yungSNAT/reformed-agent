@@ -106,9 +106,9 @@ Telegram, Discord, Slack, WhatsApp, Signal, Matrix, Mattermost, DingTalk, Feishu
 
 Mem0, Honcho, Holographic, Hindsight, ByteRover, OpenViking, RetainDB, Supermemory.
 
-### 6개 터미널 백엔드
+### 4개 터미널 백엔드
 
-Local, Docker, SSH, Daytona, Modal, Singularity.
+Local, Docker, SSH, Singularity. Daytona와 Modal은 빌드에 포함되지 않으며, 설정하면 명령을 로컬에서 실행하지 않고 오류를 반환합니다.
 
 ### MCP (Model Context Protocol) 지원
 
@@ -151,7 +151,7 @@ crates/
 | `LlmProvider` | LLM API 호출 | OpenAI, Anthropic, OpenRouter, Generic |
 | `ToolHandler` | 도구 실행 | 30개 도구 백엔드 |
 | `PlatformAdapter` | 메시징 플랫폼 | 17개 플랫폼 |
-| `TerminalBackend` | 명령 실행 | Local, Docker, SSH, Daytona, Modal, Singularity |
+| `TerminalBackend` | 명령 실행 | Local, Docker, SSH, Singularity |
 | `MemoryProvider` | 영구 메모리 | 8개 메모리 플러그인 + 파일/SQLite |
 | `SkillProvider` | 스킬 관리 | 파일 스토어 + Hub |
 

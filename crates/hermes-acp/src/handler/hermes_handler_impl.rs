@@ -421,6 +421,7 @@ impl HermesAcpHandler {
                 usage: None,
                 total_turns: Some(1),
                 events: Vec::new(),
+                streamed_text: false,
             })
         }?;
 
@@ -429,22 +430,24 @@ impl HermesAcpHandler {
             usage,
             total_turns,
             events,
+            streamed_text,
         } = prompt_result;
 
-        let streamed_message = events.iter().any(|event| {
-            matches!(
-                event.kind,
-                AcpEventKind::MessageDelta | AcpEventKind::MessageComplete
-            ) && event.text.as_deref().is_some_and(|text| !text.is_empty())
-        });
+        let streamed_message = streamed_text
+            || events.iter().any(|event| {
+                matches!(
+                    event.kind,
+                    AcpEventKind::MessageDelta | AcpEventKind::MessageComplete
+                ) && event.text.as_deref().is_some_and(|text| !text.is_empty())
+            });
         for event in events {
             self.event_sink.push(event);
         }
 
         let response_text = response_text.trim().to_string();
         if !response_text.is_empty() && !streamed_message {
-            self.event_sink
-                .push(AcpEvent::message_delta(session_id, &response_text));
+            // One event: a delta and a completion would each reach the
+            // client as an agent_message_chunk and show the reply twice.
             self.event_sink
                 .push(AcpEvent::message_complete(session_id, &response_text));
         }

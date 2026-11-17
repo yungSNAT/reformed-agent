@@ -215,16 +215,19 @@ impl AcpHandler for HermesAcpHandler {
                 let session_id = params_obj(&request.params)
                     .and_then(|p| param_str_any(p, &["sessionId", "session_id"]))
                     .unwrap_or("");
-                if let Some(state) = self.session_manager.get_session(session_id) {
+                // Recorded before the executor looks for a running turn, so a
+                // turn that registers its interrupt after this still sees it.
+                if let Some(state) = self.session_manager.request_cancel(session_id) {
                     if state.phase == SessionPhase::Active {
                         self.session_manager.set_interrupted_prompt_text(
                             session_id,
                             latest_user_prompt_text(&state.history),
                         );
+                        if let Some(executor) = &self.prompt_executor {
+                            executor.cancel_prompt(&state);
+                        }
                     }
                 }
-                self.session_manager
-                    .set_phase(session_id, SessionPhase::Cancelled);
                 tracing::info!("Cancelled session {}", session_id);
                 AcpResponse::success(request.id, json!({"cancelled": true}))
             }
@@ -305,12 +308,23 @@ impl AcpHandler for HermesAcpHandler {
                     }
                 }
 
-                if self
-                    .session_manager
-                    .get_session(session_id)
-                    .map(|s| s.phase == SessionPhase::Active)
-                    .unwrap_or(false)
-                {
+                // Set by the server for the prompt it is running.
+                let seq = crate::session::PROMPT_SEQ.try_with(|seq| *seq).ok().flatten();
+                let seq = match self.session_manager.begin_turn(session_id, seq) {
+                    TurnStart::Started(seq) => seq,
+                    TurnStart::Cancelled => {
+                        return AcpResponse::success(
+                            request.id,
+                            prompt_response_value(StopReason::Cancelled, None),
+                        );
+                    }
+                    TurnStart::Missing => {
+                        return AcpResponse::success(
+                            request.id,
+                            prompt_response_value(StopReason::Refusal, None),
+                        );
+                    }
+                    TurnStart::Busy => {
                     let queued_text = if user_text.trim().is_empty() {
                         "[Image attachment]"
                     } else {
@@ -326,10 +340,8 @@ impl AcpHandler for HermesAcpHandler {
                         request.id,
                         prompt_response_value(StopReason::EndTurn, None),
                     );
-                }
-
-                self.session_manager
-                    .set_phase(session_id, SessionPhase::Active);
+                    }
+                };
 
                 let mut usage = match self
                     .execute_prompt_turn(session_id, user_text, user_content)
@@ -339,12 +351,17 @@ impl AcpHandler for HermesAcpHandler {
                     Err(err) => {
                         self.event_sink.push(AcpEvent::error(session_id, &err));
                         self.session_manager
-                            .set_phase(session_id, SessionPhase::Failed);
+                            .finish_turn(session_id, seq, SessionPhase::Failed);
                         return AcpResponse::error(request.id, -32000, err);
                     }
                 };
 
-                while let Some(queued_prompt) = self.session_manager.pop_queued_prompt(session_id) {
+                // A cancelled turn leaves queued prompts for the next turn.
+                while !self.session_manager.turn_cancelled(session_id, seq) {
+                    let Some(queued_prompt) = self.session_manager.pop_queued_prompt(session_id)
+                    else {
+                        break;
+                    };
                     let queued_usage = match self
                         .execute_prompt_turn(
                             session_id,
@@ -356,22 +373,29 @@ impl AcpHandler for HermesAcpHandler {
                         Ok(usage) => usage,
                         Err(err) => {
                             self.event_sink.push(AcpEvent::error(session_id, &err));
-                            self.session_manager
-                                .set_phase(session_id, SessionPhase::Failed);
+                            self.session_manager.finish_turn(
+                                session_id,
+                                seq,
+                                SessionPhase::Failed,
+                            );
                             return AcpResponse::error(request.id, -32000, err);
                         }
                     };
                     usage = merge_usage(usage, queued_usage);
                 }
 
-                self.session_manager
-                    .set_phase(session_id, SessionPhase::Idle);
+                let stop_reason =
+                    if self
+                        .session_manager
+                        .finish_turn(session_id, seq, SessionPhase::Idle)
+                    {
+                        StopReason::Cancelled
+                    } else {
+                        StopReason::EndTurn
+                    };
                 self.emit_usage_update(session_id);
 
-                AcpResponse::success(
-                    request.id,
-                    prompt_response_value(StopReason::EndTurn, usage),
-                )
+                AcpResponse::success(request.id, prompt_response_value(stop_reason, usage))
             }
 
             // -- Session configuration --------------------------------------

@@ -19,11 +19,19 @@ Usage (CLI):
 import math
 import os
 import random
-import shutil
 import subprocess
+import sys
 import tempfile
+from pathlib import Path
 
 from PIL import Image, ImageDraw
+
+# Ensure the sibling _program_path module is importable when run standalone.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from _program_path import find_program
 
 
 # ── Pixel drawing helpers ──────────────────────────────────────────────
@@ -236,12 +244,14 @@ _LAYERS = {
 }
 
 
-def _ensure_ffmpeg():
-    if shutil.which("ffmpeg") is None:
+def _ensure_ffmpeg() -> str:
+    ffmpeg = find_program("ffmpeg")
+    if ffmpeg is None:
         raise RuntimeError(
             "ffmpeg not found on PATH. Install via your package manager or "
             "download from https://ffmpeg.org/"
         )
+    return ffmpeg
 
 
 def pixel_art_video(
@@ -271,7 +281,7 @@ def pixel_art_video(
         raise ValueError(
             f"Unknown scene {scene!r}. Choose from: {sorted(SCENES)}"
         )
-    _ensure_ffmpeg()
+    ffmpeg = _ensure_ffmpeg()
 
     base = Image.open(base_image).convert("RGB")
     W, H = base.size
@@ -295,7 +305,7 @@ def pixel_art_video(
             canvas.save(os.path.join(frames_dir, f"frame_{frame_idx:04d}.png"))
 
         subprocess.run(
-            ["ffmpeg", "-y", "-loglevel", "error",
+            [ffmpeg, "-y", "-loglevel", "error",
              "-framerate", str(fps),
              "-i", os.path.join(frames_dir, "frame_%04d.png"),
              "-c:v", "libx264", "-pix_fmt", "yuv420p", "-crf", "18",
@@ -307,7 +317,7 @@ def pixel_art_video(
         if export_gif:
             gif_path = output_path.rsplit(".", 1)[0] + ".gif"
             subprocess.run(
-                ["ffmpeg", "-y", "-loglevel", "error",
+                [ffmpeg, "-y", "-loglevel", "error",
                  "-framerate", str(fps),
                  "-i", os.path.join(frames_dir, "frame_%04d.png"),
                  "-vf",

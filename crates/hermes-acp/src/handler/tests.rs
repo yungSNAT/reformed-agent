@@ -25,6 +25,7 @@ impl AcpPromptExecutor for EchoPromptExecutor {
             }),
             total_turns: Some(2),
             events: Vec::new(),
+            streamed_text: false,
         })
     }
 }
@@ -67,6 +68,7 @@ impl AcpPromptExecutor for ProfileRecordingPromptExecutor {
             usage: None,
             total_turns: Some(1),
             events: Vec::new(),
+            streamed_text: false,
         })
     }
 }
@@ -99,6 +101,7 @@ impl AcpPromptExecutor for ToolEventPromptExecutor {
                     Some("contents".to_string()),
                 ),
             ],
+            streamed_text: false,
         })
     }
 }
@@ -121,6 +124,7 @@ impl AcpPromptExecutor for StreamingPromptExecutor {
                 &session.session_id,
                 "streamed answer",
             )],
+            streamed_text: false,
         })
     }
 }
@@ -159,6 +163,7 @@ impl AcpPromptExecutor for SteeringPromptExecutor {
             usage: None,
             total_turns: Some(1),
             events: Vec::new(),
+            streamed_text: false,
         })
     }
 

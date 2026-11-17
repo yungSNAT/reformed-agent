@@ -24,6 +24,8 @@ use hermes_intelligence::anthropic_adapter::{
 };
 use hermes_intelligence::supports_vision;
 
+use crate::sse_buffer::SseEvents;
+
 use hermes_core::{
     AgentError, FunctionCall, FunctionCallDelta, LlmProvider, LlmResponse, Message, MessageRole,
     StreamChunk, StreamDelta, ToolCall, ToolCallDelta, ToolSchema, UsageStats,

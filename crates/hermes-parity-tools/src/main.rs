@@ -9,7 +9,7 @@ mod slash_gate;
 mod surface_gate;
 
 use clap::{Parser, Subcommand};
-use hermes_parity_tools::py;
+use hermes_py as py;
 
 #[derive(Parser, Debug)]
 #[command(name = "hermes-parity-tools", infer_long_args = true)]
