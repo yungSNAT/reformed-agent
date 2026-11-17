@@ -6,8 +6,9 @@
 //! JSON-RPC 'method not found' until the session methods are added.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
-//! address and the bound port (DNS rebinding), a web page's `Origin` must be this server's
-//! own, and the WebSocket upgrade needs the token. Each refusal happens before the upgrade.
+//! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token and an
+//! `Origin` that is absent (no browser), exactly `file://` (the packaged desktop) or an
+//! http(s) origin naming this listener. Each refusal happens before the upgrade.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -99,9 +100,12 @@ async fn host_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next
     }
 }
 
-/// An absent `Origin` is a non-browser client. A web page (`http` or `https`) must be served
-/// from this listener. The packaged desktop renderer sends `file://`, `null` or its own
-/// scheme; as in upstream's server, the token is the boundary for those.
+/// An absent `Origin` is a client without a browser, such as the desktop's main-process
+/// probe. A web page (`http` or `https`) must be served from this listener. The packaged
+/// desktop loads its renderer from a file, so its socket sends exactly `file://` (upstream's
+/// tests/hermes_cli/test_dashboard_auth_ws_auth.py), which no page served over the web can send. Every
+/// other origin is refused, `null` included: sandboxed frames and `data:` pages send it.
+/// Upstream also admits `null` and other schemes and relies on the token for them.
 fn origin_allowed(headers: &HeaderMap, port: u16) -> bool {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return true;
@@ -115,8 +119,7 @@ fn origin_allowed(headers: &HeaderMap, port: u16) -> bool {
         {
             is_loopback_authority(authority, port)
         }
-        Some(_) => true,
-        None => origin == "null",
+        _ => origin == "file://",
     }
 }
 
