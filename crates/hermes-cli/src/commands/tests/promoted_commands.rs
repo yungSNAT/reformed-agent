@@ -586,17 +586,23 @@
         let id = sessions.create_session(".").session_id;
 
         // No cancel: the turn runs.
-        sessions.prompt_received(&id);
+        let first = sessions.prompt_received(&id).unwrap();
+        assert!(matches!(
+            sessions.begin_turn(&id, Some(first)),
+            hermes_acp::TurnStart::Started(_)
+        ));
         assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
 
-        // A cancel recorded whilst the prompt is in flight, before the turn
-        // registers: the new interrupt starts interrupted.
+        // A cancel recorded before the turn registers its interrupt (the
+        // handler records one before looking for an interrupt): the new
+        // interrupt starts interrupted.
         sessions.request_cancel(&id);
         assert!(register_interrupt(&interrupts, &sessions, &id).is_interrupted());
 
-        // Spent once the prompt is answered: the next turn is not cancelled.
-        sessions.prompt_answered(&id);
-        sessions.prompt_received(&id);
+        // The cancel covered that turn only: the next one is not cancelled.
+        sessions.finish_turn(&id, first, hermes_acp::SessionPhase::Idle);
+        let second = sessions.prompt_received(&id).unwrap();
+        sessions.begin_turn(&id, Some(second));
         assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
     }
 

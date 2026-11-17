@@ -32,14 +32,22 @@ pub enum SessionPhase {
     Failed,
 }
 
+tokio::task_local! {
+    /// The arrival number of the prompt a server task is running (from
+    /// [`SessionManager::prompt_received`]), so the handler's turn knows
+    /// which cancels came after it. Unset when a handler is called directly.
+    pub static PROMPT_SEQ: Option<u64>;
+}
+
 /// What [`SessionManager::begin_turn`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnStart {
-    /// The turn is running; end it with [`SessionManager::end_turn`].
-    Started,
+    /// The turn runs under this number; finish it with
+    /// [`SessionManager::finish_turn`].
+    Started(u64),
     /// Another turn of the session is running.
     Busy,
-    /// A pending cancel was for this turn: it did not start.
+    /// A cancel came after the prompt arrived: the turn did not start.
     Cancelled,
     /// No such session.
     Missing,
@@ -69,15 +77,13 @@ pub struct SessionState {
     pub queued_prompts: Vec<String>,
     /// Last interrupted prompt text that `/steer` can replay with guidance.
     pub interrupted_prompt_text: Option<String>,
-    /// A turn of this session is running. Kept apart from `phase`, which a
-    /// cancel sets whilst the turn still runs.
-    pub turn_running: bool,
-    /// Prompts the server has read for this session and not yet answered.
-    pub prompts_in_flight: usize,
-    /// A `session/cancel` came whilst a turn ran or a prompt was in flight:
-    /// the running turn, or else the next turn to start, ends at once. Spent
-    /// when that turn ends or starts, or when no prompt is in flight.
-    pub cancel_pending: bool,
+    /// Prompts received for this session so far; each prompt's number.
+    pub prompts_received: u64,
+    /// A `session/cancel` covers every prompt numbered up to this.
+    pub cancel_through: u64,
+    /// The number of the running turn's prompt. Kept apart from `phase`,
+    /// which a cancel sets whilst the turn still runs.
+    pub turn_seq: Option<u64>,
     pub created_at: u64,
     pub updated_at: u64,
     /// Total prompt tokens across all turns.
@@ -126,9 +132,9 @@ impl SessionState {
             config_options: HashMap::new(),
             queued_prompts: Vec::new(),
             interrupted_prompt_text: None,
-            turn_running: false,
-            prompts_in_flight: 0,
-            cancel_pending: false,
+            prompts_received: 0,
+            cancel_through: 0,
+            turn_seq: None,
             created_at: now,
             updated_at: now,
             total_prompt_tokens: 0,
@@ -324,75 +330,85 @@ impl SessionManager {
         }
     }
 
-    /// Start a turn of the session unless one is running. Checked and set
-    /// under one lock, so two prompts for a session cannot both start; a
-    /// pending cancel is spent on the turn instead.
-    pub fn begin_turn(&self, session_id: &str) -> TurnStart {
+    /// Number the next prompt for the session, in arrival order (`None` for
+    /// a session that does not exist).
+    pub fn prompt_received(&self, session_id: &str) -> Option<u64> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let state = sessions.get_mut(session_id)?;
+        state.prompts_received += 1;
+        Some(state.prompts_received)
+    }
+
+    /// Start a turn for the prompt numbered `seq` unless a turn is running,
+    /// checked and set under one lock. A prompt with no number (a handler
+    /// called directly) is numbered now. A prompt that a later cancel covers
+    /// does not start.
+    pub fn begin_turn(&self, session_id: &str, seq: Option<u64>) -> TurnStart {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(state) = sessions.get_mut(session_id) else {
             return TurnStart::Missing;
         };
-        if state.turn_running {
+        if state.turn_seq.is_some() {
             return TurnStart::Busy;
         }
+        let seq = seq.unwrap_or_else(|| {
+            state.prompts_received += 1;
+            state.prompts_received
+        });
         state.touch();
-        if std::mem::take(&mut state.cancel_pending) {
+        if seq <= state.cancel_through {
             state.phase = SessionPhase::Idle;
             return TurnStart::Cancelled;
         }
-        state.turn_running = true;
+        state.turn_seq = Some(seq);
         state.phase = SessionPhase::Active;
-        TurnStart::Started
+        TurnStart::Started(seq)
     }
 
-    /// End the session's running turn, leaving it in `phase`. A cancel that
-    /// came during the turn is spent with it.
-    pub fn end_turn(&self, session_id: &str, phase: SessionPhase) {
+    /// Whether a cancel covers the turn numbered `seq`.
+    pub fn turn_cancelled(&self, session_id: &str, seq: u64) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions
+            .get(session_id)
+            .is_some_and(|state| seq <= state.cancel_through)
+    }
+
+    /// Finish the turn numbered `seq`, if it is the running one, leaving the
+    /// session in `phase`. Returns whether a cancel covers it, read under
+    /// the same lock, so a cancel cannot fall between the two.
+    pub fn finish_turn(&self, session_id: &str, seq: u64, phase: SessionPhase) -> bool {
         let mut sessions = self.sessions.lock().unwrap();
-        if let Some(state) = sessions.get_mut(session_id) {
-            state.turn_running = false;
-            state.cancel_pending = false;
+        let Some(state) = sessions.get_mut(session_id) else {
+            return false;
+        };
+        if state.turn_seq == Some(seq) {
+            state.turn_seq = None;
             state.phase = phase;
             state.touch();
         }
+        seq <= state.cancel_through
     }
 
-    /// The server has read a prompt for the session.
-    pub fn prompt_received(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(state) = sessions.get_mut(session_id) {
-            state.prompts_in_flight += 1;
-        }
-    }
-
-    /// The server is answering a prompt for the session, or its task ended.
-    /// Once none is in flight, a pending cancel is spent.
-    pub fn prompt_answered(&self, session_id: &str) {
-        let mut sessions = self.sessions.lock().unwrap();
-        if let Some(state) = sessions.get_mut(session_id) {
-            state.prompts_in_flight = state.prompts_in_flight.saturating_sub(1);
-            if state.prompts_in_flight == 0 {
-                state.cancel_pending = false;
-            }
-        }
-    }
-
-    /// Mark the session cancelled, and the cancel pending whilst a turn runs
-    /// or a prompt is in flight. Returns the session as it was before.
+    /// Mark the session cancelled, covering every prompt received so far.
+    /// Returns the session as it was before.
     pub fn request_cancel(&self, session_id: &str) -> Option<SessionState> {
         let mut sessions = self.sessions.lock().unwrap();
         let state = sessions.get_mut(session_id)?;
         let before = state.clone();
         state.phase = SessionPhase::Cancelled;
-        state.cancel_pending |= state.turn_running || state.prompts_in_flight > 0;
+        state.cancel_through = state.prompts_received;
         state.touch();
         Some(before)
     }
 
-    /// Whether a cancel is pending for the session's prompt in flight.
+    /// Whether a cancel covers the running turn.
     pub fn cancel_pending(&self, session_id: &str) -> bool {
         let sessions = self.sessions.lock().unwrap();
-        sessions.get(session_id).is_some_and(|s| s.cancel_pending)
+        sessions.get(session_id).is_some_and(|state| {
+            state
+                .turn_seq
+                .is_some_and(|seq| seq <= state.cancel_through)
+        })
     }
 
     /// Update session history.
@@ -592,37 +608,46 @@ mod tests {
     fn only_one_turn_of_a_session_starts_at_a_time() {
         let sessions = SessionManager::new();
         let id = sessions.create_session(".").session_id;
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Busy);
-        // A cancel marks the phase, but the turn still owns the session.
+        let first = sessions.prompt_received(&id).unwrap();
+        assert_eq!(sessions.begin_turn(&id, Some(first)), TurnStart::Started(first));
+        let second = sessions.prompt_received(&id).unwrap();
+        assert_eq!(sessions.begin_turn(&id, Some(second)), TurnStart::Busy);
+        // A cancel marks the phase, but the turn still owns the session,
+        // and only its own task can finish it.
         sessions.request_cancel(&id);
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Busy);
-        sessions.end_turn(&id, SessionPhase::Idle);
-        // The cancel was spent with the turn it ended.
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
-        assert_eq!(sessions.begin_turn("no-such-session"), TurnStart::Missing);
+        assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
+        assert!(sessions.cancel_pending(&id));
+        sessions.finish_turn(&id, second, SessionPhase::Failed);
+        assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
+        assert!(sessions.finish_turn(&id, first, SessionPhase::Idle));
+        assert!(!sessions.cancel_pending(&id));
+        assert!(matches!(sessions.begin_turn(&id, None), TurnStart::Started(_)));
+        assert_eq!(sessions.begin_turn("no-such-session", None), TurnStart::Missing);
     }
 
     #[test]
-    fn a_cancel_is_pending_only_whilst_a_prompt_is_in_flight() {
+    fn a_cancel_covers_the_prompts_received_before_it() {
         let sessions = SessionManager::new();
         let id = sessions.create_session(".").session_id;
+        // A, a cancel, then B; B's task starts first.
+        let a = sessions.prompt_received(&id).unwrap();
         sessions.request_cancel(&id);
+        let b = sessions.prompt_received(&id).unwrap();
+        assert_eq!(sessions.begin_turn(&id, Some(b)), TurnStart::Started(b));
         assert!(!sessions.cancel_pending(&id));
-        sessions.prompt_received(&id);
-        sessions.prompt_received(&id);
-        sessions.request_cancel(&id);
-        assert!(sessions.cancel_pending(&id));
-        sessions.prompt_answered(&id);
-        assert!(sessions.cancel_pending(&id));
-        sessions.prompt_answered(&id);
-        assert!(!sessions.cancel_pending(&id));
+        assert!(!sessions.finish_turn(&id, b, SessionPhase::Idle));
+        assert_eq!(sessions.begin_turn(&id, Some(a)), TurnStart::Cancelled);
 
-        // Before its turn starts: that turn is cancelled, and the next runs.
-        sessions.prompt_received(&id);
+        // A cancel during a turn covers it, read with the finish.
+        let c = sessions.prompt_received(&id).unwrap();
+        assert_eq!(sessions.begin_turn(&id, Some(c)), TurnStart::Started(c));
         sessions.request_cancel(&id);
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Cancelled);
-        assert_eq!(sessions.begin_turn(&id), TurnStart::Started);
+        assert!(sessions.turn_cancelled(&id, c));
+        assert!(sessions.finish_turn(&id, c, SessionPhase::Idle));
+        // A cancel with nothing received covers nothing later.
+        sessions.request_cancel(&id);
+        let d = sessions.prompt_received(&id).unwrap();
+        assert_eq!(sessions.begin_turn(&id, Some(d)), TurnStart::Started(d));
     }
 
     #[test]

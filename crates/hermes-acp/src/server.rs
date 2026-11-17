@@ -143,12 +143,13 @@ impl AcpServer {
     /// its session failed, and keep serving the others.
     fn prompt_failed(&self, prompts: &mut Prompts, error: tokio::task::JoinError, outbox: &Outbox) {
         tracing::error!("ACP prompt task failed: {error}");
-        let (request_id, session_id) = prompts.requests.remove(&error.id()).unwrap_or_default();
-        self.session_manager.prompt_answered(&session_id);
-        // shortcut: ends whatever turn the session runs, which is this task's
-        // unless it panicked whilst only queueing behind another turn.
-        self.session_manager
-            .end_turn(&session_id, SessionPhase::Failed);
+        let (request_id, session_id, seq) =
+            prompts.requests.remove(&error.id()).unwrap_or_default();
+        // Ends the session's turn only if it was this prompt's.
+        if let Some(seq) = seq {
+            self.session_manager
+                .finish_turn(&session_id, seq, SessionPhase::Failed);
+        }
         if request_id.is_some() {
             send(
                 &lock(outbox),
@@ -173,19 +174,21 @@ impl AcpServer {
 
         if AcpMethod::from(request.method.as_str()) == AcpMethod::Prompt {
             let session_id = prompt_session_id(&request);
-            // Counted before anything else is read, so a cancel that follows
-            // finds the prompt in flight even if its turn has not started.
-            self.session_manager.prompt_received(&session_id);
+            // Numbered before anything else is read, so a cancel that follows
+            // covers this prompt even if its turn has not started.
+            let seq = self.session_manager.prompt_received(&session_id);
             let request_id = request.id.clone();
             let task = prompts.tasks.spawn(run_prompt(
                 self.handler.clone(),
                 self.event_sink.clone(),
-                self.session_manager.clone(),
                 outbox.clone(),
                 session_id.clone(),
+                seq,
                 request,
             ));
-            prompts.requests.insert(task.id(), (request_id, session_id));
+            prompts
+                .requests
+                .insert(task.id(), (request_id, session_id, seq));
             return;
         }
 
@@ -212,7 +215,7 @@ impl AcpServer {
 #[derive(Default)]
 struct Prompts {
     tasks: JoinSet<()>,
-    requests: HashMap<tokio::task::Id, (Option<serde_json::Value>, String)>,
+    requests: HashMap<tokio::task::Id, (Option<serde_json::Value>, String, Option<u64>)>,
 }
 
 fn prompt_session_id(request: &AcpRequest) -> String {
@@ -240,13 +243,13 @@ fn lock(outbox: &Outbox) -> std::sync::MutexGuard<'_, UnboundedSender<String>> {
 async fn run_prompt(
     handler: Arc<dyn AcpHandler>,
     event_sink: Arc<EventSink>,
-    session_manager: Arc<SessionManager>,
     outbox: Outbox,
     session_id: String,
+    seq: Option<u64>,
     request: AcpRequest,
 ) {
     let notification = request.id.is_none();
-    let turn = handler.handle_request(request);
+    let turn = crate::session::PROMPT_SEQ.scope(seq, handler.handle_request(request));
     tokio::pin!(turn);
     let response = loop {
         let pushed = event_sink.pushed();
@@ -260,8 +263,6 @@ async fn run_prompt(
     };
     let out = lock(&outbox);
     send_events(&out, event_sink.drain_for_session(&session_id));
-    // Before the response, so a prompt sent after it is not cancelled.
-    session_manager.prompt_answered(&session_id);
     if !notification {
         send(&out, &response);
     }
@@ -680,7 +681,7 @@ mod tests {
         let (_, response) = client.until_response(2).await;
         assert_eq!(response["result"]["stopReason"], "cancelled");
 
-        // The cancel is spent: the next prompt runs to its end.
+        // The cancel covered only the prompts before it: the next one runs.
         client.send(prompt_with_id(&session_id, 3)).await;
         while !is_reply_chunk(&client.next().await, "partial") {}
         release.notify_one();
@@ -759,6 +760,18 @@ mod tests {
         client.send(text_prompt(&session_id, 4, "second")).await;
         let (_, second) = client.until_response(4).await;
         assert_eq!(second["result"]["stopReason"], "end_turn", "{second}");
+        // Nor does /steer or /queue start a second turn after the cancel.
+        client
+            .send(text_prompt(&session_id, 5, "/steer do it differently"))
+            .await;
+        let (_, steer) = client.until_response(5).await;
+        assert_eq!(steer["result"]["stopReason"], "end_turn", "{steer}");
+        client
+            .send(text_prompt(&session_id, 6, "/queue later"))
+            .await;
+        let (_, queue) = client.until_response(6).await;
+        assert_eq!(queue["result"]["stopReason"], "end_turn", "{queue}");
+        assert_eq!(runs.lock().unwrap().as_slice(), ["first"]);
 
         release.notify_one();
         let (_, first) = client.until_response(2).await;

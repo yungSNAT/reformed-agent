@@ -222,9 +222,9 @@ struct CliAcpPromptExecutor {
     session_manager: Arc<hermes_acp::SessionManager>,
 }
 
-/// Register a turn's interrupt for `session_id`. A cancel the handler
-/// recorded before this (it records one before looking for an interrupt)
-/// interrupts it at once, so no cancel falls between the two.
+/// Register a turn's interrupt for `session_id`. A cancel covering the turn
+/// that the handler recorded before this (it records one before looking for
+/// an interrupt) interrupts it at once, so no cancel falls between the two.
 fn register_interrupt(
     interrupts: &Mutex<HashMap<String, hermes_agent::InterruptController>>,
     session_manager: &hermes_acp::SessionManager,
