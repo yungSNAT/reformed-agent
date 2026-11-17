@@ -3,7 +3,7 @@
 //! job, as `/btw` does, with the recent conversation as its evidence.
 
 use hermes_core::{Message, MessageRole};
-use hermes_parity_tools::py::{self, Py};
+use hermes_py::{self as py, Py};
 
 use super::{emit_command_output, queue_background_job, AgentError, App, CommandResult};
 

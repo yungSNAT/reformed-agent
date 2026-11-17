@@ -4,13 +4,14 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Parity gates and report generators run by CI, and the Python behaviour they and the CLI's /review reproduce"
+description = "Parity gates and report generators run by CI; not part of the hermes binary"
 publish = false
 
 [dependencies]
 chrono = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
+hermes-py = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
