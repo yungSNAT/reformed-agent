@@ -79,3 +79,32 @@ fn readme_names_repo_ci_as_gold_standard() {
     assert!(text.contains("GitHub Actions are a hosted mirror"));
     assert!(text.contains("bash scripts/run-repo-ci.sh"));
 }
+
+#[test]
+fn cross_images_are_pinned_by_digest_for_every_built_target() {
+    let workflow = read(".github/workflows/ci.yml");
+    let cross = read("Cross.toml");
+    let job = &workflow[workflow.find("  cross-build:").expect("cross-build job")..];
+    let job = &job[..job.find("\n  macos-build:").unwrap_or(job.len())];
+    let targets: Vec<&str> = job
+        .lines()
+        .filter_map(|line| line.trim().strip_prefix("- "))
+        .filter(|item| !item.contains(':') && !item.contains(' '))
+        .collect();
+    assert!(targets.len() >= 4, "{targets:?}");
+    let pinned =
+        regex::Regex::new(r#"(?m)^image = "ghcr\.io/cross-rs/([a-z0-9_-]+)@sha256:[0-9a-f]{64}"$"#)
+            .unwrap();
+    for target in targets {
+        let section = format!("[target.{target}]");
+        let start = cross
+            .find(&section)
+            .unwrap_or_else(|| panic!("Cross.toml lacks {section}"));
+        let body = &cross[start + section.len()..];
+        let body = &body[..body.find("\n[").unwrap_or(body.len())];
+        let image = pinned
+            .captures(body)
+            .unwrap_or_else(|| panic!("{section} has no image pinned by digest"));
+        assert_eq!(&image[1], target, "{section} pulls another target's image");
+    }
+}

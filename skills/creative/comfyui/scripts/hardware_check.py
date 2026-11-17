@@ -30,7 +30,15 @@ import re
 import shutil
 import subprocess
 import sys
+from pathlib import Path
 from typing import Any
+
+# Ensure the sibling _program_path module is importable when run standalone.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from _program_path import find_program
 
 
 # Thresholds (GiB).
@@ -52,9 +60,12 @@ _COMFY_CLI_FLAG = {
 
 
 def _run(cmd: list[str], timeout: int = 8) -> str:
+    program = find_program(cmd[0])
+    if program is None:
+        return ""
     try:
         out = subprocess.run(
-            cmd, capture_output=True, text=True, timeout=timeout, check=False
+            [program, *cmd[1:]], capture_output=True, text=True, timeout=timeout, check=False
         )
         return (out.stdout or "") + (out.stderr or "")
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
@@ -87,7 +98,7 @@ def is_rosetta() -> bool:
 
 def detect_nvidia() -> dict | None:
     """Detect NVIDIA GPUs. Returns the GPU with the most VRAM, plus list of all."""
-    if not shutil.which("nvidia-smi"):
+    if not find_program("nvidia-smi"):
         return None
     out = _run([
         "nvidia-smi",
@@ -125,7 +136,7 @@ def detect_nvidia() -> dict | None:
 
 
 def detect_rocm() -> dict | None:
-    if not shutil.which("rocm-smi"):
+    if not find_program("rocm-smi"):
         return None
     # Prefer JSON output (new ROCm 6.x)
     out = _run(["rocm-smi", "--showproductname", "--showmeminfo", "vram", "--json"])
@@ -205,12 +216,12 @@ def detect_apple_silicon() -> dict | None:
 def detect_intel_arc() -> dict | None:
     if platform.system() not in {"Linux", "Windows"}:
         return None
-    if shutil.which("clinfo"):
+    if find_program("clinfo"):
         out = _run(["clinfo", "--list"])
         if "Intel" in out and ("Arc" in out or "Xe" in out):
             return {"vendor": "intel", "name": "Intel Arc/Xe", "vram_gb": 0.0}
     # Windows: try Get-CimInstance
-    if platform.system() == "Windows" and shutil.which("powershell"):
+    if platform.system() == "Windows" and find_program("powershell"):
         out = _run(["powershell", "-NoProfile",
                     "Get-CimInstance Win32_VideoController | Select-Object Name | Format-List"])
         if "Intel" in out and ("Arc" in out or "Iris Xe" in out):
@@ -235,7 +246,7 @@ def total_system_ram_gb() -> float:
         except OSError:
             return 0.0
     if sysname == "Windows":
-        if shutil.which("powershell"):
+        if find_program("powershell"):
             out = _run([
                 "powershell", "-NoProfile",
                 "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory",

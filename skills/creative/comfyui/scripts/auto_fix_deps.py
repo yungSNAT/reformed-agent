@@ -25,7 +25,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -36,14 +35,17 @@ from _common import (  # noqa: E402
 )
 from check_deps import check_deps  # noqa: E402
 from _common import unwrap_workflow  # noqa: E402
+from _program_path import find_program  # noqa: E402
 
 
-def comfy_cli_available() -> str | None:
-    """Return command prefix for comfy-cli, or None."""
-    if shutil.which("comfy"):
-        return "comfy"
-    if shutil.which("uvx"):
-        return "uvx --from comfy-cli comfy"
+def comfy_cli_available() -> list[str] | None:
+    """Return the command prefix for comfy-cli, or None."""
+    comfy = find_program("comfy")
+    if comfy:
+        return [comfy]
+    uvx = find_program("uvx")
+    if uvx:
+        return [uvx, "--from", "comfy-cli", "comfy"]
     return None
 
 
@@ -56,16 +58,17 @@ def run_cmd(cmd: list[str], *, dry_run: bool = False) -> tuple[int, str]:
     return proc.returncode, out
 
 
-def install_node(package: str, *, dry_run: bool = False, comfy_cmd: str = "comfy") -> bool:
-    cmd = comfy_cmd.split() + ["--skip-prompt", "node", "install", package]
+def install_node(package: str, *, comfy_cmd: list[str], dry_run: bool = False) -> bool:
+    cmd = [*comfy_cmd, "--skip-prompt", "node", "install", package]
     code, _ = run_cmd(cmd, dry_run=dry_run)
     return code == 0
 
 
 def install_model(url: str, folder: str, filename: str | None = None,
-                  *, dry_run: bool = False, comfy_cmd: str = "comfy",
+                  *, comfy_cmd: list[str], dry_run: bool = False,
                   hf_token: str | None = None, civitai_token: str | None = None) -> bool:
-    cmd = comfy_cmd.split() + [
+    cmd = [
+        *comfy_cmd,
         "--skip-prompt", "model", "download",
         "--url", url,
         "--relative-path", f"models/{folder}",

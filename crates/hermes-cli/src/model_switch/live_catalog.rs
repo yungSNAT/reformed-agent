@@ -156,6 +156,16 @@ fn openai_compatible_catalog_credentials(provider: &str) -> Option<(String, Stri
             "https://api.arcee.ai/api/v1",
             &["ARCEEAI_API_KEY", "ARCEE_API_KEY"],
         ),
+        "deepinfra" => (
+            "DEEPINFRA_BASE_URL",
+            "https://api.deepinfra.com/v1/openai",
+            &["DEEPINFRA_API_KEY"],
+        ),
+        "upstage" => (
+            "UPSTAGE_BASE_URL",
+            "https://api.upstage.ai/v1",
+            &["UPSTAGE_API_KEY"],
+        ),
         "xiaomi" => (
             "XIAOMI_BASE_URL",
             "https://api.xiaomimimo.com/v1",
