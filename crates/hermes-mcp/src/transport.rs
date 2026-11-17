@@ -1691,7 +1691,11 @@ mod tests {
         )
     }
 
-    const NOT_FOUND: &str = "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\n\r\n";
+    // Each stub closes the connection after one reply, so it says so: a
+    // client that pooled it would otherwise send the next request into a
+    // closed socket.
+    const NOT_FOUND: &str =
+        "HTTP/1.1 404 Not Found\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
 
     #[tokio::test]
     async fn the_first_post_goes_to_the_url_even_where_sse_would_answer() {
@@ -1996,7 +2000,7 @@ mod tests {
                     }
                     stream
                         // The body the MCP Python SDK's server writes.
-                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\n\r\nAccepted")
+                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\nConnection: close\r\n\r\nAccepted")
                         .await
                         .expect("write 202");
                 } else {
