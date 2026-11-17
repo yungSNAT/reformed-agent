@@ -275,7 +275,9 @@ fn merge_custom_providers_into_llm(map: &mut Mapping) {
     map.insert(llm_key, Value::Mapping(llm));
 }
 
-/// `providers: { openai: { api_key: ... } }` → merge into `llm_providers`.
+/// `providers: { openai: { api_key: ... } }` → merge into `llm_providers`. Upstream's
+/// spellings are read as it reads them: the endpoint is the first of `base_url`, `url` and
+/// `api`, and the key's variable is `key_env`, else `api_key_env`.
 fn merge_providers_into_llm(map: &mut Mapping) {
     let Some(Value::Mapping(providers)) = map.remove(key("providers")) else {
         return;
@@ -298,8 +300,22 @@ fn merge_providers_into_llm(map: &mut Mapping) {
             .or_insert_with(|| Value::Mapping(Mapping::new()));
         if let Value::Mapping(em) = slot {
             if let Value::Mapping(src) = pv {
+                let endpoint = (trimmed_str(src.get(key("base_url"))).is_none())
+                    .then(|| {
+                        ["url", "api"]
+                            .iter()
+                            .find_map(|field| src.get(key(field)).and_then(normalized_base_url))
+                    })
+                    .flatten();
+                let key_env = trimmed_str(src.get(key("key_env"))).map(str::to_string);
                 for (k, v) in src {
                     em.insert(k, v);
+                }
+                if let Some(url) = endpoint {
+                    em.insert(key("base_url"), Value::String(url));
+                }
+                if let Some(env_name) = key_env {
+                    em.insert(key("api_key_env"), Value::String(env_name));
                 }
             }
         }
@@ -787,6 +803,47 @@ model:
         );
         assert_eq!(provider.api_key.as_deref(), Some("sk-local"));
         assert_eq!(provider.api_key_env.as_deref(), Some("DEEPSEEK_API_KEY"));
+    }
+
+    /// Upstream's `providers:` entries name the endpoint `api` or `url` and the key's
+    /// variable `key_env` (`hermes_cli/config_providers.py`); Hermes Desktop's own tests
+    /// write that shape.
+    #[test]
+    fn python_providers_entry_reads_api_url_and_key_env() {
+        let raw = r#"
+model:
+  default: mock-model
+  provider: mock
+providers:
+  mock:
+    api: http://127.0.0.1:40107/v1/
+    key_env: MOCK_API_KEY
+  byurl:
+    url: http://127.0.0.1:40108/v1
+    api: http://ignored.example/v1
+  both:
+    base_url: http://127.0.0.1:40109/v1
+    api: http://ignored.example/v1
+    key_env: FIRST_KEY
+    api_key_env: SECOND_KEY
+"#;
+        let mut root: Value = serde_yaml::from_str(raw).unwrap();
+        let Value::Mapping(ref mut m) = root else {
+            panic!();
+        };
+        normalize_config_yaml_root(m);
+        let cfg: crate::config::GatewayConfig = serde_yaml::from_value(root).unwrap();
+
+        assert_eq!(cfg.model.as_deref(), Some("mock:mock-model"));
+        let mock = cfg.llm_providers.get("mock").expect("mock provider");
+        assert_eq!(mock.base_url.as_deref(), Some("http://127.0.0.1:40107/v1"));
+        assert_eq!(mock.api_key_env.as_deref(), Some("MOCK_API_KEY"));
+        let byurl = cfg.llm_providers.get("byurl").expect("byurl provider");
+        assert_eq!(byurl.base_url.as_deref(), Some("http://127.0.0.1:40108/v1"));
+        // Upstream's order: base_url, url, api; key_env before api_key_env.
+        let both = cfg.llm_providers.get("both").expect("both provider");
+        assert_eq!(both.base_url.as_deref(), Some("http://127.0.0.1:40109/v1"));
+        assert_eq!(both.api_key_env.as_deref(), Some("FIRST_KEY"));
     }
 
     #[test]
