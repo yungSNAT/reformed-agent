@@ -216,9 +216,6 @@ pub fn normalize_runtime_provider_name(provider: &str) -> String {
         "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
-        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
-        "fireworks-ai" | "fw" => "fireworks".to_string(),
-        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
@@ -231,7 +228,8 @@ pub fn normalize_runtime_provider_name(provider: &str) -> String {
                 .provider
                 .to_string()
         }
-        _ => normalized,
+        _ => hermes_core::providers::provider_for_alias(&normalized)
+            .map_or(normalized, str::to_string),
     }
 }
 

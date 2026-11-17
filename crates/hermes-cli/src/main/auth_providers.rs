@@ -77,9 +77,6 @@ fn normalize_auth_provider(provider: &str) -> String {
         "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
-        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
-        "fireworks-ai" | "fw" => "fireworks".to_string(),
-        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "api-server" => "api_server".to_string(),
@@ -88,7 +85,9 @@ fn normalize_auth_provider(provider: &str) -> String {
         "mm" => "mattermost".to_string(),
         "github-copilot" | "github-models" => "copilot".to_string(),
         "github-copilot-acp" | "copilot-acp-agent" => "copilot-acp".to_string(),
-        other => other.to_string(),
+        other => hermes_core::providers::provider_for_alias(other)
+            .unwrap_or(other)
+            .to_string(),
     }
 }
 
@@ -153,9 +152,6 @@ fn normalize_secret_provider(provider: &str) -> String {
         "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
-        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
-        "fireworks-ai" | "fw" => "fireworks".to_string(),
-        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
@@ -164,7 +160,7 @@ fn normalize_secret_provider(provider: &str) -> String {
         "alibaba_coding" | "alibaba-coding" | "alibaba_coding_plan" => {
             "alibaba-coding-plan".to_string()
         }
-        _ => p,
+        _ => hermes_core::providers::provider_for_alias(&p).map_or(p, str::to_string),
     }
 }
 
@@ -227,17 +223,6 @@ fn secret_provider_aliases(provider: &str) -> Vec<String> {
             "arcee-ai".to_string(),
             "arceeai".to_string(),
         ],
-        "deepinfra" => vec![
-            "deepinfra".to_string(),
-            "deep-infra".to_string(),
-            "deepinfra-ai".to_string(),
-        ],
-        "fireworks" => vec![
-            "fireworks".to_string(),
-            "fireworks-ai".to_string(),
-            "fw".to_string(),
-        ],
-        "upstage" => vec!["upstage".to_string(), "solar".to_string()],
         "xiaomi" => vec![
             "xiaomi".to_string(),
             "mimo".to_string(),
@@ -304,7 +289,10 @@ fn secret_provider_aliases(provider: &str) -> Vec<String> {
             "exllama".to_string(),
             "exllamav2".to_string(),
         ],
-        p => vec![p.to_string()],
+        p => std::iter::once(p)
+            .chain(hermes_core::providers::provider_aliases(p).iter().copied())
+            .map(str::to_string)
+            .collect(),
     }
 }
 

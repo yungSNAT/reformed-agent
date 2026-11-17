@@ -103,6 +103,30 @@ pub fn oauth_capable_providers() -> Vec<&'static str> {
     OAUTH_CAPABLE_PROVIDERS.to_vec()
 }
 
+/// Providers whose aliases every provider-name normaliser shares: the
+/// canonical id, then its aliases. Each normaliser falls back to this table.
+pub const PROVIDER_ALIASES: &[(&str, &[&str])] = &[
+    ("deepinfra", &["deep-infra", "deepinfra-ai"]),
+    ("fireworks", &["fireworks-ai", "fw"]),
+    ("upstage", &["solar"]),
+];
+
+/// The canonical id of a lowercase alias listed in `PROVIDER_ALIASES`.
+pub fn provider_for_alias(alias: &str) -> Option<&'static str> {
+    PROVIDER_ALIASES
+        .iter()
+        .find(|(_, aliases)| aliases.contains(&alias))
+        .map(|(id, _)| *id)
+}
+
+/// The aliases `PROVIDER_ALIASES` lists for a canonical id.
+pub fn provider_aliases(id: &str) -> &'static [&'static str] {
+    PROVIDER_ALIASES
+        .iter()
+        .find(|(provider, _)| *provider == id)
+        .map_or(&[], |(_, aliases)| aliases)
+}
+
 pub fn canonical_provider_id(provider: &str) -> String {
     let normalized = provider.trim().to_ascii_lowercase();
     match normalized.as_str() {
@@ -127,9 +151,6 @@ pub fn canonical_provider_id(provider: &str) -> String {
         "hf" | "hugging-face" | "huggingface-hub" => "huggingface".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
-        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
-        "fireworks-ai" | "fw" => "fireworks".to_string(),
-        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         "aws" | "aws-bedrock" | "amazon-bedrock" | "amazon" => "bedrock".to_string(),
@@ -152,7 +173,7 @@ pub fn canonical_provider_id(provider: &str) -> String {
             "text-generation-webui".to_string()
         }
         "tabby-api" | "tabby_api" | "exllama" | "exllamav2" => "tabbyapi".to_string(),
-        _ => normalized,
+        _ => provider_for_alias(&normalized).map_or(normalized, str::to_string),
     }
 }
 
@@ -248,8 +269,8 @@ mod tests {
     use serde::Deserialize;
 
     use super::{
-        canonical_provider_id, known_providers, oauth_capable_providers, provider_capability_for,
-        MODELS_DEV_MERGED_PROVIDERS,
+        canonical_provider_id, known_providers, oauth_capable_providers, provider_aliases,
+        provider_capability_for, provider_for_alias, MODELS_DEV_MERGED_PROVIDERS, PROVIDER_ALIASES,
     };
 
     #[derive(Debug, Deserialize)]
@@ -269,6 +290,19 @@ mod tests {
             .unwrap_or_else(|err| panic!("read {} failed: {}", path.display(), err));
         serde_json::from_str(&raw)
             .unwrap_or_else(|err| panic!("parse {} failed: {}", path.display(), err))
+    }
+
+    #[test]
+    fn shared_provider_aliases_normalise_to_their_provider() {
+        for (id, aliases) in PROVIDER_ALIASES {
+            assert_eq!(canonical_provider_id(id), *id);
+            assert_eq!(provider_aliases(id), *aliases);
+            for alias in *aliases {
+                assert_eq!(canonical_provider_id(&alias.to_uppercase()), *id, "{alias}");
+            }
+        }
+        assert_eq!(provider_for_alias("deepinfra"), None);
+        assert!(provider_aliases("openai").is_empty());
     }
 
     #[test]
