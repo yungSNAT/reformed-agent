@@ -274,8 +274,12 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             },
         };
         if let Some(outgoing) = frame {
-            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
             let deadline = outgoing.queued + chat.write_timeout();
+            // `timeout_at` would still take a write that is ready at once after the deadline.
+            if tokio::time::Instant::now() >= deadline {
+                break;
+            }
+            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
             if !matches!(tokio::time::timeout_at(deadline, write).await, Ok(Ok(()))) {
                 break;
             }
