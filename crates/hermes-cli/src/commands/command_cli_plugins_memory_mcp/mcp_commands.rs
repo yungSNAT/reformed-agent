@@ -497,6 +497,9 @@ fn update_yaml_mcp_server(
             name: name.to_string(),
             command,
             url,
+            // Re-adding a server redefines it: headers written for its old
+            // target are not carried to a new one.
+            headers: Default::default(),
             supports_parallel_tool_calls,
             keepalive_interval,
         });

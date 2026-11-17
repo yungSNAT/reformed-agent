@@ -1761,6 +1761,7 @@ dependencies = [
  "hermes-intelligence",
  "hermes-mcp",
  "hermes-provider-runtime",
+ "hermes-py",
  "hermes-skills",
  "hermes-telemetry",
  "hermes-tool-planning",
@@ -1864,6 +1865,21 @@ dependencies = [
  "tracing",
  "uuid",
  "yaml_serde",
+]
+
+[[package]]
+name = "hermes-desktop-gateway"
+version = "0.22.0"
+dependencies = [
+ "axum",
+ "clap",
+ "futures",
+ "reqwest",
+ "serde_json",
+ "subtle",
+ "tokio",
+ "tokio-tungstenite",
+ "uuid",
 ]
 
 [[package]]
@@ -2035,6 +2051,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermes-parity-tools"
+version = "0.22.0"
+dependencies = [
+ "chrono",
+ "clap",
+ "hermes-py",
+ "regex",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "hermes-protocol-parity-tests"
 version = "0.22.0"
 dependencies = [
@@ -2064,6 +2092,14 @@ dependencies = [
  "tokio",
  "tracing",
  "wiremock",
+]
+
+[[package]]
+name = "hermes-py"
+version = "0.22.0"
+dependencies = [
+ "chrono",
+ "tempfile",
 ]
 
 [[package]]

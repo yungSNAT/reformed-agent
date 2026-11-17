@@ -330,7 +330,12 @@ fn opens_block_scalar(trimmed: &str) -> bool {
 /// - `./.env` is sanitized and loaded as a fallback source.
 /// - When user env exists, project env only fills missing keys.
 pub fn load_dotenv() {
-    let env_file = paths::env_path();
+    load_dotenv_in(&paths::hermes_home());
+}
+
+/// [`load_dotenv`] with `home`'s `.env` as the user env file.
+fn load_dotenv_in(home: &Path) {
+    let env_file = home.join(".env");
     let project_env = std::env::current_dir().ok().map(|p| p.join(".env"));
 
     if env_file.exists() {
@@ -609,8 +614,12 @@ pub fn load_effective_config_yaml_value(path: &Path) -> Option<serde_json::Value
 ///
 /// If `home_dir` is provided it overrides the `HERMES_HOME` env var.
 pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError> {
-    // Load .env before anything else so env overrides see those values.
-    load_dotenv();
+    // Load .env before anything else so env overrides see those values;
+    // a given home supplies its own .env.
+    match home_dir {
+        Some(home) => load_dotenv_in(Path::new(home)),
+        None => load_dotenv(),
+    }
 
     // Determine effective hermes home
     let effective_home = home_dir

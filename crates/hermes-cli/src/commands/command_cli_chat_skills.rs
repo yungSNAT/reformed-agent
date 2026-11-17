@@ -47,6 +47,31 @@ async fn query_mode_remediation_target(provider_model: &str) -> Option<QueryMode
     query_mode_remediation_target_from_catalog(provider_model, &catalog)
 }
 
+/// Resolves `hermes chat --query -`, which reads the query from `stdin`, so
+/// a caller can pass text that should stay off the command line; any other
+/// query is returned as given.
+pub fn read_chat_query(
+    query: Option<String>,
+    mut stdin: impl std::io::Read,
+) -> Result<Option<String>, hermes_core::AgentError> {
+    if query.as_deref() != Some("-") {
+        return Ok(query);
+    }
+    let mut text = String::new();
+    stdin.read_to_string(&mut text).map_err(|e| {
+        hermes_core::AgentError::Io(format!(
+            "Failed to read the query from standard input: {e}"
+        ))
+    })?;
+    let text = text.trim();
+    if text.is_empty() {
+        return Err(hermes_core::AgentError::Config(
+            "`--query -` read an empty query from standard input.".to_string(),
+        ));
+    }
+    Ok(Some(text.to_string()))
+}
+
 /// Handle `hermes chat [--query ...] [--preload-skill ...] [--yolo]`.
 pub async fn handle_cli_chat(
     query: Option<String>,

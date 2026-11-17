@@ -97,7 +97,11 @@ fn set_provider_reasoning_effort(cfg: &mut GatewayConfig, provider: &str, effort
                 .get("reasoning")
                 .and_then(|v| v.as_object().cloned())
                 .unwrap_or_default();
-            let mapped_reasoning = if provider_key.eq_ignore_ascii_case("opencode-go") {
+            // These providers' request profiles map each level onto their own scale.
+            let mapped_reasoning = if ["opencode-go", "deepseek"]
+                .iter()
+                .any(|own_scale| provider_key.eq_ignore_ascii_case(own_scale))
+            {
                 level
             } else {
                 openai_reasoning_effort_for_level(level)

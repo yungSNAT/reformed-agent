@@ -23,7 +23,7 @@ use hermes_core::ToolError;
 /// 6. Unicode normalized (smart punctuation aliases)
 /// 7. Trimmed boundary (trim first/last line only)
 /// 8. Block anchor (match first+last lines, similarity for middle)
-/// 9. Context-aware (50% line similarity threshold)
+/// 9. Context-aware (every non-blank line at least 0.80 similar)
 pub struct LocalPatchBackend;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -311,8 +311,8 @@ impl LocalPatchBackend {
             }
         }
 
-        // Use lower threshold for unique matches
-        let threshold = if candidates.len() == 1 { 0.10 } else { 0.30 };
+        // Upstream's safe floor: its earlier 0.10 and 0.30 matched unrelated blocks.
+        let threshold = if candidates.len() == 1 { 0.50 } else { 0.70 };
 
         for i in candidates {
             let similarity = if n <= 2 {
@@ -330,33 +330,28 @@ impl LocalPatchBackend {
         None
     }
 
-    /// Strategy 8: Line-by-line similarity with 50% threshold.
+    /// Strategy 9 (last resort): the first and last lines, and every other
+    /// non-blank line, must each be at least 0.80 similar, as upstream requires.
     fn strategy_context_aware(haystack: &str, needle: &str) -> Option<(usize, usize)> {
         let needle_lines: Vec<&str> = needle.lines().collect();
         let haystack_lines: Vec<&str> = haystack.lines().collect();
-
-        if needle_lines.is_empty() {
+        let (Some(first), Some(last)) = (needle_lines.first(), needle_lines.last()) else {
             return None;
-        }
-
+        };
         let n = needle_lines.len();
+        let similar = |a: &str, b: &str| Self::sequence_similarity(a.trim(), b.trim()) >= 0.80;
 
-        for i in 0..haystack_lines.len().saturating_sub(n - 1) {
-            let block = &haystack_lines[i..i + n];
-            let mut high_sim_count = 0;
-
-            for (pl, cl) in needle_lines.iter().zip(block.iter()) {
-                let sim = Self::sequence_similarity(pl.trim(), cl.trim());
-                if sim >= 0.80 {
-                    high_sim_count += 1;
-                }
-            }
-
-            if high_sim_count >= (n as f64 * 0.5) as usize {
-                return Some(Self::line_positions(haystack, &haystack_lines, i, i + n));
-            }
-        }
-        None
+        (0..haystack_lines.len().saturating_sub(n - 1))
+            .find(|&i| {
+                let block = &haystack_lines[i..i + n];
+                similar(first, block[0])
+                    && similar(last, block[n - 1])
+                    && needle_lines
+                        .iter()
+                        .zip(block)
+                        .all(|(pl, cl)| pl.trim().is_empty() || similar(pl, cl))
+            })
+            .map(|i| Self::line_positions(haystack, &haystack_lines, i, i + n))
     }
 
     fn normalize_whitespace(s: &str) -> String {
@@ -856,6 +851,42 @@ mod tests {
         let found = LocalPatchBackend::fuzzy_find(haystack, "wörld\nend").expect("match");
         assert_eq!(found.strategy, "line_trimmed");
         assert_eq!(&haystack[found.start..found.end], "  wörld\r\nend");
+    }
+
+    #[test]
+    fn fuzzy_find_does_not_replace_an_unrelated_line() {
+        // A 1-line old_string absent from the file used to match line 1.
+        assert_eq!(
+            LocalPatchBackend::fuzzy_find("alpha\nbeta\n", "missing line"),
+            None
+        );
+        // 1 of 3 lines similar used to pass the 50% rule.
+        let haystack = "one\nlet total = 1;\nthree\n";
+        assert_eq!(
+            LocalPatchBackend::fuzzy_find(haystack, "xxxx\nlet total = 2;\nzzzz"),
+            None
+        );
+    }
+
+    #[test]
+    fn fuzzy_context_aware_needs_every_non_blank_line_similar() {
+        let haystack = "fn main() {\n    let total = 1;\n\n    println!(total);\n}\n";
+        // The first line differs, so block_anchor cannot claim it first.
+        let needle = "fn main () {\n    let totals = 1;\n\n    println!(totals);\n}";
+        let found = LocalPatchBackend::fuzzy_find(haystack, needle).expect("match");
+        assert_eq!(found.strategy, "context_aware");
+        assert_eq!(&haystack[found.start..found.end], haystack.trim_end());
+    }
+
+    #[test]
+    fn fuzzy_block_anchor_rejects_a_dissimilar_middle() {
+        // Same first and last lines; the middle shares about a third of its
+        // characters, above the old 0.10 floor and below upstream's 0.50.
+        let haystack = "start\nabcdefghijkl\nend\n";
+        assert_eq!(
+            LocalPatchBackend::fuzzy_find(haystack, "start\nabcdXXXXXXXX\nend"),
+            None
+        );
     }
 
     #[test]
