@@ -44,6 +44,7 @@ impl DockerBackend {
     ///   be created on first command execution using the specified `image`.
     /// - `image`: Docker image name (e.g. `"ubuntu:22.04"`). Used only when
     ///   `container_id` is None.
+    #[allow(clippy::too_many_arguments)] // One argument per `terminal.docker_*` and container setting.
     pub fn new(
         container_id: Option<String>,
         image: Option<String>,

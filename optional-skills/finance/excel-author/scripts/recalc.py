@@ -19,10 +19,17 @@ import sys
 import tempfile
 from pathlib import Path
 
+# Ensure the sibling _program_path module is importable when run standalone.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from _program_path import find_program
+
 
 def find_libreoffice() -> str | None:
     for cmd in ("libreoffice", "soffice"):
-        path = shutil.which(cmd)
+        path = find_program(cmd)
         if path:
             return path
     return None

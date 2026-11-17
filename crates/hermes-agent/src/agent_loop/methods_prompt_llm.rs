@@ -1103,17 +1103,26 @@ impl AgentLoop {
             let mut stream_scrubber = StreamingContextScrubber::new();
 
             loop {
-                let chunk_result = match lifetime_deadline {
-                    Some((cap, deadline)) => {
-                        match tokio::time::timeout_at(deadline, stream.next()).await {
-                            Ok(chunk) if tokio::time::Instant::now() < deadline => chunk,
-                            _ => return Ok(StreamCollectOutcome::LifetimeExceeded(cap)),
-                        }
+                // A cancel ends the wait for the next chunk: a stalled stream
+                // would otherwise hold the turn until it sends again.
+                let next = async {
+                    tokio::select! {
+                        chunk = stream.next() => Some(chunk),
+                        () = self.interrupt.interrupted() => None,
                     }
-                    None => stream.next().await,
                 };
-                let Some(chunk_result) = chunk_result else {
-                    break;
+                let waited = match lifetime_deadline {
+                    Some((cap, deadline)) => match tokio::time::timeout_at(deadline, next).await {
+                        Ok(waited) if tokio::time::Instant::now() < deadline => waited,
+                        _ => return Ok(StreamCollectOutcome::LifetimeExceeded(cap)),
+                    },
+                    None => next.await,
+                };
+                let chunk_result = match waited {
+                    Some(Some(chunk_result)) => Some(chunk_result),
+                    Some(None) => break,
+                    // Interrupted while waiting: handled just below.
+                    None => None,
                 };
                 if self.interrupt.take_interrupt_graceful().is_some() {
                     let message = Self::assemble_stream_assistant_message(
@@ -1128,6 +1137,10 @@ impl AgentLoop {
                         finish_reason: Some("interrupted".to_string()),
                     }));
                 }
+                // The interrupt was taken elsewhere in between: wait again.
+                let Some(chunk_result) = chunk_result else {
+                    continue;
+                };
 
                 let chunk = match chunk_result {
                     Ok(chunk) => chunk,

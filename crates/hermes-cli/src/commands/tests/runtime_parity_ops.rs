@@ -394,6 +394,7 @@ fn test_render_mcp_runtime_status_reports_drift_between_yaml_and_json() {
         url: None,
         supports_parallel_tool_calls: false,
         keepalive_interval: None,
+        ..Default::default()
     }];
 
     let status = render_mcp_runtime_status(&yaml, Some(&cfg), &path);

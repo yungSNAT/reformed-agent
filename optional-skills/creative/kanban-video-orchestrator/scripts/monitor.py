@@ -18,16 +18,30 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import subprocess
 import sys
 import time
 from collections import defaultdict
 from datetime import datetime, timedelta
+from pathlib import Path
+
+# Ensure the sibling _program_path module is importable when run standalone.
+_SCRIPTS_DIR = str(Path(__file__).resolve().parent)
+if _SCRIPTS_DIR not in sys.path:
+    sys.path.insert(0, _SCRIPTS_DIR)
+
+from _program_path import find_program
 
 
 def hermes_available() -> bool:
-    return shutil.which("hermes") is not None
+    return find_program("hermes") is not None
+
+
+def _hermes() -> str:
+    hermes = find_program("hermes")
+    if hermes is None:
+        raise FileNotFoundError("hermes not found on PATH")
+    return hermes
 
 
 def kanban_list(tenant: str) -> list[dict]:
@@ -35,7 +49,7 @@ def kanban_list(tenant: str) -> list[dict]:
     output isn't supported by the installed hermes CLI."""
     try:
         out = subprocess.run(
-            ["hermes", "kanban", "list", "--tenant", tenant, "--json"],
+            [_hermes(), "kanban", "list", "--tenant", tenant, "--json"],
             capture_output=True, text=True, check=False,
         )
         if out.returncode == 0 and out.stdout.strip().startswith("["):
@@ -44,7 +58,7 @@ def kanban_list(tenant: str) -> list[dict]:
         pass
     # Fallback: textual parse of `hermes kanban list`
     out = subprocess.run(
-        ["hermes", "kanban", "list", "--tenant", tenant],
+        [_hermes(), "kanban", "list", "--tenant", tenant],
         capture_output=True, text=True, check=False,
     )
     rows = []
@@ -68,7 +82,7 @@ def kanban_list(tenant: str) -> list[dict]:
 
 def kanban_show(task_id: str) -> dict | None:
     out = subprocess.run(
-        ["hermes", "kanban", "show", task_id, "--json"],
+        [_hermes(), "kanban", "show", task_id, "--json"],
         capture_output=True, text=True, check=False,
     )
     if out.returncode != 0:
