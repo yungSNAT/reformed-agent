@@ -8,6 +8,7 @@
 //! - MCP server config block generation
 //! - Progress events (thinking, tool_call, tool_result steps)
 
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 use tokio::io::{AsyncBufReadExt, AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::sync::mpsc::{self, UnboundedSender};
@@ -17,7 +18,7 @@ use crate::events::{AcpEvent, EventSink};
 use crate::handler::AcpHandler;
 use crate::permissions::PermissionStore;
 use crate::protocol::{AcpMethod, AcpRequest, AcpResponse};
-use crate::session::SessionManager;
+use crate::session::{SessionManager, SessionPhase};
 
 fn flush_events_before_response(method: &str) -> bool {
     matches!(
@@ -102,11 +103,11 @@ impl AcpServer {
         let (tx, mut rx) = mpsc::unbounded_channel::<String>();
         let outbox: Outbox = Arc::new(Mutex::new(tx));
         let mut lines = BufReader::new(reader).lines();
-        let mut prompts = JoinSet::new();
+        let mut prompts = Prompts::default();
         let mut reading = true;
 
         loop {
-            if !reading && prompts.is_empty() {
+            if !reading && prompts.tasks.is_empty() {
                 send_events(&lock(&outbox), self.event_sink.drain_all());
                 while let Ok(line) = rx.try_recv() {
                     write_line(&mut writer, &line).await?;
@@ -114,15 +115,22 @@ impl AcpServer {
                 writer.flush().await?;
                 return Ok(());
             }
+            // Unbiased, so a stream of updates cannot hold off reading a cancel.
             tokio::select! {
-                biased;
                 Some(line) = rx.recv() => {
                     write_line(&mut writer, &line).await?;
                     if rx.is_empty() {
                         writer.flush().await?;
                     }
                 }
-                Some(joined) = prompts.join_next(), if !prompts.is_empty() => joined?,
+                Some(joined) = prompts.tasks.join_next_with_id(), if !prompts.tasks.is_empty() => {
+                    match joined {
+                        Ok((id, ())) => {
+                            prompts.requests.remove(&id);
+                        }
+                        Err(error) => self.prompt_failed(&mut prompts, error, &outbox),
+                    }
+                }
                 line = lines.next_line(), if reading => match line? {
                     Some(line) => self.dispatch(&line, &outbox, &mut prompts).await,
                     None => reading = false,
@@ -131,7 +139,23 @@ impl AcpServer {
         }
     }
 
-    async fn dispatch(&self, line: &str, outbox: &Outbox, prompts: &mut JoinSet<()>) {
+    /// A prompt task that panicked: answer its request with an error, mark
+    /// its session failed, and keep serving the others.
+    fn prompt_failed(&self, prompts: &mut Prompts, error: tokio::task::JoinError, outbox: &Outbox) {
+        tracing::error!("ACP prompt task failed: {error}");
+        let (request_id, session_id) = prompts.requests.remove(&error.id()).unwrap_or_default();
+        self.session_manager.prompt_answered(&session_id);
+        self.session_manager
+            .set_phase(&session_id, SessionPhase::Failed);
+        if request_id.is_some() {
+            send(
+                &lock(outbox),
+                &AcpResponse::error(request_id, -32603, "Internal error: the prompt failed"),
+            );
+        }
+    }
+
+    async fn dispatch(&self, line: &str, outbox: &Outbox, prompts: &mut Prompts) {
         let line = line.trim();
         if line.is_empty() {
             return;
@@ -146,12 +170,20 @@ impl AcpServer {
         };
 
         if AcpMethod::from(request.method.as_str()) == AcpMethod::Prompt {
-            prompts.spawn(run_prompt(
+            let session_id = prompt_session_id(&request);
+            // Counted before anything else is read, so a cancel that follows
+            // finds the prompt in flight even if its turn has not started.
+            self.session_manager.prompt_received(&session_id);
+            let request_id = request.id.clone();
+            let task = prompts.tasks.spawn(run_prompt(
                 self.handler.clone(),
                 self.event_sink.clone(),
+                self.session_manager.clone(),
                 outbox.clone(),
+                session_id.clone(),
                 request,
             ));
+            prompts.requests.insert(task.id(), (request_id, session_id));
             return;
         }
 
@@ -173,6 +205,24 @@ impl AcpServer {
     }
 }
 
+/// Running prompt tasks, with the request and session of each, so one that
+/// panics can still be answered.
+#[derive(Default)]
+struct Prompts {
+    tasks: JoinSet<()>,
+    requests: HashMap<tokio::task::Id, (Option<serde_json::Value>, String)>,
+}
+
+fn prompt_session_id(request: &AcpRequest) -> String {
+    request
+        .params
+        .as_ref()
+        .and_then(|params| params.get("sessionId").or_else(|| params.get("session_id")))
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string()
+}
+
 /// Output lines waiting for the writer. Holding the lock across a drain of
 /// the event sink and its sends keeps updates in the order they were pushed.
 type Outbox = Arc<Mutex<UnboundedSender<String>>>;
@@ -188,16 +238,11 @@ fn lock(outbox: &Outbox) -> std::sync::MutexGuard<'_, UnboundedSender<String>> {
 async fn run_prompt(
     handler: Arc<dyn AcpHandler>,
     event_sink: Arc<EventSink>,
+    session_manager: Arc<SessionManager>,
     outbox: Outbox,
+    session_id: String,
     request: AcpRequest,
 ) {
-    let session_id = request
-        .params
-        .as_ref()
-        .and_then(|params| params.get("sessionId").or_else(|| params.get("session_id")))
-        .and_then(serde_json::Value::as_str)
-        .unwrap_or_default()
-        .to_string();
     let notification = request.id.is_none();
     let turn = handler.handle_request(request);
     tokio::pin!(turn);
@@ -213,6 +258,8 @@ async fn run_prompt(
     };
     let out = lock(&outbox);
     send_events(&out, event_sink.drain_for_session(&session_id));
+    // Before the response, so a prompt sent after it is not cancelled.
+    session_manager.prompt_answered(&session_id);
     if !notification {
         send(&out, &response);
     }
@@ -485,22 +532,30 @@ mod tests {
         Arc<tokio::sync::Notify>,
         Arc<std::sync::atomic::AtomicBool>,
     ) {
-        let session_manager = Arc::new(SessionManager::new());
         let event_sink = Arc::new(EventSink::default());
-        let permission_store = Arc::new(PermissionStore::new());
         let release = Arc::new(tokio::sync::Notify::new());
         let cancelled = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let executor = Arc::new(GatedExecutor {
+            event_sink: event_sink.clone(),
+            release: release.clone(),
+            cancelled: cancelled.clone(),
+        });
+        (client_with(executor, event_sink), release, cancelled)
+    }
+
+    fn client_with(
+        executor: Arc<dyn crate::handler::AcpPromptExecutor>,
+        event_sink: Arc<EventSink>,
+    ) -> Client {
+        let session_manager = Arc::new(SessionManager::new());
+        let permission_store = Arc::new(PermissionStore::new());
         let handler = Arc::new(
             HermesAcpHandler::new(
                 session_manager.clone(),
                 event_sink.clone(),
                 permission_store.clone(),
             )
-            .with_prompt_executor(Arc::new(GatedExecutor {
-                event_sink: event_sink.clone(),
-                release: release.clone(),
-                cancelled: cancelled.clone(),
-            })),
+            .with_prompt_executor(executor),
         );
         let server = Arc::new(AcpServer::with_components(
             handler,
@@ -514,12 +569,11 @@ mod tests {
         let server = tokio::spawn(async move {
             server.run_on(server_read, server_write).await.unwrap();
         });
-        let client = Client {
+        Client {
             lines: BufReader::new(client_read).lines(),
             writer,
             server,
-        };
-        (client, release, cancelled)
+        }
     }
 
     async fn new_session(client: &mut Client) -> String {
@@ -534,9 +588,13 @@ mod tests {
     }
 
     fn prompt_request(session_id: &str) -> serde_json::Value {
+        prompt_with_id(session_id, 2)
+    }
+
+    fn prompt_with_id(session_id: &str, id: u64) -> serde_json::Value {
         serde_json::json!({
             "jsonrpc": "2.0",
-            "id": 2,
+            "id": id,
             "method": "session/prompt",
             "params": {"sessionId": session_id, "prompt": [{"type": "text", "text": "hello"}]},
         })
@@ -606,6 +664,123 @@ mod tests {
             );
         }
         client.server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn run_on_cancels_a_prompt_whose_turn_has_not_started() {
+        let (mut client, release, _) = gated_client();
+        let session_id = new_session(&mut client).await;
+        // Back to back: the cancel can be read before the turn starts.
+        client.send(prompt_request(&session_id)).await;
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session_id}}))
+            .await;
+        let (_, response) = client.until_response(2).await;
+        assert_eq!(response["result"]["stopReason"], "cancelled");
+
+        // The cancel is spent: the next prompt runs to its end.
+        client.send(prompt_with_id(&session_id, 3)).await;
+        while !is_reply_chunk(&client.next().await, "partial") {}
+        release.notify_one();
+        let (_, response) = client.until_response(3).await;
+        assert_eq!(response["result"]["stopReason"], "end_turn");
+
+        client.writer.shutdown().await.unwrap();
+        client.server.await.unwrap();
+    }
+
+    struct PanickingExecutor;
+
+    #[async_trait::async_trait]
+    impl crate::handler::AcpPromptExecutor for PanickingExecutor {
+        async fn execute_prompt(
+            &self,
+            _session: &crate::session::SessionState,
+            _user_text: &str,
+            _history: &[serde_json::Value],
+        ) -> Result<crate::handler::PromptExecutionOutput, String> {
+            panic!("executor failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn run_on_answers_a_prompt_whose_task_panicked_and_keeps_serving() {
+        let mut client = client_with(Arc::new(PanickingExecutor), Arc::new(EventSink::default()));
+        let session_id = new_session(&mut client).await;
+        client.send(prompt_request(&session_id)).await;
+        let (_, response) = client.until_response(2).await;
+        assert_eq!(response["error"]["code"], -32603, "{response}");
+
+        // The session is not left running: the next prompt is tried, not
+        // queued, and the server still answers other requests.
+        client.send(prompt_with_id(&session_id, 3)).await;
+        let (_, response) = client.until_response(3).await;
+        assert_eq!(response["error"]["code"], -32603, "{response}");
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "session/new", "params": {"cwd": "/tmp"}}))
+            .await;
+        let (_, response) = client.until_response(4).await;
+        assert!(response["result"]["sessionId"].is_string(), "{response}");
+
+        client.writer.shutdown().await.unwrap();
+        client.server.await.unwrap();
+    }
+
+    /// Prints each `session/update` kind this server sends, one per line
+    /// after `ACP-UPDATE `, for a check against the ACP SDK's schema
+    /// (run with `--nocapture`).
+    #[test]
+    fn every_session_update_kind_has_its_protocol_form() {
+        let plan = crate::events::plan_entries_from_todo_result(Some(
+            r#"{"todos":[{"id":"1","content":"Write the test","status":"in_progress"},{"id":"2","content":"Ship it","status":"pending"}]}"#,
+        ))
+        .expect("plan entries");
+        let events = [
+            AcpEvent::agent_thought_chunk("s1", "weighing it"),
+            AcpEvent::user_message_chunk("s1", "hello"),
+            AcpEvent::message_delta("s1", "Hel"),
+            AcpEvent::message_complete("s1", "Hello."),
+            AcpEvent::tool_call_start(
+                "s1",
+                "tc1",
+                "read_file",
+                Some(serde_json::json!({"path": "src/main.rs"})),
+            ),
+            AcpEvent::tool_call_start(
+                "s1",
+                "tc2",
+                "terminal",
+                Some(serde_json::json!({"command": "cargo test"})),
+            ),
+            AcpEvent::tool_call_start(
+                "s1",
+                "tc3",
+                "patch",
+                Some(serde_json::json!({"path": "a.rs", "old_string": "a", "new_string": "b"})),
+            ),
+            AcpEvent::tool_call_complete("s1", "tc1", "read_file", Some("fn main() {}".into())),
+            AcpEvent::tool_call_complete(
+                "s1",
+                "tc2",
+                "terminal",
+                Some(r#"{"error":"exit 1"}"#.into()),
+            ),
+            AcpEvent::tool_call_complete("s1", "tc3", "patch", None),
+            AcpEvent::plan_update("s1", plan),
+            AcpEvent::usage_update("s1", 200_000, 1_234),
+            AcpEvent::session_info_update(
+                "s1",
+                Some("Fix the build".into()),
+                "2026-11-17T00:00:00Z".into(),
+                None,
+            ),
+        ];
+        for event in &events {
+            let params = event.session_update_params().expect("protocol form");
+            assert_eq!(params["sessionId"], "s1");
+            assert!(params["update"]["sessionUpdate"].is_string(), "{params}");
+            println!("ACP-UPDATE {params}");
+        }
     }
 
     #[test]

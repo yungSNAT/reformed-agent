@@ -215,7 +215,9 @@ impl AcpHandler for HermesAcpHandler {
                 let session_id = params_obj(&request.params)
                     .and_then(|p| param_str_any(p, &["sessionId", "session_id"]))
                     .unwrap_or("");
-                if let Some(state) = self.session_manager.get_session(session_id) {
+                // Recorded before the executor looks for a running turn, so a
+                // turn that registers its interrupt after this still sees it.
+                if let Some(state) = self.session_manager.request_cancel(session_id) {
                     if state.phase == SessionPhase::Active {
                         self.session_manager.set_interrupted_prompt_text(
                             session_id,
@@ -226,8 +228,6 @@ impl AcpHandler for HermesAcpHandler {
                         }
                     }
                 }
-                self.session_manager
-                    .set_phase(session_id, SessionPhase::Cancelled);
                 tracing::info!("Cancelled session {}", session_id);
                 AcpResponse::success(request.id, json!({"cancelled": true}))
             }
@@ -308,12 +308,7 @@ impl AcpHandler for HermesAcpHandler {
                     }
                 }
 
-                if self
-                    .session_manager
-                    .get_session(session_id)
-                    .map(|s| s.phase == SessionPhase::Active)
-                    .unwrap_or(false)
-                {
+                if !self.session_manager.begin_turn(session_id) {
                     let queued_text = if user_text.trim().is_empty() {
                         "[Image attachment]"
                     } else {
@@ -331,8 +326,15 @@ impl AcpHandler for HermesAcpHandler {
                     );
                 }
 
-                self.session_manager
-                    .set_phase(session_id, SessionPhase::Active);
+                if self.session_manager.cancel_pending(session_id) {
+                    // Cancelled before the turn began.
+                    self.session_manager
+                        .set_phase(session_id, SessionPhase::Idle);
+                    return AcpResponse::success(
+                        request.id,
+                        prompt_response_value(StopReason::Cancelled, None),
+                    );
+                }
 
                 let mut usage = match self
                     .execute_prompt_turn(session_id, user_text, user_content)

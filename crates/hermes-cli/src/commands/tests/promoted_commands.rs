@@ -97,6 +97,7 @@
             tool_registry: Arc::new(hermes_tools::ToolRegistry::new()),
             interrupts,
             event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let session = hermes_acp::SessionState::new(session_id, ".".to_string());
 
@@ -187,6 +188,7 @@
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
             event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let file_schema = hermes_core::tool_schema(
             "read_file",
@@ -252,6 +254,7 @@
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
             event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
         };
         let schema = hermes_core::tool_schema(
             "mcp_srv_ping",
@@ -574,6 +577,27 @@
         assert_eq!(messages.len(), 1);
         let content = messages[0].content.as_deref().unwrap_or("");
         assert!(content.starts_with(ACP_MULTIMODAL_PREFIX));
+    }
+
+    #[test]
+    fn test_acp_cancel_before_a_turn_registers_its_interrupt_still_interrupts_it() {
+        let sessions = hermes_acp::SessionManager::new();
+        let interrupts = Mutex::new(HashMap::new());
+        let id = sessions.create_session(".").session_id;
+
+        // No cancel: the turn runs.
+        sessions.prompt_received(&id);
+        assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
+
+        // A cancel recorded whilst the prompt is in flight, before the turn
+        // registers: the new interrupt starts interrupted.
+        sessions.request_cancel(&id);
+        assert!(register_interrupt(&interrupts, &sessions, &id).is_interrupted());
+
+        // Spent once the prompt is answered: the next turn is not cancelled.
+        sessions.prompt_answered(&id);
+        sessions.prompt_received(&id);
+        assert!(!register_interrupt(&interrupts, &sessions, &id).is_interrupted());
     }
 
     #[test]

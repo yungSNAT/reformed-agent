@@ -217,6 +217,27 @@ struct CliAcpPromptExecutor {
     interrupts: Arc<Mutex<HashMap<String, hermes_agent::InterruptController>>>,
     /// The server's sink: streamed text and reasoning go out as they arrive.
     event_sink: Arc<hermes_acp::EventSink>,
+    /// The server's sessions, read for a cancel that came before a turn's
+    /// interrupt was registered.
+    session_manager: Arc<hermes_acp::SessionManager>,
+}
+
+/// Register a turn's interrupt for `session_id`. A cancel the handler
+/// recorded before this (it records one before looking for an interrupt)
+/// interrupts it at once, so no cancel falls between the two.
+fn register_interrupt(
+    interrupts: &Mutex<HashMap<String, hermes_agent::InterruptController>>,
+    session_manager: &hermes_acp::SessionManager,
+    session_id: &str,
+) -> hermes_agent::InterruptController {
+    let interrupt = hermes_agent::InterruptController::new();
+    if let Ok(mut active) = interrupts.lock() {
+        active.insert(session_id.to_string(), interrupt.clone());
+    }
+    if session_manager.cancel_pending(session_id) {
+        interrupt.interrupt(None);
+    }
+    interrupt
 }
 
 impl CliAcpPromptExecutor {
@@ -282,10 +303,8 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         agent_config.session_id = Some(session.session_id.clone());
 
         let agent_tools = Arc::new(crate::app::bridge_tool_registry(&self.tool_registry));
-        let interrupt = hermes_agent::InterruptController::new();
-        if let Ok(mut active) = self.interrupts.lock() {
-            active.insert(session.session_id.clone(), interrupt.clone());
-        }
+        let interrupt =
+            register_interrupt(&self.interrupts, &self.session_manager, &session.session_id);
         let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
         let callbacks = acp_stream_callbacks(
             &session.session_id,
@@ -456,14 +475,15 @@ pub async fn handle_cli_acp(
             )));
 
             let event_sink = Arc::new(hermes_acp::EventSink::default());
+            let session_manager = Arc::new(hermes_acp::SessionManager::new());
             let prompt_executor = Arc::new(CliAcpPromptExecutor {
                 config: Arc::new(config.clone()),
                 tool_registry: tool_registry.clone(),
                 interrupts: Arc::new(Mutex::new(HashMap::new())),
                 event_sink: event_sink.clone(),
+                session_manager: session_manager.clone(),
             });
 
-            let session_manager = Arc::new(hermes_acp::SessionManager::new());
             let permission_store = Arc::new(hermes_acp::PermissionStore::new());
             let handler = Arc::new(
                 hermes_acp::HermesAcpHandler::new(

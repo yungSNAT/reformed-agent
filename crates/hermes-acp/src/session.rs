@@ -56,6 +56,11 @@ pub struct SessionState {
     pub queued_prompts: Vec<String>,
     /// Last interrupted prompt text that `/steer` can replay with guidance.
     pub interrupted_prompt_text: Option<String>,
+    /// Prompts the server has read for this session and not yet answered.
+    pub prompts_in_flight: usize,
+    /// A `session/cancel` came whilst a prompt was in flight: a turn that
+    /// starts, or registers its interrupt, after it ends at once.
+    pub cancel_pending: bool,
     pub created_at: u64,
     pub updated_at: u64,
     /// Total prompt tokens across all turns.
@@ -104,6 +109,8 @@ impl SessionState {
             config_options: HashMap::new(),
             queued_prompts: Vec::new(),
             interrupted_prompt_text: None,
+            prompts_in_flight: 0,
+            cancel_pending: false,
             created_at: now,
             updated_at: now,
             total_prompt_tokens: 0,
@@ -299,6 +306,58 @@ impl SessionManager {
         }
     }
 
+    /// Mark the session's turn as running unless one already is. Checked and
+    /// set under one lock, so two prompts for a session cannot both start.
+    pub fn begin_turn(&self, session_id: &str) -> bool {
+        let mut sessions = self.sessions.lock().unwrap();
+        match sessions.get_mut(session_id) {
+            Some(state) if state.phase != SessionPhase::Active => {
+                state.phase = SessionPhase::Active;
+                state.touch();
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The server has read a prompt for the session.
+    pub fn prompt_received(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.prompts_in_flight += 1;
+        }
+    }
+
+    /// The server is answering a prompt for the session, or its task ended.
+    /// Once none is in flight, a pending cancel is spent.
+    pub fn prompt_answered(&self, session_id: &str) {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(state) = sessions.get_mut(session_id) {
+            state.prompts_in_flight = state.prompts_in_flight.saturating_sub(1);
+            if state.prompts_in_flight == 0 {
+                state.cancel_pending = false;
+            }
+        }
+    }
+
+    /// Mark the session cancelled, and the cancel pending whilst a prompt is
+    /// in flight. Returns the session as it was before.
+    pub fn request_cancel(&self, session_id: &str) -> Option<SessionState> {
+        let mut sessions = self.sessions.lock().unwrap();
+        let state = sessions.get_mut(session_id)?;
+        let before = state.clone();
+        state.phase = SessionPhase::Cancelled;
+        state.cancel_pending |= state.prompts_in_flight > 0;
+        state.touch();
+        Some(before)
+    }
+
+    /// Whether a cancel is pending for the session's prompt in flight.
+    pub fn cancel_pending(&self, session_id: &str) -> bool {
+        let sessions = self.sessions.lock().unwrap();
+        sessions.get(session_id).is_some_and(|s| s.cancel_pending)
+    }
+
     /// Update session history.
     pub fn set_history(&self, session_id: &str, history: Vec<Value>) {
         let mut sessions = self.sessions.lock().unwrap();
@@ -491,6 +550,33 @@ impl Default for SessionManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_one_turn_of_a_session_starts_at_a_time() {
+        let sessions = SessionManager::new();
+        let id = sessions.create_session(".").session_id;
+        assert!(sessions.begin_turn(&id));
+        assert!(!sessions.begin_turn(&id));
+        sessions.set_phase(&id, SessionPhase::Cancelled);
+        assert!(sessions.begin_turn(&id));
+        assert!(!sessions.begin_turn("no-such-session"));
+    }
+
+    #[test]
+    fn a_cancel_is_pending_only_whilst_a_prompt_is_in_flight() {
+        let sessions = SessionManager::new();
+        let id = sessions.create_session(".").session_id;
+        sessions.request_cancel(&id);
+        assert!(!sessions.cancel_pending(&id));
+        sessions.prompt_received(&id);
+        sessions.prompt_received(&id);
+        sessions.request_cancel(&id);
+        assert!(sessions.cancel_pending(&id));
+        sessions.prompt_answered(&id);
+        assert!(sessions.cancel_pending(&id));
+        sessions.prompt_answered(&id);
+        assert!(!sessions.cancel_pending(&id));
+    }
 
     #[test]
     fn test_create_and_get_session() {
