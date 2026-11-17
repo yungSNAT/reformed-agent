@@ -74,6 +74,15 @@ struct Started {
 /// Starts the scripted model and a gateway whose Hermes home names it as upstream's tests do
 /// (`providers.<name>.api` and `key_env`).
 async fn start(pieces: Vec<&'static str>, delay: Duration) -> Started {
+    start_with(pieces, delay, None).await
+}
+
+/// As [`start`], with the gateway's socket write timeout when given.
+async fn start_with(
+    pieces: Vec<&'static str>,
+    delay: Duration,
+    write_timeout: Option<Duration>,
+) -> Started {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let model = Model {
         pieces,
@@ -100,7 +109,10 @@ async fn start(pieces: Vec<&'static str>, delay: Duration) -> Started {
     let config = hermes_config::load_config(home.path().to_str()).unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
-    let chat = hermes_desktop_gateway::Chat::new(config);
+    let mut chat = hermes_desktop_gateway::Chat::new(config);
+    if let Some(timeout) = write_timeout {
+        chat = chat.with_write_timeout(timeout);
+    }
     tokio::spawn(hermes_desktop_gateway::serve(
         listener,
         TOKEN.to_string(),
@@ -586,4 +598,81 @@ async fn a_failed_turn_keeps_the_saved_rows_once() {
     let mut expected = saved.clone();
     expected.push(("User".to_string(), "FAIL now".to_string()));
     assert_eq!(roles(store.load_session(&session).unwrap()), expected);
+}
+
+type PlainSocket = tokio_tungstenite::WebSocketStream<tokio::net::TcpStream>;
+
+async fn next_text(ws: &mut PlainSocket) -> Value {
+    loop {
+        if let Message::Text(text) = ws.next().await.unwrap().unwrap() {
+            return serde_json::from_str(&text).unwrap();
+        }
+    }
+}
+
+/// A connection that sends a prompt and then reads nothing, with a small receive buffer so
+/// its turn's frames stop at the socket.
+async fn stalled_turn(addr: SocketAddr) -> (PlainSocket, String) {
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.set_recv_buffer_size(4096).unwrap();
+    let stream = socket.connect(addr).await.unwrap();
+    let request = format!("ws://{addr}/api/ws?token={TOKEN}")
+        .into_client_request()
+        .unwrap();
+    let (mut ws, _) = tokio_tungstenite::client_async(request, stream)
+        .await
+        .unwrap();
+    assert_eq!(next_text(&mut ws).await["params"]["type"], "gateway.ready");
+    let create = json!({"jsonrpc": "2.0", "id": 1, "method": "session.create", "params": {}});
+    ws.send(Message::text(create.to_string())).await.unwrap();
+    let session = next_text(&mut ws).await["result"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let submit = json!({"jsonrpc": "2.0", "id": 2, "method": "prompt.submit",
+        "params": {"session_id": session, "text": "hi"}});
+    ws.send(Message::text(submit.to_string())).await.unwrap();
+    (ws, session)
+}
+
+/// A finished turn keeps its slot until its events are written, so readers that stop reading
+/// cannot pile up finished replies past the turn cap; a write that waits past the timeout
+/// closes the connection and frees the slot.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
+    // 4 MiB streamed and the same again in message.complete: more than a loopback socket's
+    // buffers hold, so each stalled connection's writes stop.
+    let reply: &'static str = Box::leak("x".repeat(4 << 20).into_boxed_str());
+    let timeout = Duration::from_secs(10);
+    let started = start_with(vec![reply], Duration::ZERO, Some(timeout)).await;
+    let mut stalled = Vec::new();
+    for _ in 0..8 {
+        stalled.push(stalled_turn(started.addr).await);
+    }
+    // Each turn has finished once its reply is saved.
+    for (_, session) in &stalled {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+        while history(started.addr, session).await.len() < 2 {
+            assert!(tokio::time::Instant::now() < deadline, "turn {session} did not finish");
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["error"]["code"], 4090, "{reply}");
+
+    // Once the stalled writes time out, their connections close and the slots free.
+    let deadline = tokio::time::Instant::now() + timeout * 4;
+    let mut id = 3;
+    let mut reply = client.submit(id, &session, "hi").await;
+    while reply["result"]["status"] != "streaming" {
+        assert!(tokio::time::Instant::now() < deadline, "{reply}");
+        tokio::time::sleep(Duration::from_millis(250)).await;
+        id += 1;
+        reply = client.submit(id, &session, "hi").await;
+    }
+    drop(stalled);
 }

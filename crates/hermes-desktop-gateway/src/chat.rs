@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use hermes_agent::agent_loop::ToolRegistry;
 use hermes_agent::{AgentLoop, SessionPersistence};
@@ -38,6 +39,9 @@ const NO_TURN_SLOT: i64 = 4090;
 /// with it, what waits in a connection's outbox is bounded by those turns' replies.
 const MAX_TURNS: usize = 8;
 
+/// How long one socket write may wait for a client that is not reading.
+const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
+
 /// Longest session id a request may name.
 const MAX_SESSION_ID: usize = 128;
 
@@ -49,6 +53,7 @@ pub struct Chat {
     // a token holder); dropping idle ones comes with session close and resume.
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
     turns: Arc<Semaphore>,
+    write_timeout: Duration,
 }
 
 /// The reply streamed so far and its length in UTF-16 units, the desktop's offsets.
@@ -87,7 +92,15 @@ impl Chat {
             home,
             sessions: Mutex::default(),
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
+            write_timeout: WRITE_TIMEOUT,
         }
+    }
+
+    /// How long one socket write may wait for a client that is not reading before the
+    /// connection closes (30 seconds unless set).
+    pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
+        self.write_timeout = timeout;
+        self
     }
 
     fn model(&self) -> Option<&str> {
