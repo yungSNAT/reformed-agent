@@ -29,14 +29,19 @@ pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
 /// Shortest token accepted from the environment.
 pub const MIN_TOKEN_LEN: usize = 32;
 
-/// Largest inbound WebSocket message (and frame); a larger one closes the connection.
-// shortcut: 16 MiB, uvicorn's default. Upstream raises its server to 384 MiB
-// (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py) because
-// `file.attach` sends a whole base64 file in one frame; raise this with `file.attach`.
+/// Largest inbound WebSocket message (and frame); a larger one closes the connection. This
+/// is the only memory bound on a message: it is parsed whole before anything else is checked.
+// shortcut: 16 MiB, uvicorn's default. Parsing a message can cost about 100 times its size
+// (a 16 MiB array of tiny objects, estimated at 1.5 GB; not measured), and connections are
+// not limited; only a token holder, who controls the agent anyway, can send one. Upstream
+// allows 384 MiB (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py)
+// because `file.attach` sends a whole base64 file in one frame. Upgrade path: when this
+// crate serves `file.attach`, raise the cap with a streaming reader instead of a whole parse.
 pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
 
-/// Most requests one JSON-RPC batch may hold; a longer batch gets a single -32600.
-/// Upstream's gateway takes no batches at all, so no desktop frame comes near it.
+/// Most requests one JSON-RPC batch may hold; a longer batch gets a single -32600. It bounds
+/// the reply, not memory: the batch is already parsed when it is counted. Upstream's gateway
+/// takes no batches at all, so no desktop frame comes near it.
 pub const MAX_BATCH: usize = 100;
 
 const LOOPBACK_NAMES: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
@@ -103,10 +108,12 @@ async fn host_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next
 /// An absent `Origin` is a client without a browser, such as the desktop's main-process
 /// probe. A web page (`http` or `https`) must be served from this listener. The packaged
 /// desktop loads its renderer from a file, so its socket sends exactly `file://` (upstream's
-/// tests/hermes_cli/test_dashboard_auth_ws_auth.py), which no page served over the web can
-/// send. Every other origin is refused, `null` included: sandboxed frames and `data:` pages
-/// send it.
-/// Upstream also admits `null` and other schemes and relies on the token for them.
+/// tests/hermes_cli/test_dashboard_auth_ws_auth.py, and seen in a live trace), which no page
+/// served over the web can send. A local HTML file opened in a Chromium browser likely sends
+/// `file://` too (inferred from Chromium's source, not tested), so the token alone stops it.
+/// Every other origin is refused, `null` included: sandboxed frames and `data:` pages send
+/// it. Upstream also admits `null` and other schemes and relies on the token for them; if
+/// its desktop moves to one of those, this check refuses it (fails closed).
 fn origin_allowed(headers: &HeaderMap, port: u16) -> bool {
     let Some(origin) = headers.get(header::ORIGIN) else {
         return true;

@@ -9,6 +9,8 @@ use hermes_desktop_gateway::{new_token, serve, MIN_TOKEN_LEN, TOKEN_ENV};
 
 /// Preview: a backend Hermes Desktop can attach to with 'Connect to existing Hermes'.
 /// The token comes from HERMES_DASHBOARD_SESSION_TOKEN; without it one is made and printed.
+/// A supplied token must be random: only its length (at least 32 characters) is checked and
+/// connection attempts are not rate limited, so prefer the generated one.
 #[derive(Parser)]
 #[command(version)]
 struct Args {
