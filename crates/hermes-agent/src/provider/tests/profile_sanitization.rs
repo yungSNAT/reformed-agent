@@ -460,6 +460,7 @@ fn test_provider_profile_request_body_deepseek_reasoning_contract() {
             stream: false,
         });
         assert!(body.get("reasoning").is_none(), "{model}: {body}");
+        assert!(body.get("reasoning_config").is_none(), "{model}: {body}");
         (
             body.get("thinking").cloned(),
             body.get("reasoning_effort").cloned(),
@@ -502,14 +503,39 @@ fn test_provider_profile_request_body_deepseek_reasoning_contract() {
         ),
         (Some(serde_json::json!({"type": "disabled"})), None)
     );
-    // V3 has no thinking mode: nothing is added and the effort is not sent.
+    // V3 has no thinking mode, and a vendor-prefixed id is not DeepSeek's own
+    // (upstream matches the bare id): nothing is added and the effort is not sent.
+    for model in ["deepseek-chat", "vendor/deepseek-v4-pro"] {
+        assert_eq!(
+            shape(
+                model,
+                Some(serde_json::json!({"reasoning": {"effort": "high"}}))
+            ),
+            (None, None),
+            "{model}"
+        );
+    }
+
+    // A DeepSeek model through OpenRouter keeps OpenRouter's reasoning object.
+    let model = "deepseek/deepseek-v4-pro";
+    let openrouter = GenericProvider::new("https://openrouter.ai/api/v1", "key", model)
+        .with_provider_profile("openrouter");
+    let body = openrouter.chat_request_body(ChatRequestParams {
+        messages: &messages,
+        tools: &[],
+        max_tokens: None,
+        temperature: None,
+        effective_model: model,
+        extra_body: Some(&serde_json::json!({"reasoning": {"effort": "xhigh"}})),
+        stream: false,
+    });
     assert_eq!(
-        shape(
-            "deepseek-chat",
-            Some(serde_json::json!({"reasoning": {"effort": "high"}}))
-        ),
-        (None, None)
+        body["reasoning"],
+        serde_json::json!({"effort": "xhigh"}),
+        "{body}"
     );
+    assert!(body.get("thinking").is_none(), "{body}");
+    assert!(body.get("reasoning_effort").is_none(), "{body}");
 }
 
 #[test]

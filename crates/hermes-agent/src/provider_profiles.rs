@@ -549,10 +549,11 @@ fn apply_kimi_profile(body: &mut Value, extra_body: Option<&Value>) {
 }
 
 /// DeepSeek V4 and later, and the legacy `deepseek-reasoner`, think unless a
-/// request turns it off; V3 (`deepseek-chat`) has no thinking mode.
+/// request turns it off; V3 (`deepseek-chat`) has no thinking mode. The
+/// model id is DeepSeek's own, as upstream matches it: a relay strips its
+/// vendor prefix first.
 pub(crate) fn is_deepseek_thinking_model(model: &str) -> bool {
     let model = model.trim().to_ascii_lowercase();
-    let model = model.rsplit('/').next().unwrap_or_default();
     (model.starts_with("deepseek-v") && !model.starts_with("deepseek-v3"))
         || model == "deepseek-reasoner"
 }
