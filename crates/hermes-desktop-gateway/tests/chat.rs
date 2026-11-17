@@ -681,3 +681,37 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     }
     drop(stalled);
 }
+
+/// A reader that takes a frame every half second keeps each write well under the 2 second
+/// write timeout, yet its turn's 35 frames would take about 17 seconds to deliver and hold
+/// the turn's slot all that time. A frame not written within the timeout of being queued
+/// closes the connection, so the last event, which carries the slot, is never delivered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
+    // 16 MiB streamed as 16 frames of 1 MiB, and the same again in message.complete: more
+    // than a loopback socket's buffers hold, so most frames wait for the reader.
+    let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
+    let timeout = Duration::from_secs(2);
+    let started = start_with(vec![piece; 16], Duration::ZERO, Some(timeout)).await;
+    let (mut ws, _) = stalled_turn(started.addr).await;
+    let begun = tokio::time::Instant::now();
+    loop {
+        tokio::time::sleep(timeout / 4).await;
+        let frame = tokio::time::timeout(Duration::from_secs(20), ws.next())
+            .await
+            .expect("no frame and no close within 20 seconds");
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                let frame: Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(
+                    frame["params"]["type"],
+                    "message.complete",
+                    "the whole turn reached a reader that took {:?}",
+                    begun.elapsed()
+                );
+            }
+            Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+            Some(Ok(_)) => {}
+        }
+    }
+}
