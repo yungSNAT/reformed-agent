@@ -210,6 +210,113 @@ async fn an_unknown_method_gets_method_not_found_with_its_id() {
     );
 }
 
+type Socket =
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
+
+/// A socket past `gateway.ready`.
+async fn connected() -> Socket {
+    let addr = start().await;
+    let (mut socket, _) =
+        tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
+            .await
+            .unwrap();
+    next_json(&mut socket).await; // gateway.ready
+    socket
+}
+
+/// An id must be a string, a number or null, and params an array or an object; otherwise
+/// the frame is an invalid request, answered with a null id.
+#[tokio::test]
+async fn an_id_or_params_of_the_wrong_type_makes_an_invalid_request() {
+    let mut socket = connected().await;
+    for frame in [
+        json!({"jsonrpc": "2.0", "id": {"a": 1}, "method": "x"}),
+        json!({"jsonrpc": "2.0", "id": [1], "method": "x"}),
+        json!({"jsonrpc": "2.0", "id": true, "method": "x"}),
+        json!({"jsonrpc": "2.0", "id": [1], "method": 7}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "x", "params": 5}),
+        json!({"jsonrpc": "2.0", "id": 1, "method": "x", "params": "bar"}),
+    ] {
+        socket.send(Message::text(frame.to_string())).await.unwrap();
+        let reply = next_json(&mut socket).await;
+        assert_eq!(reply["error"]["code"], -32600, "{frame}");
+        let expected_id = match &frame["id"] {
+            id @ Value::Number(_) => id.clone(),
+            _ => Value::Null,
+        };
+        assert_eq!(reply["id"], expected_id, "{frame}");
+    }
+    // Valid ids and params still reach method lookup.
+    for frame in [
+        json!({"jsonrpc": "2.0", "id": null, "method": "x"}),
+        json!({"jsonrpc": "2.0", "id": 1.5, "method": "x", "params": [1]}),
+        json!({"jsonrpc": "2.0", "id": "s", "method": "x", "params": {}}),
+    ] {
+        socket.send(Message::text(frame.to_string())).await.unwrap();
+        let reply = next_json(&mut socket).await;
+        assert_eq!(reply["error"]["code"], -32601, "{frame}");
+        assert_eq!(reply["id"], frame["id"], "{frame}");
+    }
+}
+
+#[tokio::test]
+async fn a_batch_over_the_length_limit_gets_one_error() {
+    use hermes_desktop_gateway::MAX_BATCH;
+    let mut socket = connected().await;
+    let request = |n: usize| json!({"jsonrpc": "2.0", "id": n, "method": "x"});
+
+    let at_limit: Vec<Value> = (0..MAX_BATCH).map(request).collect();
+    socket
+        .send(Message::text(Value::Array(at_limit).to_string()))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(reply.as_array().map(Vec::len), Some(MAX_BATCH));
+
+    let over: Vec<Value> = (0..=MAX_BATCH).map(request).collect();
+    socket
+        .send(Message::text(Value::Array(over).to_string()))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert!(reply.is_object(), "one error object, not a batch reply");
+    assert_eq!(reply["id"], Value::Null);
+    assert_eq!(reply["error"]["code"], -32600);
+}
+
+/// A request of exactly `len` bytes.
+fn request_of_len(len: usize) -> String {
+    let base = json!({"jsonrpc": "2.0", "id": 1, "method": "x", "params": {"p": ""}}).to_string();
+    let request = json!({"jsonrpc": "2.0", "id": 1, "method": "x",
+        "params": {"p": "a".repeat(len - base.len())}})
+    .to_string();
+    assert_eq!(request.len(), len);
+    request
+}
+
+#[tokio::test]
+async fn a_message_over_the_size_limit_closes_the_socket() {
+    use hermes_desktop_gateway::MAX_MESSAGE_BYTES;
+    let mut socket = connected().await;
+    socket
+        .send(Message::text(request_of_len(MAX_MESSAGE_BYTES)))
+        .await
+        .unwrap();
+    assert_eq!(next_json(&mut socket).await["error"]["code"], -32601);
+
+    // The send itself may fail once the server drops the connection.
+    let _ = socket
+        .send(Message::text(request_of_len(MAX_MESSAGE_BYTES + 1)))
+        .await;
+    let next = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
+        .await
+        .expect("the socket neither replied nor closed within 10 seconds");
+    assert!(
+        matches!(next, None | Some(Err(_)) | Some(Ok(Message::Close(_)))),
+        "expected the socket to close, got {next:?}"
+    );
+}
+
 #[tokio::test]
 async fn a_foreign_host_header_is_refused() {
     let addr = start().await;

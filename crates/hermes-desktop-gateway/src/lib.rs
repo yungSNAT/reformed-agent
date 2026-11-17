@@ -28,6 +28,16 @@ pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
 /// Shortest token accepted from the environment.
 pub const MIN_TOKEN_LEN: usize = 32;
 
+/// Largest inbound WebSocket message (and frame); a larger one closes the connection.
+// shortcut: 16 MiB, uvicorn's default. Upstream raises its server to 384 MiB
+// (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py) because
+// `file.attach` sends a whole base64 file in one frame; raise this with `file.attach`.
+pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
+
+/// Most requests one JSON-RPC batch may hold; a longer batch gets a single -32600.
+/// Upstream's gateway takes no batches at all, so no desktop frame comes near it.
+pub const MAX_BATCH: usize = 100;
+
 const LOOPBACK_NAMES: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 
 struct Gateway {
