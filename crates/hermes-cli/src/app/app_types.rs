@@ -395,6 +395,8 @@ fn merge_usage_stats(existing: Option<UsageStats>, new: &UsageStats) -> UsageSta
                 (None, Some(b)) => Some(b),
                 (None, None) => None,
             },
+            cache_read_tokens: prev.cache_read_tokens + new.cache_read_tokens,
+            cache_write_tokens: prev.cache_write_tokens + new.cache_write_tokens,
         },
         None => new.clone(),
     }

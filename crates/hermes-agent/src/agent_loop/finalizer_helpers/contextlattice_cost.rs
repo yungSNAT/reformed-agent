@@ -233,7 +233,16 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
         (Some(i), Some(o)) => (i, o),
         _ => default_model_cost_per_million(model)?,
     };
-    let prompt_cost = (usage.prompt_tokens as f64 / 1_000_000.0) * in_pm;
+    // shortcut: Anthropic's rates, the only provider that reports cache
+    // counts here: a cache read costs 0.1 and a 5-minute cache write 1.25 of
+    // the input price. A 1-hour write (2x) is priced as a 5-minute one; carry
+    // the provider's rates with the counts once another provider reports them.
+    let cached = usage.cache_read_tokens + usage.cache_write_tokens;
+    let uncached = usage.prompt_tokens.saturating_sub(cached);
+    let prompt_tokens = uncached as f64
+        + 0.1 * usage.cache_read_tokens as f64
+        + 1.25 * usage.cache_write_tokens as f64;
+    let prompt_cost = (prompt_tokens / 1_000_000.0) * in_pm;
     let completion_cost = (usage.completion_tokens as f64 / 1_000_000.0) * out_pm;
     Some(prompt_cost + completion_cost)
 }
@@ -251,6 +260,8 @@ fn merge_usage(existing: Option<UsageStats>, new: &UsageStats) -> UsageStats {
                 (None, Some(b)) => Some(b),
                 (None, None) => None,
             },
+            cache_read_tokens: prev.cache_read_tokens + new.cache_read_tokens,
+            cache_write_tokens: prev.cache_write_tokens + new.cache_write_tokens,
         },
         None => new.clone(),
     }

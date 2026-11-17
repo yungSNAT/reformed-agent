@@ -272,13 +272,23 @@ impl ToolResult {
 // ---------------------------------------------------------------------------
 
 /// Token usage statistics from an LLM response.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
 pub struct UsageStats {
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
     pub total_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub estimated_cost: Option<f64>,
+    /// The part of `prompt_tokens` read from the provider's prompt cache.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_read_tokens: u64,
+    /// The part of `prompt_tokens` written to the provider's prompt cache.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub cache_write_tokens: u64,
+}
+
+fn is_zero(v: &u64) -> bool {
+    *v == 0
 }
 
 /// Record of a tool error during execution.

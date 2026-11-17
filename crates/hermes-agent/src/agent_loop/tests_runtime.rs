@@ -989,18 +989,24 @@
             completion_tokens: 50,
             total_tokens: 150,
             estimated_cost: Some(0.01),
+            cache_read_tokens: 30,
+            cache_write_tokens: 0,
         };
         let b = UsageStats {
             prompt_tokens: 200,
             completion_tokens: 100,
             total_tokens: 300,
             estimated_cost: Some(0.02),
+            cache_read_tokens: 60,
+            cache_write_tokens: 40,
         };
         let merged = merge_usage(Some(a), &b);
         assert_eq!(merged.prompt_tokens, 300);
         assert_eq!(merged.completion_tokens, 150);
         assert_eq!(merged.total_tokens, 450);
         assert_eq!(merged.estimated_cost, Some(0.03));
+        assert_eq!(merged.cache_read_tokens, 90);
+        assert_eq!(merged.cache_write_tokens, 40);
     }
 
     #[test]
@@ -1010,6 +1016,7 @@
             completion_tokens: 100,
             total_tokens: 300,
             estimated_cost: None,
+            ..Default::default()
         };
         let merged = merge_usage(None, &b);
         assert_eq!(merged.prompt_tokens, 200);
@@ -1023,6 +1030,7 @@
             completion_tokens: 1000,
             total_tokens: 2000,
             estimated_cost: Some(0.42),
+            ..Default::default()
         };
         let cost = estimate_usage_cost_usd(&u, "openai:gpt-4o", &cfg).unwrap();
         assert!((cost - 0.42).abs() < 1e-9);
@@ -1036,9 +1044,27 @@
             completion_tokens: 1_000_000,
             total_tokens: 2_000_000,
             estimated_cost: None,
+            ..Default::default()
         };
         let cost = estimate_usage_cost_usd(&u, "openai:gpt-4o-mini", &cfg).unwrap();
         assert!((cost - 0.75).abs() < 1e-9);
+    }
+
+    #[test]
+    fn test_estimate_usage_cost_prices_cached_prompt_tokens() {
+        let cfg = AgentConfig::default();
+        let u = UsageStats {
+            prompt_tokens: 1_000_000,
+            completion_tokens: 0,
+            total_tokens: 1_000_000,
+            estimated_cost: None,
+            cache_read_tokens: 400_000,
+            cache_write_tokens: 200_000,
+        };
+        // 400,000 uncached, 400,000 read at 0.1 and 200,000 written at 1.25,
+        // at Sonnet's fallback input price of $2.50 a million.
+        let cost = estimate_usage_cost_usd(&u, "anthropic:claude-sonnet-4-6", &cfg).unwrap();
+        assert!((cost - 2.5 * (0.4 + 0.04 + 0.25)).abs() < 1e-9, "{cost}");
     }
 
     include!("tests/runtime_provider_resolution.rs");

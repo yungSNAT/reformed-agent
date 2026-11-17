@@ -210,6 +210,7 @@ mod tests {
                     completion_tokens: 1,
                     total_tokens: 2,
                     estimated_cost: None,
+                    ..Default::default()
                 }),
             })
         }

@@ -256,3 +256,69 @@ fn test_anthropic_resolve_messages_max_tokens_none_falls_back_to_model_default()
     assert!(resolved > 0);
     assert_eq!(resolved, get_anthropic_max_output("claude-sonnet-4-6"));
 }
+
+#[test]
+fn test_anthropic_parse_response_counts_cached_prompt_tokens() {
+    let json = serde_json::json!({
+        "content": [{"type": "text", "text": "ok"}],
+        "model": "claude-sonnet-4-6",
+        "stop_reason": "end_turn",
+        "usage": {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 1000,
+            "cache_creation_input_tokens": 200,
+            "output_tokens": 5
+        }
+    });
+    let usage = AnthropicProvider::parse_response(&json).unwrap().usage.unwrap();
+    assert_eq!(usage.prompt_tokens, 1210);
+    assert_eq!(usage.cache_read_tokens, 1000);
+    assert_eq!(usage.cache_write_tokens, 200);
+    assert_eq!(usage.completion_tokens, 5);
+    assert_eq!(usage.total_tokens, 1215);
+}
+
+#[tokio::test]
+async fn a_streamed_anthropic_message_ends_with_its_whole_usage() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = vec![0u8; 65536];
+        let _ = socket.read(&mut request).await;
+        let body = concat!(
+            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":",
+            "{\"input_tokens\":10,\"cache_read_input_tokens\":1000,",
+            "\"cache_creation_input_tokens\":200,\"output_tokens\":1}}}\n\n",
+            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,",
+            "\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
+            "event: message_delta\ndata: {\"type\":\"message_delta\",",
+            "\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
+            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        );
+        let head = format!(
+            "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
+            body.len()
+        );
+        socket.write_all(head.as_bytes()).await.unwrap();
+        socket.write_all(body.as_bytes()).await.unwrap();
+        socket.flush().await.unwrap();
+    });
+
+    let provider = AnthropicProvider::new("sk-ant-api03-test").with_base_url(format!("http://{addr}"));
+    let mut stream =
+        provider.chat_completion_stream(&[Message::user("hi")], &[], None, None, None, None);
+    let mut last_usage = None;
+    while let Some(chunk) = stream.next().await {
+        if let Some(usage) = chunk.unwrap().usage {
+            last_usage = Some(usage);
+        }
+    }
+    let usage = last_usage.expect("a usage chunk");
+    assert_eq!(usage.prompt_tokens, 1210);
+    assert_eq!(usage.cache_read_tokens, 1000);
+    assert_eq!(usage.cache_write_tokens, 200);
+    assert_eq!(usage.completion_tokens, 7);
+    assert_eq!(usage.total_tokens, 1217);
+}

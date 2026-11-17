@@ -45,6 +45,7 @@ impl LlmProvider for AlwaysToolCallLlm {
                 completion_tokens: 5,
                 total_tokens: 15,
                 estimated_cost: None,
+                ..Default::default()
             }),
             model: "mock".to_string(),
             finish_reason: Some("tool_calls".to_string()),
