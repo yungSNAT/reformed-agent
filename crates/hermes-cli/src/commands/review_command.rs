@@ -254,7 +254,12 @@ mod tests {
         let mut user_turn = tool_turn(&[("skill_view", r#"{"name":"from-user"}"#)]);
         user_turn.role = MessageRole::User;
         messages.push(user_turn);
+        // The loads fall outside the excerpt, which keeps the last 10 messages.
+        for n in 0..11 {
+            messages.push(message(MessageRole::User, &format!("later {n}")));
+        }
         let task = build_review_task(&messages, "").unwrap();
+        assert!(!task.contains("fix the parser"), "{task}");
         let line = "The primary agent was operating under these loaded skills: rust, tdd. Before reviewing, load each with skill_view(name=...)";
         assert!(task.contains(&format!("{EXCERPT_END}\n\n{line}")), "{task}");
         assert_eq!(task.matches("loaded skills").count(), 1);
@@ -269,6 +274,48 @@ mod tests {
 
         let task = build_review_task(&[message(MessageRole::User, "q")], "").unwrap();
         assert!(!task.contains("loaded skills"));
+    }
+
+    #[test]
+    fn skill_arguments_are_read_with_python_truthiness_as_upstream_reads_them() {
+        let task = |arguments: &str| {
+            build_review_task(
+                &[
+                    message(MessageRole::User, "q"),
+                    tool_turn(&[("skill_view", arguments)]),
+                ],
+                "",
+            )
+            .unwrap()
+        };
+        for skipped in [
+            r#"{"name":"rust","file_path":" "}"#,
+            r#"{"name":"rust","file_path":1}"#,
+            r#"{"name":"rust","file_path":["a"]}"#,
+            r#"{"name":"rust","file_path":true}"#,
+            r#"{"name":0}"#,
+            r#"{"name":""}"#,
+            r#"{"name":" "}"#,
+            r#"["rust"]"#,
+            "null",
+            "",
+        ] {
+            assert!(!task(skipped).contains("loaded skills"), "{skipped}");
+        }
+        for (arguments, listed) in [
+            (r#"{"name":42}"#, "42"),
+            (r#"{"name":true}"#, "True"),
+            (r#"{"name":"rust","file_path":""}"#, "rust"),
+            (r#"{"name":"rust","file_path":0}"#, "rust"),
+            (r#"{"name":"rust","file_path":null}"#, "rust"),
+            (r#"{"name":"rust","file_path":false}"#, "rust"),
+            (r#"{"name":"rust","file_path":[]}"#, "rust"),
+        ] {
+            assert!(
+                task(arguments).contains(&format!("loaded skills: {listed}. Before")),
+                "{arguments}"
+            );
+        }
     }
 
     #[test]
