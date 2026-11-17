@@ -821,14 +821,7 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         chrono::Utc::now().format("%Y%m%d%H%M%S"),
         uuid::Uuid::new_v4().simple()
     );
-    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
-    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
-        AgentError::Io(format!(
-            "Failed to create background job directory {}: {}",
-            jobs_dir.display(),
-            e
-        ))
-    })?;
+    let jobs_dir = background_jobs_dir()?;
     let status_path = jobs_dir.join(format!("{}.json", job_id));
     let log_path = jobs_dir.join(format!("{}.log", job_id));
 
@@ -856,6 +849,70 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         status_path,
         log_path,
     })
+}
+
+/// The background jobs folder, created if missing. Job files hold the task
+/// and its output, so on Unix the folder is the owner's alone, one created
+/// open by an older version included.
+fn background_jobs_dir() -> Result<PathBuf, AgentError> {
+    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
+    std::fs::create_dir_all(&jobs_dir).map_err(|e| {
+        AgentError::Io(format!(
+            "Failed to create background job directory {}: {}",
+            jobs_dir.display(),
+            e
+        ))
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&jobs_dir, std::fs::Permissions::from_mode(0o700)).map_err(
+            |e| {
+                AgentError::Io(format!(
+                    "Cannot make the background job directory {} owner-only ({}); \
+                     its job files would be readable by other users, so fix its \
+                     ownership or remove it",
+                    jobs_dir.display(),
+                    e
+                ))
+            },
+        )?;
+    }
+    Ok(jobs_dir)
+}
+
+/// Starts `exe chat --query -` for a background task and writes the task to
+/// its standard input: on the command line, other local users could read it
+/// while the child runs.
+fn spawn_background_child(
+    exe: &std::path::Path,
+    task: &str,
+) -> std::io::Result<tokio::process::Child> {
+    let mut cmd = tokio::process::Command::new(exe);
+    cmd.arg("chat")
+        .arg("--query")
+        .arg("-")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+    cmd.suppress_windows_console();
+    // Ensure detached children do not survive runtime/session teardown.
+    cmd.kill_on_drop(true);
+
+    if let Ok(home) = std::env::var("HERMES_HOME") {
+        cmd.env("HERMES_HOME", home);
+    }
+    let mut child = cmd.spawn()?;
+    if let Some(mut stdin) = child.stdin.take() {
+        let task = task.to_string();
+        // Written alongside the wait, so a child that stops reading cannot
+        // stall it; dropping the pipe afterwards ends the child's input.
+        tokio::spawn(async move {
+            use tokio::io::AsyncWriteExt;
+            let _ = stdin.write_all(task.as_bytes()).await;
+        });
+    }
+    Ok(child)
 }
 
 fn handle_background_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
@@ -1161,22 +1218,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
             }
         };
 
-        let mut cmd = tokio::process::Command::new(exe);
-        cmd.arg("chat")
-            .arg("--query")
-            .arg(task)
-            .stdin(Stdio::null())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped());
-        cmd.suppress_windows_console();
-        // Ensure detached children do not survive runtime/session teardown.
-        cmd.kill_on_drop(true);
-
-        if let Ok(home) = std::env::var("HERMES_HOME") {
-            cmd.env("HERMES_HOME", home);
-        }
-
-        let child = match cmd.spawn() {
+        let child = match spawn_background_child(&exe, &task) {
             Ok(child) => child,
             Err(e) => {
                 let mut failed = queued.clone();
@@ -1255,10 +1297,20 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
     });
 }
 
-pub fn recover_queued_background_jobs(max_jobs: usize) -> usize {
-    let jobs_dir = hermes_config::hermes_home().join("background_jobs");
+/// Runs the jobs left queued by an earlier session. Fails when an existing
+/// jobs folder cannot be made owner-only, so the CLI does not start with job
+/// files other users can read.
+pub fn recover_queued_background_jobs(max_jobs: usize) -> Result<usize, AgentError> {
+    if !hermes_config::hermes_home()
+        .join("background_jobs")
+        .is_dir()
+    {
+        return Ok(0);
+    }
+    // Narrows a folder an older version created open before its jobs run.
+    let jobs_dir = background_jobs_dir()?;
     let Ok(entries) = std::fs::read_dir(&jobs_dir) else {
-        return 0;
+        return Ok(0);
     };
     let mut recovered = 0usize;
     for entry in entries.filter_map(Result::ok) {
@@ -1299,7 +1351,7 @@ pub fn recover_queued_background_jobs(max_jobs: usize) -> usize {
             recovered = recovered.saturating_add(1);
         }
     }
-    recovered
+    Ok(recovered)
 }
 
 fn read_json_map(path: &std::path::Path) -> serde_json::Map<String, serde_json::Value> {

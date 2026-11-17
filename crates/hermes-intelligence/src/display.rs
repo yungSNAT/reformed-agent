@@ -68,7 +68,7 @@ pub fn build_tool_preview(
     if tool_name == "process" {
         let action = obj.get("action").and_then(|v| v.as_str()).unwrap_or("");
         let sid = obj.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
-        let parts: Vec<&str> = [action, &sid[..sid.len().min(16)]]
+        let parts: Vec<&str> = [action, &sid[..sid.floor_char_boundary(16)]]
             .iter()
             .filter(|s| !s.is_empty())
             .copied()
@@ -159,7 +159,10 @@ pub fn build_tool_preview(
         return None;
     }
     if max_len > 0 && preview.len() > max_len {
-        Some(format!("{}...", &preview[..max_len - 3]))
+        Some(format!(
+            "{}...",
+            &preview[..preview.floor_char_boundary(max_len - 3)]
+        ))
     } else {
         Some(preview)
     }
@@ -277,7 +280,7 @@ pub fn get_cute_tool_message(
 
     let trunc = |s: &str, n: usize| -> String {
         if s.len() > n {
-            format!("{}...", &s[..n.saturating_sub(3)])
+            format!("{}...", &s[..s.floor_char_boundary(n.saturating_sub(3))])
         } else {
             s.to_string()
         }
@@ -364,7 +367,7 @@ pub fn get_cute_tool_message(
             format!(
                 "{} ⚡ {:9} {}  {}",
                 prefix,
-                &tool_name[..tool_name.len().min(9)],
+                &tool_name[..tool_name.floor_char_boundary(9)],
                 trunc(&preview, 35),
                 dur
             )
@@ -399,7 +402,7 @@ fn detect_tool_failure(tool_name: &str, result: Option<&str>) -> (bool, String) 
         return (false, String::new());
     }
 
-    let lower = &result[..result.len().min(500)].to_lowercase();
+    let lower = &result[..result.floor_char_boundary(500)].to_lowercase();
     if lower.contains("\"error\"") || lower.contains("\"failed\"") || result.starts_with("Error") {
         return (true, " [error]".to_string());
     }
@@ -678,7 +681,10 @@ fn oneline(text: &str) -> String {
 
 fn truncate(text: &str, max: usize) -> String {
     if max > 0 && text.len() > max {
-        format!("{}...", &text[..max.saturating_sub(3)])
+        format!(
+            "{}...",
+            &text[..text.floor_char_boundary(max.saturating_sub(3))]
+        )
     } else {
         text.to_string()
     }
@@ -1048,6 +1054,26 @@ mod tests {
     fn test_format_progress_bar() {
         let bar = format_progress_bar(50, 100, 10);
         assert!(bar.contains("50%"));
+    }
+
+    /// Byte limits cut on a character boundary: a cut inside a multi-byte
+    /// character panics.
+    #[test]
+    fn previews_and_failure_checks_survive_multi_byte_text() {
+        // Odd byte offsets fall inside `even`'s characters, even ones inside `odd`'s.
+        let even = "é".repeat(400);
+        let odd = format!("a{even}");
+        let args = serde_json::json!({"query": even});
+        let preview = build_tool_preview("web_search", &args, 40).unwrap();
+        assert!(preview.ends_with("...") && preview.len() <= 40, "{preview}");
+        let process = serde_json::json!({"action": "poll", "session_id": odd});
+        assert!(build_tool_preview("process", &process, 0).is_some());
+        assert!(!get_cute_tool_message("web_search", &args, 1.0, Some(&odd)).is_empty());
+        assert!(!get_cute_tool_message("outil_éé", &args, 1.0, None).is_empty());
+        for command in [&even, &odd] {
+            let terminal = serde_json::json!({"command": command});
+            assert!(!get_cute_tool_message("terminal", &terminal, 1.0, None).is_empty());
+        }
     }
 
     #[test]

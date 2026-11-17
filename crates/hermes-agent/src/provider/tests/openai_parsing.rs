@@ -206,6 +206,19 @@ fn test_parse_sse_chunk_tool_call() {
 }
 
 #[test]
+fn test_parse_sse_chunk_keeps_the_usage_chunk_without_choices() {
+    // OpenAI's last chunk when stream_options.include_usage is set.
+    let json = serde_json::json!({
+        "choices": [],
+        "usage": {"prompt_tokens": 12, "completion_tokens": 3, "total_tokens": 15}
+    });
+    let chunk = parse_sse_chunk(&json).expect("usage chunk");
+    assert!(chunk.delta.is_none());
+    assert_eq!(chunk.usage.as_ref().unwrap().total_tokens, 15);
+    assert!(parse_sse_chunk(&serde_json::json!({"choices": []})).is_none());
+}
+
+#[test]
 fn test_parse_sse_chunk_finish() {
     let json = serde_json::json!({
         "choices": [{

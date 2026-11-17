@@ -140,7 +140,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "8fa264c2f909e1e8102fc6d43154d3e468665a69",
+      "local_blob": "cfeada317881fdd5076bf5529b5c421c71968feb",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -10008,15 +10008,15 @@
     {
       "action": "No vendoring; verify approved divergence remains current.",
       "classification": "intentional_divergence",
-      "classification_path": "tests/integration",
+      "classification_path": "tests/integration/test_batch_runner.py",
       "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "85565ae6e49cf8893f23c82b730a5bbf74b398d4",
       "necessity": "approved_divergence",
-      "owner": "sheawinkler",
+      "owner": "yungSNAT",
       "path": "tests/integration/test_batch_runner.py",
       "rust_requirement": "not_required_for_runtime",
       "status": "cleared_intentional_divergence",
-      "ticket": 25,
+      "ticket": 3523,
       "upstream_blob": "793006062397da60fc153b93c64fd3f2bef0555e",
       "workstream": "WS6"
     },
@@ -19666,10 +19666,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-16T17:19:56.467639+00:00",
+  "generated_at_utc": "2026-11-17T00:26:28.731362+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "8863619a17abb0f366dafbcdc33ecb4bf377127f",
+    "local_sha": "ce774721ef29706f40764d120487f0893b35fa9b",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "b51fbc738be26760939922981f9d4ee468770f91"
   },

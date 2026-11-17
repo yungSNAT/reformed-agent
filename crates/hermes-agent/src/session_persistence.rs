@@ -917,6 +917,59 @@ impl SessionPersistence {
         Ok(session_ids.len() as u64)
     }
 
+    /// Delete a session from the store: its row, messages and search entries
+    /// in one transaction, then its `.jsonl` transcript. As in Hermes Agent, a
+    /// session that names it as parent is kept and loses the link. Returns
+    /// whether the store held the session.
+    pub fn delete_session(&self, session_id: &str) -> Result<bool, AgentError> {
+        // The id names a file below, so it must be a plain file name.
+        if Path::new(session_id).file_name() != Some(std::ffi::OsStr::new(session_id)) {
+            return Err(AgentError::Config(format!(
+                "Invalid session id '{session_id}'"
+            )));
+        }
+        let mut deleted = false;
+        if self.db_path.exists() {
+            self.ensure_db()?;
+            let conn = rusqlite::Connection::open(&self.db_path)
+                .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
+            let tx = conn
+                .unchecked_transaction()
+                .map_err(|e| AgentError::Io(format!("Failed to open delete transaction: {e}")))?;
+            deleted = tx
+                .query_row(
+                    "SELECT EXISTS(SELECT 1 FROM sessions WHERE id = ?1)",
+                    rusqlite::params![session_id],
+                    |row| row.get(0),
+                )
+                .map_err(|e| AgentError::Io(format!("Failed to look up session: {e}")))?;
+            // As upstream, a session the store does not hold changes nothing there.
+            if deleted {
+                Self::delete_fts_rows_for_session(&tx, session_id)?;
+                for sql in [
+                    "UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?1",
+                    "DELETE FROM messages WHERE session_id = ?1",
+                    "DELETE FROM sessions WHERE id = ?1",
+                ] {
+                    tx.execute(sql, rusqlite::params![session_id])
+                        .map_err(|e| {
+                            AgentError::Io(format!("Failed to delete session data: {e}"))
+                        })?;
+                }
+                tx.commit()
+                    .map_err(|e| AgentError::Io(format!("Failed to commit session delete: {e}")))?;
+            }
+        }
+        let transcript = self.sessions_dir.join(format!("{session_id}.jsonl"));
+        match std::fs::remove_file(&transcript) {
+            Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(AgentError::Io(format!(
+                "Failed to remove session transcript {}: {e}",
+                transcript.display()
+            ))),
+            _ => Ok(deleted),
+        }
+    }
+
     /// Delete a session row only when it never gained resumable content.
     ///
     /// Empty sessions have no messages, no title, and no child sessions. The

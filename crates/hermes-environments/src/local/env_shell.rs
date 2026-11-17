@@ -524,26 +524,30 @@ fn shell_source_prelude(files: &[PathBuf]) -> String {
 fn scrub_subprocess_env(cmd: &mut TokioCommand, configured_passthrough: &[String]) {
     let passthrough = subprocess_env_passthrough_set(configured_passthrough);
     let mut forced = Vec::new();
-    for (key, _) in std::env::vars() {
-        if let Some(target) = key.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX) {
+    // `std::env::vars` panics on a name or value that is not UTF-8. Such a
+    // name is judged by its lossy form, so a secret-like one is still removed.
+    for (key, _) in std::env::vars_os() {
+        let name = key.to_string_lossy();
+        if let Some(target) = name.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX) {
             cmd.env_remove(&key);
             if !target.is_empty() && should_strip_subprocess_env(target) {
-                if let Ok(value) = std::env::var(&key) {
+                if let (Some(_), Ok(value)) = (key.to_str(), std::env::var(&key)) {
                     forced.push((target.to_string(), value));
                 }
             }
-        } else if should_strip_subprocess_env(&key)
-            && !is_subprocess_env_passthrough(&key, &passthrough)
+        } else if should_strip_subprocess_env(&name)
+            && !is_subprocess_env_passthrough(&name, &passthrough)
         {
-            cmd.env_remove(key);
+            cmd.env_remove(&key);
         }
     }
     for (target, value) in forced {
         cmd.env(target, value);
     }
-    let forced_targets: Vec<String> = std::env::vars()
+    let forced_targets: Vec<String> = std::env::vars_os()
         .filter_map(|(key, _)| {
-            key.strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX)
+            key.to_str()?
+                .strip_prefix(SUBPROCESS_ENV_FORCE_PREFIX)
                 .filter(|target| !target.is_empty() && should_strip_subprocess_env(target))
                 .map(ToString::to_string)
         })

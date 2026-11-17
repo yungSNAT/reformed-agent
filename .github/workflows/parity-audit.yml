@@ -18,6 +18,8 @@ jobs:
           persist-credentials: false
       - name: Fetch local parity reference
         run: git fetch origin main --depth=1
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
       - name: Checkout upstream hermes-agent snapshot
         run: git clone --depth 1 https://github.com/NousResearch/hermes-agent.git ../hermes-agent
       # Upstream's live main moves daily, so this audit reports drift in the job
@@ -28,7 +30,7 @@ jobs:
           python3 scripts/generate-parity-matrix.py --local-ref origin/main
           python3 scripts/generate-workstream-status.py
           python3 scripts/generate-test-intent-mapping.py
-          python3 scripts/validate-intentional-divergence.py --check --allow-warnings
+          cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
           python3 scripts/generate-test-coverage-audit.py --check
           python3 scripts/generate-adapter-matrix.py
           python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
@@ -43,7 +45,7 @@ jobs:
       - name: Upstream surface coverage report
         run: |
           report=.sync-reports/upstream-surface-coverage-gate.json
-          python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-ref origin/main --report-path "$report" || test -f "$report"
+          cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-ref origin/main --report-path "$report" || test -f "$report"
           jq -r '"- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
       # The harness imports upstream's hermes_cli.commands, which needs upstream's
       # core dependencies. Upstream's uv.lock applies its dependency overrides,

@@ -89,6 +89,7 @@ mod diff_command;
 mod hermes_history;
 pub use hermes_history::{import_hermes_sessions, HermesHistorySummary};
 mod hermes_migrate;
+mod init_command;
 pub use hermes_migrate::{default_hermes_home, migrate_hermes, MigrateReport, MigrateRequest};
 
 /// `std::fs::read_dir(dir)` with its unreadable entries skipped, listed on the
