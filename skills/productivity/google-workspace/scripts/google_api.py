@@ -24,7 +24,6 @@ import argparse
 import base64
 import json
 import os
-import shutil
 import subprocess
 import sys
 from datetime import datetime, timedelta, timezone
@@ -37,6 +36,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from _hermes_home import get_hermes_home
+from _program_path import find_program
 
 HERMES_HOME = get_hermes_home()
 TOKEN_PATH = HERMES_HOME / "google_token.json"
@@ -83,7 +83,7 @@ def _gws_binary() -> str | None:
     override = os.getenv("HERMES_GWS_BIN")
     if override:
         return override
-    return shutil.which("gws")
+    return find_program("gws")
 
 
 def _gws_env() -> dict[str, str]:
