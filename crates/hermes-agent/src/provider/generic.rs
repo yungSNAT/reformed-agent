@@ -525,6 +525,16 @@ impl GenericProvider {
         if provider_profiles::is_kimi_code_base_url(&self.base_url) {
             req = req.header("User-Agent", provider_profiles::KIMI_CODE_USER_AGENT);
         }
+        if self.provider_profile.as_deref() == Some("fireworks") {
+            // Upstream's Fireworks profile sends Hermes's attribution headers.
+            req = req
+                .header("HTTP-Referer", "https://hermes-agent.nousresearch.com")
+                .header("X-Title", "Hermes Agent")
+                .header(
+                    "User-Agent",
+                    concat!("HermesAgent/", env!("CARGO_PKG_VERSION")),
+                );
+        }
         for (key, value) in &self.extra_headers {
             req = req.header(key.as_str(), value.as_str());
         }
