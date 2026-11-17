@@ -14,7 +14,9 @@
 //! session is touched.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
+use std::task::Poll;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
@@ -283,16 +285,26 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
     }
 }
 
-/// Runs `write` until it finishes or `deadline` passes: true if it finished first.
+/// Runs `write` until it finishes or `deadline` passes: true if it finished first. `write` is
+/// never polled at or after the deadline, where `timeout_at` would still poll it first and take
+/// a write that is ready by then.
 async fn write_by<E>(
     deadline: tokio::time::Instant,
-    write: impl std::future::Future<Output = Result<(), E>>,
+    write: impl Future<Output = Result<(), E>>,
 ) -> bool {
-    // `timeout_at` would still take a write that is ready at once after the deadline.
-    if tokio::time::Instant::now() >= deadline {
-        return false;
-    }
-    matches!(tokio::time::timeout_at(deadline, write).await, Ok(Ok(())))
+    let mut write = std::pin::pin!(write);
+    let mut expiry = std::pin::pin!(tokio::time::sleep_until(deadline));
+    std::future::poll_fn(|cx| {
+        if tokio::time::Instant::now() >= deadline {
+            return Poll::Ready(false);
+        }
+        if let Poll::Ready(result) = write.as_mut().poll(cx) {
+            return Poll::Ready(result.is_ok());
+        }
+        // Wakes this task at the deadline, so a stalled write ends then.
+        expiry.as_mut().poll(cx).map(|()| false)
+    })
+    .await
 }
 
 fn rpc_error(id: Value, code: i64, message: String) -> Value {
@@ -383,7 +395,6 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
 mod tests {
     use super::*;
     use std::cell::Cell;
-    use std::task::Poll;
     use tokio::time::{Duration, Instant};
 
     #[tokio::test]
