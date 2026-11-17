@@ -260,17 +260,20 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
         return;
     }
     // Turns stream their events through this connection's outbox; replies go out first, as
-    // each is written before the next outbox frame is read.
+    // each is written before the next outbox frame is read. Queued events are written before
+    // the next request is read, so a client that reads slowly cannot start more turns while
+    // finished ones wait, and the outbox holds the events of at most 8 turns (the turn cap).
     let (outbox, mut events) = mpsc::unbounded_channel();
     let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
     loop {
         let frame = tokio::select! {
+            biased;
+            Some(event) = events.recv() => Some(event),
             inbound = socket.recv() => match inbound {
                 Some(Ok(Message::Text(text))) => reply_to(&text, &call),
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 Some(Ok(_)) => None,
             },
-            Some(event) = events.recv() => Some(event),
         };
         if let Some(frame) = frame {
             if socket
