@@ -16,6 +16,7 @@ impl McpClient {
             sampling_metrics: SamplingMetrics::default(),
             connected_at: None,
             ping_unsupported: false,
+            connect_timeout: Duration::from_secs(MCP_CONNECT_TIMEOUT_SECS),
         }
     }
 
@@ -37,10 +38,21 @@ impl McpClient {
         transport.start().await?;
         self.transport = Some(transport);
 
-        let discovery = match self.initialize().await {
-            Ok(_) => self.discover_tools().await,
-            Err(err) => Err(err),
+        // A server that never answers would otherwise hold its caller (a
+        // session start, the CLI's start-up) for good.
+        let timeout = self.connect_timeout;
+        let handshake = async {
+            self.initialize().await?;
+            self.discover_tools().await
         };
+        let discovery = tokio::time::timeout(timeout, handshake)
+            .await
+            .unwrap_or_else(|_| {
+                Err(McpError::ConnectionError(format!(
+                    "MCP server did not finish its handshake within {}s",
+                    timeout.as_secs()
+                )))
+            });
         if let Err(err) = discovery {
             self.connected = false;
             self.connected_at = None;

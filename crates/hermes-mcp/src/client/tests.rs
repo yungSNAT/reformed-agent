@@ -237,6 +237,55 @@ async fn connect_closes_transport_when_discovery_fails() {
     assert!(client.cached_resources().is_empty());
 }
 
+/// A server that starts but never answers.
+struct SilentTransport {
+    closed: Arc<AtomicBool>,
+}
+
+#[async_trait]
+impl McpTransport for SilentTransport {
+    async fn start(&mut self) -> Result<(), McpError> {
+        Ok(())
+    }
+
+    async fn send(&mut self, _message: serde_json::Value) -> Result<(), McpError> {
+        Ok(())
+    }
+
+    async fn receive(&mut self) -> Result<serde_json::Value, McpError> {
+        std::future::pending().await
+    }
+
+    async fn close(&mut self) -> Result<(), McpError> {
+        self.closed.store(true, Ordering::SeqCst);
+        Ok(())
+    }
+}
+
+#[tokio::test]
+async fn connect_gives_up_on_a_server_that_never_answers_and_closes_it() {
+    let closed = Arc::new(AtomicBool::new(false));
+    let mut client = McpClient::new(McpServerConfig::stdio("silent", Vec::new()));
+    client.connect_timeout = std::time::Duration::from_millis(50);
+
+    let err = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        client.finish_connect_with_transport(Box::new(SilentTransport {
+            closed: closed.clone(),
+        })),
+    )
+    .await
+    .expect("connect must not wait on a silent server")
+    .expect_err("a silent server must not connect");
+
+    assert!(
+        err.to_string().contains("did not finish its handshake"),
+        "{err}"
+    );
+    assert!(closed.load(Ordering::SeqCst));
+    assert!(!client.is_connected());
+}
+
 #[tokio::test]
 async fn keepalive_probe_uses_ping_instead_of_tools_list_payload() {
     let sent = Arc::new(Mutex::new(Vec::new()));

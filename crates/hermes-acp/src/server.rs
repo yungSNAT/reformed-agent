@@ -88,9 +88,12 @@ impl AcpServer {
     /// A prompt runs in the background: its `session/update` notifications
     /// are written as they are pushed and before its response, and
     /// `session/cancel`, `/steer` and other requests are handled whilst it
-    /// runs. Other requests are handled one at a time in arrival order. A
-    /// notification (a request without an `id`) gets no response. Returns
-    /// once the reader ends and every running prompt has answered.
+    /// runs. A request that starts a session (new, load, resume or fork)
+    /// also runs in the background, as starting the MCP servers it names
+    /// can be slow. Other requests are handled one at a time in arrival
+    /// order. A notification (a request without an `id`) gets no response.
+    /// Returns once the reader ends and every background request has
+    /// answered.
     pub async fn run_on<R, W>(
         &self,
         reader: R,
@@ -192,26 +195,71 @@ impl AcpServer {
             return;
         }
 
-        let flush_before_response = flush_events_before_response(&request.method);
-        let notification = request.id.is_none();
-        let response = self.handler.handle_request(request).await;
-        let out = lock(outbox);
-        if flush_before_response {
-            send_events(&out, self.event_sink.drain_all());
+        if starts_mcp_servers(&request.method) {
+            // Starting a client's MCP servers can take up to their connect
+            // timeout, so it must not hold off a cancel or other requests.
+            let request_id = request.id.clone();
+            let task = prompts.tasks.spawn(answer(
+                self.handler.clone(),
+                self.event_sink.clone(),
+                outbox.clone(),
+                request,
+            ));
+            prompts
+                .requests
+                .insert(task.id(), (request_id, String::new(), None));
+            return;
         }
-        if !notification {
-            send(&out, &response);
-        }
-        if !flush_before_response {
-            // Most responses are followed by the session/update
-            // notifications the handler generated.
-            send_events(&out, self.event_sink.drain_all());
-        }
+
+        answer(
+            self.handler.clone(),
+            self.event_sink.clone(),
+            outbox.clone(),
+            request,
+        )
+        .await;
     }
 }
 
-/// Running prompt tasks, with the request and session of each, so one that
-/// panics can still be answered.
+/// The requests that start the MCP servers a client names.
+fn starts_mcp_servers(method: &str) -> bool {
+    matches!(
+        AcpMethod::from(method),
+        AcpMethod::NewSession
+            | AcpMethod::LoadSession
+            | AcpMethod::ResumeSession
+            | AcpMethod::ForkSession
+    )
+}
+
+/// Handle a request other than a prompt and write its response with the
+/// session updates it generated.
+async fn answer(
+    handler: Arc<dyn AcpHandler>,
+    event_sink: Arc<EventSink>,
+    outbox: Outbox,
+    request: AcpRequest,
+) {
+    let flush_before_response = flush_events_before_response(&request.method);
+    let notification = request.id.is_none();
+    let response = handler.handle_request(request).await;
+    let out = lock(&outbox);
+    if flush_before_response {
+        send_events(&out, event_sink.drain_all());
+    }
+    if !notification {
+        send(&out, &response);
+    }
+    if !flush_before_response {
+        // Most responses are followed by the session/update
+        // notifications the handler generated.
+        send_events(&out, event_sink.drain_all());
+    }
+}
+
+/// Requests running in the background (prompts and session starts), with
+/// the request and session of each, so one that panics can still be
+/// answered.
 #[derive(Default)]
 struct Prompts {
     tasks: JoinSet<()>,
@@ -667,6 +715,44 @@ mod tests {
             );
         }
         client.server.await.unwrap();
+    }
+
+    /// A session whose MCP server never answers must not hold off a cancel
+    /// for another session or later requests.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_on_serves_other_requests_whilst_a_session_starts_its_mcp_servers() {
+        let (mut client, _, cancelled) = gated_client();
+        let session_id = new_session(&mut client).await;
+        client.send(prompt_request(&session_id)).await;
+        while !is_reply_chunk(&client.next().await, "partial") {}
+
+        // `sleep` starts and never answers the MCP handshake.
+        client
+            .send(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "session/new",
+                "params": {"cwd": "/tmp", "mcpServers": [
+                    {"type": "stdio", "name": "silent", "command": "sleep", "args": ["30"], "env": []}
+                ]},
+            }))
+            .await;
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "method": "session/cancel", "params": {"sessionId": session_id}}))
+            .await;
+        let (_, response) = client.until_response(2).await;
+        assert_eq!(response["result"]["stopReason"], "cancelled");
+        assert!(cancelled.load(std::sync::atomic::Ordering::SeqCst));
+
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 4, "method": "session/list", "params": {}}))
+            .await;
+        let (_, response) = client.until_response(4).await;
+        assert!(response["result"]["sessions"].is_array(), "{response}");
+
+        // Dropping the server kills the silent server.
+        client.server.abort();
     }
 
     #[tokio::test]
