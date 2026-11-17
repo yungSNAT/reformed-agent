@@ -2,6 +2,10 @@
 //! `json.loads` and `json.dumps` byte for byte (`indent=2` or compact,
 //! `ensure_ascii`, `sort_keys`), `str()` of a parsed JSON value,
 //! `str.strip()`, `datetime.isoformat()` and `pathlib.Path.resolve()`.
+//!
+//! Known limit: `repr` of a string escapes ASCII control characters but
+//! prints other characters Python treats as non-printable (such as U+00A0
+//! and U+200B) as they are, where Python writes `\xa0` or `\u200b`.
 
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
