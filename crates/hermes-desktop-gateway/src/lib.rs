@@ -297,7 +297,9 @@ mod tests {
         assert!(allowed("http://localhost:9119"));
         assert!(allowed("https://127.0.0.1:9119"));
         assert!(allowed("file://"));
-        assert!(allowed("null"));
+        assert!(!allowed("null"));
+        assert!(!allowed("app://hermes"));
+        assert!(!allowed("file://attacker.example"));
         assert!(!allowed("HTTP://attacker.example:9119"));
         assert!(!allowed("https://localhost:9120"));
         assert!(!allowed("attacker.example"));

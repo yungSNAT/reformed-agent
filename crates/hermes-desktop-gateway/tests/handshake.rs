@@ -390,6 +390,10 @@ async fn a_foreign_web_origin_is_refused() {
         "http://[::1".to_string(),
         format!("http://localhost:{}@attacker.example", addr.port()),
         format!("http://attacker.example@localhost:{}x", addr.port()),
+        // Not the packaged app: sandboxed frames and data: pages send null.
+        "null".to_string(),
+        "app://hermes".to_string(),
+        "file://attacker.example".to_string(),
     ] {
         let mut request = ws_request(addr, &format!("?token={TOKEN}"));
         request
@@ -399,16 +403,19 @@ async fn a_foreign_web_origin_is_refused() {
     }
 }
 
-/// The packaged desktop's renderer is not a web page: Chromium sends `file://`, `null` or
-/// the app's own scheme. The token is the boundary there, as upstream's server treats it.
+/// The packaged desktop loads its renderer from a file, so its socket sends exactly
+/// `Origin: file://` (upstream's tests/hermes_cli/test_dashboard_auth_ws_auth.py); a client
+/// without a browser, such as the desktop's main-process probe, sends none.
 #[tokio::test]
-async fn the_packaged_app_origin_may_connect() {
+async fn the_packaged_app_and_a_non_browser_client_may_connect() {
     let addr = start().await;
-    for origin in ["file://", "null", "app://hermes"] {
+    for origin in ["file://", ""] {
         let mut request = ws_request(addr, &format!("?token={TOKEN}"));
-        request
-            .headers_mut()
-            .insert("origin", origin.parse().unwrap());
+        if !origin.is_empty() {
+            request
+                .headers_mut()
+                .insert("origin", origin.parse().unwrap());
+        }
         let (mut socket, _) = tokio_tungstenite::connect_async(request)
             .await
             .unwrap_or_else(|e| panic!("{origin}: {e}"));
