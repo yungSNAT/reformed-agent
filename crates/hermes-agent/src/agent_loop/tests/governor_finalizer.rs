@@ -834,13 +834,15 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
 }
 
 /// A reply that drops the user's explicit anchor (`U1-abc`) is re-asked only when the turn
-/// offers tools to gather evidence; without tools the first answer stands, on both loops.
+/// offers tools to gather evidence; without tools the first answer stands, on both loops. The
+/// output-quality rewrite (a placeholder reply) needs no tools and is re-asked either way.
 #[test]
 fn test_finalizer_retries_need_tools() {
     use std::sync::atomic::{AtomicU32, Ordering};
 
     struct AnchorlessProvider {
         calls: Arc<AtomicU32>,
+        reply: &'static str,
     }
 
     #[async_trait::async_trait]
@@ -856,7 +858,7 @@ fn test_finalizer_retries_need_tools() {
         ) -> Result<hermes_core::LlmResponse, AgentError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             Ok(hermes_core::LlmResponse {
-                message: Message::assistant("remote hello"),
+                message: Message::assistant(self.reply),
                 usage: None,
                 model: "dummy".into(),
                 finish_reason: Some("stop".into()),
@@ -875,7 +877,7 @@ fn test_finalizer_retries_need_tools() {
             self.calls.fetch_add(1, Ordering::SeqCst);
             let chunk = StreamChunk {
                 delta: Some(hermes_core::StreamDelta {
-                    content: Some("remote hello".into()),
+                    content: Some(self.reply.into()),
                     tool_calls: None,
                     extra: None,
                 }),
@@ -887,10 +889,11 @@ fn test_finalizer_retries_need_tools() {
     }
 
     let rt = tokio::runtime::Runtime::new().expect("runtime");
-    let calls_for = |tools: Vec<ToolSchema>, stream: bool| {
+    let calls_for = |reply: &'static str, tools: Vec<ToolSchema>, stream: bool| {
         let calls = Arc::new(AtomicU32::new(0));
         let provider = Arc::new(AnchorlessProvider {
             calls: calls.clone(),
+            reply,
         });
         let agent = AgentLoop::new(
             AgentConfig::default(),
@@ -908,8 +911,9 @@ fn test_finalizer_retries_need_tools() {
     };
     let echo = || vec![ToolSchema::new("echo", "Echo", JsonSchema::new("object"))];
 
-    assert_eq!(calls_for(Vec::new(), false), 1);
-    assert_eq!(calls_for(Vec::new(), true), 1);
-    assert!(calls_for(echo(), false) > 1);
-    assert!(calls_for(echo(), true) > 1);
+    for stream in [false, true] {
+        assert_eq!(calls_for("remote hello", Vec::new(), stream), 1);
+        assert!(calls_for("remote hello", echo(), stream) > 1);
+        assert!(calls_for("U1-abc: see [URL](URL)", Vec::new(), stream) > 1);
+    }
 }
