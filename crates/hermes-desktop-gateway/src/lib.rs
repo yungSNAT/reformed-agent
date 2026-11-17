@@ -252,20 +252,16 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             "replay_epoch": replay_epoch,
         }},
     });
-    if socket
-        .send(Message::Text(ready.to_string().into()))
-        .await
-        .is_err()
-    {
-        return;
-    }
-    // Turns stream their events through this connection's outbox; replies go out first, as
-    // each is written before the next outbox frame is read. Queued events are written before
-    // the next request is read, so a client that reads slowly cannot start more turns while
-    // finished ones wait. A turn keeps its slot until its last event is written, so the turn
-    // cap bounds the replies waiting across all connections; a write that waits past the
-    // write timeout closes the connection, which drops its queued events and frees their slots.
+    // Turns stream their events through this connection's outbox, after `gateway.ready`;
+    // replies go out first, as each is written before the next outbox frame is read. Queued
+    // events are written before the next request is read, so a client that reads slowly cannot
+    // start more turns while finished ones wait. A turn keeps its slot until its last event is
+    // written, so the turn cap bounds the replies waiting across all connections. A frame not
+    // written within the write timeout of being queued closes the connection, which drops its
+    // queued events and frees their slots.
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
+    // Cannot fail: `events` lives until the session ends.
+    let _ = outbox.send(Outgoing::from(ready));
     let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
     loop {
         let frame = tokio::select! {
@@ -279,10 +275,8 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
         };
         if let Some(outgoing) = frame {
             let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
-            if !matches!(
-                tokio::time::timeout(chat.write_timeout(), write).await,
-                Ok(Ok(()))
-            ) {
+            let deadline = outgoing.queued + chat.write_timeout();
+            if !matches!(tokio::time::timeout_at(deadline, write).await, Ok(Ok(()))) {
                 break;
             }
         }
