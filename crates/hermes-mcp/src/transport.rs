@@ -822,8 +822,10 @@ impl McpTransport for HttpTransport {
 /// POST goes to the URL; only when it fails with a 4xx other than 401 or 403
 /// and `<url>/sse` answers is the server treated as the older HTTP+SSE kind this
 /// transport spoke before: messages are then POSTed to the endpoint its
-/// `mcp-message-endpoint` header names (within the server's origin), else
-/// `<url>/message`.
+/// `mcp-message-endpoint` header or first `endpoint` event names (within the
+/// server's origin), else `<url>/message`. That GET's event stream is held
+/// open, as such a server may answer a POST with `202 Accepted` and send the
+/// reply as a `message` event there.
 pub struct HttpSseTransport {
     /// The base URL of the MCP server.
     url: String,
@@ -844,6 +846,11 @@ pub struct HttpSseTransport {
     kind_known: bool,
     /// The message endpoint the older kind's SSE response named.
     message_endpoint: Option<String>,
+    /// The older kind's held GET event stream, its bytes not yet taken as
+    /// events, and where the next event starts in them.
+    legacy_stream: Option<reqwest::Response>,
+    legacy_bytes: Vec<u8>,
+    legacy_events: SseResponseFinder,
     /// The session id a Streamable HTTP server assigned.
     session_id: Option<String>,
     /// Read timeout used for SSE and POST responses.
@@ -871,6 +878,9 @@ impl HttpSseTransport {
             legacy_sse: false,
             kind_known: false,
             message_endpoint: None,
+            legacy_stream: None,
+            legacy_bytes: Vec::new(),
+            legacy_events: SseResponseFinder::default(),
             session_id: None,
             sse_read_timeout: mcp_sse_read_timeout(),
             connect_timeout: mcp_sse_connect_timeout(),
@@ -938,12 +948,13 @@ impl HttpSseTransport {
     /// credentials would go there.
     async fn switch_to_legacy(&mut self) -> Result<bool, McpError> {
         let sse_url = self.endpoint_url("/sse");
-        let Ok(resp) = self
+        // Only the wait for the headers is bounded: the stream stays open
+        // for the server's replies.
+        let request = self
             .with_auth(self.client.get(&sse_url))
-            .timeout(self.connect_timeout)
-            .send()
-            .await
-        else {
+            .header("Accept", "text/event-stream")
+            .send();
+        let Ok(Ok(resp)) = tokio::time::timeout(self.connect_timeout, request).await else {
             return Ok(false);
         };
         if !resp.status().is_success() {
@@ -958,9 +969,81 @@ impl HttpSseTransport {
         {
             self.message_endpoint = Some(self.same_origin_endpoint(ep)?);
         }
+        let is_sse = resp
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .is_some_and(|v| v.starts_with("text/event-stream"));
         self.legacy_sse = true;
+        if is_sse {
+            self.legacy_stream = Some(resp);
+            // The specification's server names its endpoint in its first event.
+            if self.message_endpoint.is_none() {
+                if let Some((name, data)) = self.next_legacy_event(self.connect_timeout).await? {
+                    if name == "endpoint" {
+                        self.message_endpoint = Some(self.same_origin_endpoint(data.trim())?);
+                    } else if name == "message" {
+                        self.queue_legacy_message(&data)?;
+                    }
+                }
+            }
+        }
         info!("MCP HTTP+SSE transport connected to: {}", self.url);
         Ok(true)
+    }
+
+    /// The name and data of the next event with data on the older kind's
+    /// held stream, or `None` once it has ended or sent nothing for `wait`.
+    async fn next_legacy_event(
+        &mut self,
+        wait: Duration,
+    ) -> Result<Option<(String, String)>, McpError> {
+        let max_message_bytes = max_message_bytes_from_env();
+        loop {
+            if let Some(event) = self.legacy_events.next_event(&self.legacy_bytes) {
+                let text = String::from_utf8(self.legacy_bytes.drain(..event.end).collect())
+                    .map_err(|e| McpError::Protocol {
+                        code: -32700,
+                        message: format!("Invalid UTF-8 in event stream: {}", e),
+                    })?;
+                self.legacy_events.consume(event.end);
+                if let Some(fields) = sse_event_fields(&text) {
+                    return Ok(Some(fields));
+                }
+                continue;
+            }
+            let Some(stream) = self.legacy_stream.as_mut() else {
+                return Ok(None);
+            };
+            let Ok(chunk) = tokio::time::timeout(wait, stream.chunk()).await else {
+                return Ok(None);
+            };
+            match chunk.map_err(|e| {
+                McpError::ConnectionError(format!("Failed to read event stream: {}", e))
+            })? {
+                Some(chunk) => {
+                    self.legacy_bytes.extend_from_slice(&chunk);
+                    enforce_message_size(self.legacy_bytes.len(), max_message_bytes)?;
+                }
+                None => {
+                    self.legacy_stream = None;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    /// Queue the JSON-RPC message (or batch) an event carried.
+    fn queue_legacy_message(&mut self, data: &str) -> Result<(), McpError> {
+        let message: Value = serde_json::from_str(data).map_err(|e| McpError::Protocol {
+            code: -32700,
+            message: format!("Invalid JSON in event stream: {}", e),
+        })?;
+        match message {
+            Value::Array(items) => self.pending.extend(items),
+            value => self.pending.push_back(value),
+        }
+        Ok(())
     }
 
     /// `endpoint`, resolved against the server URL, if it keeps its origin.
@@ -1016,6 +1099,22 @@ impl SseResponseFinder {
     /// The end of the response's event, once `body` (which only grows
     /// between calls) holds it in full.
     fn find(&mut self, body: &[u8]) -> Result<Option<usize>, McpError> {
+        while let Some(event) = self.next_event(body) {
+            let end = event.end;
+            let event = std::str::from_utf8(&body[event]).map_err(|e| McpError::Protocol {
+                code: -32700,
+                message: format!("Invalid UTF-8 in response: {}", e),
+            })?;
+            if http_reply_messages(event, true)?.iter().any(is_response) {
+                return Ok(Some(end));
+            }
+        }
+        Ok(None)
+    }
+
+    /// The bytes of the next complete event, once `body` (which only grows
+    /// between calls, but for what `consume` removes) holds it.
+    fn next_event(&mut self, body: &[u8]) -> Option<std::ops::Range<usize>> {
         while self.pos < body.len() {
             let byte = body[self.pos];
             self.pos += 1;
@@ -1029,23 +1128,47 @@ impl SseResponseFinder {
             self.after_cr = byte == b'\r';
             let blank = self.pos - 1 == self.line_start;
             self.line_start = self.pos;
-            if !blank {
-                continue;
-            }
-            let end = self.pos;
-            let event = std::str::from_utf8(&body[self.event_start..end]).map_err(|e| {
-                McpError::Protocol {
-                    code: -32700,
-                    message: format!("Invalid UTF-8 in response: {}", e),
-                }
-            })?;
-            self.event_start = end;
-            if http_reply_messages(event, true)?.iter().any(is_response) {
-                return Ok(Some(end));
+            if blank {
+                let start = std::mem::replace(&mut self.event_start, self.pos);
+                return Some(start..self.pos);
             }
         }
-        Ok(None)
+        None
     }
+
+    /// The caller removed the first `n` bytes, all of them already taken
+    /// as events, from the body.
+    fn consume(&mut self, n: usize) {
+        self.pos -= n;
+        self.line_start -= n;
+        self.event_start -= n;
+    }
+}
+
+/// The name (`message` by default) and data of one SSE event, or `None`
+/// for an event with no data, such as a comment.
+fn sse_event_fields(event: &str) -> Option<(String, String)> {
+    let event = event.replace("\r\n", "\n").replace('\r', "\n");
+    let mut name = None;
+    let mut data: Vec<&str> = Vec::new();
+    for line in event.split('\n') {
+        let field = |prefix: &str| {
+            line.strip_prefix(prefix)
+                .map(|value| value.strip_prefix(' ').unwrap_or(value))
+        };
+        if let Some(value) = field("event:") {
+            name = Some(value.to_string());
+        } else if let Some(value) = field("data:") {
+            data.push(value);
+        }
+    }
+    if data.is_empty() {
+        return None;
+    }
+    Some((
+        name.unwrap_or_else(|| "message".to_string()),
+        data.join("\n"),
+    ))
 }
 
 /// Whether `message` is a JSON-RPC response (a result or error for an id).
@@ -1185,11 +1308,26 @@ impl McpTransport for HttpSseTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        match self.pending.pop_front() {
-            Some(value) => Ok(value),
-            None => Err(McpError::ConnectionError(
-                "No pending response. Call send() first.".to_string(),
-            )),
+        loop {
+            if let Some(value) = self.pending.pop_front() {
+                return Ok(value);
+            }
+            // The older kind may send its replies on the held stream instead.
+            match self.next_legacy_event(self.sse_read_timeout).await? {
+                Some((name, data)) if name == "message" => self.queue_legacy_message(&data)?,
+                Some(_) => {}
+                None if self.legacy_stream.is_some() => {
+                    return Err(McpError::ConnectionError(format!(
+                        "MCP server sent nothing on its event stream for {}s",
+                        self.sse_read_timeout.as_secs()
+                    )))
+                }
+                None => {
+                    return Err(McpError::ConnectionError(
+                        "No pending response. Call send() first.".to_string(),
+                    ))
+                }
+            }
         }
     }
 
@@ -1200,6 +1338,9 @@ impl McpTransport for HttpSseTransport {
         self.legacy_sse = false;
         self.kind_known = false;
         self.message_endpoint = None;
+        self.legacy_stream = None;
+        self.legacy_bytes.clear();
+        self.legacy_events = SseResponseFinder::default();
         self.session_id = None;
         Ok(())
     }
@@ -1776,5 +1917,118 @@ mod tests {
         .expect("sse reply");
         assert_eq!(transport.receive().await.unwrap()["id"], 9);
         held.abort();
+    }
+
+    /// Reads one HTTP request, body included: its head, lower-cased, and its
+    /// body.
+    async fn read_request(stream: &mut tokio::net::TcpStream) -> (String, String) {
+        use tokio::io::AsyncReadExt;
+        let mut bytes = Vec::new();
+        let mut buf = vec![0; 8192];
+        loop {
+            let n = stream.read(&mut buf).await.expect("read request");
+            bytes.extend_from_slice(&buf[..n]);
+            let text = String::from_utf8_lossy(&bytes).to_string();
+            if let Some(end) = text.find("\r\n\r\n") {
+                let head = text[..end].to_ascii_lowercase();
+                let length = head
+                    .lines()
+                    .find_map(|line| line.strip_prefix("content-length:"))
+                    .map_or(0, |v| v.trim().parse::<usize>().expect("length"));
+                if n == 0 || bytes.len() >= end + 4 + length {
+                    return (head, text[end + 4..].to_string());
+                }
+            }
+            assert!(n > 0, "connection closed mid-request");
+        }
+    }
+
+    /// An older HTTP+SSE server as the 2024-11-05 specification describes
+    /// it: the GET stream's first event names the message endpoint, each
+    /// POST is answered `202 Accepted`, and its reply comes as a `message`
+    /// event on the held stream.
+    #[tokio::test]
+    async fn an_older_server_replying_on_its_held_stream_is_read() {
+        use tokio::io::AsyncWriteExt;
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let stub = tokio::spawn(async move {
+            let (replies, to_stream) = tokio::sync::mpsc::unbounded_channel::<Value>();
+            let mut to_stream = Some(to_stream);
+            let mut posted = Vec::new();
+            loop {
+                let (mut stream, _) = server.accept().await.expect("accept");
+                let (head, body) = read_request(&mut stream).await;
+                if head.starts_with("get /mcp/sse ") {
+                    let mut to_stream = to_stream.take().expect("one event stream");
+                    tokio::spawn(async move {
+                        stream
+                            .write_all(
+                                concat!(
+                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
+                                    ": a comment first\r\n\r\n",
+                                    "event: endpoint\r\ndata: /mcp/messages?session_id=s1\r\n\r\n",
+                                )
+                                .as_bytes(),
+                            )
+                            .await
+                            .expect("write stream head");
+                        while let Some(reply) = to_stream.recv().await {
+                            let event = format!("event: message\ndata: {reply}\n\n");
+                            stream
+                                .write_all(event.as_bytes())
+                                .await
+                                .expect("write event");
+                        }
+                    });
+                } else if head.starts_with("post /mcp/messages?session_id=s1 ") {
+                    let message: Value = serde_json::from_str(&body).expect("posted json");
+                    posted.push(message["method"].as_str().unwrap_or_default().to_string());
+                    if let Some(id) = message.get("id") {
+                        replies
+                            .send(serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {"posted": posted.len()}}))
+                            .expect("stream open");
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+                        .await
+                        .expect("write 202");
+                } else {
+                    // The first POST to the URL: this server has no such endpoint.
+                    stream
+                        .write_all(NOT_FOUND.as_bytes())
+                        .await
+                        .expect("write 404");
+                }
+            }
+        });
+
+        let mut transport = HttpSseTransport::new(&url, None);
+        let exchange = async {
+            transport
+                .send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+                .await
+                .expect("initialize sent");
+            let first = transport.receive().await.expect("initialize answered");
+            transport
+                .send(serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+                .await
+                .expect("notification sent");
+            transport
+                .send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+                .await
+                .expect("tools/list sent");
+            let second = transport.receive().await.expect("tools/list answered");
+            (first, second)
+        };
+        let (first, second) = tokio::time::timeout(Duration::from_secs(10), exchange)
+            .await
+            .expect("the exchange waited");
+        assert!(transport.legacy_sse);
+        assert_eq!(first["id"], 1);
+        assert_eq!(first["result"]["posted"], 1);
+        assert_eq!(second["id"], 2);
+        assert_eq!(second["result"]["posted"], 3);
+        stub.abort();
     }
 }
