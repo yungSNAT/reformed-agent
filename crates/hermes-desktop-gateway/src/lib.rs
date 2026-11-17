@@ -103,8 +103,9 @@ async fn host_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next
 /// An absent `Origin` is a client without a browser, such as the desktop's main-process
 /// probe. A web page (`http` or `https`) must be served from this listener. The packaged
 /// desktop loads its renderer from a file, so its socket sends exactly `file://` (upstream's
-/// tests/hermes_cli/test_dashboard_auth_ws_auth.py), which no page served over the web can send. Every
-/// other origin is refused, `null` included: sandboxed frames and `data:` pages send it.
+/// tests/hermes_cli/test_dashboard_auth_ws_auth.py), which no page served over the web can
+/// send. Every other origin is refused, `null` included: sandboxed frames and `data:` pages
+/// send it.
 /// Upstream also admits `null` and other schemes and relies on the token for them.
 fn origin_allowed(headers: &HeaderMap, port: u16) -> bool {
     let Some(origin) = headers.get(header::ORIGIN) else {
