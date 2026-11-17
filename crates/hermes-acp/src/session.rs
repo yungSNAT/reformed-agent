@@ -342,23 +342,27 @@ impl SessionManager {
     /// Start a turn for the prompt numbered `seq` unless a turn is running,
     /// checked and set under one lock. A prompt with no number (a handler
     /// called directly) is numbered now. A prompt that a later cancel covers
-    /// does not start.
+    /// does not start or queue, whether or not another turn runs.
     pub fn begin_turn(&self, session_id: &str, seq: Option<u64>) -> TurnStart {
         let mut sessions = self.sessions.lock().unwrap();
         let Some(state) = sessions.get_mut(session_id) else {
             return TurnStart::Missing;
         };
-        if state.turn_seq.is_some() {
-            return TurnStart::Busy;
-        }
         let seq = seq.unwrap_or_else(|| {
             state.prompts_received += 1;
             state.prompts_received
         });
         state.touch();
+        // Before the busy check, so a cancelled prompt is never queued into
+        // a later prompt's turn.
         if seq <= state.cancel_through {
-            state.phase = SessionPhase::Idle;
+            if state.turn_seq.is_none() {
+                state.phase = SessionPhase::Idle;
+            }
             return TurnStart::Cancelled;
+        }
+        if state.turn_seq.is_some() {
+            return TurnStart::Busy;
         }
         state.turn_seq = Some(seq);
         state.phase = SessionPhase::Active;
@@ -644,6 +648,13 @@ mod tests {
         let b = sessions.prompt_received(&id).unwrap();
         assert_eq!(sessions.begin_turn(&id, Some(b)), TurnStart::Started(b));
         assert!(!sessions.cancel_pending(&id));
+        // A is refused whilst B still runs, and B keeps its turn.
+        assert_eq!(sessions.begin_turn(&id, Some(a)), TurnStart::Cancelled);
+        assert_eq!(
+            sessions.get_session(&id).unwrap().phase,
+            SessionPhase::Active
+        );
+        assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
         assert!(!sessions.finish_turn(&id, b, SessionPhase::Idle));
         assert_eq!(sessions.begin_turn(&id, Some(a)), TurnStart::Cancelled);
 
