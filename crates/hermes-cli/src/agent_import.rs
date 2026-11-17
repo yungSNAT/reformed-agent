@@ -5,13 +5,17 @@
 //!
 //! It only plans unless asked to apply, and it replaces nothing: an MCP
 //! server or skill this home already has is listed and left alone. Credential
-//! files are never read, and MCP environment variables and headers whose
-//! names look like secrets are left out and named, never shown.
+//! files are never read. MCP environment variables and headers whose names or
+//! values look like secrets are left out and named, never shown; a server
+//! whose arguments or URL carry one is skipped, and the report shows only each
+//! server's program or URL origin. Links are not followed out of the source,
+//! and nothing is written through a link in this home.
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
+use hermes_intelligence::redact_sensitive_text;
 use hermes_tools::backends::memory::{FileMemoryBackend, ENTRY_DELIMITER, MEMORY_CHAR_LIMIT};
 use regex::Regex;
 use serde_json::{Map, Value};
@@ -103,7 +107,7 @@ fn import_with(request: &AgentImportRequest<'_>, save_config: SaveConfig) -> Age
         import.left_out.sort();
         import.left_out.dedup();
         import.report.lines.push(format!(
-            "Left out because the names look like secrets; add them to this home yourself: {}",
+            "Left out because they look like secrets; add them to this home yourself: {}",
             import.left_out.join(", ")
         ));
     }
@@ -220,6 +224,10 @@ impl Importer<'_> {
             return;
         }
         let destination = self.request.home.join("memories").join("MEMORY.md");
+        if let Err(err) = check_destination(self.request.home, &destination) {
+            self.record(Status::Error, item, err);
+            return;
+        }
         let existing = match std::fs::read_to_string(&destination) {
             Ok(text) => text
                 .split(ENTRY_DELIMITER)
@@ -254,7 +262,7 @@ impl Importer<'_> {
         if self.request.apply {
             let content = merge.entries.join(ENTRY_DELIMITER);
             if let Err(err) =
-                back_up(&destination).and_then(|()| write_file(&destination, &content))
+                back_up(&destination).and_then(|()| write_file(&destination, content.as_bytes()))
             {
                 self.record(
                     Status::Error,
@@ -267,21 +275,29 @@ impl Importer<'_> {
         self.record(Status::Import, item, detail);
     }
 
+    /// Lists each allow and deny rule, redacted, as not imported.
     fn permission_rules(&mut self, settings: &Map<String, Value>) {
-        let count = |key: &str| {
-            settings
+        let mut rules = Vec::new();
+        for key in ["allow", "deny"] {
+            let found = settings
                 .get("permissions")
                 .and_then(|permissions| permissions.get(key))
-                .and_then(Value::as_array)
-                .map_or(0, Vec::len)
-        };
-        let (allow, deny) = (count("allow"), count("deny"));
-        if allow + deny > 0 {
+                .and_then(Value::as_array);
+            for rule in found.into_iter().flatten() {
+                let rule = rule
+                    .as_str()
+                    .map_or_else(|| rule.to_string(), str::to_string);
+                rules.push(format!("{key} {}", redact_sensitive_text(rule)));
+            }
+        }
+        if !rules.is_empty() {
             self.record(
                 Status::Skip,
                 "permissions",
                 format!(
-                    "{allow} allow and {deny} deny rules: this agent reads no command allow or deny list from config.yaml, so approvals stay as they are"
+                    "{} rules this agent cannot use, as it reads no command allow or deny list from config.yaml; approvals stay as they are: {}",
+                    rules.len(),
+                    rules.join("; ")
                 ),
             );
         }
@@ -293,6 +309,13 @@ impl Importer<'_> {
             return;
         }
         let config_path = self.request.home.join("config.yaml");
+        let records_path = self.request.home.join("mcp_servers.json");
+        for path in [&config_path, &records_path] {
+            if let Err(err) = check_destination(self.request.home, path) {
+                self.record(Status::Error, "MCP servers", err);
+                return;
+            }
+        }
         let mut config = match hermes_config::load_user_config_file(&config_path) {
             Ok(config) => config,
             Err(err) => {
@@ -304,7 +327,6 @@ impl Importer<'_> {
                 return;
             }
         };
-        let records_path = self.request.home.join("mcp_servers.json");
         let mut records = match read_records(&records_path) {
             Ok(records) => records,
             Err(err) => {
@@ -330,12 +352,7 @@ impl Importer<'_> {
                 continue;
             }
             match self.translate_server(name, server) {
-                Ok((entry, record)) => {
-                    let detail = match (&entry.url, &entry.command) {
-                        (Some(url), _) => url.clone(),
-                        (None, Some(command)) => command.clone(),
-                        (None, None) => String::new(),
-                    };
+                Ok((entry, record, detail)) => {
                     if let Some(record) = record {
                         add_record(&mut records, name, record);
                     }
@@ -367,8 +384,13 @@ impl Importer<'_> {
         }
         if self.request.apply {
             config.mcp_servers.sort_by(|a, b| a.name.cmp(&b.name));
-            let written = write_file(&records_path, &records_text)
-                .and_then(|()| (self.save_config)(&config_path, &config));
+            let written = write_servers(
+                &records_path,
+                &records_text,
+                &config_path,
+                &config,
+                self.save_config,
+            );
             if let Err(err) = written {
                 self.record(
                     Status::Error,
@@ -383,14 +405,14 @@ impl Importer<'_> {
         }
     }
 
-    /// One Claude Code server as a config.yaml entry and, for a command, the
+    /// One Claude Code server as a config.yaml entry, for a command the
     /// `mcp_servers.json` launch record that carries its arguments and
-    /// environment.
+    /// environment, and the detail the report shows.
     fn translate_server(
         &mut self,
         name: &str,
         server: &Value,
-    ) -> Result<(hermes_config::McpServerEntry, Option<Value>), String> {
+    ) -> Result<(hermes_config::McpServerEntry, Option<Value>, String), String> {
         let Some(server) = server.as_object() else {
             return Err("the entry is not an object".to_string());
         };
@@ -401,14 +423,27 @@ impl Importer<'_> {
                 .map(str::trim)
                 .filter(|value| !value.is_empty())
         };
+        if text("cwd").is_some() {
+            return Err(
+                "it sets a working folder (cwd), which this home's MCP launch records cannot hold; add it yourself"
+                    .to_string(),
+            );
+        }
         if let Some(url) = text("url") {
+            if looks_secret(url) {
+                return Err("its URL carries a credential; add it yourself".to_string());
+            }
             let mut headers = std::collections::BTreeMap::new();
             if let Some(Value::Object(found)) = server.get("headers") {
                 for (key, value) in found {
-                    if is_secret_name(key) || key.eq_ignore_ascii_case("authorization") {
+                    let value = value.as_str();
+                    if is_secret_name(key)
+                        || key.to_ascii_lowercase().contains("authorization")
+                        || value.is_some_and(looks_secret)
+                    {
                         self.left_out
                             .push(format!("mcp_servers.{name}.headers.{key}"));
-                    } else if let Some(value) = value.as_str() {
+                    } else if let Some(value) = value {
                         headers.insert(key.clone(), value.to_string());
                     }
                 }
@@ -421,11 +456,15 @@ impl Importer<'_> {
                     ..Default::default()
                 },
                 None,
+                url_origin(url).to_string(),
             ));
         }
         let Some(command) = text("command") else {
             return Err("it has neither a command nor a URL".to_string());
         };
+        if looks_secret(command) {
+            return Err("its command looks like a credential; add it yourself".to_string());
+        }
         let args: Vec<String> = match server.get("args") {
             None | Some(Value::Null) => Vec::new(),
             Some(Value::Array(items)) => {
@@ -441,12 +480,20 @@ impl Importer<'_> {
             }
             Some(_) => return Err("its args are not a list".to_string()),
         };
+        // An argument cannot be left out without changing the command.
+        if args
+            .iter()
+            .any(|arg| is_secret_flag(arg) || looks_secret(arg))
+        {
+            return Err("an argument looks like a credential; add it yourself".to_string());
+        }
         let mut env = Map::new();
         if let Some(Value::Object(found)) = server.get("env") {
             for (key, value) in found {
-                if is_secret_name(key) {
+                let value = value.as_str();
+                if is_secret_name(key) || value.is_some_and(looks_secret) {
                     self.left_out.push(format!("mcp_servers.{name}.env.{key}"));
-                } else if let Some(value) = value.as_str() {
+                } else if let Some(value) = value {
                     env.insert(key.clone(), Value::String(value.to_string()));
                 }
             }
@@ -455,6 +502,11 @@ impl Importer<'_> {
             .chain(args.iter().map(String::as_str))
             .collect::<Vec<_>>()
             .join(" ");
+        let detail = match args.len() {
+            0 => command.to_string(),
+            1 => format!("{command} (1 argument)"),
+            count => format!("{command} ({count} arguments)"),
+        };
         let record = serde_json::json!({"command": command, "args": args, "env": env});
         Ok((
             hermes_config::McpServerEntry {
@@ -463,11 +515,13 @@ impl Importer<'_> {
                 ..Default::default()
             },
             Some(record),
+            detail,
         ))
     }
 
     /// Each `skills/<name>/` holding a `SKILL.md` is copied to
-    /// `skills/<agent>-imports/<name>/`; links inside a skill are not copied.
+    /// `skills/<agent>-imports/<name>/`; a linked skill folder or `SKILL.md`
+    /// is skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
         let Ok(entries) = std::fs::read_dir(source) else {
             self.record(Status::Skip, "skills", "no skills folder".to_string());
@@ -497,7 +551,23 @@ impl Importer<'_> {
                 continue;
             };
             let item = format!("skill {}", name.to_string_lossy());
+            if is_link(&skill) {
+                self.record(
+                    Status::Skip,
+                    &item,
+                    "it is a link, which this import does not follow".to_string(),
+                );
+                continue;
+            }
+            if is_link(&skill.join("SKILL.md")) {
+                self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
+                continue;
+            }
             let destination = destination_root.join(name);
+            if let Err(err) = check_destination(self.request.home, &destination) {
+                self.record(Status::Error, &item, err);
+                continue;
+            }
             if destination.exists() {
                 self.record(
                     Status::Conflict,
@@ -508,7 +578,9 @@ impl Importer<'_> {
             }
             let mut links = 0;
             if self.request.apply {
-                if let Err(err) = copy_tree(&skill, &destination, &mut links) {
+                let copied = std::fs::create_dir_all(&destination_root)
+                    .and_then(|()| copy_tree(&skill, &destination, &mut links));
+                if let Err(err) = copied {
                     self.record(Status::Error, &item, format!("could not copy it: {err}"));
                     continue;
                 }
@@ -548,6 +620,69 @@ static SECRET_NAME: LazyLock<Regex> = LazyLock::new(|| {
 /// Whether an environment variable or header name looks like a credential.
 fn is_secret_name(name: &str) -> bool {
     SECRET_NAME.is_match(name)
+}
+
+static IPV4: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\b\d{1,3}(?:\.\d{1,3}){3}\b").expect("valid address pattern"));
+
+/// Whether the agent's own secret filter would change `text`: known key
+/// prefixes, credentials in URL queries and user info, and the like. The
+/// filter also hides IPv4 addresses, which local servers need and which are
+/// not secret, so those do not count.
+fn looks_secret(text: &str) -> bool {
+    let text = IPV4.replace_all(text, "address");
+    redact_sensitive_text(&*text) != text
+}
+
+/// Whether `arg` is an option named like a credential, such as `--token` or
+/// `--api-key=...`; its value is in it or in the next argument.
+fn is_secret_flag(arg: &str) -> bool {
+    let Some(flag) = arg.strip_prefix('-') else {
+        return false;
+    };
+    let name = flag
+        .trim_start_matches('-')
+        .split('=')
+        .next()
+        .unwrap_or_default();
+    is_secret_name(&name.replace('-', "_"))
+}
+
+/// The scheme and host of `url`, without its path, query or fragment.
+fn url_origin(url: &str) -> &str {
+    let start = url.find("://").map_or(0, |at| at + 3);
+    let end = url[start..]
+        .find(|c| matches!(c, '/' | '?' | '#'))
+        .map_or(url.len(), |at| start + at);
+    &url[..end]
+}
+
+fn is_link(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
+}
+
+/// Refuses `path` when it, or a folder between `home` and it, is a link:
+/// writing there would land outside the home or replace the link.
+fn check_destination(home: &Path, path: &Path) -> Result<(), String> {
+    let relative = path
+        .strip_prefix(home)
+        .map_err(|_| format!("{} is outside this home", path.display()))?;
+    let mut current = home.to_path_buf();
+    for part in relative.components() {
+        current.push(part);
+        match std::fs::symlink_metadata(&current) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                return Err(format!(
+                    "{} is a link, so it is left unchanged",
+                    current.display()
+                ))
+            }
+            Ok(_) => {}
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => break,
+            Err(err) => return Err(format!("could not check {}: {err}", current.display())),
+        }
+    }
+    Ok(())
 }
 
 static HEADING: LazyLock<Regex> =
@@ -705,13 +840,44 @@ fn back_up(path: &Path) -> Result<(), String> {
 }
 
 /// Writes through a temporary file in the same folder, owner-only on Unix.
-fn write_file(path: &Path, content: &str) -> Result<(), String> {
+fn write_file(path: &Path, content: &[u8]) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|err| err.to_string())?;
-    std::io::Write::write_all(&mut temp, content.as_bytes()).map_err(|err| err.to_string())?;
+    std::io::Write::write_all(&mut temp, content).map_err(|err| err.to_string())?;
     temp.persist(path).map_err(|err| err.to_string())?;
     Ok(())
+}
+
+/// Writes `mcp_servers.json`, then `config.yaml`, each after a backup. If
+/// `config.yaml` cannot be saved, `mcp_servers.json` is put back as it was,
+/// so the 2 files never disagree.
+fn write_servers(
+    records_path: &Path,
+    records_text: &str,
+    config_path: &Path,
+    config: &hermes_config::GatewayConfig,
+    save_config: SaveConfig,
+) -> Result<(), String> {
+    let original = match std::fs::read(records_path) {
+        Ok(bytes) => Some(bytes),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
+        Err(err) => return Err(format!("could not read mcp_servers.json: {err}")),
+    };
+    back_up(records_path)?;
+    back_up(config_path)?;
+    write_file(records_path, records_text.as_bytes())?;
+    let Err(err) = save_config(config_path, config) else {
+        return Ok(());
+    };
+    let restored = match original {
+        Some(bytes) => write_file(records_path, &bytes),
+        None => std::fs::remove_file(records_path).map_err(|err| err.to_string()),
+    };
+    Err(match restored {
+        Ok(()) => format!("{err}; mcp_servers.json is restored"),
+        Err(again) => format!("{err}; mcp_servers.json could not be restored: {again}"),
+    })
 }
 
 /// `mcp_servers.json` as a JSON value: an object of servers, or the
@@ -754,8 +920,10 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
     }
 }
 
+/// Copies `source` into a new folder `destination`, creating every folder and
+/// file afresh so nothing already there, a link included, is written through.
 fn copy_tree(source: &Path, destination: &Path, links: &mut usize) -> std::io::Result<()> {
-    std::fs::create_dir_all(destination)?;
+    std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
         let kind = entry.file_type()?;
@@ -765,7 +933,13 @@ fn copy_tree(source: &Path, destination: &Path, links: &mut usize) -> std::io::R
         } else if kind.is_dir() {
             copy_tree(&entry.path(), &target, links)?;
         } else {
-            std::fs::copy(entry.path(), target)?;
+            let mut from = std::fs::File::open(entry.path())?;
+            let mut to = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&target)?;
+            std::io::copy(&mut from, &mut to)?;
+            to.set_permissions(from.metadata()?.permissions())?;
         }
     }
     Ok(())
@@ -1054,7 +1228,8 @@ mod tests {
               "headers": {"url": "https://h.example/mcp",
                           "headers": {"X-Authorization": "plain-hdr-1", "X-Region": "ghp_fixtureHdr02", "X-Zone": "eu"}},
               "env": {"command": "env-server", "env": {"PLAIN": "ghp_fixtureEnv01", "ROOT": "/w"}},
-              "folder": {"command": "./run-server", "cwd": "/srv/tools"}
+              "folder": {"command": "./run-server", "cwd": "/srv/tools"},
+              "local": {"url": "http://127.0.0.1:8931/mcp"}
             }}"#,
         )
         .unwrap();
@@ -1087,13 +1262,14 @@ mod tests {
             "skipped      MCP server folder: it sets a working folder (cwd)",
             "imported     MCP server headers: https://h.example\n",
             "imported     MCP server env: env-server\n",
+            "imported     MCP server local: http://127.0.0.1:8931\n",
             "mcp_servers.env.env.PLAIN, mcp_servers.headers.headers.X-Authorization, mcp_servers.headers.headers.X-Region",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
         let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
         let names: Vec<_> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
-        assert_eq!(names, vec!["env", "headers"]);
+        assert_eq!(names, vec!["env", "headers", "local"]);
         assert_eq!(
             config.mcp_servers[1].headers.keys().collect::<Vec<_>>(),
             vec!["X-Zone"]
