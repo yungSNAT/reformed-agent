@@ -7,10 +7,79 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use hermes_core::{SkillProvider, TerminalBackend, ToolHandler};
+use async_trait::async_trait;
+use hermes_core::{SkillProvider, TerminalBackend, ToolError, ToolHandler, ToolSchema};
+use serde_json::Value;
 
+use crate::terminal_requirements::non_local_terminal_backend;
 use crate::tools::browser::SharedBrowser;
 use crate::ToolRegistry;
+
+/// A tool that acts on this machine directly rather than through the
+/// terminal backend. It runs only while that backend is local: with any
+/// other, the user chose it for isolation, so the tool refuses.
+///
+/// With no parameters listed, every call refuses and the tool is registered
+/// hidden (dispatch does not check availability, so a call by name must still
+/// refuse). With parameters listed, the handler reads or writes the path one of
+/// them names, so only a call giving one a value that reaches this machine
+/// refuses, and the tool stays offered.
+struct HostOnly(Arc<dyn ToolHandler>, &'static [HostParam]);
+
+/// A parameter through which a guarded tool reaches this machine.
+enum HostParam {
+    /// Read as a path on this machine unless it is an `http://` or
+    /// `https://` URL.
+    PathOrUrl(&'static str),
+    /// Always a path on this machine, whatever it looks like.
+    Path(&'static str),
+}
+
+impl HostParam {
+    /// The parameter's name when `params` gives it a value that may reach this
+    /// machine: any value but null, unless it is a URL the parameter allows.
+    /// The URL test is case-sensitive, like the handlers'.
+    fn reaching_host(&self, params: &Value) -> Option<&'static str> {
+        let (key, url_allowed) = match *self {
+            Self::PathOrUrl(key) => (key, true),
+            Self::Path(key) => (key, false),
+        };
+        let value = params.get(key).filter(|value| !value.is_null())?;
+        let allowed = url_allowed
+            && value.as_str().is_some_and(|value| {
+                value.is_empty() || value.starts_with("https://") || value.starts_with("http://")
+            });
+        (!allowed).then_some(key)
+    }
+}
+
+#[async_trait]
+impl ToolHandler for HostOnly {
+    async fn execute(&self, params: Value) -> Result<String, ToolError> {
+        if let Some(backend) = non_local_terminal_backend() {
+            let name = self.0.schema().name;
+            if self.1.is_empty() {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "`{name}` works on this machine directly, so it is off whilst the terminal \
+                     backend is `{backend}`; use the terminal, read_file and write_file tools, \
+                     which run in that backend."
+                )));
+            }
+            if let Some(key) = self.1.iter().find_map(|param| param.reaching_host(&params)) {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "`{name}` would use the path in `{key}` on this machine, which is off whilst \
+                     the terminal backend is `{backend}`; leave `{key}` out or give an http(s) \
+                     URL where the tool takes one."
+                )));
+            }
+        }
+        self.0.execute(params).await
+    }
+
+    fn schema(&self) -> ToolSchema {
+        self.0.schema()
+    }
+}
 
 /// Register all built-in tool handlers into the given registry.
 ///
@@ -124,6 +193,8 @@ fn register_builtin_tools_with_data_dir(
 
     let terminal_requirements_check: Arc<dyn Fn() -> bool + Send + Sync> =
         Arc::new(crate::terminal_requirements::check_terminal_requirements);
+    let host_only_check: Arc<dyn Fn() -> bool + Send + Sync> =
+        Arc::new(|| non_local_terminal_backend().is_none());
 
     // -- Web tools -----------------------------------------------------------
     reg(
@@ -197,39 +268,55 @@ fn register_builtin_tools_with_data_dir(
         vec![],
         terminal_requirements_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "file",
-        Arc::new(crate::tools::file::PatchHandler::new(Arc::new(
-            crate::backends::file::LocalPatchBackend::new(),
-        ))),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::file::PatchHandler::new(Arc::new(
+                crate::backends::file::LocalPatchBackend::new(),
+            ))),
+            &[],
+        )),
         "🩹",
         vec![],
+        host_only_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "file",
-        Arc::new(crate::tools::file::SearchFilesHandler::new(Arc::new(
-            crate::backends::file::LocalSearchBackend::new(),
-        ))),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::file::SearchFilesHandler::new(Arc::new(
+                crate::backends::file::LocalSearchBackend::new(),
+            ))),
+            &[],
+        )),
         "🔎",
         vec![],
+        host_only_check.clone(),
     );
 
     // -- Project/workspace tools ----------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "project",
-        Arc::new(crate::tools::project_workspace::ProjectFactsHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::project_workspace::ProjectFactsHandler),
+            &[],
+        )),
         "🗂️",
         vec![],
+        host_only_check.clone(),
     );
-    reg(
+    reg_with_check(
         registry,
         "project",
-        Arc::new(crate::tools::project_workspace::ProjectTreeHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::project_workspace::ProjectTreeHandler),
+            &[],
+        )),
         "🌳",
         vec![],
+        host_only_check.clone(),
     );
     reg(
         registry,
@@ -269,8 +356,11 @@ fn register_builtin_tools_with_data_dir(
         reg(
             registry,
             "vision",
-            Arc::new(crate::tools::vision::VisionAnalyzeHandler::new(
-                vision_backend.clone(),
+            Arc::new(HostOnly(
+                Arc::new(crate::tools::vision::VisionAnalyzeHandler::new(
+                    vision_backend.clone(),
+                )),
+                &[HostParam::PathOrUrl("image_url")],
             )),
             "👁️",
             vec![
@@ -286,14 +376,18 @@ fn register_builtin_tools_with_data_dir(
                 "XAI_API_KEY".into(),
             ],
         );
-        reg(
+        reg_with_check(
             registry,
             "vision",
-            Arc::new(crate::tools::video::VideoAnalyzeHandler::new(Arc::new(
-                crate::backends::video::VisionFrameSamplingVideoBackend::new(vision_backend),
-            ))),
+            Arc::new(HostOnly(
+                Arc::new(crate::tools::video::VideoAnalyzeHandler::new(Arc::new(
+                    crate::backends::video::VisionFrameSamplingVideoBackend::new(vision_backend),
+                ))),
+                &[],
+            )),
             "🎬",
             vec!["HERMES_OPENAI_API_KEY".into(), "OPENAI_API_KEY".into()],
+            host_only_check.clone(),
         );
     }
 
@@ -447,14 +541,18 @@ fn register_builtin_tools_with_data_dir(
     );
 
     // -- Code execution ------------------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "code_execution",
-        Arc::new(crate::tools::code_execution::ExecuteCodeHandler::new(
-            Arc::new(crate::backends::code_execution::LocalCodeExecutionBackend::default()),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::code_execution::ExecuteCodeHandler::new(
+                Arc::new(crate::backends::code_execution::LocalCodeExecutionBackend::default()),
+            )),
+            &[],
         )),
         "🖥️",
         vec![],
+        host_only_check.clone(),
     );
 
     // -- Delegation ----------------------------------------------------------
@@ -552,9 +650,12 @@ fn register_builtin_tools_with_data_dir(
     reg(
         registry,
         "tts",
-        Arc::new(crate::tools::tts::TextToSpeechHandler::new(Arc::new(
-            crate::backends::tts::MultiTtsBackend::new(),
-        ))),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::tts::TextToSpeechHandler::new(Arc::new(
+                crate::backends::tts::MultiTtsBackend::new(),
+            ))),
+            &[HostParam::Path("output_path")],
+        )),
         "🔊",
         vec![],
     );
@@ -584,12 +685,16 @@ fn register_builtin_tools_with_data_dir(
     );
 
     // -- Transcription -------------------------------------------------------
-    reg(
+    reg_with_check(
         registry,
         "voice",
-        Arc::new(crate::tools::transcription::TranscriptionHandler),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::transcription::TranscriptionHandler),
+            &[],
+        )),
         "🎙️",
         vec!["HERMES_OPENAI_API_KEY".into(), "OPENAI_API_KEY".into()],
+        host_only_check.clone(),
     );
 
     // -- Voice mode ----------------------------------------------------------
@@ -628,25 +733,22 @@ fn register_builtin_tools_with_data_dir(
         vec![],
     );
 
-    // -- Env passthrough -----------------------------------------------------
-    reg(
-        registry,
-        "system",
-        Arc::new(crate::tools::env_passthrough::EnvPassthroughHandler),
-        "🔧",
-        vec![],
-    );
-
     // -- Computer Use --------------------------------------------------------
     reg_with_check(
         registry,
         "computer_use",
-        Arc::new(crate::tools::computer_use::ComputerUseHandler::new(
-            Arc::new(crate::backends::computer_use::CuaDriverBackend::from_env()),
+        Arc::new(HostOnly(
+            Arc::new(crate::tools::computer_use::ComputerUseHandler::new(
+                Arc::new(crate::backends::computer_use::CuaDriverBackend::from_env()),
+            )),
+            &[],
         )),
         "🖱️",
         vec!["HERMES_CUA_DRIVER_CMD".into()],
-        Arc::new(crate::backends::computer_use::CuaDriverBackend::command_available_from_env),
+        Arc::new(move || {
+            host_only_check()
+                && crate::backends::computer_use::CuaDriverBackend::command_available_from_env()
+        }),
     );
 
     // -- Credential files ----------------------------------------------------
@@ -987,22 +1089,21 @@ pub(crate) mod tests {
         let _ssh_user = EnvGuard::remove("TERMINAL_SSH_USER");
         let names = registered_names();
 
+        // patch, search_files and execute_code act on this machine directly,
+        // so a backend that is not local hides them too.
         for hidden in [
             "terminal",
             "process",
             "process_registry",
             "read_file",
             "write_file",
+            "patch",
+            "search_files",
+            "execute_code",
         ] {
             assert!(
                 !names.contains(&hidden.to_string()),
                 "invalid backend should hide {hidden}"
-            );
-        }
-        for independent in ["patch", "search_files", "execute_code"] {
-            assert!(
-                names.contains(&independent.to_string()),
-                "invalid backend should keep independent tool {independent}"
             );
         }
         assert!(
@@ -1057,6 +1158,222 @@ pub(crate) mod tests {
             names.contains(&"ops_snapshot".to_string()),
             "invalid backend should keep read-only ops snapshots"
         );
+    }
+
+    /// With a terminal backend other than local, the tools that act on this
+    /// machine directly are hidden and refuse a call by name, whose dispatch
+    /// does not check availability: the user chose that backend for isolation.
+    #[test]
+    fn host_tools_refuse_when_the_terminal_backend_is_not_local() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        for backend in ["docker", "modal", "vercel_sandbox"] {
+            let _terminal_env = EnvGuard::set("TERMINAL_ENV", backend);
+            assert_host_tools_refuse(backend, home.path());
+        }
+    }
+
+    /// `terminal.backend: docker` in config.yaml alone, with neither
+    /// TERMINAL_ENV nor TERMINAL_BACKEND set, turns the host tools off once the
+    /// configuration is loaded, as every entry point loads it before it
+    /// registers the tools.
+    #[test]
+    fn host_tools_refuse_when_only_config_yaml_names_the_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let home = tempfile::tempdir().expect("temp home");
+        let _home = EnvGuard::set("HOME", home.path().to_string_lossy().as_ref());
+        let _hermes_home = EnvGuard::remove("HERMES_HOME");
+        let _managed = EnvGuard::remove("HERMES_MANAGED_DIR");
+        let _ignore = EnvGuard::remove("HERMES_IGNORE_USER_CONFIG");
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::remove("TERMINAL_ENV");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "terminal:\n  backend: docker\n",
+        )
+        .unwrap();
+        // The loaded configuration is not printed: it can hold keys from the
+        // environment.
+        let loaded = hermes_config::load_config(Some(home.path().to_string_lossy().as_ref()));
+        assert!(
+            loaded.is_ok_and(|config| {
+                config.terminal.backend == hermes_config::TerminalBackendType::Docker
+            }),
+            "config.yaml's docker backend did not load"
+        );
+        assert_host_tools_refuse("config.yaml docker", home.path());
+    }
+
+    /// The tools that act on this machine are not offered and refuse a call by
+    /// name; `home` holds the host file they must leave alone.
+    fn assert_host_tools_refuse(backend: &str, home: &std::path::Path) {
+        let file = home.join("host.txt");
+        std::fs::write(&file, "host text").unwrap();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let registry = ToolRegistry::new();
+        register_builtin_tools(
+            &registry,
+            Arc::new(MockTerminalBackend),
+            Arc::new(MockSkillProvider),
+        );
+        for tool in [
+            "patch",
+            "search_files",
+            "execute_code",
+            "project_facts",
+            "project_tree",
+            "transcription",
+            "video_analyze",
+            "computer_use",
+        ] {
+            assert!(!registry.is_available(tool), "{backend}: {tool} offered");
+        }
+        let path = file.to_string_lossy();
+        let speech = home.join("speech.mp3");
+        let calls = [
+            (
+                "patch",
+                serde_json::json!({
+                    "path": file.to_string_lossy(),
+                    "old_string": "host",
+                    "new_string": "changed",
+                }),
+            ),
+            (
+                "search_files",
+                serde_json::json!({ "pattern": "host", "path": home.to_string_lossy() }),
+            ),
+            (
+                "execute_code",
+                serde_json::json!({ "code": "print(1)", "language": "python" }),
+            ),
+            (
+                "project_facts",
+                serde_json::json!({ "cwd": home.to_string_lossy() }),
+            ),
+            (
+                "project_tree",
+                serde_json::json!({ "cwd": home.to_string_lossy() }),
+            ),
+            ("transcription", serde_json::json!({ "audio_path": path })),
+            ("video_analyze", serde_json::json!({ "video_url": path })),
+            (
+                "computer_use",
+                serde_json::json!({ "action": "screenshot" }),
+            ),
+            (
+                "vision_analyze",
+                serde_json::json!({ "image_url": path, "question": "What is this?" }),
+            ),
+            (
+                "text_to_speech",
+                serde_json::json!({ "text": "hi", "output_path": speech.to_string_lossy() }),
+            ),
+            // output_path is always a path on this machine: a URL is no exception.
+            (
+                "text_to_speech",
+                serde_json::json!({ "text": "hi", "output_path": "https://example.com/speech.mp3" }),
+            ),
+        ];
+        for (tool, params) in calls {
+            let out = runtime.block_on(registry.dispatch_async(tool, params));
+            assert!(
+                out.contains("terminal backend") && !out.contains("host text"),
+                "{backend}: {tool} ran on the host: {out}"
+            );
+        }
+        assert_eq!(std::fs::read_to_string(&file).unwrap(), "host text");
+        assert!(
+            !speech.exists() && !std::path::Path::new("https:").exists(),
+            "{backend}: text_to_speech wrote on the host"
+        );
+    }
+
+    struct Ran;
+
+    #[async_trait]
+    impl ToolHandler for Ran {
+        async fn execute(&self, _params: Value) -> Result<String, ToolError> {
+            Ok("ran".into())
+        }
+
+        fn schema(&self) -> ToolSchema {
+            hermes_core::tool_schema(
+                "ran",
+                "Reports that it ran.",
+                hermes_core::JsonSchema::object(Default::default(), vec![]),
+            )
+        }
+    }
+
+    /// A tool guarded on a path parameter still runs for a web URL, and refuses
+    /// any other value, which its handler would read as a path on this machine.
+    #[test]
+    fn a_path_guarded_tool_runs_only_for_web_urls_under_a_non_local_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::set("TERMINAL_ENV", "docker");
+        let tool = HostOnly(Arc::new(Ran), &[HostParam::PathOrUrl("image_url")]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let run = |params: Value| runtime.block_on(tool.execute(params));
+        for url in ["https://example.com/a.png", "http://example.com/a.png"] {
+            assert_eq!(run(serde_json::json!({ "image_url": url })).unwrap(), "ran");
+        }
+        assert_eq!(run(serde_json::json!({ "question": "q" })).unwrap(), "ran");
+        for path in [
+            serde_json::json!("/etc/hostname"),
+            serde_json::json!("a.png"),
+            serde_json::json!("HTTPS://example.com/a.png"),
+            serde_json::json!("file:///etc/hostname"),
+            serde_json::json!(7),
+            serde_json::json!(["/etc/hostname"]),
+        ] {
+            let err = run(serde_json::json!({ "image_url": path })).unwrap_err();
+            assert!(
+                err.to_string().contains("terminal backend"),
+                "{path}: {err}"
+            );
+        }
+    }
+
+    /// A tool guarded on a parameter that is always a path refuses any value
+    /// for it, a web URL or a value of another JSON type included, and runs
+    /// without it or with it null.
+    #[test]
+    fn a_tool_guarded_on_a_path_only_parameter_refuses_every_value_under_a_non_local_backend() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let _alias = EnvGuard::remove("TERMINAL_BACKEND");
+        let _terminal_env = EnvGuard::set("TERMINAL_ENV", "docker");
+        let tool = HostOnly(Arc::new(Ran), &[HostParam::Path("output_path")]);
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+        let run = |params: Value| runtime.block_on(tool.execute(params));
+        assert_eq!(run(serde_json::json!({ "text": "hi" })).unwrap(), "ran");
+        assert_eq!(
+            run(serde_json::json!({ "output_path": null })).unwrap(),
+            "ran"
+        );
+        for value in [
+            serde_json::json!("https://example.com/a.mp3"),
+            serde_json::json!("http://example.com/a.mp3"),
+            serde_json::json!("a.mp3"),
+            serde_json::json!(""),
+            serde_json::json!(7),
+            serde_json::json!(true),
+            serde_json::json!(["a.mp3"]),
+            serde_json::json!({ "path": "a.mp3" }),
+        ] {
+            let err = run(serde_json::json!({ "output_path": value })).unwrap_err();
+            assert!(
+                err.to_string().contains("terminal backend"),
+                "{value:?}: {err}"
+            );
+        }
     }
 
     #[test]
@@ -1141,6 +1458,32 @@ pub(crate) mod tests {
             assert!(
                 !tools.iter().any(|tool| tool.starts_with("rl_")),
                 "{composite} offers RL tools"
+            );
+        }
+    }
+
+    /// The model gets no env_passthrough tool: its `read` returned any
+    /// variable, provider keys included, and its `register` let a key through
+    /// the sanitiser to execute_code and the terminal. Passthrough stays a
+    /// setting (`terminal.env_passthrough`) and an internal call for skills.
+    #[test]
+    fn no_builtin_tool_or_toolset_offers_env_passthrough() {
+        let _global_env = hermes_config::managed_gateway::test_lock::lock();
+        let _lock = lock_env();
+        let hermes_home = tempfile::tempdir().expect("temp hermes home");
+        let _hermes_home =
+            EnvGuard::set("HERMES_HOME", hermes_home.path().to_string_lossy().as_ref());
+        let names = registered_all_names_with_data_dir(hermes_home.path().to_path_buf());
+        assert!(!names.iter().any(|name| name == "env_passthrough"));
+
+        let toolsets = crate::toolset::ToolsetManager::new(Arc::new(ToolRegistry::new()));
+        for toolset in ["system", "hermes-cli", "hermes-cron"] {
+            let tools = toolsets
+                .resolve_toolset_unfiltered(toolset)
+                .expect("toolset");
+            assert!(
+                !tools.iter().any(|tool| tool == "env_passthrough"),
+                "{toolset} offers env_passthrough"
             );
         }
     }

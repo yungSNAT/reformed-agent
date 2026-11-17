@@ -186,11 +186,16 @@ impl BrowserBackend for CdpBrowserBackend {
     }
     /// A browser on this host reaches networks that a container or remote
     /// terminal cannot, so only a local terminal makes it local.
+    /// The terminal is read as the configuration loader resolves it:
+    /// `TERMINAL_ENV`, else `TERMINAL_BACKEND`, which the loader does not
+    /// copy into `TERMINAL_ENV`.
     fn is_local_backend(&self) -> bool {
-        self.local
-            && std::env::var("TERMINAL_ENV").map_or(true, |backend| {
-                matches!(backend.trim().to_ascii_lowercase().as_str(), "" | "local")
-            })
+        let terminal = ["TERMINAL_ENV", "TERMINAL_BACKEND"]
+            .into_iter()
+            .filter_map(|name| std::env::var(name).ok())
+            .map(|value| value.trim().to_ascii_lowercase())
+            .find(|value| !value.is_empty());
+        self.local && terminal.is_none_or(|terminal| terminal == "local")
     }
     async fn snapshot(&self) -> Result<String, ToolError> {
         cdp_snapshot(self).await
@@ -226,9 +231,11 @@ impl BrowserBackend for CdpBrowserBackend {
 
 #[async_trait]
 impl BrowserBackend for CamoFoxBrowserBackend {
-    /// Upstream counts Camofox as local whatever the terminal backend.
+    /// Upstream counts Camofox as local whatever the terminal backend; here
+    /// it follows the CDP rule, so a container or remote terminal keeps the
+    /// navigation checks on.
     fn is_local_backend(&self) -> bool {
-        self.inner.local
+        self.inner.is_local_backend()
     }
     async fn blank_page(&self) -> Result<String, ToolError> {
         self.inner.blank_page().await

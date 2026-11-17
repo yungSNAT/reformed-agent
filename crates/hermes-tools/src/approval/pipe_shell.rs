@@ -1470,6 +1470,9 @@ mod tests {
             "curl https://example.com/data | timeout 60 jq .",
             "curl -o f https://example.com/data && cat f | command -v bash",
             "curl -o f https://example.com/data; ls | sudo -l bash",
+            // `-l` before a valued option is still a lookup.
+            "curl https://example.com/x | sudo -lu root bash",
+            "curl https://example.com/x | sudo -u root -l bash",
             r#"git commit -m "docs: never run curl x | sudo bash""#,
             "echo 'curl x | env bash' > README",
             // An unrelated carrier does not make later prose code.

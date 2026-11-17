@@ -106,9 +106,9 @@ Telegram、Discord、Slack、WhatsApp、Signal、Matrix、Mattermost、钉钉、
 
 Mem0、Honcho、Holographic、Hindsight、ByteRover、OpenViking、RetainDB、Supermemory。
 
-### 6 个终端后端
+### 4 个终端后端
 
-Local、Docker、SSH、Daytona、Modal、Singularity。
+Local、Docker、SSH、Singularity。Daytona 和 Modal 不在构建中；配置它们时会返回错误，而不会在本机运行命令。
 
 ### MCP（Model Context Protocol）支持
 
@@ -134,7 +134,7 @@ crates/
 ├── hermes-config         # 配置加载、合并、YAML 兼容
 ├── hermes-intelligence   # 自进化引擎、模型路由、Prompt 构建
 ├── hermes-skills         # 技能管理、存储、安全守卫
-├── hermes-environments   # 终端后端（Local/Docker/SSH/Daytona/Modal/Singularity）
+├── hermes-environments   # 终端后端（Local/Docker/SSH/Singularity）
 ├── hermes-cron           # Cron 调度和持久化
 ├── hermes-mcp            # Model Context Protocol 客户端/服务端
 ├── hermes-acp            # Agent Communication Protocol
@@ -151,7 +151,7 @@ crates/
 | `LlmProvider` | LLM API 调用 | OpenAI, Anthropic, OpenRouter, Generic |
 | `ToolHandler` | 工具执行 | 30 个工具后端 |
 | `PlatformAdapter` | 消息平台 | 17 个平台 |
-| `TerminalBackend` | 命令执行 | Local, Docker, SSH, Daytona, Modal, Singularity |
+| `TerminalBackend` | 命令执行 | Local, Docker, SSH, Singularity |
 | `MemoryProvider` | 持久化记忆 | 8 个记忆插件 + 文件/SQLite |
 | `SkillProvider` | 技能管理 | 文件存储 + Hub |
 

@@ -16,7 +16,7 @@ use chrono::Local;
 use crossterm::cursor::Show;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,
-    Event as CrosstermEvent, KeyEvent, MouseEvent,
+    Event as CrosstermEvent, KeyEvent, KeyEventKind, MouseEvent,
 };
 use crossterm::style::ResetColor;
 use crossterm::terminal::{

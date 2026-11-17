@@ -61,8 +61,23 @@ fn request_timeout_duration(seconds: Option<f64>) -> Option<Duration> {
     })
 }
 
-fn build_provider_http_client(request_timeout: Option<Duration>) -> Client {
-    let mut builder = Client::builder();
+/// How long a provider response may stay silent before its read fails, so a
+/// stalled stream ends the turn instead of hanging it. Upstream gives a silent
+/// stream 180 s by default, up to 600 s for slow reasoning models and 900 s
+/// for a local server; this is the longest, so nothing upstream waits for is
+/// cut short.
+// shortcut: one ceiling for every provider and model, and the
+// HERMES_STREAM_STALE_TIMEOUT variables are not read. Porting upstream's
+// per-provider `stale_timeout_seconds`, context scaling and model floors would
+// detect a stall sooner and honour a longer explicit deadline.
+const STREAM_IDLE_TIMEOUT: Duration = Duration::from_secs(900);
+
+pub(crate) fn build_provider_http_client(request_timeout: Option<Duration>) -> Client {
+    http_client_with_idle_timeout(request_timeout, STREAM_IDLE_TIMEOUT)
+}
+
+fn http_client_with_idle_timeout(request_timeout: Option<Duration>, idle: Duration) -> Client {
+    let mut builder = Client::builder().read_timeout(idle);
     if let Some(timeout) = request_timeout {
         builder = builder.timeout(timeout);
     }

@@ -21,8 +21,8 @@ use hermes_core::{
 
 use crate::credential_pool::CredentialPool;
 use crate::provider::{
-    codex_cloudflare_headers, is_openai_dynamic_model_alias, OPENAI_CODEX_BASE_URL,
-    OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
+    build_provider_http_client, codex_cloudflare_headers, is_openai_dynamic_model_alias,
+    OPENAI_CODEX_BASE_URL, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
 };
 use crate::rate_limit::RateLimitTracker;
 use crate::sse_buffer::SseBuffer;
@@ -36,17 +36,6 @@ fn request_timeout_duration(seconds: Option<f64>) -> Option<Duration> {
         } else {
             None
         }
-    })
-}
-
-fn build_codex_http_client(request_timeout: Option<Duration>) -> Client {
-    let mut builder = Client::builder();
-    if let Some(timeout) = request_timeout {
-        builder = builder.timeout(timeout);
-    }
-    builder.build().unwrap_or_else(|err| {
-        tracing::warn!("failed to build Codex HTTP client: {}", err);
-        Client::new()
     })
 }
 
@@ -73,7 +62,7 @@ impl CodexProvider {
             model: "codex-mini-latest".to_string(),
             headers: Vec::new(),
             chatgpt_codex_backend: false,
-            client: build_codex_http_client(request_timeout),
+            client: build_provider_http_client(request_timeout),
             request_timeout,
             rate_limiter: None,
             credential_pool: None,
@@ -97,7 +86,7 @@ impl CodexProvider {
 
     pub fn with_optional_request_timeout_seconds(mut self, seconds: Option<f64>) -> Self {
         self.request_timeout = request_timeout_duration(seconds);
-        self.client = build_codex_http_client(self.request_timeout);
+        self.client = build_provider_http_client(self.request_timeout);
         self
     }
 

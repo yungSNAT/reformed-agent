@@ -181,7 +181,10 @@ pub fn init_telemetry(config: &TelemetryConfig) {
         Registry::default()
     };
 
-    let fmt_base = tracing_subscriber::fmt::layer().with_target(false);
+    // stderr, so a stdio protocol server (ACP, MCP) keeps stdout for its messages.
+    let fmt_base = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(false);
     let _ = if config.json {
         reg.with(filter).with(fmt_base.json()).try_init()
     } else {

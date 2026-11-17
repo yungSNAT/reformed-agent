@@ -476,3 +476,106 @@ fn load_config_ignore_user_config_uses_defaults_when_files_exist() {
         std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
     }
 }
+
+/// A backend name this build does not know, given through TERMINAL_ENV or
+/// TERMINAL_BACKEND, stops loading: the configured backend would otherwise
+/// stay local, so the user's chosen isolation would run on this machine.
+#[test]
+fn an_unknown_terminal_backend_in_the_environment_stops_loading() {
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for key in ["TERMINAL_ENV", "TERMINAL_BACKEND"] {
+        clear_terminal_env_bridge_vars();
+        let dir = tempfile::tempdir().unwrap();
+        set_test_env("HERMES_HOME", dir.path());
+        set_test_env(key, "vercel_sandbox");
+        let result = load_config(Some(dir.path().to_string_lossy().as_ref()));
+        remove_test_env(key);
+        remove_test_env("HERMES_HOME");
+        // The loaded config is not printed: it can hold keys from the
+        // environment.
+        let Err(err) = result else {
+            panic!("{key}: an unknown backend loaded as local");
+        };
+        let err = err.to_string();
+        assert!(err.contains("`vercel_sandbox`"), "{key}: {err}");
+    }
+}
+
+/// A configuration file that names a terminal backend other than local but
+/// cannot be loaded stops loading: skipping it would leave the backend local,
+/// so commands would run on this machine in place of the isolation chosen.
+#[test]
+fn a_config_file_naming_a_backend_that_cannot_load_stops_loading() {
+    let _global_guard = crate::managed_gateway::test_lock::lock();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for (file, text, name) in [
+        ("config.yaml", "terminal:\n  backend: vercel_sandbox\n", "vercel_sandbox"),
+        ("config.yaml", "terminal:\n  backend: Docker\n", "Docker"),
+        ("config.yaml", "terminal:\n  backend: apptainer\n", "apptainer"),
+        ("config.yaml", "terminal:\n  env_type: vercel_sandbox\n", "vercel_sandbox"),
+        ("config.yaml", "terminal:\n  backend: docker\n  timeout: soon\n", "docker"),
+        ("cli-config.yaml", "terminal:\n  backend: vercel_sandbox\n", "vercel_sandbox"),
+        ("gateway.json", r#"{"terminal": {"backend": "vercel_sandbox"}}"#, "vercel_sandbox"),
+    ] {
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join(file), text).unwrap();
+        set_test_env("HERMES_HOME", dir.path());
+        let result = load_config(Some(dir.path().to_string_lossy().as_ref()));
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+        // The loaded config is not printed: it can hold keys from the
+        // environment.
+        let Err(err) = result else {
+            panic!("{file} naming `{name}` loaded with the backend left local");
+        };
+        let err = err.to_string();
+        assert!(err.contains(&format!("`{name}`")), "{file}: {err}");
+    }
+}
+
+/// A configuration file that cannot be loaded and names no backend other
+/// than local is still skipped with a warning.
+#[test]
+fn a_config_file_that_cannot_load_and_names_no_other_backend_is_skipped() {
+    let _global_guard = crate::managed_gateway::test_lock::lock();
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    for text in [
+        "terminal:\n  backend: local\n  timeout: soon\n",
+        "max_turns: many\n",
+        "terminal: [\n",
+    ] {
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("config.yaml"), text).unwrap();
+        set_test_env("HERMES_HOME", dir.path());
+        let result = load_config(Some(dir.path().to_string_lossy().as_ref()));
+        clear_managed_scope_test_env();
+        clear_terminal_env_bridge_vars();
+        assert!(
+            result.is_ok_and(|config| config.terminal.backend == TerminalBackendType::Local),
+            "{text:?} did not load as the local backend"
+        );
+    }
+}
+
+#[test]
+fn load_config_reads_the_env_file_of_the_home_it_is_given() {
+    use tempfile::tempdir;
+
+    let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let given = tempdir().expect("tempdir");
+    let other = tempdir().expect("tempdir");
+    std::fs::write(given.path().join(".env"), "R2952_DOTENV_PROBE=given\n").expect("write");
+    std::fs::write(other.path().join(".env"), "R2952_DOTENV_PROBE=other\n").expect("write");
+    remove_test_env("R2952_DOTENV_PROBE");
+    set_test_env("HERMES_HOME", other.path());
+    let loaded = load_config(Some(given.path().to_string_lossy().as_ref()));
+    remove_test_env("HERMES_HOME");
+    let probe = std::env::var("R2952_DOTENV_PROBE");
+    remove_test_env("R2952_DOTENV_PROBE");
+    loaded.expect("load config");
+    assert_eq!(probe.as_deref(), Ok("given"));
+}

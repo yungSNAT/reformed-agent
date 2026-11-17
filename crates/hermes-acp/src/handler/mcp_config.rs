@@ -82,6 +82,15 @@ fn acp_mcp_server_to_hermes_config(
             if let Some(token) = bearer_token_from_headers(headers) {
                 config = config.with_auth(Arc::new(BearerTokenAuth::new(token)));
             }
+            // Other headers the client names (an API key header, say) go
+            // with every request; Authorization travels as the token above.
+            config.headers = headers
+                .iter()
+                .filter(|h| {
+                    !h.name.trim().is_empty() && !h.name.trim().eq_ignore_ascii_case("authorization")
+                })
+                .map(|h| (h.name.trim().to_string(), h.value.clone()))
+                .collect();
             Some((name, config))
         }
     }

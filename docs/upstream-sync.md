@@ -48,13 +48,13 @@ fork-specific history.
 - `scripts/run-differential-parity-gate.py`
   - Compares local CLI command/action surface with `upstream/main`
   - Emits gate artifact under `.sync-reports/differential-parity-gate-<timestamp>.json`
-- `scripts/run-upstream-surface-coverage-gate.py`
+- `run-upstream-surface-coverage-gate` (`crates/hermes-parity-tools`)
   - Verifies required upstream surfaces are present locally (`skills`, `optional-skills`, `plugins`, `tests`, `website`, `ui-tui`, `docs`)
   - Fails on unclassified missing upstream files under those prefixes
   - Classifies approved Rust-first divergences from `docs/parity/intentional-divergence.json` separately from actionable missing paths
   - Supports `--local-mode worktree` for pre-commit validation while changes are still unstaged/uncommitted
   - Emits gate artifact under `.sync-reports/upstream-surface-coverage-gate-<timestamp>.json`
-- `scripts/run-upstream-slash-parity-gate.py`
+- `run-upstream-slash-parity-gate` (`crates/hermes-parity-tools`)
   - Compares upstream `/` command surface (`hermes_cli/commands.py`) against Rust `SLASH_COMMANDS`
   - Fails on missing upstream commands unless explicitly allowlisted in `docs/parity/slash-command-divergence.json`
   - Emits gate artifact under `.sync-reports/upstream-slash-parity-gate-<timestamp>.json`
@@ -91,7 +91,7 @@ bash scripts/sync-upstream.sh --redteam-cmd "python3 scripts/run-redteam-gate.py
 python3 scripts/run-adapter-chaos-harness.py --repo-root .
 python3 scripts/run-zero-copy-hotpath-bench.py --repo-root .
 python3 scripts/run-elite-sync-gate.py --repo-root .
-python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/main --local-mode worktree
+cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-mode worktree
 python3 scripts/run-self-evolution-loop.py --repo-root . --json
 python3 scripts/generate-parity-dashboard.py --repo-root .
 python3 scripts/generate-readme-sync-status.py --repo-root .

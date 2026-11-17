@@ -1,3 +1,10 @@
 {
-  "allowed_missing_upstream_commands": []
+  "allowed_missing_upstream_commands": [
+    "/subscription",
+    "/topup"
+  ],
+  "reasons": {
+    "/subscription": "Changes a Nous Portal subscription plan through Nous's billing service; this port ships no Nous billing client and takes no payments.",
+    "/topup": "Buys Nous Portal credit through Nous's billing service; this port ships no Nous billing client and takes no payments."
+  }
 }

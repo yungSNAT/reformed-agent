@@ -253,6 +253,9 @@ fn session_mcp_server_configs(
         };
         config.supports_parallel_tool_calls = server.supports_parallel_tool_calls;
         config.keepalive_interval = server.keepalive_interval;
+        if url.is_some() {
+            config.headers = server.headers.clone().into_iter().collect();
+        }
 
         if let Some(record) = records.and_then(|records| records.get(name)) {
             let record_command = record.command.as_deref().unwrap_or_default();
@@ -328,6 +331,7 @@ mod tests {
 
     use async_trait::async_trait;
     use serde_json::json;
+    use std::collections::HashMap;
     use std::sync::Mutex;
 
     use hermes_core::{GatewayError, ParseMode, PlatformAdapter, SendMessageOptions};
@@ -681,5 +685,250 @@ mod tests {
         let parsed: serde_json::Value = serde_json::from_str(&out).expect("json output");
         assert_eq!(parsed["answer"], "from-env");
         std::env::remove_var("HERMES_CLARIFY_AUTO_ANSWER");
+    }
+
+    type StubRequests = Arc<Mutex<Vec<(String, HashMap<String, String>)>>>;
+
+    /// A Streamable HTTP MCP server on 127.0.0.1, as hosted tool catalogues
+    /// run: it records every request's headers, under its JSON-RPC method for
+    /// a POST to the URL and its request line otherwise, answers
+    /// `initialize` as an SSE stream that assigns a session id, a
+    /// notification with 202, `tools/list` as JSON and `tools/call` as an SSE
+    /// stream with a progress notification before the result. Any other request
+    /// (a GET, or a POST to another path) gets 404.
+    async fn streamable_mcp_stub() -> (String, StubRequests) {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind stub");
+        let url = format!("http://{}/mcp", listener.local_addr().expect("addr"));
+        let requests: StubRequests = Arc::default();
+        let seen = Arc::clone(&requests);
+        tokio::spawn(async move {
+            while let Ok((stream, _)) = listener.accept().await {
+                let seen = Arc::clone(&seen);
+                tokio::spawn(async move {
+                    let mut stream = BufReader::new(stream);
+                    loop {
+                        let mut request_line = String::new();
+                        if stream.read_line(&mut request_line).await.unwrap_or(0) == 0 {
+                            return;
+                        }
+                        let mut headers = HashMap::new();
+                        loop {
+                            let mut line = String::new();
+                            stream.read_line(&mut line).await.expect("header line");
+                            let line = line.trim_end();
+                            if line.is_empty() {
+                                break;
+                            }
+                            if let Some((name, value)) = line.split_once(':') {
+                                headers.insert(
+                                    name.trim().to_ascii_lowercase(),
+                                    value.trim().to_string(),
+                                );
+                            }
+                        }
+                        let length = headers
+                            .get("content-length")
+                            .and_then(|v| v.parse().ok())
+                            .unwrap_or(0);
+                        let mut body = vec![0; length];
+                        stream.read_exact(&mut body).await.expect("body");
+                        let (status, content_type, extra, reply) = if request_line
+                            .starts_with("POST /mcp ")
+                        {
+                            let message: serde_json::Value =
+                                serde_json::from_slice(&body).expect("json-rpc body");
+                            let method = message["method"].as_str().unwrap_or("").to_string();
+                            seen.lock()
+                                .expect("requests")
+                                .push((method.clone(), headers));
+                            let id = message["id"].clone();
+                            let sse = |events: &[serde_json::Value]| {
+                                events
+                                    .iter()
+                                    .map(|event| format!("event: message\ndata: {event}\n\n"))
+                                    .collect::<String>()
+                            };
+                            match method.as_str() {
+                                "initialize" => (
+                                    "200 OK",
+                                    "text/event-stream",
+                                    "Mcp-Session-Id: stub-session\r\n",
+                                    sse(&[json!({"jsonrpc": "2.0", "id": id, "result": {
+                                        "protocolVersion": "2025-03-26",
+                                        "capabilities": {"tools": {}},
+                                        "serverInfo": {"name": "catalogue-stub", "version": "1"},
+                                    }})]),
+                                ),
+                                "tools/list" => (
+                                    "200 OK",
+                                    "application/json",
+                                    "",
+                                    json!({"jsonrpc": "2.0", "id": id, "result": {"tools": [{
+                                        "name": "COMPOSIO_SEARCH_TOOLS",
+                                        "description": "Search the catalogue",
+                                        "inputSchema": {"type": "object", "properties": {"query": {"type": "string"}}},
+                                    }]}})
+                                    .to_string(),
+                                ),
+                                "tools/call" => (
+                                    "200 OK",
+                                    "text/event-stream",
+                                    "",
+                                    sse(&[
+                                        json!({"jsonrpc": "2.0", "method": "notifications/progress", "params": {"progressToken": 1, "progress": 1}}),
+                                        json!({"jsonrpc": "2.0", "id": id, "result": {"content": [{
+                                            "type": "text",
+                                            "text": format!("found: {}", message["params"]["arguments"]["query"].as_str().unwrap_or("")),
+                                        }]}}),
+                                    ]),
+                                ),
+                                _ if id.is_null() => ("202 Accepted", "application/json", "", String::new()),
+                                _ => (
+                                    "200 OK",
+                                    "application/json",
+                                    "",
+                                    json!({"jsonrpc": "2.0", "id": id, "error": {"code": -32601, "message": "not here"}}).to_string(),
+                                ),
+                            }
+                        } else {
+                            let line = request_line.trim_end().trim_end_matches(" HTTP/1.1");
+                            seen.lock()
+                                .expect("requests")
+                                .push((line.to_string(), headers));
+                            ("404 Not Found", "text/plain", "", String::new())
+                        };
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\n{extra}Content-Length: {}\r\n\r\n{reply}",
+                            reply.len()
+                        );
+                        if stream
+                            .get_mut()
+                            .write_all(response.as_bytes())
+                            .await
+                            .is_err()
+                        {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        (url, requests)
+    }
+
+    /// The hosted catalogue preset docs/mcp.md documents, pointed at a local
+    /// Streamable HTTP server: config.yaml's header (with its `${VAR}`
+    /// expanded) reaches every request, the session id comes back after
+    /// `initialize`, and the catalogue's tool is listed and called.
+    #[tokio::test]
+    async fn hosted_catalogue_preset_reaches_a_streamable_http_server() {
+        let _env = crate::test_env_lock::lock_async().await;
+        let (url, requests) = streamable_mcp_stub().await;
+        let home = TempDir::new().expect("home");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!(
+                "mcp_servers:\n  - name: composio\n    url: \"{url}\"\n    headers:\n      x-consumer-api-key: \"${{HERMES_TEST_CATALOGUE_KEY}}\"\n"
+            ),
+        )
+        .expect("write config");
+        std::env::set_var("HERMES_TEST_CATALOGUE_KEY", "key-from-env");
+        let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")));
+        std::env::remove_var("HERMES_TEST_CATALOGUE_KEY");
+        let config = config.expect("config loads");
+
+        let registry = Arc::new(ToolRegistry::new());
+        connect_configured_mcp_servers(&config, home.path(), &registry).await;
+        let tool = registry
+            .list_tools()
+            .into_iter()
+            .map(|info| info.name)
+            .find(|name| name.to_ascii_lowercase().contains("composio_search_tools"))
+            .expect("the catalogue's tool is registered");
+        let out = registry
+            .dispatch_async(&tool, json!({"query": "gmail"}))
+            .await;
+        assert!(out.contains("found: gmail"), "{out}");
+
+        let requests = requests.lock().expect("requests");
+        let methods: Vec<&str> = requests.iter().map(|(method, _)| method.as_str()).collect();
+        for method in [
+            "initialize",
+            "notifications/initialized",
+            "tools/list",
+            "tools/call",
+        ] {
+            assert!(
+                methods.contains(&method),
+                "{method} missing from {methods:?}"
+            );
+        }
+        // Streamable HTTP first: no probe of the older kind's `/sse`.
+        assert!(
+            !methods.iter().any(|method| method.contains("/sse")),
+            "{methods:?}"
+        );
+        let initialize = methods
+            .iter()
+            .position(|method| *method == "initialize")
+            .expect("initialize");
+        for (index, (method, headers)) in requests.iter().enumerate() {
+            assert_eq!(
+                headers.get("x-consumer-api-key").map(String::as_str),
+                Some("key-from-env"),
+                "{method}"
+            );
+            if !method.starts_with("GET ") {
+                assert!(
+                    headers
+                        .get("accept")
+                        .is_some_and(|v| v.contains("text/event-stream")),
+                    "{method}"
+                );
+            }
+            let session = headers.get("mcp-session-id").map(String::as_str);
+            if index <= initialize {
+                assert_eq!(session, None, "{method}");
+            } else {
+                assert_eq!(session, Some("stub-session"), "{method}");
+            }
+        }
+    }
+
+    /// A command that loads config.yaml to change it and saves it writes the
+    /// header's `${VAR}` back, not the key; and `Debug` names headers only.
+    #[test]
+    fn catalogue_header_stays_a_reference_through_a_save_and_out_of_debug() {
+        let _env = crate::test_env_lock::lock();
+        let home = TempDir::new().expect("home");
+        let path = home.path().join("config.yaml");
+        std::fs::write(
+            &path,
+            "mcp_servers:\n  - name: composio\n    url: \"https://connect.composio.dev/mcp\"\n    headers:\n      x-consumer-api-key: \"${HERMES_TEST_CATALOGUE_KEY}\"\n",
+        )
+        .expect("write config");
+        std::env::set_var("HERMES_TEST_CATALOGUE_KEY", "key-from-env");
+        let edited = hermes_config::load_user_config_file(&path).expect("load to edit");
+        hermes_config::save_config_yaml(&path, &edited).expect("save");
+        let loaded = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")));
+        std::env::remove_var("HERMES_TEST_CATALOGUE_KEY");
+
+        let saved = std::fs::read_to_string(&path).expect("read config");
+        assert!(saved.contains("${HERMES_TEST_CATALOGUE_KEY}"), "{saved}");
+        assert!(!saved.contains("key-from-env"), "{saved}");
+        let loaded = loaded.expect("config loads");
+        let entry = loaded
+            .mcp_servers
+            .iter()
+            .find(|server| server.name == "composio")
+            .expect("composio entry");
+        assert_eq!(entry.headers["x-consumer-api-key"], "key-from-env");
+        let shown = format!("{entry:?} {loaded:?}");
+        assert!(!shown.contains("key-from-env"), "{shown}");
+        assert!(shown.contains("x-consumer-api-key"), "{shown}");
     }
 }

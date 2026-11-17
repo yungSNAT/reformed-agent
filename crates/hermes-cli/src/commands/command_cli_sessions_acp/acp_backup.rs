@@ -63,7 +63,14 @@ fn acp_history_to_messages(
         let content = match content_value {
             Some(serde_json::Value::String(s)) => s.to_string(),
             Some(serde_json::Value::Array(parts)) if looks_like_openai_parts(parts) => {
-                if role == "user" {
+                // Only content with an image needs the prefixed parts form;
+                // text sent that way reads, to the agent loop's answer checks,
+                // as JSON with `__hermes_acp_parts_json__` among the user's
+                // words, which no reply repeats, so every turn was re-asked.
+                let text_only = parts
+                    .iter()
+                    .all(|part| part.get("type").and_then(|v| v.as_str()) == Some("text"));
+                if role == "user" && !text_only {
                     match serde_json::to_string(parts) {
                         Ok(serialized) => format!("{ACP_MULTIMODAL_PREFIX}{serialized}"),
                         Err(_) => flatten_openai_parts_to_text(parts),
@@ -208,6 +215,29 @@ struct CliAcpPromptExecutor {
     config: Arc<hermes_config::GatewayConfig>,
     tool_registry: Arc<hermes_tools::ToolRegistry>,
     interrupts: Arc<Mutex<HashMap<String, hermes_agent::InterruptController>>>,
+    /// The server's sink: streamed text and reasoning go out as they arrive.
+    event_sink: Arc<hermes_acp::EventSink>,
+    /// The server's sessions, read for a cancel that came before a turn's
+    /// interrupt was registered.
+    session_manager: Arc<hermes_acp::SessionManager>,
+}
+
+/// Register a turn's interrupt for `session_id`. A cancel covering the turn
+/// that the handler recorded before this (it records one before looking for
+/// an interrupt) interrupts it at once, so no cancel falls between the two.
+fn register_interrupt(
+    interrupts: &Mutex<HashMap<String, hermes_agent::InterruptController>>,
+    session_manager: &hermes_acp::SessionManager,
+    session_id: &str,
+) -> hermes_agent::InterruptController {
+    let interrupt = hermes_agent::InterruptController::new();
+    if let Ok(mut active) = interrupts.lock() {
+        active.insert(session_id.to_string(), interrupt.clone());
+    }
+    if session_manager.cancel_pending(session_id) {
+        interrupt.interrupt(None);
+    }
+    interrupt
 }
 
 impl CliAcpPromptExecutor {
@@ -220,36 +250,35 @@ impl CliAcpPromptExecutor {
     }
 }
 
+/// Push reasoning and reply text to the server's sink as they stream, and
+/// set `streamed` once any reply text has gone out.
 fn acp_stream_callbacks(
     session_id: &str,
-    callback_events: Arc<Mutex<Vec<hermes_acp::AcpEvent>>>,
+    event_sink: Arc<hermes_acp::EventSink>,
+    streamed: Arc<std::sync::atomic::AtomicBool>,
 ) -> hermes_agent::AgentCallbacks {
-    let thought_events = callback_events.clone();
+    let thought_sink = event_sink.clone();
     let thought_session_id = session_id.to_string();
-    let stream_events = callback_events;
     let stream_session_id = session_id.to_string();
     hermes_agent::AgentCallbacks {
         on_thinking: Some(Box::new(move |thinking: &str| {
             if thinking.trim().is_empty() {
                 return;
             }
-            if let Ok(mut events) = thought_events.lock() {
-                events.push(hermes_acp::AcpEvent::agent_thought_chunk(
-                    &thought_session_id,
-                    thinking,
-                ));
-            }
+            thought_sink.push(hermes_acp::AcpEvent::agent_thought_chunk(
+                &thought_session_id,
+                thinking,
+            ));
         })),
         on_stream_delta: Some(Box::new(move |delta: &str| {
             if delta.is_empty() {
                 return;
             }
-            if let Ok(mut events) = stream_events.lock() {
-                events.push(hermes_acp::AcpEvent::message_delta(
-                    &stream_session_id,
-                    delta,
-                ));
-            }
+            event_sink.push(hermes_acp::AcpEvent::message_delta(
+                &stream_session_id,
+                delta,
+            ));
+            streamed.store(true, std::sync::atomic::Ordering::Release);
         })),
         ..hermes_agent::AgentCallbacks::default()
     }
@@ -274,20 +303,30 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         agent_config.session_id = Some(session.session_id.clone());
 
         let agent_tools = Arc::new(crate::app::bridge_tool_registry(&self.tool_registry));
-        let interrupt = hermes_agent::InterruptController::new();
-        if let Ok(mut active) = self.interrupts.lock() {
-            active.insert(session.session_id.clone(), interrupt.clone());
-        }
-        let callback_events: Arc<Mutex<Vec<hermes_acp::AcpEvent>>> =
-            Arc::new(Mutex::new(Vec::new()));
-        let callbacks = acp_stream_callbacks(&session.session_id, callback_events.clone());
+        let interrupt =
+            register_interrupt(&self.interrupts, &self.session_manager, &session.session_id);
+        let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let callbacks = acp_stream_callbacks(
+            &session.session_id,
+            self.event_sink.clone(),
+            streamed.clone(),
+        );
         let agent = hermes_agent::attach_discovered_memory(
             hermes_agent::AgentLoop::with_interrupt(agent_config, agent_tools, provider, interrupt)
                 .with_callbacks(callbacks),
         );
         let messages = acp_history_to_messages(history, user_text);
 
-        let result = agent.run(messages, Some(self.current_tool_schemas())).await;
+        // `run` asks the model for each turn without streaming, so nothing
+        // reaches the callbacks before the turn ends; `run_stream` streams and
+        // fires `on_stream_delta`, which feeds the sink.
+        let result = agent
+            .run_stream(
+                messages,
+                Some(self.current_tool_schemas()),
+                Some(Box::new(|_| {})),
+            )
+            .await;
         if let Ok(mut active) = self.interrupts.lock() {
             active.remove(&session.session_id);
         }
@@ -301,20 +340,14 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             .unwrap_or_default();
 
         let usage = result.usage.as_ref().map(acp_usage_from_agent_usage);
-        let mut events = callback_events
-            .lock()
-            .map(|mut events| std::mem::take(&mut *events))
-            .unwrap_or_default();
-        events.extend(acp_events_from_agent_messages(
-            &session.session_id,
-            &result.messages,
-        ));
+        let events = acp_events_from_agent_messages(&session.session_id, &result.messages);
 
         Ok(hermes_acp::PromptExecutionOutput {
             response_text,
             usage,
             total_turns: Some(result.total_turns),
             events,
+            streamed_text: streamed.load(std::sync::atomic::Ordering::Acquire),
         })
     }
 
@@ -334,6 +367,17 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             Ok(true)
         } else {
             Ok(false)
+        }
+    }
+
+    fn cancel_prompt(&self, session: &hermes_acp::SessionState) {
+        let controller = self
+            .interrupts
+            .lock()
+            .ok()
+            .and_then(|active| active.get(&session.session_id).cloned());
+        if let Some(controller) = controller {
+            controller.interrupt(None);
         }
     }
 }
@@ -384,7 +428,7 @@ pub async fn handle_cli_acp(
     action: Option<String>,
     assume_yes: bool,
 ) -> Result<(), hermes_core::AgentError> {
-    match action.as_deref().unwrap_or("status") {
+    match action.as_deref().unwrap_or("start") {
         "start" => {
             let config = hermes_config::load_config(None)
                 .map_err(|e| hermes_core::AgentError::Config(e.to_string()))?;
@@ -395,7 +439,8 @@ pub async fn handle_cli_acp(
                 .unwrap_or_else(|| "dynamic".to_string());
             let max_turns = config.max_turns as usize;
 
-            println!(
+            // stdout carries the ACP messages.
+            eprintln!(
                 "Starting ACP server (model={}, max_turns={})...",
                 model, max_turns
             );
@@ -429,14 +474,16 @@ pub async fn handle_cli_acp(
                 tool_registry.clone(),
             )));
 
+            let event_sink = Arc::new(hermes_acp::EventSink::default());
+            let session_manager = Arc::new(hermes_acp::SessionManager::new());
             let prompt_executor = Arc::new(CliAcpPromptExecutor {
                 config: Arc::new(config.clone()),
                 tool_registry: tool_registry.clone(),
                 interrupts: Arc::new(Mutex::new(HashMap::new())),
+                event_sink: event_sink.clone(),
+                session_manager: session_manager.clone(),
             });
 
-            let session_manager = Arc::new(hermes_acp::SessionManager::new());
-            let event_sink = Arc::new(hermes_acp::EventSink::default());
             let permission_store = Arc::new(hermes_acp::PermissionStore::new());
             let handler = Arc::new(
                 hermes_acp::HermesAcpHandler::new(

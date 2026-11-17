@@ -266,6 +266,25 @@ fn apply_display_env_overrides(config: &mut DisplayConfig) {
     }
 }
 
+/// Refuses a `TERMINAL_ENV` or `TERMINAL_BACKEND` naming no backend this
+/// build knows: the configured backend, local by default, would otherwise
+/// run commands on this machine in place of the isolation the user chose.
+fn check_terminal_backend_env() -> Result<(), ConfigError> {
+    let Some(name) =
+        env_var_nonempty("TERMINAL_ENV").or_else(|| env_var_nonempty("TERMINAL_BACKEND"))
+    else {
+        return Ok(());
+    };
+    if TerminalBackendType::from_env_name(&name).is_some() {
+        return Ok(());
+    }
+    Err(ConfigError::ValidationError(format!(
+        "the terminal backend `{name}` (TERMINAL_ENV or TERMINAL_BACKEND) is not one this build \
+         knows: local, docker, ssh, singularity, modal or daytona. Commands are not run on this \
+         machine instead; set one of those or unset the variable."
+    )))
+}
+
 fn apply_terminal_env_overrides(config: &mut TerminalConfig) {
     if let Some(v) =
         env_var_nonempty("TERMINAL_ENV").or_else(|| env_var_nonempty("TERMINAL_BACKEND"))

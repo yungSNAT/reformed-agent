@@ -215,7 +215,14 @@ pub fn normalize_subprocess_path(path: Option<&str>) -> String {
 }
 
 pub fn hermes_subprocess_env(inherit_credentials: bool) -> BTreeMap<String, String> {
-    hermes_subprocess_env_from(std::env::vars(), inherit_credentials)
+    hermes_subprocess_env_from(utf8_env_vars(), inherit_credentials)
+}
+
+/// The process environment's entries whose name and value are both UTF-8;
+/// `std::env::vars` panics on any other, and a map of strings cannot hold it.
+fn utf8_env_vars() -> impl Iterator<Item = (String, String)> {
+    std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
 }
 
 pub fn hermes_subprocess_env_from<I, K, V>(
@@ -256,6 +263,61 @@ mod tests {
                 .map(|(key, value)| ((*key).to_string(), (*value).to_string())),
             inherit_credentials,
         )
+    }
+
+    /// A value no UTF-8 string can hold: a lone 0xFF byte on Unix, a lone
+    /// surrogate on Windows.
+    fn not_utf8(prefix: &str) -> std::ffi::OsString {
+        #[cfg(unix)]
+        {
+            use std::os::unix::ffi::OsStringExt;
+            let mut bytes = prefix.as_bytes().to_vec();
+            bytes.push(0xff);
+            std::ffi::OsString::from_vec(bytes)
+        }
+        #[cfg(windows)]
+        {
+            use std::os::windows::ffi::OsStringExt;
+            let mut wide: Vec<u16> = prefix.encode_utf16().collect();
+            wide.push(0xD800);
+            std::ffi::OsString::from_wide(&wide)
+        }
+    }
+
+    /// Runs `test` (its full path) in a child copy of this test binary with
+    /// `envs` added, so a variable that is not UTF-8 never enters this process,
+    /// whose other tests read the environment. True when the child ran it and it
+    /// passed.
+    fn passes_in_child(test: &str, envs: &[(std::ffi::OsString, std::ffi::OsString)]) -> bool {
+        let output = std::process::Command::new(std::env::current_exe().unwrap())
+            .args(["--exact", test, "--test-threads=1"])
+            .env("REFORMED_TEST_CHILD", "1")
+            .envs(envs.iter().map(|(k, v)| (k, v)))
+            .output()
+            .unwrap();
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        output.status.success() && stdout.contains("1 passed")
+    }
+
+    #[test]
+    fn a_variable_that_is_not_utf8_is_skipped_not_fatal() {
+        if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+            let env = hermes_subprocess_env(false);
+            assert_eq!(
+                env.get("REFORMED_TEST_GOOD").map(String::as_str),
+                Some("kept")
+            );
+            assert!(!env.keys().any(|key| key.starts_with("REFORMED_TEST_BAD")));
+            return;
+        }
+        assert!(passes_in_child(
+            "subprocess_env::tests::a_variable_that_is_not_utf8_is_skipped_not_fatal",
+            &[
+                ("REFORMED_TEST_GOOD".into(), "kept".into()),
+                ("REFORMED_TEST_BAD_VALUE".into(), not_utf8("x")),
+                (not_utf8("REFORMED_TEST_BAD_NAME"), "x".into()),
+            ],
+        ));
     }
 
     #[test]

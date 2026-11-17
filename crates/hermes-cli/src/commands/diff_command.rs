@@ -40,9 +40,9 @@ pub(super) async fn handle_diff_command(
     Ok(CommandResult::Handled)
 }
 
-/// The folder `/diff` reads: `TERMINAL_CWD` when set, as for the terminal
-/// tool, else the process's working directory.
-fn diff_cwd(terminal_cwd: Option<OsString>) -> Result<PathBuf, String> {
+/// The folder `/diff` reads and `/init` writes AGENTS.md in: `TERMINAL_CWD`
+/// when set, as for the terminal tool, else the process's working directory.
+pub(super) fn diff_cwd(terminal_cwd: Option<OsString>) -> Result<PathBuf, String> {
     match terminal_cwd.filter(|cwd| !cwd.is_empty()) {
         Some(cwd) => Ok(PathBuf::from(cwd)),
         None => std::env::current_dir()
@@ -664,6 +664,88 @@ mod tests {
         run(dir.path(), &["config", "diff.submodule", "diff"]);
         for mode in [&[][..], &["all"][..]] {
             collect_working_diff(dir.path(), &request(mode)).unwrap();
+        }
+        assert!(!marker.exists(), "a submodule-configured program ran");
+    }
+
+    /// A submodule moved to a new commit shows as its changed gitlink in every
+    /// mode, whilst its own configuration, kept in the superproject's
+    /// `.git/modules`, runs nothing and fetches nothing.
+    #[cfg(unix)]
+    #[test]
+    fn a_changed_submodule_commit_shows_as_its_gitlink_and_runs_nothing() {
+        let _env = crate::test_env_lock::lock();
+        use std::os::unix::fs::PermissionsExt;
+        let sub_origin = repo();
+        let dir = repo();
+        run(
+            dir.path(),
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                "-q",
+                sub_origin.path().to_str().unwrap(),
+                "sub",
+            ],
+        );
+        run(dir.path(), &["commit", "-qm", "sub"]);
+        let sub = dir.path().join("sub");
+        // The submodule's git directory lives outside its working tree.
+        let gitfile = std::fs::read_to_string(sub.join(".git")).unwrap();
+        assert!(gitfile.starts_with("gitdir: "), "{gitfile}");
+        let head = || {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&sub)
+                .args(["rev-parse", "HEAD"])
+                .output()
+                .unwrap();
+            String::from_utf8(out.stdout).unwrap().trim().to_string()
+        };
+        let old = head();
+        run(&sub, &["config", "user.email", "t@example.com"]);
+        run(&sub, &["config", "user.name", "t"]);
+        run(&sub, &["config", "commit.gpgsign", "false"]);
+        std::fs::write(sub.join("a.txt"), "moved\n").unwrap();
+        run(&sub, &["commit", "-qam", "move"]);
+        let new = head();
+
+        let marker = dir.path().join("ran");
+        let script = dir.path().join("hook.sh");
+        std::fs::write(
+            &script,
+            format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let driver = script.display().to_string();
+        run(&sub, &["config", "core.fsmonitor", &driver]);
+        run(&sub, &["config", "filter.evil.clean", &driver]);
+        run(&sub, &["config", "protocol.ext.allow", "always"]);
+        run(
+            &sub,
+            &["config", "remote.origin.url", &format!("ext::{driver}")],
+        );
+        std::fs::write(sub.join(".gitattributes"), "*.txt filter=evil\n").unwrap();
+        std::fs::write(sub.join("a.txt"), "dirty\n").unwrap();
+        run(dir.path(), &["config", "diff.submodule", "diff"]);
+        run(dir.path(), &["config", "fetch.recurseSubmodules", "true"]);
+
+        let gitlink = format!("-Subproject commit {old}\n+Subproject commit {new}");
+        let working = collect_working_diff(dir.path(), &request(&[])).unwrap();
+        assert!(working.diff.contains(&gitlink), "{working:?}");
+        assert!(working.stat.contains("sub"), "{working:?}");
+        assert!(!marker.exists(), "a submodule-configured program ran");
+        // Staged without running git in the submodule.
+        run(
+            dir.path(),
+            &["update-index", "--cacheinfo", &format!("160000,{new},sub")],
+        );
+        for mode in [&["staged"][..], &["all"][..]] {
+            let diff = collect_working_diff(dir.path(), &request(mode)).unwrap();
+            assert!(diff.diff.contains(&gitlink), "{mode:?}: {diff:?}");
         }
         assert!(!marker.exists(), "a submodule-configured program ran");
     }

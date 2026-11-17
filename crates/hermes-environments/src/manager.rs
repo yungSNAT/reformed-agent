@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use async_trait::async_trait;
 use hermes_config::{TerminalBackendType, TerminalConfig};
 use hermes_core::{AgentError, CommandOutput, TerminalBackend};
 
@@ -22,6 +23,69 @@ use crate::modal::ModalBackend;
 #[cfg(feature = "singularity")]
 use crate::singularity::SingularityBackend;
 
+/// Stands in for a configured backend this build lacks. Every operation
+/// fails: the user chose that backend for isolation, so running on the host
+/// instead would remove it.
+struct UnavailableBackend {
+    reason: String,
+}
+
+impl UnavailableBackend {
+    fn new(backend: TerminalBackendType) -> Self {
+        let name = match backend {
+            TerminalBackendType::Local => "local",
+            TerminalBackendType::Docker => "docker",
+            TerminalBackendType::Ssh => "ssh",
+            TerminalBackendType::Daytona => "daytona",
+            TerminalBackendType::Modal => "modal",
+            TerminalBackendType::Singularity => "singularity",
+        };
+        Self {
+            reason: format!(
+                "terminal.backend is `{name}`, but this build does not include that backend \
+                 (Cargo feature `{name}` of hermes-environments), so commands and file \
+                 operations are refused rather than run on this machine. Set terminal.backend \
+                 to `local` or use a build with the feature."
+            ),
+        }
+    }
+
+    fn refuse<T>(&self) -> Result<T, AgentError> {
+        Err(AgentError::Config(self.reason.clone()))
+    }
+}
+
+#[async_trait]
+impl TerminalBackend for UnavailableBackend {
+    async fn execute_command(
+        &self,
+        _command: &str,
+        _timeout: Option<u64>,
+        _workdir: Option<&str>,
+        _background: bool,
+        _pty: bool,
+    ) -> Result<CommandOutput, AgentError> {
+        self.refuse()
+    }
+
+    async fn read_file(
+        &self,
+        _path: &str,
+        _offset: Option<u64>,
+        _limit: Option<u64>,
+    ) -> Result<String, AgentError> {
+        self.refuse()
+    }
+
+    async fn write_file(&self, _path: &str, _content: &str) -> Result<(), AgentError> {
+        self.refuse()
+    }
+
+    async fn file_exists(&self, _path: &str) -> Result<bool, AgentError> {
+        self.refuse()
+    }
+}
+
 /// Manages the active terminal backend and provides a unified interface
 /// for command execution and file operations regardless of backend type.
 pub struct BackendManager {
@@ -34,8 +98,8 @@ impl BackendManager {
     /// Create a new `BackendManager` with the given configuration.
     ///
     /// The initial backend is selected based on `config.backend`.
-    /// If the selected backend type is not available (e.g. compiled without
-    /// the corresponding feature), falls back to [`LocalBackend`].
+    /// If the selected backend type is not compiled in, every operation fails
+    /// with a reason naming its Cargo feature; nothing runs on the host instead.
     pub fn new(config: TerminalConfig) -> Self {
         let (backend, active_backend_type) = Self::create_backend(&config);
         Self {
@@ -118,15 +182,10 @@ impl BackendManager {
                 TerminalBackendType::Singularity,
             ),
             #[allow(unreachable_patterns)]
-            _ => {
-                tracing::warn!(
-                    "Backend type {:?} not available (feature not enabled); falling back to local",
-                    config.backend
-                );
-                (
-                    Arc::new(LocalBackend::from_terminal_config(config)),
-                    TerminalBackendType::Local,
-                )
+            missing => {
+                let backend = UnavailableBackend::new(missing);
+                tracing::error!("{}", backend.reason);
+                (Arc::new(backend), missing)
             }
         }
     }
@@ -235,18 +294,68 @@ mod tests {
         );
     }
 
-    #[cfg(not(feature = "docker"))]
-    #[test]
-    fn unavailable_backend_falls_back_to_local_but_keeps_configured_type() {
-        let cfg = TerminalConfig {
-            backend: TerminalBackendType::Docker,
-            ..TerminalConfig::default()
-        };
-        let manager = BackendManager::new(cfg);
-        assert_eq!(manager.backend_type(), TerminalBackendType::Local);
-        assert_eq!(
-            manager.configured_backend_type(),
-            TerminalBackendType::Docker
-        );
+    /// Backends this build lacks, with their Cargo feature names.
+    fn missing_backends() -> Vec<(TerminalBackendType, &'static str)> {
+        [
+            (
+                TerminalBackendType::Docker,
+                "docker",
+                cfg!(feature = "docker"),
+            ),
+            (TerminalBackendType::Ssh, "ssh", cfg!(feature = "ssh")),
+            (
+                TerminalBackendType::Daytona,
+                "daytona",
+                cfg!(feature = "daytona"),
+            ),
+            (TerminalBackendType::Modal, "modal", cfg!(feature = "modal")),
+            (
+                TerminalBackendType::Singularity,
+                "singularity",
+                cfg!(feature = "singularity"),
+            ),
+        ]
+        .into_iter()
+        .filter(|(_, _, built)| !built)
+        .map(|(backend, feature, _)| (backend, feature))
+        .collect()
+    }
+
+    /// A configured backend the build lacks must refuse every operation,
+    /// never run it on the host: the user chose that backend for isolation.
+    #[tokio::test]
+    async fn a_configured_backend_this_build_lacks_refuses_to_run_on_the_host() {
+        let dir = tempfile::tempdir().unwrap();
+        let marker = dir.path().join("ran-on-host");
+        let file = dir.path().join("host-file.txt");
+        std::fs::write(&file, "host secret").unwrap();
+        // With every feature on (`--all-features`) nothing is missing and the
+        // loop checks nothing; the workspace build always lacks some.
+        for (backend, feature) in missing_backends() {
+            let manager = BackendManager::new(TerminalConfig {
+                backend,
+                ..TerminalConfig::default()
+            });
+            let command = format!("echo ran > \"{}\"", marker.display());
+            let err = manager
+                .execute_command(&command, Some(20), None, false, false)
+                .await
+                .expect_err("a missing backend must not run commands");
+            let text = err.to_string();
+            assert!(
+                text.contains(&format!("`{feature}`")) && text.contains("terminal.backend"),
+                "{text}"
+            );
+            assert!(!marker.exists(), "{feature}: the command ran on the host");
+
+            let path = file.to_str().unwrap();
+            assert!(manager.read_file(path, None, None).await.is_err());
+            assert!(manager.file_exists(path).await.is_err());
+            assert!(manager.write_file(path, "overwritten").await.is_err());
+            assert_eq!(std::fs::read_to_string(&file).unwrap(), "host secret");
+
+            assert_eq!(manager.configured_backend_type(), backend);
+            assert_eq!(manager.backend_type(), backend, "not reported as local");
+        }
     }
 }

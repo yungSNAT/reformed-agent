@@ -180,9 +180,7 @@ impl GenericProvider {
 
         let model = flat_model_name(effective_model);
         let is_kimi_k2 = model.starts_with("kimi-k2");
-        let is_deepseek_thinking = (model.starts_with("deepseek-v")
-            && !model.starts_with("deepseek-v3"))
-            || model == "deepseek-reasoner";
+        let is_deepseek_thinking = provider_profiles::is_deepseek_thinking_model(&model);
 
         let reasoning = body.get("reasoning").cloned();
         let mut enabled = true;
@@ -209,28 +207,22 @@ impl GenericProvider {
             map.remove("reasoning_effort");
         }
 
-        if is_kimi_k2 {
+        let mapped = if is_kimi_k2 {
             if reasoning.is_none() && effort.is_none() {
                 return;
             }
-            body["thinking"] =
-                serde_json::json!({ "type": if enabled { "enabled" } else { "disabled" } });
-            if enabled {
-                if let Some(mapped) = opencode_go_kimi_reasoning_effort(effort.as_deref()) {
-                    body["reasoning_effort"] = serde_json::json!(mapped);
-                }
-            }
+            opencode_go_kimi_reasoning_effort(effort.as_deref())
+        } else if is_deepseek_thinking {
+            provider_profiles::deepseek_reasoning_effort(effort.as_deref())
+        } else {
             return;
-        }
-
-        if is_deepseek_thinking {
-            body["thinking"] =
-                serde_json::json!({ "type": if enabled { "enabled" } else { "disabled" } });
-            if enabled {
-                if let Some(mapped) = opencode_go_deepseek_reasoning_effort(effort.as_deref()) {
-                    body["reasoning_effort"] = serde_json::json!(mapped);
-                }
-            }
+        };
+        // The relay answers HTTP 400 to a request with both `thinking` and
+        // `reasoning_effort`, so an effort alone implies thinking on.
+        match (enabled, mapped) {
+            (false, _) => body["thinking"] = serde_json::json!({ "type": "disabled" }),
+            (true, Some(mapped)) => body["reasoning_effort"] = serde_json::json!(mapped),
+            (true, None) => body["thinking"] = serde_json::json!({ "type": "enabled" }),
         }
     }
 
@@ -607,17 +599,7 @@ fn opencode_go_kimi_reasoning_effort(effort: Option<&str>) -> Option<&'static st
         "low" => Some("low"),
         "medium" => Some("medium"),
         "high" => Some("high"),
-        "xhigh" | "max" => Some("high"),
-        _ => None,
-    }
-}
-
-fn opencode_go_deepseek_reasoning_effort(effort: Option<&str>) -> Option<&'static str> {
-    match effort.unwrap_or("").trim().to_ascii_lowercase().as_str() {
-        "low" => Some("low"),
-        "medium" => Some("medium"),
-        "high" => Some("high"),
-        "xhigh" | "max" => Some("max"),
+        "xhigh" | "max" | "ultra" => Some("high"),
         _ => None,
     }
 }
