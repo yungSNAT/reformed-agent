@@ -2,7 +2,7 @@
   "generated_at_utc": "2026-07-02T18:14:12Z",
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 219,
+    "covered_paths": 218,
     "required_backlog_classification_paths": [
       "tests",
       "tests/agent",
@@ -4230,38 +4230,6 @@
           "name": "test_mem0_config_file_activates_provider"
         }
       ]
-    },
-    {
-      "path": "tests/integration/test_batch_runner.py",
-      "classification_path": "tests/integration",
-      "coverage_tags": [
-        "batch_runner",
-        "checkpoint",
-        "python_test_suite",
-        "rust_contracts",
-        "tests_integration"
-      ],
-      "rust_tests": [
-        {
-          "file": "crates/hermes-intelligence/src/rl.rs",
-          "name": "batch_runner_generates_style_tagged_baseline_responses"
-        },
-        {
-          "file": "crates/hermes-intelligence/src/rl.rs",
-          "name": "batch_dataset_runner_updates_checkpoint_and_resumes_by_index_and_prompt"
-        },
-        {
-          "file": "crates/hermes-intelligence/src/rl.rs",
-          "name": "batch_dataset_runner_persists_atomic_checkpoint_per_batch_and_resumes_from_file"
-        },
-        {
-          "file": "crates/hermes-intelligence/src/rl.rs",
-          "name": "batch_dataset_runner_checkpoint_path_starts_fresh_on_corrupt_or_mismatched_checkpoint"
-        }
-      ],
-      "status": "covered_by_rust_test_suite_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime."
     },
     {
       "path": "tests/integration/test_checkpoint_resumption.py",

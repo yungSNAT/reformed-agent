@@ -250,6 +250,7 @@ async fn dispatch_slash_command(
         }
         "/history" => handle_history_command(app),
         "/prompt" | "/compose" => handle_prompt_command(app, args),
+        "/init" => init_command::handle_init_command(app, args),
         "/recap" => handle_recap_command(app, args),
         "/context" => handle_context_command(app, args),
         "/title" => handle_session_compat_command(app, canonical_command(cmd), args),
