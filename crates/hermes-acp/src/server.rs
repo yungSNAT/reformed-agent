@@ -734,7 +734,7 @@ mod tests {
                 "id": 3,
                 "method": "session/new",
                 "params": {"cwd": "/tmp", "mcpServers": [
-                    {"type": "stdio", "name": "silent", "command": "sleep", "args": ["30"], "env": []}
+                    {"name": "silent", "command": "sleep", "args": ["30"], "env": []}
                 ]},
             }))
             .await;
