@@ -1266,6 +1266,11 @@ impl McpTransport for HttpSseTransport {
         {
             self.session_id = Some(session_id.to_string());
         }
+        if response.status() == reqwest::StatusCode::ACCEPTED {
+            // No reply here, whatever the body says (an older server writes
+            // "Accepted"); one may follow on the held stream.
+            return Ok(());
+        }
         let is_sse = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -1990,7 +1995,8 @@ mod tests {
                             .expect("stream open");
                     }
                     stream
-                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\n\r\n")
+                        // The body the MCP Python SDK's server writes.
+                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\n\r\nAccepted")
                         .await
                         .expect("write 202");
                 } else {
