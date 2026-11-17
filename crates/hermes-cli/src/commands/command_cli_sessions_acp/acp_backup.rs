@@ -63,7 +63,14 @@ fn acp_history_to_messages(
         let content = match content_value {
             Some(serde_json::Value::String(s)) => s.to_string(),
             Some(serde_json::Value::Array(parts)) if looks_like_openai_parts(parts) => {
-                if role == "user" {
+                // Only content with an image needs the prefixed parts form;
+                // text sent that way reads, to the agent loop's answer checks,
+                // as JSON with `__hermes_acp_parts_json__` among the user's
+                // words, which no reply repeats, so every turn was re-asked.
+                let text_only = parts
+                    .iter()
+                    .all(|part| part.get("type").and_then(|v| v.as_str()) == Some("text"));
+                if role == "user" && !text_only {
                     match serde_json::to_string(parts) {
                         Ok(serialized) => format!("{ACP_MULTIMODAL_PREFIX}{serialized}"),
                         Err(_) => flatten_openai_parts_to_text(parts),

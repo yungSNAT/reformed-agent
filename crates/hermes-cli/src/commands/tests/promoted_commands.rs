@@ -577,6 +577,17 @@
     }
 
     #[test]
+    fn test_acp_history_to_messages_sends_text_only_user_content_as_text() {
+        let history = vec![serde_json::json!({
+            "role": "user",
+            "content": [{"type": "text", "text": "say hello"}]
+        })];
+        let messages = acp_history_to_messages(&history, "");
+        assert_eq!(messages.len(), 1);
+        assert_eq!(messages[0].content.as_deref(), Some("say hello"));
+    }
+
+    #[test]
     fn test_acp_history_to_messages_flattens_assistant_parts_to_text() {
         let history = vec![serde_json::json!({
             "role": "assistant",
