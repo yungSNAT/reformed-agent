@@ -14,9 +14,10 @@ use std::sync::{Arc, Mutex};
 use hermes_agent::agent_loop::ToolRegistry;
 use hermes_agent::{AgentLoop, SessionPersistence};
 use hermes_config::GatewayConfig;
-use hermes_core::{Message, MessageRole, StreamChunk};
+use hermes_core::{AgentResult, Message, MessageRole, StreamChunk};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc::UnboundedSender;
+use tokio::sync::Semaphore;
 
 /// Frames for one connection's socket.
 pub(crate) type Outbox = UnboundedSender<Value>;
@@ -26,11 +27,16 @@ pub(crate) type RpcError = (i64, String);
 
 pub(crate) const METHOD_NOT_FOUND: i64 = -32601;
 // Upstream's gateway codes (tui_gateway): 4000 invalid params, 4001 unknown session,
-// 4009 a turn already running, 4012 no text.
+// 4009 a turn already running, 4012 no text, 4090 no free turn slot.
 const INVALID_PARAMS: i64 = 4000;
 const SESSION_NOT_FOUND: i64 = 4001;
 const SESSION_BUSY: i64 = 4009;
 const TEXT_REQUIRED: i64 = 4012;
+const NO_TURN_SLOT: i64 = 4090;
+
+/// Most turns running at once across the gateway, each holding a model request and its reply;
+/// with it, what waits in a connection's outbox is bounded by those turns' replies.
+const MAX_TURNS: usize = 8;
 
 /// Longest session id a request may name.
 const MAX_SESSION_ID: usize = 128;
@@ -42,6 +48,7 @@ pub struct Chat {
     // shortcut: sessions live until the gateway exits (about 100 bytes each, created only by
     // a token holder); dropping idle ones comes with session close and resume.
     sessions: Mutex<HashMap<String, Arc<LiveSession>>>,
+    turns: Arc<Semaphore>,
 }
 
 /// The reply streamed so far and its length in UTF-16 units, the desktop's offsets.
@@ -79,6 +86,7 @@ impl Chat {
             config,
             home,
             sessions: Mutex::default(),
+            turns: Arc::new(Semaphore::new(MAX_TURNS)),
         }
     }
 
@@ -171,6 +179,12 @@ impl Chat {
         let Some(session) = self.lock_sessions().get(id).cloned() else {
             return Err((SESSION_NOT_FOUND, "session not found".into()));
         };
+        let Ok(slot) = Arc::clone(&self.turns).try_acquire_owned() else {
+            return Err((
+                NO_TURN_SLOT,
+                format!("{MAX_TURNS} turns are running; send again when one ends"),
+            ));
+        };
         if session.busy.swap(true, Ordering::AcqRel) {
             return Err((SESSION_BUSY, "session busy".into()));
         }
@@ -182,6 +196,7 @@ impl Chat {
             outbox: outbox.clone(),
         };
         tokio::spawn(async move {
+            let _slot = slot;
             turn.run(text, &guard.0).await;
         });
         Ok(json!({"status": "streaming"}))
@@ -254,19 +269,20 @@ impl Turn {
     async fn run(self, text: String, session: &Arc<LiveSession>) {
         self.emit(session, "message.start", json!({"turn_id": self.turn_id}));
         let streamed = Arc::new(Mutex::new(Streamed::default()));
-        let result = self.ask(text, session, &streamed).await;
-        let streamed = streamed.lock().map(|s| s.text.clone()).unwrap_or_default();
-        let payload = match result {
+        let payload = match self.ask(text, session, &streamed).await {
             Ok((reply, None)) => json!({"text": reply, "status": "complete"}),
             Ok((reply, Some(warning))) => {
                 json!({"text": reply, "status": "complete", "warning": warning})
             }
-            Err(error) => json!({
-                "text": streamed,
-                "status": "error",
-                "error": error,
-                "partial": !streamed.is_empty(),
-            }),
+            Err(error) => {
+                let streamed = streamed_text(&streamed);
+                json!({
+                    "text": streamed,
+                    "status": "error",
+                    "error": error,
+                    "partial": !streamed.is_empty(),
+                })
+            }
         };
         self.emit(session, "message.complete", payload);
     }
@@ -278,25 +294,65 @@ impl Turn {
         session: &Arc<LiveSession>,
         streamed: &Arc<Mutex<Streamed>>,
     ) -> Result<(String, Option<String>), String> {
-        let chat = &self.chat;
-        let model = chat
+        let model = self
+            .chat
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
-        let store = SessionPersistence::new(&chat.home);
-        let mut messages: Vec<Message> = store
-            .load_session(&self.id)
-            .map_err(|e| e.to_string())?
-            .into_iter()
-            .filter(|m| m.role != MessageRole::System)
-            .collect();
-        messages.push(Message::user(text));
+        let store = SessionPersistence::new(&self.chat.home);
+        let mut transcript = store.load_session(&self.id).map_err(|e| e.to_string())?;
+        // The leading system rows hold the stored system prompt, which the agent adds itself.
+        let prompt_rows = transcript
+            .iter()
+            .take_while(|m| m.role == MessageRole::System)
+            .count();
+        transcript.push(Message::user(text));
+        let messages = transcript[prompt_rows..].to_vec();
+        let result = match self.answer(&model, messages, session, streamed).await {
+            Ok(result) => result,
+            Err(error) => {
+                // As upstream keeps the user's row once a prompt is admitted, a failed turn
+                // keeps the prompt and what streamed, for the transcript and the next turn.
+                let partial = streamed_text(streamed);
+                if !partial.is_empty() {
+                    transcript.push(Message::assistant(partial));
+                }
+                let saved = store.persist_session(
+                    &self.id,
+                    &transcript,
+                    Some(&model),
+                    Some("desktop"),
+                    None,
+                    None,
+                );
+                return Err(match saved {
+                    Ok(()) => error,
+                    Err(e) => format!("{error} (the prompt was not saved: {e})"),
+                });
+            }
+        };
+        let reply = hermes_app_runtime::assistant_reply_from_result(&result);
+        let warning = store
+            .persist_agent_result(&self.id, &result, Some(&model), Some("desktop"))
+            .err()
+            .map(|e| format!("The reply was not saved: {e}"));
+        Ok((reply, warning))
+    }
 
-        let mut agent_config = hermes_app_runtime::build_agent_config(&chat.config, &model);
+    /// One tool-less agent run over `messages`, streaming the reply as it comes.
+    async fn answer(
+        &self,
+        model: &str,
+        messages: Vec<Message>,
+        session: &Arc<LiveSession>,
+        streamed: &Arc<Mutex<Streamed>>,
+    ) -> Result<AgentResult, String> {
+        let chat = &self.chat;
+        let mut agent_config = hermes_app_runtime::build_agent_config(&chat.config, model);
         agent_config.session_id = Some(self.id.clone());
         AgentLoop::hydrate_stored_system_prompt_from_hermes_home(&mut agent_config, &chat.home)
             .map_err(|e| e.to_string())?;
-        let provider = hermes_provider_runtime::build_provider(&chat.config, &model);
+        let provider = hermes_provider_runtime::build_provider(&chat.config, model);
         let agent = AgentLoop::new(agent_config, Arc::new(ToolRegistry::new()), provider);
 
         let delta = DeltaSink {
@@ -308,17 +364,19 @@ impl Turn {
         };
         let on_chunk: Box<dyn Fn(StreamChunk) + Send + Sync> =
             Box::new(move |chunk| delta.send(chunk));
-        let result = agent
+        agent
             .run_stream(messages, Some(Vec::new()), Some(on_chunk))
             .await
-            .map_err(|e| e.to_string())?;
-        let reply = hermes_app_runtime::assistant_reply_from_result(&result);
-        let warning = store
-            .persist_agent_result(&self.id, &result, Some(&model), Some("desktop"))
-            .err()
-            .map(|e| format!("The reply was not saved: {e}"));
-        Ok((reply, warning))
+            .map_err(|e| e.to_string())
     }
+}
+
+fn streamed_text(streamed: &Mutex<Streamed>) -> String {
+    streamed
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .text
+        .clone()
 }
 
 /// Sends each streamed piece of the reply as `message.delta`, stamped with the turn, segment
