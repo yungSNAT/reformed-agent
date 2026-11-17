@@ -35,7 +35,7 @@
       "classification": "intentional_divergence",
       "classification_path": ".github/workflows/ci.yml",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "008fc3a13d69e3739f706426780f01cc6057e1e8",
+      "local_blob": "a20c08ee7e424b008d31b2dc6eb2f12ad46de458",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": ".github/workflows/ci.yml",
@@ -95,7 +95,7 @@
       "classification": "policy_only",
       "classification_path": "CONTRIBUTING.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "8d2424e70611aa963443a2c4bc58f00a1f4be13e",
+      "local_blob": "583e45675c26a22396b01f545c372b6796e9a054",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "CONTRIBUTING.md",
@@ -140,7 +140,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "cfeada317881fdd5076bf5529b5c421c71968feb",
+      "local_blob": "94e19e53b1ac1f4fa613dcf86889577b84335ffe",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -19666,10 +19666,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-17T00:26:28.731362+00:00",
+  "generated_at_utc": "2026-11-17T00:26:39.517193+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "ce774721ef29706f40764d120487f0893b35fa9b",
+    "local_sha": "af8687925ab687d442734e6bcb3a07a7f991c62f",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "b51fbc738be26760939922981f9d4ee468770f91"
   },
