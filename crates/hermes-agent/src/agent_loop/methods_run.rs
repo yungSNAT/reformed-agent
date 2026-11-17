@@ -45,6 +45,10 @@ impl AgentLoop {
 
         // Determine which tools to expose
         let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
+        // Five finalizer contracts below re-ask for a final answer backed by tool evidence or
+        // execution. A turn offered no tools cannot gather any, so its first answer stands; the
+        // output-quality rewrite needs no tools and still applies.
+        let finalizers_apply = !tool_schemas.is_empty();
         let (advertised_tool_names, advertised_tool_names_display) =
             advertised_tool_name_index(&tool_schemas);
 
@@ -636,7 +640,7 @@ impl AgentLoop {
                         }
                     }
                 }
-                if finalizer_web_research_requires_retry(
+                if finalizers_apply && finalizer_web_research_requires_retry(
                     ctx.get_messages(),
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_web_research_retries,
@@ -653,7 +657,7 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_google_workspace_requires_retry(
+                if finalizers_apply && finalizer_google_workspace_requires_retry(
                     ctx.get_messages(),
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_google_workspace_retries,
@@ -670,7 +674,7 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_task_focus_requires_retry(
+                if finalizers_apply && finalizer_task_focus_requires_retry(
                     ctx.get_messages(),
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_task_focus_retries,
@@ -688,7 +692,7 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_repo_research_plan_requires_retry(
+                if finalizers_apply && finalizer_repo_research_plan_requires_retry(
                     ctx.get_messages(),
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_repo_research_plan_retries,
@@ -747,7 +751,7 @@ impl AgentLoop {
                     ));
                     continue;
                 }
-                if finalizer_action_execution_requires_retry(
+                if finalizers_apply && finalizer_action_execution_requires_retry(
                     ctx.get_messages(),
                     assistant_msg.content.as_deref().unwrap_or_default(),
                     finalizer_action_execution_retries,
