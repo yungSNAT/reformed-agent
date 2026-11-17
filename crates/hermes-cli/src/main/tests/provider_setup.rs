@@ -1439,3 +1439,28 @@
             None => std::env::remove_var("NOUS_INFERENCE_BASE_URL"),
         }
     }
+
+    #[test]
+    fn setup_offers_deepinfra_fireworks_and_upstage() {
+        let cases = [
+            ("deepinfra", "DeepInfra", "DEEPINFRA_API_KEY", "https://api.deepinfra.com/v1/openai"),
+            ("fireworks", "Fireworks AI", "FIREWORKS_API_KEY", "https://api.fireworks.ai/inference/v1"),
+            ("upstage", "Upstage Solar", "UPSTAGE_API_KEY", "https://api.upstage.ai/v1"),
+        ];
+        for (provider, display, key_var, base_url) in cases {
+            assert_eq!(setup_provider_display(provider), display);
+            assert_eq!(setup_provider_env_keys(provider), &[key_var]);
+            assert_eq!(setup_provider_default_base_url(provider), Some(base_url));
+            assert_eq!(provider_env_var(provider), Some(key_var));
+            assert!(
+                SETUP_MODEL_OPTIONS.iter().any(|option| option.provider == provider),
+                "{provider} missing from setup's model options"
+            );
+        }
+        assert_eq!(provider_env_var("solar"), Some("UPSTAGE_API_KEY"));
+        assert_eq!(provider_env_var("fw"), Some("FIREWORKS_API_KEY"));
+        assert_eq!(
+            secret_provider_aliases("deep-infra"),
+            vec!["deepinfra", "deep-infra", "deepinfra-ai"]
+        );
+    }

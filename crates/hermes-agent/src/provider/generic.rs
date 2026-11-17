@@ -525,6 +525,16 @@ impl GenericProvider {
         if provider_profiles::is_kimi_code_base_url(&self.base_url) {
             req = req.header("User-Agent", provider_profiles::KIMI_CODE_USER_AGENT);
         }
+        if self.provider_profile.as_deref() == Some("fireworks") {
+            // Upstream's Fireworks profile sends Hermes's attribution headers.
+            req = req
+                .header("HTTP-Referer", "https://hermes-agent.nousresearch.com")
+                .header("X-Title", "Hermes Agent")
+                .header(
+                    "User-Agent",
+                    concat!("HermesAgent/", env!("CARGO_PKG_VERSION")),
+                );
+        }
         for (key, value) in &self.extra_headers {
             req = req.header(key.as_str(), value.as_str());
         }
@@ -887,53 +897,42 @@ impl LlmProvider for GenericProvider {
             provider.update_rate_limit(resp.headers());
             provider.capture_nous_credits_headers(resp.headers());
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body_text = resp.text().await.unwrap_or_else(|_| "<no body>".to_string());
-                yield Err(AgentError::LlmApi(format!("API error {status}: {body_text}")));
-                return;
-            }
+            let mut events = match SseEvents::open(resp).await {
+                Ok(events) => events,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            };
 
-            // Read the SSE byte stream line by line
-            let mut byte_stream = resp.bytes_stream();
-            let mut buffer = String::new();
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk_bytes = match chunk_result {
-                    Ok(b) => b,
+            // Process complete SSE events (separated by double newlines)
+            while let Some(event_block) = events.next().await {
+                let event_block = match event_block {
+                    Ok(block) => block,
                     Err(e) => {
-                        yield Err(AgentError::LlmApi(format!("Stream read error: {e}")));
+                        yield Err(e);
                         return;
                     }
                 };
-
-                buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
-
-                // Process complete SSE events (separated by double newlines)
-                while let Some(event_end) = buffer.find("\n\n") {
-                    let event_block = buffer[..event_end].to_string();
-                    buffer = buffer[event_end + 2..].to_string();
-
-                    for line in event_block.lines() {
-                        let line = line.trim();
-                        if line.is_empty() || line.starts_with(':') {
-                            continue;
+                for line in event_block.lines() {
+                    let line = line.trim();
+                    if line.is_empty() || line.starts_with(':') {
+                        continue;
+                    }
+                    if let Some(data) = line.strip_prefix("data: ") {
+                        let data = data.trim();
+                        if data == "[DONE]" {
+                            // Stream finished
+                            return;
                         }
-                        if let Some(data) = line.strip_prefix("data: ") {
-                            let data = data.trim();
-                            if data == "[DONE]" {
-                                // Stream finished
-                                return;
+                        match serde_json::from_str::<Value>(data) {
+                            Ok(json) => {
+                                if let Some(chunk) = parse_sse_chunk(&json) {
+                                    yield Ok(chunk);
+                                }
                             }
-                            match serde_json::from_str::<Value>(data) {
-                                Ok(json) => {
-                                    if let Some(chunk) = parse_sse_chunk(&json) {
-                                        yield Ok(chunk);
-                                    }
-                                }
-                                Err(e) => {
-                                    tracing::warn!("Failed to parse SSE data: {e}");
-                                }
+                            Err(e) => {
+                                tracing::warn!("Failed to parse SSE data: {e}");
                             }
                         }
                     }
@@ -941,8 +940,9 @@ impl LlmProvider for GenericProvider {
             }
 
             // Process any remaining data in the buffer
-            if !buffer.trim().is_empty() {
-                for line in buffer.lines() {
+            let rest = events.rest();
+            if !rest.trim().is_empty() {
+                for line in rest.lines() {
                     let line = line.trim();
                     if let Some(data) = line.strip_prefix("data: ") {
                         let data = data.trim();
@@ -961,4 +961,3 @@ impl LlmProvider for GenericProvider {
         .boxed()
     }
 }
-
