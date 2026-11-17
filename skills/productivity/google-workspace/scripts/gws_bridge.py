@@ -16,6 +16,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from _hermes_home import get_hermes_home
+from _program_path import find_program
 
 
 def get_token_path() -> Path:
@@ -99,11 +100,16 @@ def main():
         print("Usage: gws_bridge.py <gws args...>", file=sys.stderr)
         sys.exit(1)
 
+    gws = find_program("gws")
+    if gws is None:
+        print("gws not found on PATH", file=sys.stderr)
+        sys.exit(1)
+
     access_token = get_valid_token()
     env = os.environ.copy()
     env["GOOGLE_WORKSPACE_CLI_TOKEN"] = access_token
 
-    result = subprocess.run(["gws"] + sys.argv[1:], env=env)
+    result = subprocess.run([gws] + sys.argv[1:], env=env)
     sys.exit(result.returncode)
 
 

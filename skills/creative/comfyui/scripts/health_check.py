@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
 import sys
 from pathlib import Path
 
@@ -29,12 +28,14 @@ from _common import (  # noqa: E402
     DEFAULT_LOCAL_HOST, ENV_API_KEY, emit_json, http_get, parse_model_list,
     resolve_api_key, resolve_url, unwrap_workflow,
 )
+from _program_path import find_program  # noqa: E402
 
 
 def comfy_cli_status() -> dict:
-    if shutil.which("comfy"):
-        return {"available": True, "method": "comfy", "path": shutil.which("comfy")}
-    if shutil.which("uvx"):
+    comfy = find_program("comfy")
+    if comfy:
+        return {"available": True, "method": "comfy", "path": comfy}
+    if find_program("uvx"):
         return {"available": True, "method": "uvx",
                 "hint": "Invoke as `uvx --from comfy-cli comfy ...`"}
     return {
