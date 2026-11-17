@@ -728,3 +728,37 @@ async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
         }
     }
 }
+
+/// A frame already past its deadline closes the connection even when the socket could take it
+/// at once: with no time allowed, not even `gateway.ready` is written.
+#[tokio::test]
+async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
+    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO)).await;
+    let request = format!("ws://{}/api/ws?token={TOKEN}", started.addr)
+        .into_client_request()
+        .unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(20), socket.next())
+        .await
+        .expect("no frame and no close within 20 seconds");
+    assert!(
+        !matches!(frame, Some(Ok(Message::Text(_)))),
+        "a frame past its deadline was written: {frame:?}"
+    );
+}
+
+/// The deadline is per frame, not per turn: a turn that runs longer than the write timeout
+/// still reaches a client that keeps reading.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
+    let timeout = Duration::from_secs(1);
+    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let events = client.turn_events(&session).await;
+    let (kind, payload, _) = events.last().unwrap();
+    assert_eq!(kind, "message.complete");
+    assert_eq!(payload["text"], "slow reply", "{payload}");
+}
