@@ -272,7 +272,8 @@ impl Importer<'_> {
         self.merge_memory(item, &markdown_entries(text.trim_start_matches('\u{feff}')));
     }
 
-    /// Every `*.md` in `folder`, in name order, as memory entries.
+    /// Every `*.md` in `folder`, in name order, as memory entries; a linked
+    /// file is skipped.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
         let Ok(entries) = std::fs::read_dir(folder) else {
             self.record(Status::Skip, item, "no memories folder".to_string());
@@ -286,6 +287,15 @@ impl Importer<'_> {
         files.sort();
         let mut incoming = Vec::new();
         for file in files {
+            if is_link(&file) {
+                let name = file.file_name().unwrap_or_default().to_string_lossy();
+                self.record(
+                    Status::Skip,
+                    &format!("{item}/{name}"),
+                    "it is a link, which this import does not follow".to_string(),
+                );
+                continue;
+            }
             match std::fs::read_to_string(&file) {
                 Ok(text) => incoming.extend(markdown_entries(text.trim_start_matches('\u{feff}'))),
                 Err(err) => self.record(
