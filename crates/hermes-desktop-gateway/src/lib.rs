@@ -30,7 +30,7 @@ use tokio::sync::mpsc;
 pub mod chat;
 
 pub use chat::Chat;
-use chat::RpcError;
+use chat::{Outgoing, RpcError};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
 pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
@@ -262,25 +262,27 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
     // Turns stream their events through this connection's outbox; replies go out first, as
     // each is written before the next outbox frame is read. Queued events are written before
     // the next request is read, so a client that reads slowly cannot start more turns while
-    // finished ones wait, and the outbox holds the events of at most 8 turns (the turn cap).
-    let (outbox, mut events) = mpsc::unbounded_channel();
+    // finished ones wait. A turn keeps its slot until its last event is written, so the turn
+    // cap bounds the replies waiting across all connections; a write that waits past the
+    // write timeout closes the connection, which drops its queued events and frees their slots.
+    let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
     let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
     loop {
         let frame = tokio::select! {
             biased;
             Some(event) = events.recv() => Some(event),
             inbound = socket.recv() => match inbound {
-                Some(Ok(Message::Text(text))) => reply_to(&text, &call),
+                Some(Ok(Message::Text(text))) => reply_to(&text, &call).map(Outgoing::from),
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 Some(Ok(_)) => None,
             },
         };
-        if let Some(frame) = frame {
-            if socket
-                .send(Message::Text(frame.to_string().into()))
-                .await
-                .is_err()
-            {
+        if let Some(outgoing) = frame {
+            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
+            if !matches!(
+                tokio::time::timeout(chat.write_timeout(), write).await,
+                Ok(Ok(()))
+            ) {
                 break;
             }
         }

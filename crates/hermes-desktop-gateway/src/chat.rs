@@ -18,10 +18,23 @@ use hermes_config::GatewayConfig;
 use hermes_core::{AgentResult, Message, MessageRole, StreamChunk};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc::UnboundedSender;
-use tokio::sync::Semaphore;
+use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 /// Frames for one connection's socket.
-pub(crate) type Outbox = UnboundedSender<Value>;
+pub(crate) type Outbox = UnboundedSender<Outgoing>;
+
+/// A frame for the connection to write. A turn's last event carries the turn's slot, so the
+/// slot frees once that event is written or dropped with a closed connection.
+pub(crate) struct Outgoing {
+    pub(crate) frame: Value,
+    _slot: Option<OwnedSemaphorePermit>,
+}
+
+impl From<Value> for Outgoing {
+    fn from(frame: Value) -> Self {
+        Self { frame, _slot: None }
+    }
+}
 
 /// A JSON-RPC error: code and message.
 pub(crate) type RpcError = (i64, String);
@@ -35,8 +48,8 @@ const SESSION_BUSY: i64 = 4009;
 const TEXT_REQUIRED: i64 = 4012;
 const NO_TURN_SLOT: i64 = 4090;
 
-/// Most turns running at once across the gateway, each holding a model request and its reply;
-/// with it, what waits in a connection's outbox is bounded by those turns' replies.
+/// Most turns running or with events not yet written, across the gateway; it bounds the
+/// replies held in memory, as a turn keeps its slot until its last event is written.
 const MAX_TURNS: usize = 8;
 
 /// How long one socket write may wait for a client that is not reading.
@@ -94,6 +107,10 @@ impl Chat {
             turns: Arc::new(Semaphore::new(MAX_TURNS)),
             write_timeout: WRITE_TIMEOUT,
         }
+    }
+
+    pub(crate) fn write_timeout(&self) -> Duration {
+        self.write_timeout
     }
 
     /// How long one socket write may wait for a client that is not reading before the
@@ -207,9 +224,9 @@ impl Chat {
             id: id.clone(),
             turn_id: uuid::Uuid::new_v4().simple().to_string(),
             outbox: outbox.clone(),
+            slot: Some(slot),
         };
         tokio::spawn(async move {
-            let _slot = slot;
             turn.run(text, &guard.0).await;
         });
         Ok(json!({"status": "streaming"}))
@@ -266,21 +283,33 @@ struct Turn {
     id: String,
     turn_id: String,
     outbox: Outbox,
+    /// The turn's slot, sent with its last event.
+    slot: Option<OwnedSemaphorePermit>,
 }
 
 impl Turn {
-    fn emit(&self, session: &LiveSession, kind: &str, payload: Value) {
+    fn emit(
+        &self,
+        session: &LiveSession,
+        kind: &str,
+        payload: Value,
+        slot: Option<OwnedSemaphorePermit>,
+    ) {
         let seq = session.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        // A closed socket drops the frame; the turn still runs and is saved.
-        let _ = self.outbox.send(json!({
-            "jsonrpc": "2.0",
-            "method": "event",
-            "params": {"type": kind, "session_id": self.id, "payload": payload, "seq": seq},
-        }));
+        // A closed socket drops the frame, and with it any slot; the turn still runs and is
+        // saved.
+        let _ = self.outbox.send(Outgoing {
+            frame: json!({
+                "jsonrpc": "2.0",
+                "method": "event",
+                "params": {"type": kind, "session_id": self.id, "payload": payload, "seq": seq},
+            }),
+            _slot: slot,
+        });
     }
 
-    async fn run(self, text: String, session: &Arc<LiveSession>) {
-        self.emit(session, "message.start", json!({"turn_id": self.turn_id}));
+    async fn run(mut self, text: String, session: &Arc<LiveSession>) {
+        self.emit(session, "message.start", json!({"turn_id": self.turn_id}), None);
         let streamed = Arc::new(Mutex::new(Streamed::default()));
         let payload = match self.ask(text, session, &streamed).await {
             Ok((reply, None)) => json!({"text": reply, "status": "complete"}),
@@ -297,7 +326,8 @@ impl Turn {
                 })
             }
         };
-        self.emit(session, "message.complete", payload);
+        let slot = self.slot.take();
+        self.emit(session, "message.complete", payload, slot);
     }
 
     /// Runs the turn; returns the reply and a warning when it could not be saved.
@@ -419,7 +449,7 @@ impl DeltaSink {
             offset
         };
         let seq = self.session.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let _ = self.outbox.send(json!({
+        let _ = self.outbox.send(Outgoing::from(json!({
             "jsonrpc": "2.0",
             "method": "event",
             "params": {
@@ -428,7 +458,7 @@ impl DeltaSink {
                 "payload": {"text": text, "turn_id": self.turn_id, "segment": 0, "offset": offset},
                 "seq": seq,
             },
-        }));
+        })));
     }
 }
 
