@@ -857,6 +857,8 @@ pub struct HttpSseTransport {
     sse_read_timeout: Duration,
     /// Connect timeout used for initial SSE handshake.
     connect_timeout: Duration,
+    /// The largest message a reply or event may hold.
+    max_message_bytes: usize,
 }
 
 impl HttpSseTransport {
@@ -884,6 +886,7 @@ impl HttpSseTransport {
             session_id: None,
             sse_read_timeout: mcp_sse_read_timeout(),
             connect_timeout: mcp_sse_connect_timeout(),
+            max_message_bytes: max_message_bytes_from_env(),
         }
     }
 
@@ -973,13 +976,14 @@ impl HttpSseTransport {
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
             .and_then(|v| v.to_str().ok())
-            .is_some_and(|v| v.starts_with("text/event-stream"));
+            .is_some_and(is_event_stream);
         self.legacy_sse = true;
         if is_sse {
             self.legacy_stream = Some(resp);
             // The specification's server names its endpoint in its first event.
             if self.message_endpoint.is_none() {
-                if let Some((name, data)) = self.next_legacy_event(self.connect_timeout).await? {
+                let deadline = tokio::time::Instant::now() + self.connect_timeout;
+                if let Some((name, data)) = self.next_legacy_event(deadline).await? {
                     if name == "endpoint" {
                         self.message_endpoint = Some(self.same_origin_endpoint(data.trim())?);
                     } else if name == "message" {
@@ -993,14 +997,17 @@ impl HttpSseTransport {
     }
 
     /// The name and data of the next event with data on the older kind's
-    /// held stream, or `None` once it has ended or sent nothing for `wait`.
+    /// held stream, or `None` once it has ended or `deadline` has passed.
+    /// Comments and other events do not extend the deadline.
     async fn next_legacy_event(
         &mut self,
-        wait: Duration,
+        deadline: tokio::time::Instant,
     ) -> Result<Option<(String, String)>, McpError> {
-        let max_message_bytes = max_message_bytes_from_env();
         loop {
             if let Some(event) = self.legacy_events.next_event(&self.legacy_bytes) {
+                // Each event is held to the limit on its own, however the
+                // server grouped events into chunks.
+                enforce_message_size(event.len(), self.max_message_bytes)?;
                 let text = String::from_utf8(self.legacy_bytes.drain(..event.end).collect())
                     .map_err(|e| McpError::Protocol {
                         code: -32700,
@@ -1012,19 +1019,18 @@ impl HttpSseTransport {
                 }
                 continue;
             }
+            // What is left is part of one event.
+            enforce_message_size(self.legacy_bytes.len(), self.max_message_bytes)?;
             let Some(stream) = self.legacy_stream.as_mut() else {
                 return Ok(None);
             };
-            let Ok(chunk) = tokio::time::timeout(wait, stream.chunk()).await else {
+            let Ok(chunk) = tokio::time::timeout_at(deadline, stream.chunk()).await else {
                 return Ok(None);
             };
             match chunk.map_err(|e| {
                 McpError::ConnectionError(format!("Failed to read event stream: {}", e))
             })? {
-                Some(chunk) => {
-                    self.legacy_bytes.extend_from_slice(&chunk);
-                    enforce_message_size(self.legacy_bytes.len(), max_message_bytes)?;
-                }
+                Some(chunk) => self.legacy_bytes.extend_from_slice(&chunk),
                 None => {
                     self.legacy_stream = None;
                     return Ok(None);
@@ -1143,6 +1149,15 @@ impl SseResponseFinder {
         self.line_start -= n;
         self.event_start -= n;
     }
+}
+
+/// Whether a Content-Type value names an event stream, whatever the case
+/// of its media type and whatever parameters follow it.
+fn is_event_stream(content_type: &str) -> bool {
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|media| media.trim().eq_ignore_ascii_case("text/event-stream"))
 }
 
 /// The name (`message` by default) and data of one SSE event, or `None`
@@ -1280,7 +1295,7 @@ impl McpTransport for HttpSseTransport {
         // Read as the body arrives: a server may leave an SSE stream open
         // after the response, so reading stops at the event holding it, and
         // what follows in the same chunk is neither decoded nor counted.
-        let max_message_bytes = max_message_bytes_from_env();
+        let max_message_bytes = self.max_message_bytes;
         let mut bytes = Vec::new();
         let mut finder = SseResponseFinder::default();
         while let Some(chunk) = response
@@ -1313,17 +1328,19 @@ impl McpTransport for HttpSseTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
+        // As long as a reply in a POST body may take.
+        let deadline = tokio::time::Instant::now() + self.sse_read_timeout;
         loop {
             if let Some(value) = self.pending.pop_front() {
                 return Ok(value);
             }
             // The older kind may send its replies on the held stream instead.
-            match self.next_legacy_event(self.sse_read_timeout).await? {
+            match self.next_legacy_event(deadline).await? {
                 Some((name, data)) if name == "message" => self.queue_legacy_message(&data)?,
                 Some(_) => {}
                 None if self.legacy_stream.is_some() => {
                     return Err(McpError::ConnectionError(format!(
-                        "MCP server sent nothing on its event stream for {}s",
+                        "MCP server sent no message on its event stream within {}s",
                         self.sse_read_timeout.as_secs()
                     )))
                 }
@@ -1958,62 +1975,8 @@ mod tests {
     /// event on the held stream.
     #[tokio::test]
     async fn an_older_server_replying_on_its_held_stream_is_read() {
-        use tokio::io::AsyncWriteExt;
-        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let url = format!("http://{}/mcp", server.local_addr().unwrap());
-        let stub = tokio::spawn(async move {
-            let (replies, to_stream) = tokio::sync::mpsc::unbounded_channel::<Value>();
-            let mut to_stream = Some(to_stream);
-            let mut posted = Vec::new();
-            loop {
-                let (mut stream, _) = server.accept().await.expect("accept");
-                let (head, body) = read_request(&mut stream).await;
-                if head.starts_with("get /mcp/sse ") {
-                    let mut to_stream = to_stream.take().expect("one event stream");
-                    tokio::spawn(async move {
-                        stream
-                            .write_all(
-                                concat!(
-                                    "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\n\r\n",
-                                    ": a comment first\r\n\r\n",
-                                    "event: endpoint\r\ndata: /mcp/messages?session_id=s1\r\n\r\n",
-                                )
-                                .as_bytes(),
-                            )
-                            .await
-                            .expect("write stream head");
-                        while let Some(reply) = to_stream.recv().await {
-                            let event = format!("event: message\ndata: {reply}\n\n");
-                            stream
-                                .write_all(event.as_bytes())
-                                .await
-                                .expect("write event");
-                        }
-                    });
-                } else if head.starts_with("post /mcp/messages?session_id=s1 ") {
-                    let message: Value = serde_json::from_str(&body).expect("posted json");
-                    posted.push(message["method"].as_str().unwrap_or_default().to_string());
-                    if let Some(id) = message.get("id") {
-                        replies
-                            .send(serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {"posted": posted.len()}}))
-                            .expect("stream open");
-                    }
-                    stream
-                        // The body the MCP Python SDK's server writes.
-                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\nConnection: close\r\n\r\nAccepted")
-                        .await
-                        .expect("write 202");
-                } else {
-                    // The first POST to the URL: this server has no such endpoint.
-                    stream
-                        .write_all(NOT_FOUND.as_bytes())
-                        .await
-                        .expect("write 404");
-                }
-            }
-        });
-
-        let mut transport = HttpSseTransport::new(&url, None);
+        let (mut transport, stub) =
+            older_server("text/event-stream", ENDPOINT, OlderStream::Replies).await;
         let exchange = async {
             transport
                 .send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
@@ -2039,6 +2002,223 @@ mod tests {
         assert_eq!(first["result"]["posted"], 1);
         assert_eq!(second["id"], 2);
         assert_eq!(second["result"]["posted"], 3);
+        stub.abort();
+    }
+
+    /// How the older server stub writes its held event stream.
+    #[derive(Clone, Copy, PartialEq)]
+    enum OlderStream {
+        /// Names its endpoint, then sends each reply as an event.
+        Replies,
+        /// Names its endpoint, then holds each reply until the next and
+        /// writes the 2 events at once.
+        RepliesInPairs,
+        /// Sends a comment every 20 ms and never names its endpoint.
+        PingsBeforeEndpoint,
+        /// Names its endpoint, then sends a comment every 20 ms and no reply.
+        PingsInsteadOfReplies,
+    }
+
+    /// An older HTTP+SSE server on `server` whose stream has `content_type`
+    /// and names `endpoint`, answering each POST there `202 Accepted`.
+    fn spawn_older_server(
+        server: tokio::net::TcpListener,
+        content_type: &'static str,
+        endpoint: &'static str,
+        kind: OlderStream,
+    ) -> tokio::task::JoinHandle<()> {
+        use tokio::io::AsyncWriteExt;
+        tokio::spawn(async move {
+            let (replies, to_stream) = tokio::sync::mpsc::unbounded_channel::<Value>();
+            let mut to_stream = Some(to_stream);
+            let mut posted = 0;
+            loop {
+                let (mut stream, _) = server.accept().await.expect("accept");
+                let (head, body) = read_request(&mut stream).await;
+                if head.starts_with("get /mcp/sse ") {
+                    let mut to_stream = to_stream.take().expect("one event stream");
+                    tokio::spawn(async move {
+                        let mut opening =
+                            format!("HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\n\r\n");
+                        if kind != OlderStream::PingsBeforeEndpoint {
+                            opening.push_str(": a comment first\r\n\r\n");
+                            opening
+                                .push_str(&format!("event: endpoint\r\ndata: {endpoint}\r\n\r\n"));
+                        }
+                        stream
+                            .write_all(opening.as_bytes())
+                            .await
+                            .expect("write stream head");
+                        let event = |reply: Value| format!("event: message\ndata: {reply}\n\n");
+                        match kind {
+                            OlderStream::Replies => {
+                                while let Some(reply) = to_stream.recv().await {
+                                    let _ = stream.write_all(event(reply).as_bytes()).await;
+                                }
+                            }
+                            OlderStream::RepliesInPairs => {
+                                while let (Some(a), Some(b)) =
+                                    (to_stream.recv().await, to_stream.recv().await)
+                                {
+                                    let both = event(a) + &event(b);
+                                    let _ = stream.write_all(both.as_bytes()).await;
+                                }
+                            }
+                            OlderStream::PingsBeforeEndpoint
+                            | OlderStream::PingsInsteadOfReplies => {
+                                while stream.write_all(b": ping\n\n").await.is_ok() {
+                                    tokio::time::sleep(Duration::from_millis(20)).await;
+                                }
+                            }
+                        }
+                    });
+                } else if head.starts_with("post /mcp/messages?session_id=s1 ") {
+                    let message: Value = serde_json::from_str(&body).expect("posted json");
+                    posted += 1;
+                    if let Some(id) = message.get("id") {
+                        let _ = replies.send(serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {"posted": posted}}));
+                    }
+                    stream
+                        .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 8\r\nConnection: close\r\n\r\nAccepted")
+                        .await
+                        .expect("write 202");
+                } else {
+                    stream
+                        .write_all(NOT_FOUND.as_bytes())
+                        .await
+                        .expect("write 404");
+                }
+            }
+        })
+    }
+
+    /// Sends initialize, the initialized notification and tools/list, then
+    /// reads 2 replies.
+    async fn exchange_three(transport: &mut HttpSseTransport) -> Result<(Value, Value), McpError> {
+        transport
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+            .await?;
+        transport
+            .send(serde_json::json!({"jsonrpc": "2.0", "method": "notifications/initialized"}))
+            .await?;
+        transport
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "tools/list"}))
+            .await?;
+        Ok((transport.receive().await?, transport.receive().await?))
+    }
+
+    async fn older_server(
+        content_type: &'static str,
+        endpoint: &'static str,
+        kind: OlderStream,
+    ) -> (HttpSseTransport, tokio::task::JoinHandle<()>) {
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let stub = spawn_older_server(server, content_type, endpoint, kind);
+        (HttpSseTransport::new(&url, None), stub)
+    }
+
+    const ENDPOINT: &str = "/mcp/messages?session_id=s1";
+
+    #[tokio::test]
+    async fn an_older_server_whose_content_type_is_in_another_case_is_read() {
+        let (mut transport, stub) = older_server(
+            "Text/Event-Stream; charset=utf-8",
+            ENDPOINT,
+            OlderStream::Replies,
+        )
+        .await;
+        let (first, second) =
+            tokio::time::timeout(Duration::from_secs(10), exchange_three(&mut transport))
+                .await
+                .expect("the exchange waited")
+                .expect("the exchange");
+        assert_eq!(first["id"], 1);
+        assert_eq!(second["id"], 2);
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn older_server_events_are_held_to_the_size_limit_one_by_one() {
+        let (mut transport, stub) =
+            older_server("text/event-stream", ENDPOINT, OlderStream::RepliesInPairs).await;
+        // Each event is about 70 bytes; the 2 written together are not.
+        transport.max_message_bytes = 100;
+        let (first, second) =
+            tokio::time::timeout(Duration::from_secs(10), exchange_three(&mut transport))
+                .await
+                .expect("the exchange waited")
+                .expect("2 events under the limit, read in one chunk");
+        assert_eq!(first["id"], 1);
+        assert_eq!(second["id"], 2);
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn an_older_server_event_over_the_size_limit_is_refused() {
+        let (mut transport, stub) =
+            older_server("text/event-stream", ENDPOINT, OlderStream::Replies).await;
+        transport.max_message_bytes = 60;
+        let refused = tokio::time::timeout(Duration::from_secs(10), exchange_three(&mut transport))
+            .await
+            .expect("the exchange waited");
+        assert!(refused.is_err(), "{refused:?}");
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn comments_do_not_extend_the_wait_for_an_older_server_endpoint() {
+        let (mut transport, stub) = older_server(
+            "text/event-stream",
+            ENDPOINT,
+            OlderStream::PingsBeforeEndpoint,
+        )
+        .await;
+        transport.connect_timeout = Duration::from_millis(300);
+        let sent = tokio::time::timeout(
+            Duration::from_secs(5),
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"})),
+        )
+        .await;
+        assert!(sent.is_ok(), "comments held the endpoint wait open");
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn comments_do_not_extend_the_wait_for_an_older_server_reply() {
+        let (mut transport, stub) = older_server(
+            "text/event-stream",
+            ENDPOINT,
+            OlderStream::PingsInsteadOfReplies,
+        )
+        .await;
+        transport.sse_read_timeout = Duration::from_millis(300);
+        transport
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"}))
+            .await
+            .expect("initialize sent");
+        let received = tokio::time::timeout(Duration::from_secs(5), transport.receive())
+            .await
+            .expect("comments held the reply wait open");
+        assert!(received.is_err(), "{received:?}");
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn an_older_server_endpoint_on_another_origin_is_refused() {
+        let (mut transport, stub) = older_server(
+            "text/event-stream",
+            "http://elsewhere.invalid/messages",
+            OlderStream::Replies,
+        )
+        .await;
+        let sent = tokio::time::timeout(
+            Duration::from_secs(10),
+            transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"})),
+        )
+        .await
+        .expect("the send waited");
+        assert!(sent.is_err(), "{sent:?}");
         stub.abort();
     }
 }
