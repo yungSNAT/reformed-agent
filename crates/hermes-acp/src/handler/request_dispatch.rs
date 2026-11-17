@@ -341,7 +341,7 @@ impl AcpHandler for HermesAcpHandler {
                         prompt_response_value(StopReason::EndTurn, None),
                     );
                     }
-                }
+                };
 
                 let mut usage = match self
                     .execute_prompt_turn(session_id, user_text, user_content)

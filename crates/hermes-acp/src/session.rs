@@ -609,7 +609,10 @@ mod tests {
         let sessions = SessionManager::new();
         let id = sessions.create_session(".").session_id;
         let first = sessions.prompt_received(&id).unwrap();
-        assert_eq!(sessions.begin_turn(&id, Some(first)), TurnStart::Started(first));
+        assert_eq!(
+            sessions.begin_turn(&id, Some(first)),
+            TurnStart::Started(first)
+        );
         let second = sessions.prompt_received(&id).unwrap();
         assert_eq!(sessions.begin_turn(&id, Some(second)), TurnStart::Busy);
         // A cancel marks the phase, but the turn still owns the session,
@@ -621,8 +624,14 @@ mod tests {
         assert_eq!(sessions.begin_turn(&id, None), TurnStart::Busy);
         assert!(sessions.finish_turn(&id, first, SessionPhase::Idle));
         assert!(!sessions.cancel_pending(&id));
-        assert!(matches!(sessions.begin_turn(&id, None), TurnStart::Started(_)));
-        assert_eq!(sessions.begin_turn("no-such-session", None), TurnStart::Missing);
+        assert!(matches!(
+            sessions.begin_turn(&id, None),
+            TurnStart::Started(_)
+        ));
+        assert_eq!(
+            sessions.begin_turn("no-such-session", None),
+            TurnStart::Missing
+        );
     }
 
     #[test]
