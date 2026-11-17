@@ -864,3 +864,88 @@ fn test_extract_marker_values_collects_unique_paths_and_cmds() {
     );
     assert_eq!(cmds, vec!["rg".to_string(), "cargo".to_string()]);
 }
+
+/// A reply that drops the user's explicit anchor (`U1-abc`) is re-asked only when the turn
+/// offers tools to gather evidence; without tools the first answer stands, on both loops. The
+/// output-quality rewrite (a placeholder reply) needs no tools and is re-asked either way.
+#[test]
+fn test_finalizer_retries_need_tools() {
+    use std::sync::atomic::{AtomicU32, Ordering};
+
+    struct AnchorlessProvider {
+        calls: Arc<AtomicU32>,
+        reply: &'static str,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for AnchorlessProvider {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant(self.reply),
+                usage: None,
+                model: "dummy".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            let chunk = StreamChunk {
+                delta: Some(hermes_core::StreamDelta {
+                    content: Some(self.reply.into()),
+                    tool_calls: None,
+                    extra: None,
+                }),
+                finish_reason: Some("stop".into()),
+                usage: None,
+            };
+            futures::stream::iter(vec![Ok(chunk)]).boxed()
+        }
+    }
+
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    let calls_for = |reply: &'static str, tools: Vec<ToolSchema>, stream: bool| {
+        let calls = Arc::new(AtomicU32::new(0));
+        let provider = Arc::new(AnchorlessProvider {
+            calls: calls.clone(),
+            reply,
+        });
+        let agent = AgentLoop::new(
+            AgentConfig::default(),
+            Arc::new(ToolRegistry::new()),
+            provider,
+        );
+        let messages = vec![Message::user("U1-abc hi remote")];
+        let result = if stream {
+            rt.block_on(agent.run_stream(messages, Some(tools), None))
+        } else {
+            rt.block_on(agent.run(messages, Some(tools)))
+        };
+        result.expect("agent run should succeed");
+        calls.load(Ordering::SeqCst)
+    };
+    let echo = || vec![ToolSchema::new("echo", "Echo", JsonSchema::new("object"))];
+
+    for stream in [false, true] {
+        assert_eq!(calls_for("remote hello", Vec::new(), stream), 1);
+        assert!(calls_for("remote hello", echo(), stream) > 1);
+        assert!(calls_for("U1-abc: see [URL](URL)", Vec::new(), stream) > 1);
+    }
+}
