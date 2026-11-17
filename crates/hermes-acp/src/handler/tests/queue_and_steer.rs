@@ -264,3 +264,37 @@ async fn test_acp_steer_after_cancel_replays_interrupted_prompt_with_guidance() 
     assert!(state.interrupted_prompt_text.is_none());
     assert!(state.queued_prompts.is_empty());
 }
+
+#[tokio::test]
+async fn test_acp_cancel_covers_only_the_prompts_received_before_it() {
+    let executor = Arc::new(SteeringPromptExecutor::default());
+    let handler = make_handler().with_prompt_executor(executor.clone());
+    let session_id = create_session(&handler).await;
+    let prompt = |id: u64, text: &str| AcpRequest {
+        jsonrpc: "2.0".into(),
+        id: Some(json!(id)),
+        method: "prompt".into(),
+        params: Some(json!({"session_id": session_id.clone(), "text": text})),
+    };
+
+    // A arrives, then a cancel, then B; the server runs B's task first.
+    let a = handler.session_manager.prompt_received(&session_id);
+    handler
+        .handle_request(AcpRequest {
+            jsonrpc: "2.0".into(),
+            id: None,
+            method: "session/cancel".into(),
+            params: Some(json!({"session_id": session_id.clone()})),
+        })
+        .await;
+    let b = handler.session_manager.prompt_received(&session_id);
+    let resp = crate::session::PROMPT_SEQ
+        .scope(b, handler.handle_request(prompt(3, "second")))
+        .await;
+    assert_eq!(resp.result.unwrap()["stopReason"], "end_turn");
+    let resp = crate::session::PROMPT_SEQ
+        .scope(a, handler.handle_request(prompt(2, "first")))
+        .await;
+    assert_eq!(resp.result.unwrap()["stopReason"], "cancelled");
+    assert_eq!(executor.runs.lock().unwrap().as_slice(), ["second"]);
+}
