@@ -1346,7 +1346,7 @@ enabled = false
         assert!(!report.failed, "{:#?}", report.lines);
         let text = report.lines.join("\n");
         assert!(
-            text.contains("imported     MCP server docs: docs-server --stdio"),
+            text.contains("imported     MCP server docs: docs-server (1 argument)"),
             "{text}"
         );
         assert!(
