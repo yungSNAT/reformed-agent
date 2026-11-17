@@ -144,3 +144,38 @@ fn upstage_defaults_reasoning_on_and_skips_models_without_it() {
     let not_mini = direct_provider_body("upstage", "solar-minix", None);
     assert_eq!(not_mini["reasoning_effort"], "medium");
 }
+
+#[test]
+fn fireworks_requests_carry_upstreams_attribution_headers() {
+    let header_of = |profile: &str, name: &str| {
+        let provider = GenericProvider::new("https://example.invalid/v1", "key", "m")
+            .with_provider_profile(profile);
+        let request = provider
+            .build_request(
+                &Client::new(),
+                "https://example.invalid/v1/chat/completions",
+                "key",
+                &serde_json::json!({}),
+            )
+            .build()
+            .expect("request");
+        request
+            .headers()
+            .get(name)
+            .map(|value| value.to_str().unwrap().to_string())
+    };
+    for profile in ["fireworks", "fw"] {
+        assert_eq!(
+            header_of(profile, "HTTP-Referer").as_deref(),
+            Some("https://hermes-agent.nousresearch.com")
+        );
+        assert_eq!(header_of(profile, "X-Title").as_deref(), Some("Hermes Agent"));
+        assert_eq!(
+            header_of(profile, "User-Agent"),
+            Some(format!("HermesAgent/{}", env!("CARGO_PKG_VERSION")))
+        );
+    }
+    for profile in ["deepinfra", "upstage", "openrouter"] {
+        assert_eq!(header_of(profile, "X-Title"), None, "{profile}");
+    }
+}
