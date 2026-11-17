@@ -90,8 +90,7 @@ fn loads_reads_documents_as_python_does() {
 
 #[test]
 fn loads_fails_closed_past_1000_levels_of_nesting() {
-    // An error, as CPython's json.loads raises RecursionError near its
-    // default limit of 1000, never a stack overflow.
+    // An error at this port's own bound, never a stack overflow.
     let arrays = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
     let objects = |depth: usize| format!("{}1{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
     assert!(loads(&arrays(1_000)).is_ok());
