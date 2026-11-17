@@ -274,17 +274,25 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             },
         };
         if let Some(outgoing) = frame {
+            let text = outgoing.frame.to_string();
             let deadline = outgoing.queued + chat.write_timeout();
-            // `timeout_at` would still take a write that is ready at once after the deadline.
-            if tokio::time::Instant::now() >= deadline {
-                break;
-            }
-            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
-            if !matches!(tokio::time::timeout_at(deadline, write).await, Ok(Ok(()))) {
+            if !write_by(deadline, socket.send(Message::Text(text.into()))).await {
                 break;
             }
         }
     }
+}
+
+/// Runs `write` until it finishes or `deadline` passes: true if it finished first.
+async fn write_by<E>(
+    deadline: tokio::time::Instant,
+    write: impl std::future::Future<Output = Result<(), E>>,
+) -> bool {
+    // `timeout_at` would still take a write that is ready at once after the deadline.
+    if tokio::time::Instant::now() >= deadline {
+        return false;
+    }
+    matches!(tokio::time::timeout_at(deadline, write).await, Ok(Ok(())))
 }
 
 fn rpc_error(id: Value, code: i64, message: String) -> Value {
@@ -374,6 +382,43 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use std::task::Poll;
+    use tokio::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn a_write_is_not_started_once_its_deadline_has_passed() {
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            Poll::Ready(Ok::<(), ()>(()))
+        });
+        assert!(!write_by(Instant::now(), write).await);
+        assert_eq!(polls.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_pending_write_is_not_polled_again_once_its_deadline_has_passed() {
+        // Pending at first and ready on the next poll, which only the deadline's timer causes.
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            if polls.get() == 1 {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok::<(), ()>(()))
+            }
+        });
+        assert!(!write_by(Instant::now() + Duration::from_millis(50), write).await);
+        assert_eq!(polls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_write_that_finishes_before_its_deadline_counts() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(write_by(deadline, async { Ok::<(), ()>(()) }).await);
+        assert!(!write_by(deadline, async { Err(()) }).await);
+    }
 
     #[test]
     fn loopback_authorities() {
