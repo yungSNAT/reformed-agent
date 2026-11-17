@@ -150,7 +150,9 @@ async fn upgrade(
         return StatusCode::FORBIDDEN.into_response();
     }
     let epoch = gw.replay_epoch.clone();
-    ws.on_upgrade(move |socket| session(socket, epoch))
+    ws.max_message_size(MAX_MESSAGE_BYTES)
+        .max_frame_size(MAX_MESSAGE_BYTES)
+        .on_upgrade(move |socket| session(socket, epoch))
 }
 
 async fn session(mut socket: WebSocket, replay_epoch: String) {
@@ -205,6 +207,11 @@ fn reply_to(text: &str) -> Option<Value> {
             -32600,
             "invalid request: empty batch".into(),
         )),
+        Value::Array(items) if items.len() > MAX_BATCH => Some(rpc_error(
+            Value::Null,
+            -32600,
+            format!("invalid request: a batch holds at most {MAX_BATCH} requests"),
+        )),
         Value::Array(items) => {
             let replies: Vec<Value> = items.iter().filter_map(reply_to_one).collect();
             (!replies.is_empty()).then_some(Value::Array(replies))
@@ -213,30 +220,48 @@ fn reply_to(text: &str) -> Option<Value> {
     }
 }
 
-/// A request carries "jsonrpc": "2.0" and a non-empty string method. Notifications (a request
-/// with no id) and responses to our own requests (an id with a result or an error) get no
-/// reply; anything else gets -32600.
+/// A request carries "jsonrpc": "2.0", a non-empty string method, an id that is a string, a
+/// number or null when present, and params that are an array or an object when present. A
+/// request without an id is a notification and gets no reply, as does a response to our own
+/// requests (an id with a result or an error). Anything else gets -32600, with its id only
+/// when that id has a valid type.
+///
+/// One departure from JSON-RPC 2.0 is deliberate: a notification with an empty method gets
+/// -32600, where the specification allows no reply to any notification. Upstream's gateway
+/// (`_normalize_request` in tui_gateway/server.py) answers an empty method that way with or
+/// without an id, and Hermes Desktop never sends one.
 fn reply_to_one(frame: &Value) -> Option<Value> {
-    let invalid = |id: Option<&Value>| {
-        let id = id.cloned().unwrap_or(Value::Null);
-        Some(rpc_error(id, -32600, "invalid request".into()))
-    };
+    let invalid = |id: Value| Some(rpc_error(id, -32600, "invalid request".into()));
     let Some(request) = frame.as_object() else {
-        return invalid(None);
+        return invalid(Value::Null);
     };
     let id = request.get("id");
+    let id_valid = matches!(
+        id,
+        None | Some(Value::String(_) | Value::Number(_) | Value::Null)
+    );
+    let reply_id = match id {
+        Some(id) if id_valid => id.clone(),
+        _ => Value::Null,
+    };
+    let params_valid = matches!(
+        request.get("params"),
+        None | Some(Value::Array(_) | Value::Object(_))
+    );
     let version_2 = request.get("jsonrpc").and_then(Value::as_str) == Some("2.0");
     match request.get("method") {
-        Some(Value::String(method)) if version_2 && !method.is_empty() => {
-            id.map(|id| rpc_error(id.clone(), -32601, format!("method not found: {method}")))
+        Some(Value::String(method))
+            if version_2 && !method.is_empty() && id_valid && params_valid =>
+        {
+            id.map(|_| rpc_error(reply_id, -32601, format!("method not found: {method}")))
         }
-        Some(_) => invalid(id),
+        Some(_) => invalid(reply_id),
         None if id.is_some()
             && (request.contains_key("result") || request.contains_key("error")) =>
         {
             None
         }
-        None => invalid(id),
+        None => invalid(reply_id),
     }
 }
 
