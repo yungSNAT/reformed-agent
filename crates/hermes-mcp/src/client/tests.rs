@@ -237,14 +237,22 @@ async fn connect_closes_transport_when_discovery_fails() {
     assert!(client.cached_resources().is_empty());
 }
 
-/// A server that starts but never answers.
+/// A server that never answers. `stall_start` and `stall_close` make its
+/// `start` and `close` never return either.
+#[derive(Default)]
 struct SilentTransport {
-    closed: Arc<AtomicBool>,
+    stall_start: bool,
+    stall_close: bool,
+    close_called: Arc<AtomicBool>,
+    dropped: Arc<AtomicBool>,
 }
 
 #[async_trait]
 impl McpTransport for SilentTransport {
     async fn start(&mut self) -> Result<(), McpError> {
+        if self.stall_start {
+            std::future::pending::<()>().await;
+        }
         Ok(())
     }
 
@@ -257,33 +265,157 @@ impl McpTransport for SilentTransport {
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
-        self.closed.store(true, Ordering::SeqCst);
+        self.close_called.store(true, Ordering::SeqCst);
+        if self.stall_close {
+            std::future::pending::<()>().await;
+        }
         Ok(())
     }
 }
 
-#[tokio::test]
-async fn connect_gives_up_on_a_server_that_never_answers_and_closes_it() {
-    let closed = Arc::new(AtomicBool::new(false));
-    let mut client = McpClient::new(McpServerConfig::stdio("silent", Vec::new()));
-    client.connect_timeout = std::time::Duration::from_millis(50);
+impl Drop for SilentTransport {
+    fn drop(&mut self) {
+        self.dropped.store(true, Ordering::SeqCst);
+    }
+}
 
+/// Asserts that `took` is `secs` seconds, give or take the timer's
+/// millisecond rounding.
+fn assert_took(took: std::time::Duration, secs: u64) {
+    let expected = std::time::Duration::from_secs(secs);
+    assert!(
+        took >= expected && took < expected + std::time::Duration::from_millis(100),
+        "took {took:?}, expected {secs}s"
+    );
+}
+
+/// Connects through `transport` with the default bounds and returns the
+/// error and the time it took, failing if it took over twice the bounds.
+/// Run with paused time, so the wait costs nothing.
+async fn connect_silent(transport: SilentTransport) -> (McpError, std::time::Duration) {
+    let mut client = McpClient::new(McpServerConfig::stdio("silent", Vec::new()));
+    let bound =
+        client.connect_timeout + std::time::Duration::from_secs(super::MCP_CLOSE_TIMEOUT_SECS);
+    let started = tokio::time::Instant::now();
     let err = tokio::time::timeout(
-        std::time::Duration::from_secs(10),
-        client.finish_connect_with_transport(Box::new(SilentTransport {
-            closed: closed.clone(),
-        })),
+        bound * 2,
+        client.finish_connect_with_transport(Box::new(transport)),
     )
     .await
-    .expect("connect must not wait on a silent server")
+    .expect("connect must not wait on a silent server for good")
     .expect_err("a silent server must not connect");
-
-    assert!(
-        err.to_string().contains("did not finish its handshake"),
-        "{err}"
-    );
-    assert!(closed.load(Ordering::SeqCst));
     assert!(!client.is_connected());
+    (err, started.elapsed())
+}
+
+#[tokio::test(start_paused = true)]
+async fn connect_gives_up_on_a_server_that_never_answers_and_closes_it() {
+    let close_called = Arc::new(AtomicBool::new(false));
+    let (err, took) = connect_silent(SilentTransport {
+        close_called: close_called.clone(),
+        ..Default::default()
+    })
+    .await;
+
+    assert!(err.to_string().contains("did not connect within"), "{err}");
+    assert_took(took, 60);
+    assert!(close_called.load(Ordering::SeqCst));
+}
+
+#[tokio::test(start_paused = true)]
+async fn connect_bounds_a_transport_whose_start_never_returns_and_drops_it() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let (err, took) = connect_silent(SilentTransport {
+        stall_start: true,
+        dropped: dropped.clone(),
+        ..Default::default()
+    })
+    .await;
+
+    assert!(err.to_string().contains("did not connect within"), "{err}");
+    assert_took(took, 60);
+    // A stdio transport kills its process when dropped.
+    assert!(dropped.load(Ordering::SeqCst));
+}
+
+#[tokio::test(start_paused = true)]
+async fn connect_bounds_the_close_of_a_server_that_never_answers() {
+    let dropped = Arc::new(AtomicBool::new(false));
+    let (err, took) = connect_silent(SilentTransport {
+        stall_close: true,
+        dropped: dropped.clone(),
+        ..Default::default()
+    })
+    .await;
+
+    assert!(err.to_string().contains("did not connect within"), "{err}");
+    assert_took(took, 65);
+    assert!(dropped.load(Ordering::SeqCst));
+}
+
+/// An auth provider whose token never comes.
+struct StalledAuth;
+
+#[async_trait]
+impl crate::auth::McpAuthProvider for StalledAuth {
+    async fn get_token(&self) -> Result<String, McpError> {
+        std::future::pending().await
+    }
+
+    fn provider_type(&self) -> &str {
+        "stalled"
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn connect_bounds_building_the_transport() {
+    let mut client = McpClient::new(
+        McpServerConfig::http("http://127.0.0.1:9/mcp").with_auth(Arc::new(StalledAuth)),
+    );
+    let started = tokio::time::Instant::now();
+
+    let err = tokio::time::timeout(std::time::Duration::from_secs(600), client.connect())
+        .await
+        .expect("connect must not wait on its auth provider for good")
+        .expect_err("no token, no connection");
+
+    assert!(err.to_string().contains("did not connect within"), "{err}");
+    assert_took(started.elapsed(), 60);
+}
+
+/// The real stdio transport: a server that starts and never answers is
+/// killed once the bound passes, not left running.
+#[cfg(unix)]
+#[tokio::test]
+async fn connect_kills_a_stdio_server_that_never_answers() {
+    let dir = TempDir::new().expect("temp dir");
+    let pid_file = dir.path().join("pid");
+    // Through `env`, as the default sandbox refuses `sh` as the command.
+    let mut client = McpClient::new(McpServerConfig::stdio(
+        "env",
+        vec![
+            "sh".to_string(),
+            "-c".to_string(),
+            "echo $$ > \"$0\"; exec sleep 120".to_string(),
+            pid_file.display().to_string(),
+        ],
+    ));
+    client.connect_timeout = std::time::Duration::from_secs(2);
+
+    let err = tokio::time::timeout(std::time::Duration::from_secs(30), client.connect())
+        .await
+        .expect("connect must not wait on a silent server for good")
+        .expect_err("a silent server must not connect");
+
+    assert!(err.to_string().contains("did not connect within"), "{err}");
+    let pid = std::fs::read_to_string(&pid_file).expect("the server started and wrote its pid");
+    let pid = pid.trim();
+    let alive = std::process::Command::new("kill")
+        .args(["-0", pid])
+        .status()
+        .expect("run kill")
+        .success();
+    assert!(!alive, "server {pid} still running after connect gave up");
 }
 
 #[tokio::test]
@@ -445,6 +577,77 @@ async fn connect_all_parallel_reports_failed_servers_without_aborting_batch() {
     assert!(reports.iter().all(|report| report.error.is_some()));
     assert!(!manager.is_connected("missing-a"));
     assert!(!manager.is_connected("missing-b"));
+}
+
+/// A client connected to a fake server that lists one tool, `tool`.
+async fn client_with_tool(tool: &str) -> McpClient {
+    let transport = FakeTransport::new(
+        vec![
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": {"name": "fake", "version": "0"}
+                }
+            }),
+            json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {"tools": [{
+                    "name": tool,
+                    "description": "a tool",
+                    "inputSchema": {"type": "object", "properties": {}}
+                }]}
+            }),
+        ],
+        Arc::new(AtomicBool::new(false)),
+    );
+    let mut client = McpClient::new(McpServerConfig::stdio(tool, Vec::new()));
+    client
+        .finish_connect_with_transport(Box::new(transport))
+        .await
+        .expect("connect fake server");
+    client
+}
+
+/// Connections as `start_connects` leaves them once `client` has connected.
+fn connected(name: &str, client: McpClient) -> super::McpConnects {
+    let mut tasks = tokio::task::JoinSet::new();
+    let report = super::McpDiscoveryReport {
+        name: name.to_string(),
+        connected: true,
+        transport_type: "stdio".to_string(),
+        tool_count: client.cached_tools().len(),
+        error: None,
+    };
+    tasks.spawn(async move { (0, report, Some(client)) });
+    super::McpConnects {
+        reports: Vec::new(),
+        tasks,
+        ended: Vec::new(),
+    }
+}
+
+/// Two callers that connect one server name at once, each outside the
+/// manager's lock: the first to finish is kept and the other dropped.
+#[tokio::test]
+async fn finish_connects_keeps_a_server_another_caller_added_meanwhile() {
+    let registry = Arc::new(hermes_tools::ToolRegistry::new());
+    let mut manager = McpManager::new(Arc::clone(&registry));
+    let first = connected("srv", client_with_tool("first").await);
+    let second = connected("srv", client_with_tool("second").await);
+
+    let reports = manager.finish_connects(first).await;
+    assert!(reports[0].connected);
+    let reports = manager.finish_connects(second).await;
+
+    assert_eq!(reports.len(), 1);
+    assert_eq!(reports[0].name, "srv");
+    assert!(reports[0].connected);
+    assert!(registry.get_tool("mcp_srv_first").is_some());
+    assert!(registry.get_tool("mcp_srv_second").is_none());
 }
 
 #[tokio::test]

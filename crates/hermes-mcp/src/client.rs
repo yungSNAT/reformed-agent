@@ -102,9 +102,12 @@ const MAX_MCP_CALL_TIMEOUT_SECS: u64 = 900;
 const DEFAULT_MCP_KEEPALIVE_INTERVAL_SECS: u64 = 180;
 const MIN_MCP_KEEPALIVE_INTERVAL_SECS: u64 = 5;
 const MCP_KEEPALIVE_PROBE_TIMEOUT_SECS: u64 = 30;
-/// Upstream's default `connect_timeout`: how long a server has to finish its
-/// handshake and tool discovery.
+/// Upstream's default `connect_timeout`: how long a server has to start,
+/// finish its handshake and list its tools.
 const MCP_CONNECT_TIMEOUT_SECS: u64 = 60;
+/// How long closing a server that failed to connect may take before its
+/// transport is dropped instead (a stdio server is then killed).
+const MCP_CLOSE_TIMEOUT_SECS: u64 = 5;
 const STALE_TRANSPORT_MARKERS: &[&str] = &[
     "closedresourceerror",
     "closed resource",
@@ -753,7 +756,7 @@ pub struct McpClient {
     connected_at: Option<Instant>,
     /// Latched when a server returns JSON-RPC -32601 for optional `ping`.
     ping_unsupported: bool,
-    /// Bound on the handshake and tool discovery in `connect`.
+    /// Bound on `connect`, from building the transport to tool discovery.
     connect_timeout: Duration,
 }
 

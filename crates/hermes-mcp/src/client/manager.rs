@@ -177,6 +177,37 @@ fn deregister_mcp_tools(registry: &ToolRegistry, tool_names: Vec<String>) {
     }
 }
 
+/// A finished connection: its index in the configs, its report and the
+/// client when it connected.
+type ConnectOutcome = (usize, McpDiscoveryReport, Option<McpClient>);
+
+/// Connections started by [`McpManager::start_connects`].
+pub struct McpConnects {
+    reports: Vec<(usize, McpDiscoveryReport)>,
+    tasks: tokio::task::JoinSet<ConnectOutcome>,
+    ended: Vec<Result<ConnectOutcome, tokio::task::JoinError>>,
+}
+
+impl McpConnects {
+    /// Wait for every connection to end, without the manager.
+    pub async fn wait(&mut self) {
+        while let Some(joined) = self.tasks.join_next().await {
+            self.ended.push(joined);
+        }
+    }
+}
+
+/// The report for a server the manager already has.
+fn existing_report(name: String, existing: &ManagedMcpClient) -> McpDiscoveryReport {
+    McpDiscoveryReport {
+        name,
+        connected: existing.available.load(Ordering::SeqCst),
+        transport_type: existing.transport_type.clone(),
+        tool_count: existing.cached_tools.len(),
+        error: None,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // McpManager — manages multiple McpClient instances
 // ---------------------------------------------------------------------------
@@ -277,21 +308,22 @@ impl McpManager {
         &mut self,
         configs: Vec<(String, McpServerConfig)>,
     ) -> Vec<McpDiscoveryReport> {
-        let mut reports: Vec<(usize, McpDiscoveryReport)> = Vec::new();
+        let connects = self.start_connects(configs);
+        self.finish_connects(connects).await
+    }
+
+    /// Start connecting each server in `configs` not already connected.
+    ///
+    /// The connections run without the manager, so a caller that shares it
+    /// behind a lock can release the lock, [`McpConnects::wait`] for them,
+    /// and lock it again for [`McpManager::finish_connects`].
+    pub fn start_connects(&self, configs: Vec<(String, McpServerConfig)>) -> McpConnects {
+        let mut reports = Vec::new();
         let mut tasks = tokio::task::JoinSet::new();
 
         for (index, (name, config)) in configs.into_iter().enumerate() {
             if let Some(existing) = self.clients.get(&name) {
-                reports.push((
-                    index,
-                    McpDiscoveryReport {
-                        name,
-                        connected: existing.available.load(Ordering::SeqCst),
-                        transport_type: existing.transport_type.clone(),
-                        tool_count: existing.cached_tools.len(),
-                        error: None,
-                    },
-                ));
+                reports.push((index, existing_report(name, existing)));
                 continue;
             }
 
@@ -341,34 +373,28 @@ impl McpManager {
             });
         }
 
-        while let Some(joined) = tasks.join_next().await {
-            match joined {
-                Ok((index, report, client)) => {
-                    if let Some(client) = client {
-                        debug!(
-                            "Discovered {} tools from MCP server '{}'",
-                            report.tool_count, report.name
-                        );
-                        self.clients.insert(
-                            report.name.clone(),
-                            make_managed_client(&report.name, client, self.tool_registry.as_ref()),
-                        );
-                    }
-                    reports.push((index, report));
-                }
-                Err(err) => {
-                    reports.push((
-                        usize::MAX,
-                        McpDiscoveryReport {
-                            name: "mcp-discovery-task".to_string(),
-                            connected: false,
-                            transport_type: "unknown".to_string(),
-                            tool_count: 0,
-                            error: Some(format!("discovery task failed: {err}")),
-                        },
-                    ));
-                }
-            }
+        McpConnects {
+            reports,
+            tasks,
+            ended: Vec::new(),
+        }
+    }
+
+    /// Add each server in `connects` that connected, waiting for those
+    /// still connecting, and return a report per server in the order given
+    /// to [`McpManager::start_connects`].
+    ///
+    /// A server added under the same name since then, by another caller, is
+    /// kept: the first connection to finish wins and this one is dropped.
+    pub async fn finish_connects(&mut self, mut connects: McpConnects) -> Vec<McpDiscoveryReport> {
+        let mut reports = std::mem::take(&mut connects.reports);
+        for joined in std::mem::take(&mut connects.ended) {
+            reports.push(self.add_connected(joined));
+        }
+        // Added one at a time, so a caller that gives up waiting keeps the
+        // servers that connected before it did.
+        while let Some(joined) = connects.tasks.join_next().await {
+            reports.push(self.add_connected(joined));
         }
 
         reports.sort_by_key(|(index, _)| *index);
@@ -385,6 +411,41 @@ impl McpManager {
             summary.0, summary.1
         );
         reports.into_iter().map(|(_, report)| report).collect()
+    }
+
+    fn add_connected(
+        &mut self,
+        joined: Result<ConnectOutcome, tokio::task::JoinError>,
+    ) -> (usize, McpDiscoveryReport) {
+        match joined {
+            Ok((index, report, Some(client))) => {
+                if let Some(existing) = self.clients.get(&report.name) {
+                    // Dropping the client drops its transport, which kills
+                    // a stdio server.
+                    return (index, existing_report(report.name, existing));
+                }
+                debug!(
+                    "Discovered {} tools from MCP server '{}'",
+                    report.tool_count, report.name
+                );
+                self.clients.insert(
+                    report.name.clone(),
+                    make_managed_client(&report.name, client, self.tool_registry.as_ref()),
+                );
+                (index, report)
+            }
+            Ok((index, report, None)) => (index, report),
+            Err(err) => (
+                usize::MAX,
+                McpDiscoveryReport {
+                    name: "mcp-discovery-task".to_string(),
+                    connected: false,
+                    transport_type: "unknown".to_string(),
+                    tool_count: 0,
+                    error: Some(format!("discovery task failed: {err}")),
+                },
+            ),
+        }
     }
 
     /// Disconnect from an MCP server and remove it from the active list.

@@ -131,7 +131,7 @@ impl AcpServer {
                         Ok((id, ())) => {
                             prompts.requests.remove(&id);
                         }
-                        Err(error) => self.prompt_failed(&mut prompts, error, &outbox),
+                        Err(error) => self.request_failed(&mut prompts, error, &outbox),
                     }
                 }
                 line = lines.next_line(), if reading => match line? {
@@ -142,10 +142,16 @@ impl AcpServer {
         }
     }
 
-    /// A prompt task that panicked: answer its request with an error, mark
-    /// its session failed, and keep serving the others.
-    fn prompt_failed(&self, prompts: &mut Prompts, error: tokio::task::JoinError, outbox: &Outbox) {
-        tracing::error!("ACP prompt task failed: {error}");
+    /// A background request (a prompt or a session start) whose task
+    /// panicked: answer it with an error, mark a prompt's session failed,
+    /// and keep serving the others.
+    fn request_failed(
+        &self,
+        prompts: &mut Prompts,
+        error: tokio::task::JoinError,
+        outbox: &Outbox,
+    ) {
+        tracing::error!("ACP request task failed: {error}");
         let (request_id, session_id, seq) =
             prompts.requests.remove(&error.id()).unwrap_or_default();
         // Ends the session's turn only if it was this prompt's.
@@ -156,7 +162,7 @@ impl AcpServer {
         if request_id.is_some() {
             send(
                 &lock(outbox),
-                &AcpResponse::error(request_id, -32603, "Internal error: the prompt failed"),
+                &AcpResponse::error(request_id, -32603, "Internal error: the request failed"),
             );
         }
     }
@@ -608,6 +614,15 @@ mod tests {
             )
             .with_prompt_executor(executor),
         );
+        serve(handler, session_manager, event_sink, permission_store)
+    }
+
+    fn serve(
+        handler: Arc<dyn AcpHandler>,
+        session_manager: Arc<SessionManager>,
+        event_sink: Arc<EventSink>,
+        permission_store: Arc<PermissionStore>,
+    ) -> Client {
         let server = Arc::new(AcpServer::with_components(
             handler,
             session_manager,
@@ -753,6 +768,127 @@ mod tests {
 
         // Dropping the server kills the silent server.
         client.server.abort();
+    }
+
+    /// A session start whose MCP server never answers must not hold off
+    /// another session's start, which shares the MCP manager.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn run_on_starts_a_session_whilst_another_waits_on_its_mcp_server() {
+        let (mut client, _, _) = gated_client();
+        client
+            .send(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "method": "session/new",
+                "params": {"cwd": "/tmp", "mcpServers": [
+                    {"name": "silent", "command": "sleep", "args": ["30"], "env": []}
+                ]},
+            }))
+            .await;
+        // Long enough for the first start to reach its MCP servers.
+        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+
+        client
+            .send(serde_json::json!({
+                "jsonrpc": "2.0",
+                "id": 2,
+                "method": "session/new",
+                "params": {"cwd": "/tmp", "mcpServers": [
+                    {"name": "missing", "command": "/nonexistent/hermes-mcp-server", "args": [], "env": []}
+                ]},
+            }))
+            .await;
+        let (_, response) = client.until_response(2).await;
+        assert!(response["result"]["sessionId"].is_string(), "{response}");
+
+        // Dropping the server kills the silent server.
+        client.server.abort();
+    }
+
+    /// Answers each request at once, except that a session start waits for
+    /// `release`.
+    struct GatedStartHandler {
+        release: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait::async_trait]
+    impl AcpHandler for GatedStartHandler {
+        async fn handle_request(&self, request: AcpRequest) -> AcpResponse {
+            if starts_mcp_servers(&request.method) {
+                self.release.notified().await;
+            }
+            AcpResponse::success(request.id, serde_json::json!({}))
+        }
+    }
+
+    fn client_on(handler: Arc<dyn AcpHandler>) -> Client {
+        serve(
+            handler,
+            Arc::new(SessionManager::new()),
+            Arc::new(EventSink::default()),
+            Arc::new(PermissionStore::new()),
+        )
+    }
+
+    #[tokio::test]
+    async fn run_on_serves_other_requests_whilst_any_kind_of_session_starts() {
+        for method in [
+            "session/new",
+            "new_session",
+            "session/load",
+            "load_session",
+            "session/resume",
+            "resume_session",
+            "session/fork",
+            "fork_session",
+        ] {
+            let release = Arc::new(tokio::sync::Notify::new());
+            let mut client = client_on(Arc::new(GatedStartHandler {
+                release: release.clone(),
+            }));
+            client
+                .send(
+                    serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": method, "params": {}}),
+                )
+                .await;
+            client
+                .send(serde_json::json!({"jsonrpc": "2.0", "id": 2, "method": "session/list", "params": {}}))
+                .await;
+            // until_response fails on any other response first.
+            client.until_response(2).await;
+
+            release.notify_one();
+            client.until_response(1).await;
+            client.writer.shutdown().await.unwrap();
+            client.server.await.unwrap();
+        }
+    }
+
+    struct PanickingHandler;
+
+    #[async_trait::async_trait]
+    impl AcpHandler for PanickingHandler {
+        async fn handle_request(&self, _request: AcpRequest) -> AcpResponse {
+            panic!("handler failed");
+        }
+    }
+
+    #[tokio::test]
+    async fn run_on_answers_a_session_start_whose_task_panicked() {
+        let mut client = client_on(Arc::new(PanickingHandler));
+        client
+            .send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "session/new", "params": {"cwd": "/tmp"}}))
+            .await;
+        let (_, response) = client.until_response(1).await;
+        assert_eq!(response["error"]["code"], -32603, "{response}");
+        assert_eq!(
+            response["error"]["message"], "Internal error: the request failed",
+            "{response}"
+        );
+
+        client.writer.shutdown().await.unwrap();
+        client.server.await.unwrap();
     }
 
     #[tokio::test]
