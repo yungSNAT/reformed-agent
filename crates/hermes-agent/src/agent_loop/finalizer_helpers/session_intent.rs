@@ -4,7 +4,8 @@ fn extract_last_user_assistant(messages: &[Message]) -> (String, String) {
         .iter()
         .rev()
         .find(|m| matches!(m.role, hermes_core::MessageRole::User))
-        .and_then(|m| m.content.clone())
+        .and_then(|m| m.content.as_deref())
+        .map(user_turn_words)
         .unwrap_or_default();
     let assistant = messages
         .iter()
@@ -13,6 +14,20 @@ fn extract_last_user_assistant(messages: &[Message]) -> (String, String) {
         .and_then(|m| m.content.clone())
         .unwrap_or_default();
     (user, assistant)
+}
+
+/// The words of a user turn. An ACP prompt holding an image or a resource
+/// arrives as its parts in JSON; memory keeps only their text parts.
+fn user_turn_words(content: &str) -> String {
+    match crate::provider::parse_acp_multimodal_parts(content) {
+        Some(parts) => parts
+            .iter()
+            .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+            .filter_map(|part| part.get("text").and_then(Value::as_str))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => content.to_string(),
+    }
 }
 
 fn latest_user_content(messages: &[Message]) -> Option<&str> {

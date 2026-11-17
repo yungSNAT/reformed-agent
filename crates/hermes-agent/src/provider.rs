@@ -46,7 +46,7 @@ struct ChatRequestParams<'a> {
     stream: bool,
 }
 
-const ACP_MULTIMODAL_PREFIX: &str = "__hermes_acp_parts_json__:";
+pub(crate) const ACP_MULTIMODAL_PREFIX: &str = "__hermes_acp_parts_json__:";
 pub const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const OPENAI_CODEX_DYNAMIC_WIRE_MODEL: &str = "gpt-5.4";
 const CODEX_CLOUDFLARE_ORIGINATOR: &str = "codex_cli_rs";
@@ -206,7 +206,7 @@ fn resolve_openai_compatible_dynamic_wire_model(
     }
 }
 
-fn parse_acp_multimodal_parts(content: &str) -> Option<Vec<Value>> {
+pub(crate) fn parse_acp_multimodal_parts(content: &str) -> Option<Vec<Value>> {
     let payload = content.trim().strip_prefix(ACP_MULTIMODAL_PREFIX)?;
     let parsed: Value = serde_json::from_str(payload).ok()?;
     let parts = parsed.as_array()?.clone();
