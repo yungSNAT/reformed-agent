@@ -121,7 +121,14 @@ const CURATED_PROVIDER_MODELS: &[(&str, &[&str])] = &[
             "google/gemini-3-flash-preview",
         ],
     ),
-    ("fireworks", &["accounts/fireworks-ai/qwq-32b"]),
+    (
+        "fireworks",
+        &[
+            "accounts/fireworks/models/kimi-k2p6",
+            "accounts/fireworks/models/glm-5p2",
+            "accounts/fireworks/models/kimi-k2p7-code",
+        ],
+    ),
     (
         "mistral",
         &["mistral-small", "mistral-large", "pixtral-large-latest"],
@@ -247,6 +254,7 @@ const CURATED_PROVIDER_MODELS: &[(&str, &[&str])] = &[
         ],
     ),
     ("tencent-tokenhub", &["hy3-preview"]),
+    ("upstage", &["solar-pro3"]),
     ("zai", &["glm-5.2", "glm-5.1", "glm-5.0", "glm-4.5-flash"]),
     ("minimax", &["MiniMax-M3", "MiniMax-M2.7"]),
     ("minimax-cn", &["MiniMax-M3", "MiniMax-M2.7"]),

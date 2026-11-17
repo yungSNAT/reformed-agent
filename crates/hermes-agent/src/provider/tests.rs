@@ -73,6 +73,8 @@ include!("tests/codex_generic.rs");
 
 include!("tests/profile_sanitization.rs");
 
+include!("tests/direct_providers.rs");
+
 include!("tests/openai_parsing.rs");
 
 include!("tests/anthropic_requests.rs");
