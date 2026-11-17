@@ -1410,6 +1410,39 @@ enabled = false
         assert!(!text.contains("sk-live"), "{text}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn codex_memory_files_that_are_links_are_skipped() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- Kept note.\n").unwrap();
+        let outside = root.path().join("outside.md");
+        std::fs::write(&outside, "- Outside note.\n").unwrap();
+        symlink(&outside, codex.join("memories/b.md")).unwrap();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains(
+                "skipped      memories/b.md: it is a link, which this import does not follow"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Kept note."
+        );
+    }
+
     fn claude_request<'a>(source: &'a Path, home: &'a Path, apply: bool) -> AgentImportRequest<'a> {
         AgentImportRequest {
             agent: SourceAgent::ClaudeCode,
