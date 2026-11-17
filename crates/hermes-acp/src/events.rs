@@ -460,6 +460,76 @@ impl AcpEvent {
             used: None,
         }
     }
+
+    /// The `session/update` params the Agent Client Protocol defines for
+    /// this event: `{"sessionId", "update": {"sessionUpdate", ...}}`.
+    /// `None` for internal markers (thinking and progress notes, step
+    /// counts, errors) that have no protocol form; a prompt's error reaches
+    /// the client as the prompt's error response.
+    pub fn session_update_params(&self) -> Option<Value> {
+        let text_chunk = |update: &str| {
+            let text = self.text.as_deref()?;
+            Some(json!({"sessionUpdate": update, "content": {"type": "text", "text": text}}))
+        };
+        let update = match self.kind {
+            AcpEventKind::MessageDelta
+            | AcpEventKind::MessageComplete
+            | AcpEventKind::AgentMessageChunk => text_chunk("agent_message_chunk")?,
+            AcpEventKind::AgentThoughtChunk => text_chunk("agent_thought_chunk")?,
+            AcpEventKind::UserMessageChunk => text_chunk("user_message_chunk")?,
+            AcpEventKind::ToolCallStart => {
+                let mut update = json!({
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": self.tool_call_id.as_deref()?,
+                    "title": self.title.as_deref().unwrap_or_default(),
+                    "kind": self.tool_kind.as_deref().unwrap_or("other"),
+                    "status": "in_progress",
+                });
+                if let Some(arguments) = &self.arguments {
+                    update["rawInput"] = arguments.clone();
+                }
+                update
+            }
+            AcpEventKind::ToolCallComplete => {
+                let mut update = json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": self.tool_call_id.as_deref()?,
+                    "status": self.status.as_deref().unwrap_or("completed"),
+                });
+                if let Some(result) = &self.result {
+                    update["content"] =
+                        json!([{"type": "content", "content": {"type": "text", "text": result}}]);
+                    update["rawOutput"] = json!(result);
+                }
+                update
+            }
+            AcpEventKind::PlanUpdate => {
+                json!({"sessionUpdate": "plan", "entries": self.entries.as_ref()?})
+            }
+            AcpEventKind::UsageUpdate => {
+                json!({"sessionUpdate": "usage_update", "size": self.size?, "used": self.used?})
+            }
+            AcpEventKind::AvailableCommandsUpdate => json!({
+                "sessionUpdate": "available_commands_update",
+                "availableCommands": self.available_commands.as_ref()?,
+            }),
+            AcpEventKind::SessionInfoUpdate => {
+                let mut update = json!({"sessionUpdate": "session_info_update"});
+                if let Some(title) = &self.title {
+                    update["title"] = json!(title);
+                }
+                if let Some(updated_at) = &self.updated_at {
+                    update["updatedAt"] = json!(updated_at);
+                }
+                update
+            }
+            AcpEventKind::Thinking
+            | AcpEventKind::StepComplete
+            | AcpEventKind::Progress
+            | AcpEventKind::Error => return None,
+        };
+        Some(json!({"sessionId": self.session_id, "update": update}))
+    }
 }
 
 fn json_loads_maybe_prefix(text: &str) -> Option<Value> {
@@ -561,6 +631,7 @@ impl ToolCallIdTracker {
 pub struct EventSink {
     events: Mutex<VecDeque<AcpEvent>>,
     max_events: usize,
+    pushed: tokio::sync::Notify,
 }
 
 impl EventSink {
@@ -568,15 +639,25 @@ impl EventSink {
         Self {
             events: Mutex::new(VecDeque::new()),
             max_events,
+            pushed: tokio::sync::Notify::new(),
         }
     }
 
     pub fn push(&self, event: AcpEvent) {
-        let mut events = self.events.lock().unwrap();
-        events.push_back(event);
-        while events.len() > self.max_events {
-            events.pop_front();
+        {
+            let mut events = self.events.lock().unwrap();
+            events.push_back(event);
+            while events.len() > self.max_events {
+                events.pop_front();
+            }
         }
+        self.pushed.notify_waiters();
+    }
+
+    /// Completes at the next `push`. Enable the returned future before
+    /// draining so a push between the drain and the wait is not missed.
+    pub fn pushed(&self) -> tokio::sync::futures::Notified<'_> {
+        self.pushed.notified()
     }
 
     pub fn drain_all(&self) -> Vec<AcpEvent> {

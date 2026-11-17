@@ -115,7 +115,7 @@ impl From<&str> for AcpMethod {
             "session/fork" | "fork_session" => Self::ForkSession,
             "session/list" | "list_sessions" => Self::ListSessions,
             "session/cancel" | "cancel" => Self::Cancel,
-            "prompt" => Self::Prompt,
+            "session/prompt" | "prompt" => Self::Prompt,
             "session/set_model" | "set_session_model" => Self::SetSessionModel,
             "session/set_mode" | "set_session_mode" => Self::SetSessionMode,
             "session/set_config" | "session/set_config_option" | "set_config_option" => {
@@ -458,6 +458,7 @@ mod tests {
         assert_eq!(AcpMethod::from("session/new"), AcpMethod::NewSession);
         assert_eq!(AcpMethod::from("new_session"), AcpMethod::NewSession);
         assert_eq!(AcpMethod::from("prompt"), AcpMethod::Prompt);
+        assert_eq!(AcpMethod::from("session/prompt"), AcpMethod::Prompt);
         assert_eq!(AcpMethod::from("cancel"), AcpMethod::Cancel);
         assert_eq!(
             AcpMethod::from("session/set_config_option"),
