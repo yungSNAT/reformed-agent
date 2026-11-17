@@ -1,0 +1,64 @@
+# Findings in main's history, triaged by rule and file on 18 November 2026. None is in
+# the current tree: each file has since been removed or changed.
+
+# The vendored matrix-sdk-crypto 0.18.0 patch (removed by #87): key-handling code and its tests.
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/backups/keys/decryption.rs:generic-api-key:289
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/backups/mod.rs:generic-api-key:660
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/machine/tests/mod.rs:generic-api-key:1631
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/machine/tests/mod.rs:generic-api-key:1633
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/machine/tests/send_encrypted_to_device.rs:generic-api-key:493
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/account.rs:generic-api-key:2105
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1080
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1124
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1314
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1316
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1383
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:1384
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/inbound.rs:generic-api-key:998
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/mod.rs:generic-api-key:335
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/group_sessions/mod.rs:generic-api-key:337
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/olm/utility.rs:generic-api-key:233
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/secret_storage.rs:generic-api-key:813
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/secret_storage.rs:generic-api-key:820
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/secret_storage.rs:generic-api-key:827
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/secret_storage.rs:generic-api-key:834
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/session_manager/group_sessions/mod.rs:generic-api-key:1179
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/session_manager/sessions.rs:generic-api-key:949
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/memorystore.rs:generic-api-key:1286
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/memorystore.rs:generic-api-key:887
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2239
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2240
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2241
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2242
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2322
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/store/mod.rs:generic-api-key:2323
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/olm_v1.rs:generic-api-key:450
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/olm_v1.rs:generic-api-key:451
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room/encrypted.rs:generic-api-key:461
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room/encrypted.rs:generic-api-key:491
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_request.rs:generic-api-key:307
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_withheld.rs:generic-api-key:512
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_withheld.rs:generic-api-key:527
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_withheld.rs:generic-api-key:542
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_withheld.rs:generic-api-key:559
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/room_key_withheld.rs:generic-api-key:671
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/to_device.rs:generic-api-key:475
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/to_device.rs:generic-api-key:476
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/events/to_device.rs:generic-api-key:496
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/mod.rs:generic-api-key:572
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/mod.rs:generic-api-key:573
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/mod.rs:generic-api-key:574
+57e10be98dd2b0876b9da7b791af8e236d7aec98:third_party/rustsec-patches/matrix-sdk-crypto-0.18.0/src/types/one_time_keys.rs:generic-api-key:148
+
+# Upstream Hermes Agent's Python sources and example configurations, imported for parity and since removed or rewritten.
+fd76830cc553625030df46400f012575cf905d9e:.env.example:generic-password:212
+fd76830cc553625030df46400f012575cf905d9e:agent/anthropic_adapter.py:generic-api-key:699
+fd76830cc553625030df46400f012575cf905d9e:agent/google_oauth.py:generic-api-key:91
+fd76830cc553625030df46400f012575cf905d9e:cli-config.yaml.example:generic-password:154
+fd76830cc553625030df46400f012575cf905d9e:cli-config.yaml.example:generic-password:264
+fd76830cc553625030df46400f012575cf905d9e:cli.py:generic-password:519
+fd76830cc553625030df46400f012575cf905d9e:hermes_cli/auth.py:generic-api-key:78
+fd76830cc553625030df46400f012575cf905d9e:hermes_cli/copilot_auth.py:generic-api-key:33
+
+# The media delivery test media_delivery_blocks_home_credential_subdir_under_home_exception, since changed.
+2d0aa4c5ff203052df6c711b6751bf2f0a4d9d7a:crates/hermes-gateway/src/media.rs:private-key:1025
