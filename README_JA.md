@@ -106,9 +106,9 @@ Telegram、Discord、Slack、WhatsApp、Signal、Matrix、Mattermost、DingTalk�
 
 Mem0、Honcho、Holographic、Hindsight、ByteRover、OpenViking、RetainDB、Supermemory。
 
-### 6 ターミナルバックエンド
+### 4 ターミナルバックエンド
 
-Local、Docker、SSH、Daytona、Modal、Singularity。
+Local、Docker、SSH、Singularity。Daytona と Modal はビルドに含まれず、設定するとコマンドはローカルで実行されずエラーになります。
 
 ### MCP（Model Context Protocol）サポート
 
@@ -151,7 +151,7 @@ crates/
 | `LlmProvider` | LLM API 呼び出し | OpenAI, Anthropic, OpenRouter, Generic |
 | `ToolHandler` | ツール実行 | 30 ツールバックエンド |
 | `PlatformAdapter` | メッセージプラットフォーム | 17 プラットフォーム |
-| `TerminalBackend` | コマンド実行 | Local, Docker, SSH, Daytona, Modal, Singularity |
+| `TerminalBackend` | コマンド実行 | Local, Docker, SSH, Singularity |
 | `MemoryProvider` | 永続メモリ | 8 メモリプラグイン + ファイル/SQLite |
 | `SkillProvider` | スキル管理 | ファイルストア + Hub |
 

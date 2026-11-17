@@ -230,6 +230,15 @@ fn check_daytona_requirements() -> TerminalRequirementReport {
     }
 }
 
+/// The terminal backend the user chose (`TERMINAL_ENV`, then its alias
+/// `TERMINAL_BACKEND`), or `None` for this machine.
+pub fn non_local_terminal_backend() -> Option<String> {
+    env_nonempty("TERMINAL_ENV")
+        .or_else(|| env_nonempty("TERMINAL_BACKEND"))
+        .map(|name| name.trim().to_string())
+        .filter(|name| !name.eq_ignore_ascii_case("local"))
+}
+
 fn env_nonempty(key: &str) -> Option<String> {
     env::var(key).ok().filter(|value| !value.trim().is_empty())
 }

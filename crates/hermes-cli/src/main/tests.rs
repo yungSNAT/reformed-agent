@@ -369,6 +369,10 @@ mod tests {
                 .as_deref(),
             Some("restart")
         );
+        assert_eq!(
+            acp_action_from_flags(None, false, false, false, false).as_deref(),
+            Some("start")
+        );
     }
 
     #[test]
@@ -744,6 +748,19 @@ mod tests {
             }),
         );
         assert_eq!(cron_platform_delivery_text(&silent), None);
+    }
+
+    #[test]
+    fn shared_provider_aliases_normalise_to_their_provider() {
+        for (id, aliases) in hermes_core::providers::PROVIDER_ALIASES {
+            for alias in *aliases {
+                assert_eq!(normalize_auth_provider(alias), *id, "{alias}");
+                assert_eq!(normalize_secret_provider(alias), *id, "{alias}");
+            }
+            let mut expected = vec![id.to_string()];
+            expected.extend(aliases.iter().map(|alias| alias.to_string()));
+            assert_eq!(secret_provider_aliases(id), expected);
+        }
     }
 
     #[test]

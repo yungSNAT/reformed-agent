@@ -36,6 +36,7 @@ pub mod reasoning;
 pub mod session_persistence;
 pub mod skill_orchestrator;
 pub mod smart_model_routing;
+mod sse_buffer;
 pub mod steer;
 pub mod sub_agent_orchestrator;
 pub mod subdirectory_hints;

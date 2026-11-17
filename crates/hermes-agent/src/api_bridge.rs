@@ -25,6 +25,7 @@ use crate::provider::{
     OPENAI_CODEX_BASE_URL, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
 };
 use crate::rate_limit::RateLimitTracker;
+use crate::sse_buffer::SseEvents;
 
 const CODEX_RESPONSES_BETA_HEADER: &str = "responses=2026-02-06";
 
@@ -472,37 +473,29 @@ impl CodexProvider {
         resp: reqwest::Response,
         effective_model: &str,
     ) -> Result<LlmResponse, AgentError> {
-        let mut byte_stream = resp.bytes_stream();
-        let mut buffer = String::new();
+        let mut events = SseEvents::open(resp).await?;
         let mut content_text = String::new();
         let mut completed_response: Option<Value> = None;
 
-        while let Some(chunk_result) = byte_stream.next().await {
-            let chunk_bytes =
-                chunk_result.map_err(|e| AgentError::LlmApi(format!("Stream read error: {e}")))?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
+        while let Some(event_block) = events.next().await {
+            let event_block = event_block?;
+            let Some((event_type, json)) = Self::parse_sse_event_block(&event_block) else {
+                continue;
+            };
 
-            while let Some(event_end) = buffer.find("\n\n") {
-                let event_block = buffer[..event_end].to_string();
-                buffer = buffer[event_end + 2..].to_string();
-                let Some((event_type, json)) = Self::parse_sse_event_block(&event_block) else {
-                    continue;
-                };
-
-                match event_type.as_str() {
-                    "response.output_text.delta" => {
-                        if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
-                            content_text.push_str(delta);
-                        }
+            match event_type.as_str() {
+                "response.output_text.delta" => {
+                    if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
+                        content_text.push_str(delta);
                     }
-                    "response.completed" => {
-                        completed_response = json.get("response").cloned();
-                    }
-                    "response.failed" => {
-                        return Err(AgentError::LlmApi(format!("response failed: {json}")));
-                    }
-                    _ => {}
                 }
+                "response.completed" => {
+                    completed_response = json.get("response").cloned();
+                }
+                "response.failed" => {
+                    return Err(AgentError::LlmApi(format!("response failed: {json}")));
+                }
+                _ => {}
             }
         }
 
@@ -642,90 +635,80 @@ impl LlmProvider for CodexProvider {
 
             provider.update_rate_limit(resp.headers());
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body_text = resp.text().await.unwrap_or_else(|_| "<no body>".to_string());
-                yield Err(AgentError::LlmApi(format!("API error {status}: {body_text}")));
-                return;
-            }
+            let mut events = match SseEvents::open(resp).await {
+                Ok(events) => events,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            };
 
-            let mut byte_stream = resp.bytes_stream();
-            let mut buffer = String::new();
-
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk_bytes = match chunk_result {
-                    Ok(b) => b,
+            while let Some(event_block) = events.next().await {
+                let event_block = match event_block {
+                    Ok(block) => block,
                     Err(e) => {
-                        yield Err(AgentError::LlmApi(format!("Stream read error: {e}")));
+                        yield Err(e);
                         return;
                     }
                 };
+                let Some((event_type, json)) = CodexProvider::parse_sse_event_block(&event_block) else {
+                    continue;
+                };
 
-                buffer.push_str(&String::from_utf8_lossy(&chunk_bytes));
-
-                while let Some(event_end) = buffer.find("\n\n") {
-                    let event_block = buffer[..event_end].to_string();
-                    buffer = buffer[event_end + 2..].to_string();
-
-                    let Some((event_type, json)) = CodexProvider::parse_sse_event_block(&event_block) else {
-                        continue;
-                    };
-
-                    match event_type.as_str() {
-                        "response.output_text.delta" => {
-                            if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
-                                yield Ok(StreamChunk {
-                                    delta: Some(StreamDelta {
-                                        content: Some(delta.to_string()),
-                                        tool_calls: None,
-                                        extra: None,
-                                    }),
-                                    finish_reason: None,
-                                    usage: None,
-                                });
-                            }
-                        }
-                        "response.function_call_arguments.delta" => {
-                            let call_id = json.get("call_id").and_then(|i| i.as_str()).map(|s| s.to_string());
-                            let name = json.get("name").and_then(|n| n.as_str()).map(|s| s.to_string());
-                            let args_delta = json.get("delta").and_then(|d| d.as_str()).map(|s| s.to_string());
+                match event_type.as_str() {
+                    "response.output_text.delta" => {
+                        if let Some(delta) = json.get("delta").and_then(|d| d.as_str()) {
                             yield Ok(StreamChunk {
                                 delta: Some(StreamDelta {
-                                    content: None,
-                                    tool_calls: Some(vec![ToolCallDelta {
-                                        index: 0,
-                                        id: call_id,
-                                        function: Some(FunctionCallDelta {
-                                            name,
-                                            arguments: args_delta,
-                                        }),
-                                    }]),
+                                    content: Some(delta.to_string()),
+                                    tool_calls: None,
                                     extra: None,
                                 }),
                                 finish_reason: None,
                                 usage: None,
                             });
                         }
-                        "response.completed" => {
-                            let usage = json.get("response").and_then(|r| r.get("usage")).map(|u| {
-                                let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                UsageStats {
-                                    prompt_tokens: input,
-                                    completion_tokens: output,
-                                    total_tokens: input + output,
-                                    estimated_cost: None,
-                                }
-                            });
-                            yield Ok(StreamChunk {
-                                delta: None,
-                                finish_reason: Some("stop".to_string()),
-                                usage,
-                            });
-                            return;
-                        }
-                        _ => {}
                     }
+                    "response.function_call_arguments.delta" => {
+                        let call_id = json.get("call_id").and_then(|i| i.as_str()).map(|s| s.to_string());
+                        let name = json.get("name").and_then(|n| n.as_str()).map(|s| s.to_string());
+                        let args_delta = json.get("delta").and_then(|d| d.as_str()).map(|s| s.to_string());
+                        yield Ok(StreamChunk {
+                            delta: Some(StreamDelta {
+                                content: None,
+                                tool_calls: Some(vec![ToolCallDelta {
+                                    index: 0,
+                                    id: call_id,
+                                    function: Some(FunctionCallDelta {
+                                        name,
+                                        arguments: args_delta,
+                                    }),
+                                }]),
+                                extra: None,
+                            }),
+                            finish_reason: None,
+                            usage: None,
+                        });
+                    }
+                    "response.completed" => {
+                        let usage = json.get("response").and_then(|r| r.get("usage")).map(|u| {
+                            let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            UsageStats {
+                                prompt_tokens: input,
+                                completion_tokens: output,
+                                total_tokens: input + output,
+                                estimated_cost: None,
+                            }
+                        });
+                        yield Ok(StreamChunk {
+                            delta: None,
+                            finish_reason: Some("stop".to_string()),
+                            usage,
+                        });
+                        return;
+                    }
+                    _ => {}
                 }
             }
         }
