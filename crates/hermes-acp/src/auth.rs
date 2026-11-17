@@ -100,7 +100,8 @@ fn normalize_provider_name(provider: &str) -> String {
             "text-generation-webui".to_string()
         }
         "tabby-api" | "tabby_api" | "exllama" | "exllamav2" => "tabbyapi".to_string(),
-        _ => normalized,
+        _ => hermes_core::providers::provider_for_alias(&normalized)
+            .map_or(normalized, str::to_string),
     }
 }
 
@@ -349,6 +350,15 @@ mod tests {
                 "GITHUB_COPILOT_TOKEN"
             ]
         );
+    }
+
+    #[test]
+    fn shared_provider_aliases_normalise_to_their_provider() {
+        for (id, aliases) in hermes_core::providers::PROVIDER_ALIASES {
+            for alias in *aliases {
+                assert_eq!(normalize_provider_name(alias), *id, "{alias}");
+            }
+        }
     }
 
     #[test]
