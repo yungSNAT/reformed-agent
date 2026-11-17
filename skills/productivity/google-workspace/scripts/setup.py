@@ -26,7 +26,6 @@ from __future__ import annotations  # allow PEP 604 `X | None` on Python 3.9+
 import argparse
 import json
 import os
-import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -37,6 +36,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from _hermes_home import display_hermes_home, get_hermes_home
+from _program_path import find_program
 
 HERMES_HOME = get_hermes_home()
 TOKEN_PATH = HERMES_HOME / "google_token.json"
@@ -121,7 +121,7 @@ def install_deps():
     # --python <interpreter>` installs into that exact interpreter without
     # needing pip present. Targeting sys.executable keeps us on the venv the
     # script is actually running under, rather than guessing.
-    uv = shutil.which("uv")
+    uv = find_program("uv")
     if uv:
         try:
             subprocess.check_call(

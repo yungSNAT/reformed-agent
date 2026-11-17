@@ -67,6 +67,8 @@ jobs:
           python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
           python3 -m py_compile scripts/release_secret_scan.py
+      - name: Skill scripts never start programs from the working folder
+        run: python3 -m unittest tests/skills/test_skill_program_lookup.py
 
   ui-tui:
     runs-on: ubuntu-latest

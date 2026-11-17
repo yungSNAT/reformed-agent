@@ -33,6 +33,8 @@ mod default_models {
     pub const GEMINI: &str = "gemini-3.5-flash";
     pub const GMI: &str = "google/gemini-3.1-flash-lite-preview";
     pub const TENCENT_TOKENHUB: &str = "hy3-preview";
+    pub const DEEPINFRA: &str = "deepseek-ai/DeepSeek-V4-Flash";
+    pub const FIREWORKS: &str = "accounts/fireworks/models/glm-5p2";
 }
 
 mod default_base_urls {
@@ -50,6 +52,9 @@ mod default_base_urls {
     pub const NOVITA: &str = "https://api.novita.ai/openai/v1";
     pub const NVIDIA: &str = "https://integrate.api.nvidia.com/v1";
     pub const ARCEE: &str = "https://api.arcee.ai/api/v1";
+    pub const DEEPINFRA: &str = "https://api.deepinfra.com/v1/openai";
+    pub const FIREWORKS: &str = "https://api.fireworks.ai/inference/v1";
+    pub const UPSTAGE: &str = "https://api.upstage.ai/v1";
     pub const TENCENT_TOKENHUB: &str = "https://tokenhub.tencentmaas.com/v1";
 }
 
@@ -280,6 +285,24 @@ pub fn build_auxiliary_client_with_main_runtime(
         default_models::TENCENT_TOKENHUB,
         main_label.as_deref(),
     );
+    register_direct_key(
+        &mut builder,
+        &mut summary,
+        "DEEPINFRA_API_KEY",
+        "deepinfra",
+        default_base_urls::DEEPINFRA,
+        default_models::DEEPINFRA,
+        main_label.as_deref(),
+    );
+    register_direct_key(
+        &mut builder,
+        &mut summary,
+        "FIREWORKS_API_KEY",
+        "fireworks",
+        default_base_urls::FIREWORKS,
+        default_models::FIREWORKS,
+        main_label.as_deref(),
+    );
 
     let client = builder.build();
     (client, summary)
@@ -409,6 +432,9 @@ fn canonical_provider_label(provider: &str) -> String {
         "google" | "google-gemini" | "google-ai-studio" => "gemini".to_string(),
         "gmi-cloud" | "gmicloud" => "gmi".to_string(),
         "arcee-ai" | "arceeai" => "arcee".to_string(),
+        "deep-infra" | "deepinfra-ai" => "deepinfra".to_string(),
+        "fireworks-ai" | "fw" => "fireworks".to_string(),
+        "solar" => "upstage".to_string(),
         "mimo" | "xiaomi-mimo" => "xiaomi".to_string(),
         "tencent" | "tokenhub" | "tencent-cloud" | "tencentmaas" => "tencent-tokenhub".to_string(),
         local if crate::local_backends::local_backend_spec(local).is_some() => {
@@ -484,6 +510,9 @@ fn provider_api_key_from_env(label: &str) -> Option<String> {
         "zai" => &["GLM_API_KEY", "ZAI_API_KEY", "Z_AI_API_KEY"],
         "novita" => &["NOVITA_API_KEY"],
         "nvidia" => &["NVIDIA_API_KEY"],
+        "deepinfra" => &["DEEPINFRA_API_KEY"],
+        "fireworks" => &["FIREWORKS_API_KEY"],
+        "upstage" => &["UPSTAGE_API_KEY"],
         "arcee" => &["ARCEEAI_API_KEY", "ARCEE_API_KEY"],
         "ollama-cloud" => &["OLLAMA_API_KEY"],
         _ => &[],
@@ -516,6 +545,9 @@ fn default_base_url(label: &str) -> Option<&'static str> {
         "novita" => Some(default_base_urls::NOVITA),
         "nvidia" => Some(default_base_urls::NVIDIA),
         "arcee" => Some(default_base_urls::ARCEE),
+        "deepinfra" => Some(default_base_urls::DEEPINFRA),
+        "fireworks" => Some(default_base_urls::FIREWORKS),
+        "upstage" => Some(default_base_urls::UPSTAGE),
         _ => None,
     }
 }
@@ -636,6 +668,8 @@ mod tests {
         "NOUS_API_KEY",
         "GMI_API_KEY",
         "TOKENHUB_API_KEY",
+        "DEEPINFRA_API_KEY",
+        "FIREWORKS_API_KEY",
         "DEEPSEEK_API_KEY",
         "DASHSCOPE_API_KEY",
         "GITHUB_COPILOT_TOKEN",
