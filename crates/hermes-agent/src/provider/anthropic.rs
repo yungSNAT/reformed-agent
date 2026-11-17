@@ -674,69 +674,99 @@ impl LlmProvider for AnthropicProvider {
 
             provider.update_rate_limit(resp.headers());
 
-            if !resp.status().is_success() {
-                let status = resp.status();
-                let body_text = resp.text().await.unwrap_or_else(|_| "<no body>".to_string());
-                yield Err(AgentError::LlmApi(format!("API error {status}: {body_text}")));
-                return;
-            }
-
-            let mut byte_stream = resp.bytes_stream();
-            let mut buffer = SseBuffer::default();
+            let mut events = match SseEvents::open(resp).await {
+                Ok(events) => events,
+                Err(e) => {
+                    yield Err(e);
+                    return;
+                }
+            };
             // Track current tool_use block index for delta accumulation
             let mut current_tool_index: u32 = 0;
 
-            while let Some(chunk_result) = byte_stream.next().await {
-                let chunk_bytes = match chunk_result {
-                    Ok(b) => b,
+            while let Some(event_block) = events.next().await {
+                let event_block = match event_block {
+                    Ok(block) => block,
                     Err(e) => {
-                        yield Err(AgentError::LlmApi(format!("Stream read error: {e}")));
+                        yield Err(e);
                         return;
                     }
                 };
+                let mut event_type = String::new();
+                let mut event_data = String::new();
 
-                buffer.push(&chunk_bytes);
+                for line in event_block.lines() {
+                    let line = line.trim();
+                    if let Some(et) = line.strip_prefix("event: ") {
+                        event_type = et.trim().to_string();
+                    } else if let Some(d) = line.strip_prefix("data: ") {
+                        event_data = d.trim().to_string();
+                    }
+                }
 
-                while let Some(event_block) = buffer.next_event() {
-                    let mut event_type = String::new();
-                    let mut event_data = String::new();
+                if event_data.is_empty() {
+                    continue;
+                }
 
-                    for line in event_block.lines() {
-                        let line = line.trim();
-                        if let Some(et) = line.strip_prefix("event: ") {
-                            event_type = et.trim().to_string();
-                        } else if let Some(d) = line.strip_prefix("data: ") {
-                            event_data = d.trim().to_string();
+                let json: Value = match serde_json::from_str(&event_data) {
+                    Ok(v) => v,
+                    Err(_) => continue,
+                };
+
+                match event_type.as_str() {
+                    "content_block_start" => {
+                        let block = json.get("content_block").unwrap_or(&json);
+                        let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        if block_type == "tool_use" {
+                            let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
+                            let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
+                            let idx = json.get("index").and_then(|i| i.as_u64()).unwrap_or(current_tool_index as u64) as u32;
+                            current_tool_index = idx;
+                            yield Ok(StreamChunk {
+                                delta: Some(StreamDelta {
+                                    content: None,
+                                    tool_calls: Some(vec![ToolCallDelta {
+                                        index: idx,
+                                        id: Some(id),
+                                        function: Some(FunctionCallDelta {
+                                            name: Some(name),
+                                            arguments: None,
+                                        }),
+                                    }]),
+                                    extra: None,
+                                }),
+                                finish_reason: None,
+                                usage: None,
+                            });
                         }
                     }
-
-                    if event_data.is_empty() {
-                        continue;
-                    }
-
-                    let json: Value = match serde_json::from_str(&event_data) {
-                        Ok(v) => v,
-                        Err(_) => continue,
-                    };
-
-                    match event_type.as_str() {
-                        "content_block_start" => {
-                            let block = json.get("content_block").unwrap_or(&json);
-                            let block_type = block.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                            if block_type == "tool_use" {
-                                let id = block.get("id").and_then(|i| i.as_str()).unwrap_or("").to_string();
-                                let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("").to_string();
-                                let idx = json.get("index").and_then(|i| i.as_u64()).unwrap_or(current_tool_index as u64) as u32;
-                                current_tool_index = idx;
+                    "content_block_delta" => {
+                        let delta = json.get("delta").unwrap_or(&json);
+                        let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
+                        match delta_type {
+                            "text_delta" => {
+                                let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
+                                yield Ok(StreamChunk {
+                                    delta: Some(StreamDelta {
+                                        content: Some(text),
+                                        tool_calls: None,
+                                        extra: None,
+                                    }),
+                                    finish_reason: None,
+                                    usage: None,
+                                });
+                            }
+                            "input_json_delta" => {
+                                let partial = delta.get("partial_json").and_then(|p| p.as_str()).unwrap_or("").to_string();
                                 yield Ok(StreamChunk {
                                     delta: Some(StreamDelta {
                                         content: None,
                                         tool_calls: Some(vec![ToolCallDelta {
-                                            index: idx,
-                                            id: Some(id),
+                                            index: current_tool_index,
+                                            id: None,
                                             function: Some(FunctionCallDelta {
-                                                name: Some(name),
-                                                arguments: None,
+                                                name: None,
+                                                arguments: Some(partial),
                                             }),
                                         }]),
                                         extra: None,
@@ -745,111 +775,74 @@ impl LlmProvider for AnthropicProvider {
                                     usage: None,
                                 });
                             }
-                        }
-                        "content_block_delta" => {
-                            let delta = json.get("delta").unwrap_or(&json);
-                            let delta_type = delta.get("type").and_then(|t| t.as_str()).unwrap_or("");
-                            match delta_type {
-                                "text_delta" => {
-                                    let text = delta.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string();
-                                    yield Ok(StreamChunk {
-                                        delta: Some(StreamDelta {
-                                            content: Some(text),
-                                            tool_calls: None,
-                                            extra: None,
-                                        }),
-                                        finish_reason: None,
-                                        usage: None,
-                                    });
-                                }
-                                "input_json_delta" => {
-                                    let partial = delta.get("partial_json").and_then(|p| p.as_str()).unwrap_or("").to_string();
+                            "thinking_delta" => {
+                                if let Some(thinking) =
+                                    delta.get("thinking").and_then(|t| t.as_str())
+                                {
                                     yield Ok(StreamChunk {
                                         delta: Some(StreamDelta {
                                             content: None,
-                                            tool_calls: Some(vec![ToolCallDelta {
-                                                index: current_tool_index,
-                                                id: None,
-                                                function: Some(FunctionCallDelta {
-                                                    name: None,
-                                                    arguments: Some(partial),
-                                                }),
-                                            }]),
-                                            extra: None,
+                                            tool_calls: None,
+                                            extra: Some(
+                                                serde_json::json!({"thinking": thinking}),
+                                            ),
                                         }),
                                         finish_reason: None,
                                         usage: None,
                                     });
                                 }
-                                "thinking_delta" => {
-                                    if let Some(thinking) =
-                                        delta.get("thinking").and_then(|t| t.as_str())
-                                    {
-                                        yield Ok(StreamChunk {
-                                            delta: Some(StreamDelta {
-                                                content: None,
-                                                tool_calls: None,
-                                                extra: Some(
-                                                    serde_json::json!({"thinking": thinking}),
-                                                ),
-                                            }),
-                                            finish_reason: None,
-                                            usage: None,
-                                        });
-                                    }
-                                }
-                                _ => {}
                             }
+                            _ => {}
                         }
-                        "message_delta" => {
-                            let stop_reason = json
-                                .get("delta")
-                                .and_then(|d| d.get("stop_reason"))
-                                .and_then(|s| s.as_str())
-                                .map(|s| match s {
-                                    "end_turn" => "stop".to_string(),
-                                    "tool_use" => "tool_calls".to_string(),
-                                    other => other.to_string(),
-                                });
-                            let usage = json.get("usage").map(|u| {
-                                let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                UsageStats {
-                                    prompt_tokens: 0,
-                                    completion_tokens: output,
-                                    total_tokens: output,
-                                    estimated_cost: None,
-                                }
+                    }
+                    "message_delta" => {
+                        let stop_reason = json
+                            .get("delta")
+                            .and_then(|d| d.get("stop_reason"))
+                            .and_then(|s| s.as_str())
+                            .map(|s| match s {
+                                "end_turn" => "stop".to_string(),
+                                "tool_use" => "tool_calls".to_string(),
+                                other => other.to_string(),
                             });
+                        let usage = json.get("usage").map(|u| {
+                            let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            UsageStats {
+                                prompt_tokens: 0,
+                                completion_tokens: output,
+                                total_tokens: output,
+                                estimated_cost: None,
+                            }
+                        });
+                        yield Ok(StreamChunk {
+                            delta: None,
+                            finish_reason: stop_reason,
+                            usage,
+                        });
+                    }
+                    "message_start" => {
+                        // Extract usage from the initial message
+                        let usage = json.get("message").and_then(|m| m.get("usage")).map(|u| {
+                            let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
+                            UsageStats {
+                                prompt_tokens: input,
+                                completion_tokens: 0,
+                                total_tokens: input,
+                                estimated_cost: None,
+                            }
+                        });
+                        if let Some(u) = usage {
                             yield Ok(StreamChunk {
                                 delta: None,
-                                finish_reason: stop_reason,
-                                usage,
+                                finish_reason: None,
+                                usage: Some(u),
                             });
                         }
-                        "message_start" => {
-                            // Extract usage from the initial message
-                            let usage = json.get("message").and_then(|m| m.get("usage")).map(|u| {
-                                let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                                UsageStats {
-                                    prompt_tokens: input,
-                                    completion_tokens: 0,
-                                    total_tokens: input,
-                                    estimated_cost: None,
-                                }
-                            });
-                            if let Some(u) = usage {
-                                yield Ok(StreamChunk {
-                                    delta: None,
-                                    finish_reason: None,
-                                    usage: Some(u),
-                                });
-                            }
-                        }
-                        "message_stop" => {
-                            return;
-                        }
-                        _ => {}
                     }
+                    "message_stop" => {
+                        return;
+                    }
+                    _ => {}
                 }
             }
         }
