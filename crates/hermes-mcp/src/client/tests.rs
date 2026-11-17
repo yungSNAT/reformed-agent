@@ -635,7 +635,7 @@ fn connected(name: &str, client: McpClient) -> super::McpConnects {
 }
 
 /// Two callers that connect one server name at once, each outside the
-/// manager's lock: the first to finish is kept and the other dropped.
+/// manager's lock: the first registered is kept and the other dropped.
 #[tokio::test]
 async fn finish_connects_keeps_a_server_another_caller_added_meanwhile() {
     let registry = Arc::new(hermes_tools::ToolRegistry::new());

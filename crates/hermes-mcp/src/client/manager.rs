@@ -385,7 +385,8 @@ impl McpManager {
     /// to [`McpManager::start_connects`].
     ///
     /// A server added under the same name since then, by another caller, is
-    /// kept: the first connection to finish wins and this one is dropped.
+    /// kept: the first batch to register the name wins, even when its
+    /// connection finished later, and this one is dropped.
     pub async fn finish_connects(&mut self, mut connects: McpConnects) -> Vec<McpDiscoveryReport> {
         let mut reports = std::mem::take(&mut connects.reports);
         for joined in std::mem::take(&mut connects.ended) {
