@@ -1,4 +1,17 @@
+# Each target's image is pinned by digest: cross at the rev CI installs pulls
+# the moving `main` tag otherwise. These are the `main` digests read on
+# 17 November 2026; move them together when the cross rev changes.
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu@sha256:8859395961030cc16506872272a547dce07126daf69007d492cb28217d37cd28"
+
+[target.aarch64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-gnu@sha256:036102224c8bbdb0c55b1f513e6436de5dcae5106130549b77815e16218383a1"
+
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl@sha256:4043a111de4bdb21628be33eb1a9e90dcfcb07ea96ed9df43bb2e9be53b32a05"
+
 # aws-lc-sys (jsonwebtoken's crypto backend) assembles its x86_64 Windows code
 # with NASM, which the cross image lacks.
 [target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu@sha256:faf3c23e786ee681c32737331d76ef1a29d4c1d26f5c219ebd335a3f60d22629"
 pre-build = ["apt-get update && apt-get install --assume-yes --no-install-recommends nasm"]
