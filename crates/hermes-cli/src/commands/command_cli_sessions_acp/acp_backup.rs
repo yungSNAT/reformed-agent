@@ -291,7 +291,16 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         );
         let messages = acp_history_to_messages(history, user_text);
 
-        let result = agent.run(messages, Some(self.current_tool_schemas())).await;
+        // `run` asks the model for each turn without streaming, so nothing
+        // reaches the callbacks before the turn ends; `run_stream` streams and
+        // fires `on_stream_delta`, which feeds the sink.
+        let result = agent
+            .run_stream(
+                messages,
+                Some(self.current_tool_schemas()),
+                Some(Box::new(|_| {})),
+            )
+            .await;
         if let Ok(mut active) = self.interrupts.lock() {
             active.remove(&session.session_id);
         }
