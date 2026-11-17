@@ -100,9 +100,19 @@ fn strip(text: &str) -> &str {
 /// The skills the agent loaded whole with `skill_view`, in load order,
 /// each once, at most [`SKILL_LIMIT`] (upstream's
 /// `collect_parent_loaded_skills`; the CLI keeps no launch-preloaded marker
-/// to read). A call with a `file_path` read one file of a skill, and one
-/// whose name is not a string loaded nothing, so neither counts.
+/// to read). As upstream, a call whose `file_path` is truthy read one file
+/// of a skill and does not count, and a truthy name that is not a string
+/// counts as Python's `str` prints it.
 fn loaded_skills(messages: &[Message]) -> Vec<String> {
+    use serde_json::Value;
+    let truthy = |value: &Value| match value {
+        Value::Null => false,
+        Value::Bool(value) => *value,
+        Value::Number(value) => value.as_f64() != Some(0.0),
+        Value::String(value) => !value.is_empty(),
+        Value::Array(value) => !value.is_empty(),
+        Value::Object(value) => !value.is_empty(),
+    };
     let mut names: Vec<String> = Vec::new();
     let calls = messages
         .iter()
@@ -110,21 +120,24 @@ fn loaded_skills(messages: &[Message]) -> Vec<String> {
         .flat_map(|message| message.tool_calls.iter().flatten())
         .filter(|call| call.function.name == "skill_view");
     for call in calls {
-        let Ok(args) = serde_json::from_str::<serde_json::Value>(&call.function.arguments) else {
+        let Ok(Value::Object(args)) = serde_json::from_str(&call.function.arguments) else {
             continue;
         };
-        let reads_a_file = args
-            .get("file_path")
-            .and_then(serde_json::Value::as_str)
-            .is_some_and(|path| !path.trim().is_empty());
-        let name = args
-            .get("name")
-            .and_then(serde_json::Value::as_str)
-            .map(strip);
-        if let Some(name) = name.filter(|name| !reads_a_file && !name.is_empty()) {
-            if !names.iter().any(|known| known == name) {
-                names.push(name.to_string());
-            }
+        if args.get("file_path").is_some_and(truthy) {
+            continue;
+        }
+        // shortcut: an array or object name prints as JSON rather than
+        // Python's repr, and a float or an integer past 64 bits may print
+        // differently; no skill has such a name.
+        let name = match args.get("name").filter(|name| truthy(name)) {
+            Some(Value::String(name)) => name.clone(),
+            Some(Value::Bool(_)) => "True".to_string(),
+            Some(other) => other.to_string(),
+            None => continue,
+        };
+        let name = strip(&name);
+        if !name.is_empty() && !names.iter().any(|known| known == name) {
+            names.push(name.to_string());
         }
         if names.len() == SKILL_LIMIT {
             break;
