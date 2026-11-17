@@ -244,7 +244,7 @@ struct SilentTransport {
     stall_start: bool,
     stall_close: bool,
     close_called: Arc<AtomicBool>,
-    dropped: DropFlag,
+    _dropped: DropFlag,
 }
 
 /// Set when dropped, with the transport that holds it.
@@ -331,7 +331,7 @@ async fn connect_bounds_a_transport_whose_start_never_returns_and_drops_it() {
     let dropped = Arc::new(AtomicBool::new(false));
     let (err, took) = connect_silent(SilentTransport {
         stall_start: true,
-        dropped: DropFlag(dropped.clone()),
+        _dropped: DropFlag(dropped.clone()),
         ..Default::default()
     })
     .await;
@@ -347,7 +347,7 @@ async fn connect_bounds_the_close_of_a_server_that_never_answers() {
     let dropped = Arc::new(AtomicBool::new(false));
     let (err, took) = connect_silent(SilentTransport {
         stall_close: true,
-        dropped: DropFlag(dropped.clone()),
+        _dropped: DropFlag(dropped.clone()),
         ..Default::default()
     })
     .await;
