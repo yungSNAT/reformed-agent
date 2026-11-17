@@ -363,8 +363,7 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             .get(&session.session_id)
             .cloned();
         if let Some(controller) = controller {
-            controller.interrupt(Some(hermes_agent::format_steer_marker(guidance)));
-            Ok(true)
+            Ok(controller.steer(guidance))
         } else {
             Ok(false)
         }

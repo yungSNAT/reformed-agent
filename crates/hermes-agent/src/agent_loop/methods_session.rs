@@ -108,38 +108,26 @@ impl AgentLoop {
         }
     }
 
-    fn drain_tool_batch_interrupt(&self) -> ToolBatchInterrupt {
-        match self.interrupt.take_interrupt_graceful() {
-            None => ToolBatchInterrupt::None,
-            Some(Some(message)) if is_formatted_steer_marker(&message) => {
-                ToolBatchInterrupt::Steer(message)
-            }
-            Some(_) => ToolBatchInterrupt::Stop,
-        }
-    }
-
-    fn collect_tool_batch_interrupt(&self, steer_markers: &mut Vec<String>) -> bool {
-        match self.drain_tool_batch_interrupt() {
-            ToolBatchInterrupt::None => false,
-            ToolBatchInterrupt::Stop => true,
-            ToolBatchInterrupt::Steer(marker) => {
-                steer_markers.push(marker);
-                false
-            }
-        }
-    }
-
-    fn append_steer_markers_to_last_tool_result(
-        results: &mut [ToolResult],
-        steer_markers: &[String],
-    ) {
-        if steer_markers.is_empty() {
+    /// Before a model call, deliver the steer text sent since the last one,
+    /// as upstream does: appended to the turn's latest tool result, the one
+    /// slot that keeps roles alternating. Before the turn's first tool
+    /// result it stays pending.
+    fn deliver_pending_steer(&self, ctx: &mut ContextManager) {
+        let Some(text) = self.interrupt.take_steer() else {
             return;
-        }
-        if let Some(result) = results.last_mut() {
-            for marker in steer_markers {
-                result.content.push_str(marker);
-            }
+        };
+        let tool_result = ctx
+            .get_messages_mut()
+            .iter_mut()
+            .rev()
+            .take_while(|message| message.role != MessageRole::User)
+            .find(|message| message.role == MessageRole::Tool);
+        match tool_result {
+            Some(message) => message
+                .content
+                .get_or_insert_with(String::new)
+                .push_str(&format_steer_marker(&text)),
+            None => self.interrupt.restore_steer(text),
         }
     }
 

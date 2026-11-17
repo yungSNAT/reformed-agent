@@ -371,6 +371,7 @@ impl AgentLoop {
                         prefill_range.clone(),
                     ));
                 }
+                self.deliver_pending_steer(&mut ctx);
                 let r = match self
                     .call_llm_with_retry(
                         &ctx,
@@ -1045,8 +1046,7 @@ impl AgentLoop {
             }
 
             // --- Execute tool calls in parallel ---
-            let mut steer_markers = Vec::new();
-            if self.collect_tool_batch_interrupt(&mut steer_markers) {
+            if self.interrupt.take_interrupt_graceful().is_some() {
                 Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                 return Ok(self.graceful_interrupt_result(
                     &mut ctx,
@@ -1190,8 +1190,7 @@ impl AgentLoop {
                 }
                 inject_budget_pressure_into_last_tool_result(&mut results, w.as_deref());
             }
-            let stop_after_tool_results = self.collect_tool_batch_interrupt(&mut steer_markers);
-            Self::append_steer_markers_to_last_tool_result(&mut results, &steer_markers);
+            let stop_after_tool_results = self.interrupt.take_interrupt_graceful().is_some();
             let lsp_note = self.lsp_context_note(&tool_calls, &results);
 
             for result in results {
