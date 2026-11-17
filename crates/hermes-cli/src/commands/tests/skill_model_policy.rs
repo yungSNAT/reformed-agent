@@ -882,35 +882,26 @@ llm_providers:
     }
 
     #[test]
-    fn set_provider_reasoning_effort_preserves_opencode_go_levels_for_runtime_mapping() {
-        let mut cfg = GatewayConfig::default();
-        set_provider_reasoning_effort(&mut cfg, "opencode-go", Some("xhigh"));
-        let extra = cfg
-            .llm_providers
-            .get("opencode-go")
-            .and_then(|entry| entry.extra_body.as_ref())
-            .expect("extra body");
-        assert_eq!(
-            extra
-                .get("reasoning")
-                .and_then(|value| value.get("effort"))
-                .and_then(|value| value.as_str()),
-            Some("xhigh")
-        );
-
-        set_provider_reasoning_effort(&mut cfg, "opencode-go", Some("minimal"));
-        let extra = cfg
-            .llm_providers
-            .get("opencode-go")
-            .and_then(|entry| entry.extra_body.as_ref())
-            .expect("extra body");
-        assert_eq!(
-            extra
-                .get("reasoning")
-                .and_then(|value| value.get("effort"))
-                .and_then(|value| value.as_str()),
-            Some("minimal")
-        );
+    fn set_provider_reasoning_effort_preserves_own_scale_levels_for_runtime_mapping() {
+        for provider in ["opencode-go", "deepseek"] {
+            let mut cfg = GatewayConfig::default();
+            for level in ["xhigh", "minimal"] {
+                set_provider_reasoning_effort(&mut cfg, provider, Some(level));
+                let extra = cfg
+                    .llm_providers
+                    .get(provider)
+                    .and_then(|entry| entry.extra_body.as_ref())
+                    .expect("extra body");
+                assert_eq!(
+                    extra
+                        .get("reasoning")
+                        .and_then(|value| value.get("effort"))
+                        .and_then(|value| value.as_str()),
+                    Some(level),
+                    "{provider}"
+                );
+            }
+        }
     }
 
     #[test]

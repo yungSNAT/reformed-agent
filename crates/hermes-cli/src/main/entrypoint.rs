@@ -320,6 +320,22 @@ async fn run_main() {
         return;
     }
 
+    let effective_command = match effective_command {
+        CliCommand::Chat(mut args) => {
+            match hermes_cli::commands::read_chat_query(args.query, std::io::stdin().lock()) {
+                Ok(query) => {
+                    args.query = query;
+                    CliCommand::Chat(args)
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    std::process::exit(1);
+                }
+            }
+        }
+        other => other,
+    };
+
     let result = match effective_command {
         CliCommand::Hermes => run_interactive(cli).await,
         CliCommand::Chat(ChatArgs {

@@ -1321,6 +1321,31 @@ mod tests {
         assert_eq!(load_provider_catalog_cache("openai"), Some(models));
     }
 
+    /// The signing key the cache creates is readable by its owner only,
+    /// whatever the umask, and the cache it signs still verifies.
+    #[cfg(unix)]
+    #[test]
+    fn the_provenance_key_the_cache_creates_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
+        std::env::remove_var("HERMES_PROVENANCE_SIGNING_KEY");
+
+        let models = vec!["gpt-4o".to_string()];
+        persist_provider_catalog_cache("openai", &models);
+
+        let key = tmp.path().join("auth").join("provenance.key");
+        let mode = std::fs::metadata(&key).expect("key").permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "provenance.key mode {:o}",
+            mode & 0o777
+        );
+        assert_eq!(load_provider_catalog_cache("openai"), Some(models));
+    }
+
     #[test]
     fn signed_provider_catalog_cache_detects_tamper() {
         let _guard = env_guard();

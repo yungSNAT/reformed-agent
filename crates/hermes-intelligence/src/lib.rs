@@ -17,7 +17,6 @@ pub mod model_metadata;
 pub mod models_dev;
 pub mod prompt;
 pub mod redact;
-pub mod rl;
 pub mod router;
 pub mod session_insights;
 pub mod swarm_runtime;

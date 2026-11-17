@@ -2,14 +2,27 @@
 //! document order (a repeated key keeps its first place and its last
 //! value), integers stay integers however large Python would hold them up
 //! to `i128`, and `NaN`, `Infinity` and `-Infinity` are numbers.
+//!
+//! One departure: nesting deeper than [`MAX_DEPTH`] is an error, a bound
+//! of this port's own so deep input never overflows the stack. CPython
+//! goes deeper (measured 17 November 2026: 3.12.10 parsed 2,997 levels,
+//! 3.15.0 parsed 13,862), so between the two a caller of `loads` refuses
+//! a document Python reads. `/review` cannot meet one: the agent loop
+//! stores tool-call arguments only as serde_json parsed or wrote them
+//! (`hermes-agent/src/tool_call_args.rs:18-24` and `:73-77`), and
+//! serde_json's parser refuses nesting past 128 levels.
 
 use super::Py;
+
+/// Arrays and objects nested deeper than this are refused.
+pub const MAX_DEPTH: usize = 1_000;
 
 pub fn loads(text: &str) -> Result<Py, String> {
     let mut parser = Parser {
         bytes: text.as_bytes(),
         text,
         pos: 0,
+        depth: 0,
     };
     parser.skip_ws();
     let value = parser.value()?;
@@ -24,6 +37,7 @@ struct Parser<'a> {
     bytes: &'a [u8],
     text: &'a str,
     pos: usize,
+    depth: usize,
 }
 
 impl Parser<'_> {
@@ -49,8 +63,8 @@ impl Parser<'_> {
 
     fn value(&mut self) -> Result<Py, String> {
         match self.bytes.get(self.pos) {
-            Some(b'{') => self.object(),
-            Some(b'[') => self.array(),
+            Some(b'{') => self.nested(Self::object),
+            Some(b'[') => self.nested(Self::array),
             Some(b'"') => self.string().map(Py::Str),
             _ if self.eat("null") => Ok(Py::Null),
             _ if self.eat("true") => Ok(Py::Bool(true)),
@@ -61,6 +75,17 @@ impl Parser<'_> {
             Some(b'-' | b'0'..=b'9') => self.number(),
             _ => Err(self.error("Expecting value")),
         }
+    }
+
+    /// Runs `parse` one level deeper, refusing to pass [`MAX_DEPTH`].
+    fn nested(&mut self, parse: fn(&mut Self) -> Result<Py, String>) -> Result<Py, String> {
+        if self.depth == MAX_DEPTH {
+            return Err(self.error("Maximum nesting depth exceeded"));
+        }
+        self.depth += 1;
+        let value = parse(self);
+        self.depth -= 1;
+        value
     }
 
     fn object(&mut self) -> Result<Py, String> {

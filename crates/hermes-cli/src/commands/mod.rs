@@ -89,6 +89,7 @@ mod diff_command;
 mod hermes_history;
 pub use hermes_history::{import_hermes_sessions, HermesHistorySummary};
 mod hermes_migrate;
+mod init_command;
 pub use hermes_migrate::{default_hermes_home, migrate_hermes, MigrateReport, MigrateRequest};
 
 /// `std::fs::read_dir(dir)` with its unreadable entries skipped, listed on the
@@ -101,6 +102,8 @@ async fn read_dir_entries(dir: &Path) -> std::io::Result<Vec<std::fs::DirEntry>>
     .await
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
+
+mod review_command;
 
 // The command surface is intentionally split by subsystem. These files are
 // included in the original item order so this refactor changes layout only;
