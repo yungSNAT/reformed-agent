@@ -89,6 +89,24 @@ fn loads_reads_documents_as_python_does() {
 }
 
 #[test]
+fn loads_fails_closed_past_1000_levels_of_nesting() {
+    // An error at this port's own bound, never a stack overflow.
+    let arrays = |depth: usize| format!("{}{}", "[".repeat(depth), "]".repeat(depth));
+    let objects = |depth: usize| format!("{}1{}", r#"{"a":"#.repeat(depth), "}".repeat(depth));
+    assert!(loads(&arrays(1_000)).is_ok());
+    assert!(loads(&objects(1_000)).is_ok());
+    for deep in [
+        arrays(1_001),
+        objects(1_001),
+        arrays(1_000_000),
+        objects(1_000_000),
+    ] {
+        let err = loads(&deep).unwrap_err();
+        assert!(err.starts_with("Maximum nesting depth exceeded"), "{err}");
+    }
+}
+
+#[test]
 fn strip_matches_python_whitespace() {
     assert_eq!(strip("\u{1c}\t a b \u{a0}\u{3000}\n"), "a b");
     assert_eq!(strip("\u{200b}x"), "\u{200b}x");

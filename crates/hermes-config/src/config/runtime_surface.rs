@@ -411,19 +411,40 @@ pub struct ToolsSettings {
 }
 
 /// MCP server entry.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
+#[derive(Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct McpServerEntry {
     pub name: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
+    /// Headers sent with every request to a `url` server, such as a hosted
+    /// catalogue's API key header; `${VAR}` references are expanded on load.
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub headers: std::collections::BTreeMap<String, String>,
     /// Whether this MCP server supports parallel tool calls safely.
     #[serde(default)]
     pub supports_parallel_tool_calls: bool,
     /// Optional HTTP/SSE session keepalive cadence in seconds.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub keepalive_interval: Option<u64>,
+}
+
+/// Header values can hold API keys: `Debug` names the headers only.
+impl std::fmt::Debug for McpServerEntry {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("McpServerEntry")
+            .field("name", &self.name)
+            .field("command", &self.command)
+            .field("url", &self.url)
+            .field("headers", &self.headers.keys().collect::<Vec<_>>())
+            .field(
+                "supports_parallel_tool_calls",
+                &self.supports_parallel_tool_calls,
+            )
+            .field("keepalive_interval", &self.keepalive_interval)
+            .finish()
+    }
 }
 
 /// Active profile info.
