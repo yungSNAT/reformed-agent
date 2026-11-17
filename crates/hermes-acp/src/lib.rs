@@ -37,7 +37,7 @@ pub use protocol::{
     Usage,
 };
 pub use server::AcpServer;
-pub use session::{SessionInfo, SessionManager, SessionPhase, SessionState};
+pub use session::{SessionInfo, SessionManager, SessionPhase, SessionState, TurnStart};
 pub use tools::{
     format_tool_result, make_tool_call_id, tool_completion_status, tool_kind, tool_start_metadata,
     tool_title, ToolStartMetadata,

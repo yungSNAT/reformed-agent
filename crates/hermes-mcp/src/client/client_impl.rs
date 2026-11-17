@@ -789,7 +789,14 @@ impl McpClient {
             } else {
                 None
             };
-            Ok(Box::new(HttpSseTransport::new(url, auth_token)))
+            Ok(Box::new(
+                HttpSseTransport::new(url, auth_token).with_headers(
+                    self.config
+                        .headers
+                        .iter()
+                        .map(|(name, value)| (name.clone(), value.clone())),
+                ),
+            ))
         } else {
             Err(McpError::Config(
                 "server config must specify either command (stdio) or url (http)".to_string(),

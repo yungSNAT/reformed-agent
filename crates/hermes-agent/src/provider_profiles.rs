@@ -91,6 +91,7 @@ pub fn canonical_provider_profile_id(provider: &str) -> Option<&'static str> {
         }
         "qwen" | "qwen-oauth" | "qwen-portal" | "qwen-cli" => Some("qwen-oauth"),
         "xiaomi" | "mimo" | "xiaomi-mimo" => Some("xiaomi"),
+        "deepseek" => Some("deepseek"),
         "deepinfra" | "deep-infra" | "deepinfra-ai" => Some("deepinfra"),
         "fireworks" | "fireworks-ai" | "fw" => Some("fireworks"),
         "upstage" | "solar" => Some("upstage"),
@@ -421,8 +422,8 @@ pub fn local_control_key_for_profile(profile: Option<&str>, key: &str) -> bool {
 
     match profile.and_then(canonical_provider_profile_id) {
         Some(
-            "kimi-coding" | "kimi-coding-cn" | "nous" | "openrouter" | "deepinfra" | "fireworks"
-            | "upstage",
+            "kimi-coding" | "kimi-coding-cn" | "nous" | "openrouter" | "deepseek" | "deepinfra"
+            | "fireworks" | "upstage",
         ) => {
             matches!(key, "reasoning" | "reasoning_effort")
         }
@@ -519,6 +520,7 @@ pub fn apply_profile_to_body(
         "openrouter" => apply_openrouter_profile(body, effective_model, extra_body),
         "nous" => apply_nous_profile(body, extra_body),
         "qwen-oauth" => apply_qwen_profile(body, extra_body),
+        "deepseek" => apply_deepseek_profile(body, effective_model, extra_body),
         "custom" => apply_custom_profile(body, extra_body),
         "deepinfra" => apply_deepinfra_profile(body, extra_body),
         "fireworks" => apply_fireworks_profile(body, extra_body),
@@ -566,6 +568,58 @@ fn apply_kimi_profile(body: &mut Value, extra_body: Option<&Value>) {
         body["reasoning_effort"] = Value::String(effort.to_string());
     } else {
         remove_key(body, "reasoning_effort");
+    }
+}
+
+/// DeepSeek V4 and later, and the legacy `deepseek-reasoner`, think unless a
+/// request turns it off; V3 (`deepseek-chat`) has no thinking mode. The
+/// model id is DeepSeek's own, as upstream matches it: a relay strips its
+/// vendor prefix first.
+pub(crate) fn is_deepseek_thinking_model(model: &str) -> bool {
+    let model = model.trim().to_ascii_lowercase();
+    (model.starts_with("deepseek-v") && !model.starts_with("deepseek-v3"))
+        || model == "deepseek-reasoner"
+}
+
+/// DeepSeek's effort scale is low, medium, high and max: the levels above
+/// high all become max, and any other level is left to the server default.
+pub(crate) fn deepseek_reasoning_effort(effort: Option<&str>) -> Option<&'static str> {
+    match effort?.trim().to_ascii_lowercase().as_str() {
+        "low" => Some("low"),
+        "medium" => Some("medium"),
+        "high" => Some("high"),
+        "xhigh" | "max" | "ultra" => Some("max"),
+        _ => None,
+    }
+}
+
+/// The native DeepSeek API (upstream's DeepSeek provider profile): thinking
+/// models get `thinking` set explicitly, as the API's default of thinking on
+/// otherwise starts the `reasoning_content` echo contract, and a mapped
+/// top-level `reasoning_effort`. Other models keep the plain wire format.
+fn apply_deepseek_profile(body: &mut Value, effective_model: &str, extra_body: Option<&Value>) {
+    remove_key(body, "reasoning");
+    remove_key(body, "reasoning_effort");
+    if !is_deepseek_thinking_model(effective_model) {
+        return;
+    }
+    let reasoning = reasoning_config(extra_body);
+    let enabled = reasoning
+        .and_then(|cfg| cfg.get("enabled"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    body["thinking"] = serde_json::json!({
+        "type": if enabled { "enabled" } else { "disabled" },
+    });
+    if !enabled {
+        return;
+    }
+    let effort = reasoning
+        .and_then(|cfg| cfg.get("effort"))
+        .and_then(Value::as_str)
+        .or_else(|| string_field(extra_body, "reasoning_effort"));
+    if let Some(mapped) = deepseek_reasoning_effort(effort) {
+        body["reasoning_effort"] = Value::String(mapped.to_string());
     }
 }
 

@@ -1,11 +1,6 @@
 use std::collections::BTreeSet;
 use std::sync::{LazyLock, Mutex};
 
-use async_trait::async_trait;
-use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
-use indexmap::IndexMap;
-use serde_json::{json, Value};
-
 use hermes_core::subprocess_env::normalize_env_passthrough_name as normalize_name;
 pub use hermes_core::subprocess_env::SUBPROCESS_ENV_PASSTHROUGH_VAR;
 
@@ -13,8 +8,6 @@ static SESSION_PASSTHROUGH: LazyLock<Mutex<BTreeSet<String>>> =
     LazyLock::new(|| Mutex::new(BTreeSet::new()));
 static CONFIG_PASSTHROUGH: LazyLock<Mutex<Option<BTreeSet<String>>>> =
     LazyLock::new(|| Mutex::new(None));
-
-pub struct EnvPassthroughHandler;
 
 fn mapping_get<'a>(map: &'a serde_yaml::Mapping, key: &str) -> Option<&'a serde_yaml::Value> {
     map.get(serde_yaml::Value::String(key.to_string()))
@@ -130,75 +123,6 @@ pub fn get_all_passthrough() -> BTreeSet<String> {
 pub fn reset_config_passthrough_cache_for_tests() {
     *CONFIG_PASSTHROUGH.lock().unwrap_or_else(|e| e.into_inner()) = None;
     sync_process_env_from_set(&get_all_passthrough());
-}
-
-#[async_trait]
-impl ToolHandler for EnvPassthroughHandler {
-    async fn execute(&self, params: Value) -> Result<String, ToolError> {
-        let action = params
-            .get("action")
-            .and_then(|v| v.as_str())
-            .unwrap_or("read");
-
-        match action {
-            "register" => {
-                let keys = params
-                    .get("keys")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| ToolError::InvalidParams("Missing 'keys'".into()))?;
-                let names: Vec<String> = keys
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(normalize_name)
-                    .collect();
-                register_env_passthrough(names.iter());
-                Ok(json!({"status":"registered","keys":names}).to_string())
-            }
-            "clear" => {
-                clear_env_passthrough();
-                Ok(json!({"status":"cleared"}).to_string())
-            }
-            "list" => Ok(json!({"keys": get_all_passthrough()}).to_string()),
-            "read" | "get" => {
-                let keys = params
-                    .get("keys")
-                    .and_then(|v| v.as_array())
-                    .ok_or_else(|| ToolError::InvalidParams("Missing 'keys'".into()))?;
-
-                let mut out = serde_json::Map::new();
-                for key in keys
-                    .iter()
-                    .filter_map(|v| v.as_str())
-                    .filter_map(normalize_name)
-                {
-                    if let Ok(value) = std::env::var(&key) {
-                        out.insert(key, json!(value));
-                    }
-                }
-                Ok(Value::Object(out).to_string())
-            }
-            other => Err(ToolError::InvalidParams(format!(
-                "Unsupported env_passthrough action '{other}'"
-            ))),
-        }
-    }
-
-    fn schema(&self) -> ToolSchema {
-        let mut props = IndexMap::new();
-        props.insert(
-            "action".into(),
-            json!({"type":"string","enum":["read","get","list","register","clear"]}),
-        );
-        props.insert(
-            "keys".into(),
-            json!({"type":"array","items":{"type":"string"}}),
-        );
-        tool_schema(
-            "env_passthrough",
-            "Expose selected env vars to tool workflows and register vars allowed through subprocess sanitizers.",
-            JsonSchema::object(props, vec![]),
-        )
-    }
 }
 
 #[cfg(test)]

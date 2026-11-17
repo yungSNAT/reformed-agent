@@ -85,6 +85,10 @@ Leaving these unset keeps the legacy defaults (`HERMES_API_TIMEOUT=1800`s, `HERM
 
 Hermes supports seven terminal backends. Each determines where the agent's shell commands actually execute — your local machine, a Docker container, a remote server via SSH, a Modal cloud sandbox (direct or via the Nous-managed gateway), a Daytona workspace, a Vercel Sandbox, or a Singularity/Apptainer container.
 
+:::warning
+Reformed builds 4 of these: `local`, `docker`, `ssh` and `singularity`. With `terminal.backend` set to `modal` or `daytona`, commands and file operations stop with an error instead of running on your machine. Reformed has no `vercel_sandbox` backend, and an unknown backend name in `TERMINAL_ENV` stops Reformed at start, as does a configuration file that sets a backend other than `local` but does not load. With any backend other than `local`, the tools that work on your machine directly are off: `patch`, `search_files`, `execute_code`, `project_facts`, `project_tree`, `transcription`, `video_analyze` and `computer_use`. `vision_analyze` takes only an http(s) image URL, and `text_to_speech` only its default output path. The terminal and file read and write tools run in the backend.
+:::
+
 ```yaml
 terminal:
   backend: local    # local | docker | ssh | modal | daytona | vercel_sandbox | singularity
@@ -144,7 +148,7 @@ terminal:
 
 Runs commands inside a Docker container with security hardening (all capabilities dropped, no privilege escalation, PID limits).
 
-**Single persistent container, not per-command.** Hermes starts ONE long-lived container on first use and routes every terminal, file, and `execute_code` call through `docker exec` into that same container — across sessions, `/new`, `/reset`, and `delegate_task` subagents — for the lifetime of the Hermes process. Working-directory changes, installed packages, and files in `/workspace` carry over from one tool call to the next, just like a local shell. The container is stopped and removed on shutdown. See **Container lifecycle** below for details.
+**Single persistent container, not per-command.** Hermes starts ONE long-lived container on first use and routes every terminal and file read and write call through `docker exec` into that same container — across sessions, `/new`, `/reset`, and `delegate_task` subagents — for the lifetime of the Hermes process. Working-directory changes, installed packages, and files in `/workspace` carry over from one tool call to the next, just like a local shell. The container is stopped and removed on shutdown. See **Container lifecycle** below for details.
 
 ```yaml
 terminal:

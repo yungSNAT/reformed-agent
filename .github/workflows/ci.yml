@@ -30,7 +30,7 @@ jobs:
           python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-workstream-status.py --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-intent-mapping.py
-          python3 scripts/validate-intentional-divergence.py --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
+          cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-coverage-audit.py --check
           python3 scripts/generate-adapter-matrix.py
           python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch parity-reference
@@ -53,9 +53,9 @@ jobs:
       - name: Protocol differential parity contract
         run: cargo test -p hermes-protocol-parity-tests --test protocol_differential_contracts
       - name: Upstream slash-command parity gate
-        run: python3 scripts/run-upstream-slash-parity-gate.py --upstream-ref upstream/parity-reference
+        run: cargo run --locked -q -p hermes-parity-tools -- run-upstream-slash-parity-gate --upstream-ref upstream/parity-reference
       - name: Upstream surface coverage gate
-        run: python3 scripts/run-upstream-surface-coverage-gate.py --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
+        run: cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/parity-reference --local-ref HEAD
       - name: Global parity governance contract
         run: cargo test -p hermes-source-parity-tests --test global_parity_governance
       - name: Upstream webhook sync script lint
@@ -63,8 +63,6 @@ jobs:
           python3 -m py_compile scripts/upstream_webhook_sync.py
           python3 -m py_compile scripts/publish_automation_summary.py
           python3 -m py_compile scripts/run-golden-parity-harness.py
-          python3 -m py_compile scripts/run-upstream-slash-parity-gate.py
-          python3 -m py_compile scripts/run-upstream-surface-coverage-gate.py
           python3 -m py_compile scripts/generate-shared-diff-backlog.py
           python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
@@ -155,3 +153,23 @@ jobs:
         run: |
           cargo test --locked -p hermes-config --lib check_implicit_home
           cargo test --locked -p hermes-cli -p hermes-http -p hermes-eval --test linked_home
+
+  desktop-gateway:
+    strategy:
+      fail-fast: false
+      matrix:
+        runner: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Desktop gateway tests
+        run: cargo test --locked -p hermes-desktop-gateway
+      - name: Desktop gateway clippy
+        run: cargo clippy --locked -p hermes-desktop-gateway --all-targets -- -D warnings

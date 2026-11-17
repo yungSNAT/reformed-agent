@@ -415,6 +415,20 @@
       "ticket": 304
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/hermes-achievements/dashboard/dist/style.css",
+      "rationale": "Upstream restyled its achievements dashboard in b51fbc73; this tree keeps its own static bundle (see dashboard/dist/index.js), and the Rust runtime does not serve it.",
+      "ticket": 3524
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/hermes-achievements/tests/test_achievement_engine.py",
+      "rationale": "Upstream's Python test for its achievements engine; the Rust runtime has no achievements engine and runs no Python tests.",
+      "ticket": 3524
+    },
+    {
       "classification": "functional",
       "owner": "sheawinkler",
       "path": "plugins/image_gen",
@@ -696,10 +710,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/copilot/__init__.py",
+      "rationale": "Upstream now sends xhigh to Copilot models whose live catalogue lists it and lowers other levels to the nearest supported one. The Rust Copilot provider has no per-model effort table yet; ledger follow-up under R3524.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/custom/__init__.py",
       "rationale": "Custom provider defaults are handled in Rust provider_profiles, including a 65536 default max_tokens floor for custom/Ollama-compatible profiles and provider request-body tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/deepseek/__init__.py",
+      "rationale": "Upstream maps ultra, like xhigh and max, to DeepSeek's max effort. The Rust DeepSeek profile sends no effort mapping yet; ledger follow-up under R3524.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -752,6 +780,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/qwen-oauth/__init__.py",
+      "rationale": "Upstream copies image parts before editing a request so the caller's messages stay unchanged. The Rust providers take the conversation by shared reference (ChatRequestParams.messages) and build a new request body, so the caller's messages cannot be edited.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/xiaomi/__init__.py",
       "rationale": "Xiaomi provider behavior is handled in Rust provider_profiles/provider serialization, including MiMo vision enablement and tool-message multimodal flattening for models that reject list-type tool content.",
@@ -793,6 +828,20 @@
       "ticket": 304
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/observability/nemo_relay/README.md",
+      "rationale": "Documents upstream's NeMo relay observability plugin, which the Rust runtime does not include.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/observability/nemo_relay/__init__.py",
+      "rationale": "Upstream's NeMo relay observability plugin (LLM surface mapping, dynamic plugins, shutdown hooks) is Python the Rust runtime does not load; the Rust telemetry crate has no NeMo relay exporter.",
+      "ticket": 3524
+    },
+    {
       "classification": "functional",
       "owner": "sheawinkler",
       "path": "plugins/platforms",
@@ -819,6 +868,13 @@
       "path": "plugins/platforms/google_chat/oauth.py",
       "rationale": "Ultra implements the upstream private-token write contract locally with os.replace because the upstream utils.py helper is absent from the Rust-first tree.",
       "ticket": 304
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/google_chat/plugin.yaml",
+      "rationale": "Upstream's Google Chat manifest now offers authenticated HTTP callbacks and a service-account variable; the Rust gateway has no Google Chat adapter, and this tree's Python plugin files stay at the earlier upstream revision.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -3202,6 +3258,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/integration/test_batch_runner.py",
+      "rationale": "Reformed has no batch trajectory runner: the Rust stand-in wrote fixed baseline text without calling a model and nothing ran it, so it was removed; the README lists batch trajectories and RL training as absent. Upstream's batch_runner.py tests have no Rust counterpart.",
+      "ticket": 3523
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/plugins",
       "rationale": "Upstream Python test-suite rows are reference-only in Ultra; Rust runtime behavior is covered by docs/parity/python-test-suite-coverage.json and enforced by crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs.",
@@ -3876,7 +3939,7 @@
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/tools/test_env_passthrough.py",
-      "rationale": "Upstream env passthrough registry/config intent is covered by Rust EnvPassthroughHandler registry contracts, terminal.env_passthrough YAML parsing, HERMES_SUBPROCESS_ENV_PASSTHROUGH mirroring, and LocalBackend sanitizer/profile-cleanup tests proving blocklisted provider and gateway-prefix vars remain blocked by default but pass through when explicitly allowed.",
+      "rationale": "Upstream env passthrough registry/config intent is covered by the Rust env_passthrough registry functions and their tests, terminal.env_passthrough YAML parsing, HERMES_SUBPROCESS_ENV_PASSTHROUGH mirroring, and LocalBackend sanitizer/profile-cleanup tests proving blocklisted provider and gateway-prefix vars remain blocked by default but pass through when explicitly allowed.",
       "ticket": 25
     },
     {
@@ -4086,7 +4149,7 @@
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/tools/test_skill_env_passthrough.py",
-      "rationale": "Upstream skill required-environment metadata normalization is covered by Rust skill_utils required-env parsing while Ultra exposes env_passthrough as an explicit Rust tool instead of Python's implicit global registry.",
+      "rationale": "Upstream skill required-environment metadata normalization is covered by Rust skill_utils required-env parsing and, as upstream, env_passthrough is a registry module rather than a model tool.",
       "ticket": 25
     },
     {

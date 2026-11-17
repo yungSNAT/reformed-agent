@@ -447,9 +447,16 @@ mod tests {
         );
     }
 
+    /// A personality resolved against an empty home, so a user's
+    /// `personalities/<name>.md` in the real home cannot replace a built-in.
+    fn builtin_persona(name: &str) -> Option<String> {
+        let home = tempfile::tempdir().unwrap();
+        resolve_personality(name, Some(home.path().to_string_lossy().as_ref()))
+    }
+
     #[test]
     fn test_resolve_personality_builtin() {
-        let coder = resolve_personality("coder", None).unwrap_or_default();
+        let coder = builtin_persona("coder").unwrap_or_default();
         assert!(coder.contains("`coder` persona"));
     }
 
@@ -577,112 +584,112 @@ mod tests {
 
     #[test]
     fn test_persona_snapshot_coder() {
-        let p = resolve_personality("coder", None).unwrap();
+        let p = builtin_persona("coder").unwrap();
         assert!(p.contains("`coder` persona"));
         assert!(p.contains("correctness"));
     }
 
     #[test]
     fn test_persona_snapshot_writer() {
-        let p = resolve_personality("writer", None).unwrap();
+        let p = builtin_persona("writer").unwrap();
         assert!(p.contains("`writer` persona"));
         assert!(p.contains("clarity"));
     }
 
     #[test]
     fn test_persona_snapshot_analyst() {
-        let p = resolve_personality("analyst", None).unwrap();
+        let p = builtin_persona("analyst").unwrap();
         assert!(p.contains("`analyst` persona"));
         assert!(p.contains("evidence"));
     }
 
     #[test]
     fn test_persona_snapshot_concise() {
-        let p = resolve_personality("concise", None).unwrap();
+        let p = builtin_persona("concise").unwrap();
         assert!(p.contains("`concise` persona"));
         assert!(p.contains("brevity"));
     }
 
     #[test]
     fn test_persona_snapshot_creative() {
-        let p = resolve_personality("creative", None).unwrap();
+        let p = builtin_persona("creative").unwrap();
         assert!(p.contains("`creative` persona"));
         assert!(p.contains("idea generation"));
     }
 
     #[test]
     fn test_persona_snapshot_technical() {
-        let p = resolve_personality("technical", None).unwrap();
+        let p = builtin_persona("technical").unwrap();
         assert!(p.contains("`technical` persona"));
         assert!(p.contains("systems-level"));
     }
 
     #[test]
     fn test_persona_snapshot_companion() {
-        let p = resolve_personality("companion", None).unwrap();
+        let p = builtin_persona("companion").unwrap();
         assert!(p.contains("`companion` persona"));
         assert!(p.contains("active listening"));
     }
 
     #[test]
     fn test_persona_snapshot_decision_coach() {
-        let p = resolve_personality("decision-coach", None).unwrap();
+        let p = builtin_persona("decision-coach").unwrap();
         assert!(p.contains("`decision-coach` persona"));
         assert!(p.contains("trade-offs"));
     }
 
     #[test]
     fn test_persona_snapshot_reflective() {
-        let p = resolve_personality("reflective", None).unwrap();
+        let p = builtin_persona("reflective").unwrap();
         assert!(p.contains("`reflective` persona"));
         assert!(p.contains("follow-up questions"));
     }
 
     #[test]
     fn test_persona_snapshot_security_auditor() {
-        let p = resolve_personality("security-auditor", None).unwrap();
+        let p = builtin_persona("security-auditor").unwrap();
         assert!(p.contains("`security-auditor` persona"));
         assert!(p.contains("threat modeling"));
     }
 
     #[test]
     fn test_persona_snapshot_release_manager() {
-        let p = resolve_personality("release-manager", None).unwrap();
+        let p = builtin_persona("release-manager").unwrap();
         assert!(p.contains("`release-manager` persona"));
         assert!(p.contains("rollback"));
     }
 
     #[test]
     fn test_persona_snapshot_ops_sre() {
-        let p = resolve_personality("ops-sre", None).unwrap();
+        let p = builtin_persona("ops-sre").unwrap();
         assert!(p.contains("`ops-sre` persona"));
         assert!(p.contains("observability"));
     }
 
     #[test]
     fn test_persona_snapshot_mcp_integrator() {
-        let p = resolve_personality("mcp-integrator", None).unwrap();
+        let p = builtin_persona("mcp-integrator").unwrap();
         assert!(p.contains("`mcp-integrator` persona"));
         assert!(p.contains("protocol contracts"));
     }
 
     #[test]
     fn test_persona_snapshot_quant_researcher() {
-        let p = resolve_personality("quant-researcher", None).unwrap();
+        let p = builtin_persona("quant-researcher").unwrap();
         assert!(p.contains("`quant-researcher` persona"));
         assert!(p.contains("risk-adjusted"));
     }
 
     #[test]
     fn test_persona_snapshot_performance_engineer() {
-        let p = resolve_personality("performance-engineer", None).unwrap();
+        let p = builtin_persona("performance-engineer").unwrap();
         assert!(p.contains("`performance-engineer` persona"));
         assert!(p.contains("profiling-first"));
     }
 
     #[test]
     fn test_persona_snapshot_research_scout() {
-        let p = resolve_personality("research-scout", None).unwrap();
+        let p = builtin_persona("research-scout").unwrap();
         assert!(p.contains("`research-scout` persona"));
         assert!(p.contains("source quality"));
     }
@@ -715,12 +722,12 @@ mod tests {
 
     #[test]
     fn test_persona_unknown_returns_none() {
-        assert!(resolve_personality("pirate", None).is_none());
+        assert!(builtin_persona("pirate").is_none());
     }
 
     #[test]
     fn test_persona_default_is_neutral() {
-        assert!(resolve_personality("default", None).is_none());
+        assert!(builtin_persona("default").is_none());
     }
 
     #[test]
@@ -731,7 +738,7 @@ mod tests {
         };
 
         let coder_prompt = {
-            let p = resolve_personality("coder", None).unwrap();
+            let p = builtin_persona("coder").unwrap();
             let mut b = SystemPromptBuilder::new().with_personality(Some(&p));
             b.build().to_string()
         };

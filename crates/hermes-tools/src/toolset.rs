@@ -90,7 +90,6 @@ pub const TOOLSET_VOICE: &[&str] = &["transcription", "voice_mode"];
 pub const TOOLSET_SECURITY: &[&str] = &["osv_check", "url_safety"];
 /// System utility helpers.
 pub const TOOLSET_SYSTEM: &[&str] = &[
-    "env_passthrough",
     "credential_files",
     "auth_snapshot",
     "integrations_snapshot",

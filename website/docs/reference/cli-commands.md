@@ -889,6 +889,8 @@ hermes acp
 
 Starts Hermes as an ACP (Agent Client Protocol) stdio server for editor integration.
 
+`hermes acp start` does the same, and `hermes acp status` reports the ACP setup instead of serving. Logs go to stderr, so stdout carries only protocol messages.
+
 Related entrypoints:
 
 ```bash

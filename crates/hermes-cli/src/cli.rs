@@ -787,7 +787,7 @@ pub struct TeamsPipelineArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct ChatArgs {
-    /// Single-shot query (non-interactive).
+    /// Single-shot query (non-interactive); `-` reads it from standard input.
     #[arg(short, long)]
     pub query: Option<String>,
     /// Preload a skill before chatting.
@@ -964,7 +964,7 @@ pub struct ClawArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct AcpArgs {
-    /// Action: start/status/stop/restart/check/setup/setup-browser/version
+    /// Action: start (the default)/status/stop/restart/check/setup/setup-browser/version
     pub action: Option<String>,
     /// Run ACP startup checks without starting the server.
     #[arg(long, conflicts_with_all = ["action", "setup", "setup_browser"])]

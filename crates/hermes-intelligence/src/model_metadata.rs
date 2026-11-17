@@ -114,11 +114,13 @@ static DEFAULT_CONTEXT_LENGTHS: &[(&str, u64)] = &[
     // Xiaomi MIMO
     ("mimo-v2.5-pro", 1_000_000),
     ("mimo-v2.5", 1_000_000),
-    // Tencent TokenHub
-    ("hy3-preview", 128_000),
+    // Tencent Hy3 (TokenHub's hy3-preview, OpenRouter's tencent/hy3 and
+    // tencent/hy3-preview): 262,144, as upstream v0.23.1 and OpenRouter list it.
+    ("hy3", 262_144),
     // NVIDIA Nemotron 3.5 Lightning: OpenRouter serves the free variant with a
-    // 1M window and the paid one with 262K (its model list, 11 November 2026).
+    // 1M window and the paid one with 262,144 (its model list, 17 November 2026).
     ("nemotron-3.5-lightning:free", 1_000_000),
+    ("nemotron-3.5-lightning", 262_144),
 ];
 
 // ---------------------------------------------------------------------------
@@ -761,7 +763,8 @@ mod tests {
         assert_eq!(get_model_context_length("gemma4:31b-cloud"), 256_000);
         assert_eq!(get_model_context_length("zai/glm-5.2"), 1_000_000);
         assert_eq!(get_model_context_length("xiaomi/mimo-v2.5-pro"), 1_000_000);
-        assert!(get_model_context_length("hy3-preview") >= 4096);
+        assert_eq!(get_model_context_length("hy3-preview"), 262_144);
+        assert_eq!(get_model_context_length("tencent/hy3-preview"), 262_144);
         assert_eq!(
             get_model_context_length("unknown-model"),
             CONTEXT_PROBE_TIERS[0]
@@ -777,7 +780,7 @@ mod tests {
         // The paid variant has a 262K window, so it must not take the free entry.
         assert_eq!(
             get_model_context_length("nvidia/nemotron-3.5-lightning"),
-            DEFAULT_FALLBACK_CONTEXT
+            262_144
         );
     }
 

@@ -1301,6 +1301,54 @@ mod tests {
         assert!(!clear_provider_catalog_cache("openai").expect("idempotent clear"));
     }
 
+    /// A link planted where the cache writes its temporary files is not
+    /// followed: the file it names is left alone and the cache still saves.
+    #[cfg(unix)]
+    #[test]
+    fn provider_catalog_cache_does_not_write_through_a_planted_link() {
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
+        let victim = tmp.path().join("victim.txt");
+        std::fs::write(&victim, "keep").expect("victim");
+        let cache = provider_catalog_cache_path("openai").unwrap();
+        let sig = provider_catalog_signature_path("openai").unwrap();
+        std::fs::create_dir_all(cache.parent().unwrap()).expect("cache dir");
+        std::os::unix::fs::symlink(&victim, cache.with_extension("json.tmp")).expect("link");
+        std::os::unix::fs::symlink(&victim, sig.with_extension("sig.json.tmp")).expect("link");
+
+        let models = vec!["gpt-4o".to_string()];
+        persist_provider_catalog_cache("openai", &models);
+
+        assert_eq!(std::fs::read_to_string(&victim).expect("victim"), "keep");
+        assert_eq!(load_provider_catalog_cache("openai"), Some(models));
+    }
+
+    /// The signing key the cache creates is readable by its owner only,
+    /// whatever the umask, and the cache it signs still verifies.
+    #[cfg(unix)]
+    #[test]
+    fn the_provenance_key_the_cache_creates_is_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let _guard = env_guard();
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedCatalogEnv::new(tmp.path());
+        std::env::remove_var("HERMES_PROVENANCE_SIGNING_KEY");
+
+        let models = vec!["gpt-4o".to_string()];
+        persist_provider_catalog_cache("openai", &models);
+
+        let key = tmp.path().join("auth").join("provenance.key");
+        let mode = std::fs::metadata(&key).expect("key").permissions().mode();
+        assert_eq!(
+            mode & 0o777,
+            0o600,
+            "provenance.key mode {:o}",
+            mode & 0o777
+        );
+        assert_eq!(load_provider_catalog_cache("openai"), Some(models));
+    }
+
     #[test]
     fn signed_provider_catalog_cache_detects_tamper() {
         let _guard = env_guard();

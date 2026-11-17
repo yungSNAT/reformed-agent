@@ -701,39 +701,54 @@ impl SqliteSessionSearchBackend {
         parts.join("\n\n")
     }
 
+    /// The transcript cut to `max_chars` characters around the first match of
+    /// any query term, matched case-insensitively. Offsets are in characters of
+    /// the original text, so a character whose lowercase form has another
+    /// length (such as U+0130) cannot shift the window off the match.
     fn truncate_around_matches(full_text: &str, query: &str, max_chars: usize) -> String {
-        if full_text.chars().count() <= max_chars {
+        let total = full_text.chars().count();
+        if total <= max_chars {
             return full_text.to_string();
         }
-        let text_lower = full_text.to_lowercase();
-        let mut first_match = text_lower.len();
-        for term in query.to_lowercase().split_whitespace() {
-            let t = term.trim();
-            if t.is_empty() {
-                continue;
-            }
-            if let Some(pos) = text_lower.find(t) {
-                first_match = first_match.min(pos);
+        let lower = |text: &str| {
+            text.chars()
+                .flat_map(char::to_lowercase)
+                .collect::<String>()
+        };
+        // For each byte of the lowercased text, the original character it came from.
+        let mut text_lower = String::with_capacity(full_text.len());
+        let mut source_char = Vec::with_capacity(full_text.len());
+        for (index, c) in full_text.chars().enumerate() {
+            for folded in c.to_lowercase() {
+                text_lower.push(folded);
+                source_char.extend(std::iter::repeat_n(index, folded.len_utf8()));
             }
         }
-        if first_match == text_lower.len() {
-            first_match = 0;
-        }
+        let first_match = query
+            .split_whitespace()
+            .filter_map(|term| text_lower.find(&lower(term)))
+            .min()
+            .map_or(0, |pos| source_char[pos]);
 
         let half = max_chars / 2;
         let mut start = first_match.saturating_sub(half);
-        let end = (start + max_chars).min(full_text.len());
-        if end.saturating_sub(start) < max_chars {
+        let end = (start + max_chars).min(total);
+        if end - start < max_chars {
             start = end.saturating_sub(max_chars);
         }
-        let body =
-            &full_text[full_text.floor_char_boundary(start)..full_text.ceil_char_boundary(end)];
+        let byte_at = |char_index: usize| {
+            full_text
+                .char_indices()
+                .nth(char_index)
+                .map_or(full_text.len(), |(byte, _)| byte)
+        };
+        let body = &full_text[byte_at(start)..byte_at(end)];
         let prefix = if start > 0 {
             "...[earlier conversation truncated]...\n\n"
         } else {
             ""
         };
-        let suffix = if end < full_text.len() {
+        let suffix = if end < total {
             "\n\n...[later conversation truncated]..."
         } else {
             ""

@@ -433,7 +433,8 @@ fn acp_action_from_flags(
     } else if setup_browser {
         Some("setup-browser".to_string())
     } else {
-        action
+        // `hermes acp` alone serves, as upstream's does and as ACP clients run it.
+        action.or_else(|| Some("start".to_string()))
     }
 }
 

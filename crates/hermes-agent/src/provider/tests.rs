@@ -38,3 +38,31 @@ include!("tests/openai_parsing.rs");
 include!("tests/anthropic_requests.rs");
 
 include!("tests/anthropic_openrouter_parsing.rs");
+
+#[tokio::test]
+async fn a_silent_stream_fails_once_the_idle_timeout_passes() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut request = [0u8; 4096];
+        let _ = socket.read(&mut request).await;
+        socket
+            .write_all(b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n5\r\nhello\r\n")
+            .await
+            .unwrap();
+        // Then silence, with the connection held open.
+        tokio::time::sleep(Duration::from_secs(60)).await;
+        drop(socket);
+    });
+
+    let client = http_client_with_idle_timeout(None, Duration::from_millis(300));
+    let response = client.get(format!("http://{addr}/")).send().await.unwrap();
+    let mut stream = response.bytes_stream();
+    assert_eq!(&stream.next().await.unwrap().unwrap()[..], b"hello");
+    let next = tokio::time::timeout(Duration::from_secs(20), stream.next())
+        .await
+        .expect("the idle timeout ends the read");
+    assert!(next.is_some_and(|read| read.is_err()));
+}

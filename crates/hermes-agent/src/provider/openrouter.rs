@@ -387,18 +387,20 @@ impl LlmProvider for OpenRouterProvider {
 
 /// Parse a single SSE data JSON object into a StreamChunk (OpenAI format).
 fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
-    let choices = json.get("choices").and_then(|c| c.as_array())?;
-    let choice = choices.first()?;
-
-    let delta_obj = choice.get("delta")?;
+    // The usage chunk that `include_usage` adds at the end has no choices.
+    let choice = json
+        .get("choices")
+        .and_then(|c| c.as_array())
+        .and_then(|choices| choices.first());
+    let delta_obj = choice.and_then(|c| c.get("delta"));
 
     let content = delta_obj
-        .get("content")
+        .and_then(|d| d.get("content"))
         .and_then(|c| c.as_str())
         .map(|s| s.to_string());
 
     let tool_calls = delta_obj
-        .get("tool_calls")
+        .and_then(|d| d.get("tool_calls"))
         .and_then(|tc| tc.as_array())
         .map(|arr| {
             arr.iter()
@@ -435,7 +437,7 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
     };
 
     let finish_reason = choice
-        .get("finish_reason")
+        .and_then(|c| c.get("finish_reason"))
         .and_then(|f| f.as_str())
         .map(|s| s.to_string());
 
@@ -450,6 +452,9 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
         estimated_cost: None,
     });
 
+    if delta_obj.is_none() && finish_reason.is_none() && usage.is_none() {
+        return None;
+    }
     Some(StreamChunk {
         delta,
         finish_reason,

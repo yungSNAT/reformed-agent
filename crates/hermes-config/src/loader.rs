@@ -330,7 +330,12 @@ fn opens_block_scalar(trimmed: &str) -> bool {
 /// - `./.env` is sanitized and loaded as a fallback source.
 /// - When user env exists, project env only fills missing keys.
 pub fn load_dotenv() {
-    let env_file = paths::env_path();
+    load_dotenv_in(&paths::hermes_home());
+}
+
+/// [`load_dotenv`] with `home`'s `.env` as the user env file.
+fn load_dotenv_in(home: &Path) {
+    let env_file = home.join(".env");
     let project_env = std::env::current_dir().ok().map(|p| p.join(".env"));
 
     if env_file.exists() {
@@ -609,8 +614,12 @@ pub fn load_effective_config_yaml_value(path: &Path) -> Option<serde_json::Value
 ///
 /// If `home_dir` is provided it overrides the `HERMES_HOME` env var.
 pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError> {
-    // Load .env before anything else so env overrides see those values.
-    load_dotenv();
+    // Load .env before anything else so env overrides see those values;
+    // a given home supplies its own .env.
+    match home_dir {
+        Some(home) => load_dotenv_in(Path::new(home)),
+        None => load_dotenv(),
+    }
 
     // Determine effective hermes home
     let effective_home = home_dir
@@ -630,9 +639,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     if !ignore_user_config && gateway_json_path.exists() {
         match load_from_json(&gateway_json_path) {
             Ok(json_cfg) => config = json_cfg,
-            Err(e) => {
-                tracing::warn!("Failed to load {}: {e}", gateway_json_path.display());
-            }
+            Err(e) => skip_unloadable_config_file(&gateway_json_path, e)?,
         }
     }
 
@@ -642,9 +649,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
             Ok(yaml_cfg) => {
                 config = merge_configs(&yaml_cfg, &config);
             }
-            Err(e) => {
-                tracing::warn!("Failed to load {}: {e}", config_yaml_path.display());
-            }
+            Err(e) => skip_unloadable_config_file(&config_yaml_path, e)?,
         }
     }
 
@@ -654,9 +659,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
             Ok(cli_cfg) => {
                 config = merge_configs(&cli_cfg, &config);
             }
-            Err(e) => {
-                tracing::warn!("Failed to load {}: {e}", cli_config_yaml_path.display());
-            }
+            Err(e) => skip_unloadable_config_file(&cli_config_yaml_path, e)?,
         }
     }
 
@@ -666,6 +669,7 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     bridge_vertex_config_to_env(&config.vertex);
 
     // Layer 3: environment variables (highest priority)
+    check_terminal_backend_env()?;
     apply_env_overrides(&mut config);
     normalize_platform_aliases(&mut config);
     normalize_provider_secrets(&mut config);
@@ -673,17 +677,18 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     let managed_overlay = load_managed_config_overlay_json();
     if let Some(overlay) = &managed_overlay {
         let mut managed_config = config.clone();
-        if apply_managed_config_overlay(&mut managed_config, overlay) {
+        let applied = apply_managed_config_overlay(&mut managed_config, overlay).and_then(|()| {
             normalize_platform_aliases(&mut managed_config);
             normalize_provider_secrets(&mut managed_config);
-            match validate_config(&managed_config) {
-                Ok(()) => {
-                    config = managed_config;
-                    bridge_managed_overlay_to_env(&config, overlay);
-                }
-                Err(err) => {
-                    tracing::warn!("managed scope: ignoring invalid config overlay: {err}");
-                }
+            validate_config(&managed_config).map_err(|err| err.to_string())
+        });
+        match applied {
+            Ok(()) => {
+                config = managed_config;
+                bridge_managed_overlay_to_env(&config, overlay);
+            }
+            Err(err) => {
+                skip_unloadable_config("the managed scope config overlay", Some(overlay), &err)?
             }
         }
     }
@@ -697,28 +702,52 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     Ok(config)
 }
 
-fn apply_managed_config_overlay(config: &mut GatewayConfig, overlay: &serde_json::Value) -> bool {
-    let original = config.clone();
-    let mut base = match serde_json::to_value(&*config) {
-        Ok(value) => value,
-        Err(err) => {
-            tracing::warn!("managed scope: failed to serialize base config: {err}");
-            return false;
-        }
-    };
+fn apply_managed_config_overlay(
+    config: &mut GatewayConfig,
+    overlay: &serde_json::Value,
+) -> Result<(), String> {
+    let mut base = serde_json::to_value(&*config)
+        .map_err(|err| format!("failed to serialize base config: {err}"))?;
     deep_merge(&mut base, overlay);
-    match serde_json::from_value::<GatewayConfig>(base) {
-        Ok(mut merged) => {
-            merged.home_dir = original.home_dir;
-            *config = merged;
-            true
-        }
-        Err(err) => {
-            tracing::warn!("managed scope: failed to apply config overlay: {err}");
-            *config = original;
-            false
-        }
+    let mut merged = serde_json::from_value::<GatewayConfig>(base)
+        .map_err(|err| format!("failed to apply config overlay: {err}"))?;
+    merged.home_dir = config.home_dir.take();
+    *config = merged;
+    Ok(())
+}
+
+/// Skips a configuration file that failed to load, as
+/// [`skip_unloadable_config`] decides.
+fn skip_unloadable_config_file(path: &Path, err: ConfigError) -> Result<(), ConfigError> {
+    let root = read_config_yaml_as_json(path);
+    skip_unloadable_config(&path.display().to_string(), root.as_ref(), &err)
+}
+
+/// Skips a configuration source that failed to load, with a warning, unless
+/// its raw `root` names a terminal backend other than local: skipping it
+/// would leave the backend local, so commands would run on this machine in
+/// place of the isolation chosen. A source that cannot be read as YAML at all
+/// names no backend and is skipped.
+fn skip_unloadable_config(
+    source: &str,
+    root: Option<&serde_json::Value>,
+    err: &dyn std::fmt::Display,
+) -> Result<(), ConfigError> {
+    let named = root
+        .and_then(|root| root.get("terminal"))
+        .and_then(|terminal| terminal.get("backend").or_else(|| terminal.get("env_type")))
+        .and_then(serde_json::Value::as_str)
+        .map(str::trim)
+        .filter(|name| !name.is_empty() && !name.eq_ignore_ascii_case("local"));
+    if let Some(name) = named {
+        return Err(ConfigError::ValidationError(format!(
+            "{source} sets the terminal backend `{name}` but could not be loaded: {err}. \
+             Commands are not run on this machine instead; fix it so that it loads, with a \
+             backend this build knows: local, docker, ssh, singularity, modal or daytona."
+        )));
     }
+    tracing::warn!("Failed to load {source}: {err}");
+    Ok(())
 }
 
 fn bridge_managed_overlay_to_env(config: &GatewayConfig, overlay: &serde_json::Value) {

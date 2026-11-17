@@ -114,7 +114,7 @@ impl App {
         ));
         let agent = Arc::new(agent_inner.with_sub_agent_orchestrator(orchestrator));
 
-        let recovered_background_jobs = recover_queued_background_jobs(8);
+        let recovered_background_jobs = recover_queued_background_jobs(8)?;
         if recovered_background_jobs > 0 {
             tracing::info!(
                 "Recovered {} queued background job(s) from durable status queue",
