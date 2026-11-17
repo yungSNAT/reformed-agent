@@ -1,13 +1,15 @@
-//! `hermes-desktop-gateway`: serve the Hermes Desktop handshake on a loopback port.
+//! `hermes-desktop-gateway`: serve Hermes Desktop on a loopback port.
 
 use std::io::Write;
 use std::net::{IpAddr, Ipv4Addr};
 use std::process::ExitCode;
 
 use clap::Parser;
-use hermes_desktop_gateway::{new_token, serve, MIN_TOKEN_LEN, TOKEN_ENV};
+use hermes_desktop_gateway::{new_token, serve, Chat, MIN_TOKEN_LEN, TOKEN_ENV};
 
-/// Preview: a backend Hermes Desktop can attach to with 'Connect to existing Hermes'.
+/// Preview: a backend Hermes Desktop can attach to with 'Connect to existing Hermes' and chat
+/// through, with the model and sessions of the Hermes home (HERMES_HOME, else ~/.hermes).
+/// Replies use no tools.
 /// The token comes from HERMES_DASHBOARD_SESSION_TOKEN; without it one is made and printed.
 /// A supplied token must be random: only its length (at least 32 characters) is checked and
 /// connection attempts are not rate limited, so prefer the generated one.
@@ -52,6 +54,13 @@ async fn main() -> ExitCode {
         }
         _ => (new_token(), true),
     };
+    let config = match hermes_config::load_config(None) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("cannot load the Hermes config: {err}");
+            return ExitCode::FAILURE;
+        }
+    };
     let listener = match tokio::net::TcpListener::bind((ip, args.port)).await {
         Ok(listener) => listener,
         Err(err) => {
@@ -81,7 +90,7 @@ async fn main() -> ExitCode {
         eprintln!("cannot write the readiness lines: {err}");
         return ExitCode::FAILURE;
     }
-    match serve(listener, token).await {
+    match serve(listener, token, Chat::new(config)).await {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("server stopped: {err}");
