@@ -36,7 +36,7 @@ if _SCRIPTS_DIR not in sys.path:
     sys.path.insert(0, _SCRIPTS_DIR)
 
 from _hermes_home import get_hermes_home
-from _program_path import find_program
+from _program_path import find_program, is_fully_qualified
 
 HERMES_HOME = get_hermes_home()
 TOKEN_PATH = HERMES_HOME / "google_token.json"
@@ -80,10 +80,16 @@ def _stored_token_scopes() -> list[str]:
 
 
 def _gws_binary() -> str | None:
+    """The gws program: HERMES_GWS_BIN when set (a fully qualified path, or a program
+    name looked up as without it), else gws from PATH."""
     override = os.getenv("HERMES_GWS_BIN")
-    if override:
+    if not override:
+        return find_program("gws")
+    if is_fully_qualified(override):
         return override
-    return find_program("gws")
+    if os.path.basename(override) == override:
+        return find_program(override)
+    raise RuntimeError(f"HERMES_GWS_BIN must be a program name or a full path, not {override!r}")
 
 
 def _gws_env() -> dict[str, str]:

@@ -6,6 +6,7 @@ into that folder, and on Windows ``shutil.which`` and a bare-name
 ``subprocess`` call search it first. Each test plants a program in the working
 folder and puts a trusted one in an absolute PATH entry that comes after the
 relative entries: the trusted one must be found and the planted one never run.
+WindowsLookupTests apply Windows path rules on any host through a fake os module.
 
 Runs with the standard library alone: ``python3 -m unittest
 tests/skills/test_skill_program_lookup.py``.
@@ -15,10 +16,12 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import ntpath
 import os
 import subprocess
 import sys
 import tempfile
+import types
 import unittest
 from pathlib import Path
 from unittest import mock
@@ -35,14 +38,10 @@ TRUSTED = {"ran": "trusted"}
 
 
 def _write_program(folder: Path, name: str, label: str, log: Path) -> None:
-    """Write a program that records `label` in `log` and prints it as JSON."""
-    if os.name == "nt":
-        path = folder / f"{name}.BAT"
-        path.write_text(f'@echo {label}>>"{log}"\r\n@echo {{"ran": "{label}"}}\r\n')
-    else:
-        path = folder / name
-        path.write_text(f'#!/bin/sh\necho {label} >> "{log}"\necho \'{{"ran": "{label}"}}\'\n')
-        path.chmod(0o755)
+    """Write a shell script that records `label` in `log` and prints it as JSON."""
+    path = folder / name
+    path.write_text(f'#!/bin/sh\necho {label} >> "{log}"\necho \'{{"ran": "{label}"}}\'\n')
+    path.chmod(0o755)
 
 
 def _load(script: Path):
@@ -58,6 +57,7 @@ def _load(script: Path):
     return module
 
 
+@unittest.skipIf(os.name == "nt", "the planted programs are shell scripts")
 class PlantedProgramCase(unittest.TestCase):
     """A working folder with planted programs and a trusted absolute PATH entry."""
 
@@ -66,7 +66,8 @@ class PlantedProgramCase(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         base = Path(temp.name).resolve()
         self.work = base / "checkout"
-        self.trusted = base / "trusted-bin"
+        # The space also covers a program path with spaces (the comfy command list).
+        self.trusted = base / "trusted bin"
         self.work.mkdir()
         self.trusted.mkdir()
         self.log = base / "ran.log"
@@ -98,8 +99,7 @@ class PlantedProgramCase(unittest.TestCase):
             _write_program(self.trusted, name, "trusted", self.log)
 
     def trusted_path(self, name: str) -> str:
-        suffix = ".BAT" if os.name == "nt" else ""
-        return str(self.trusted / f"{name}{suffix}")
+        return str(self.trusted / name)
 
     def ran(self) -> list[str]:
         return self.log.read_text().split() if self.log.exists() else []
@@ -143,6 +143,18 @@ class SkillScriptTests(PlantedProgramCase):
         self.assertIsNone(api._gws_binary())
         self.install("gws")
         self.assertEqual(api._gws_binary(), self.trusted_path("gws"))
+
+    def test_google_api_override_is_a_name_or_a_full_path(self):
+        api = _load(GOOGLE / "google_api.py")
+        self.plant("gws")
+        self.install("gws")
+        for override in ("gws", self.trusted_path("gws")):
+            with mock.patch.dict(os.environ, {"HERMES_GWS_BIN": override}):
+                self.assertEqual(api._gws_binary(), self.trusted_path("gws"))
+        for relative in ("./gws", "checkout-bin/gws"):
+            with mock.patch.dict(os.environ, {"HERMES_GWS_BIN": relative}):
+                with self.assertRaises(RuntimeError):
+                    api._gws_binary()
 
     def test_google_setup_falls_back_to_trusted_uv_only(self):
         setup = _load(GOOGLE / "setup.py")
@@ -234,6 +246,45 @@ class SkillScriptTests(PlantedProgramCase):
         self.assertIsNone(recalc.find_libreoffice())
         self.install("soffice")
         self.assertEqual(recalc.find_libreoffice(), self.trusted_path("soffice"))
+
+
+class WindowsLookupTests(unittest.TestCase):
+    """find_program under Windows path rules on any host, through a fake os with ntpath."""
+
+    def find(self, path: str, files: set[str], name: str = "gws"):
+        module = _load(GOOGLE / "_program_path.py")
+        fake_path = types.SimpleNamespace(
+            isabs=ntpath.isabs,
+            splitdrive=ntpath.splitdrive,
+            splitext=ntpath.splitext,
+            join=ntpath.join,
+            isfile=lambda p: p in files,
+        )
+        fake_os = types.SimpleNamespace(
+            name="nt",
+            path=fake_path,
+            pathsep=";",
+            defpath=r".;C:\bin",
+            X_OK=1,
+            environ={"PATH": path, "PATHEXT": ".COM;.EXE;.BAT;.CMD"},
+            access=lambda p, mode: True,
+        )
+        with mock.patch.object(module, "os", fake_os):
+            return module.find_program(name)
+
+    def test_a_rooted_entry_without_a_drive_is_skipped(self):
+        # \checkout is on whatever drive is current, which can hold the agent's checkout.
+        files = {r"\checkout\gws.EXE", r"C:\trusted\gws.EXE"}
+        self.assertIsNone(self.find(r"\checkout", files))
+        self.assertEqual(self.find(r"\checkout;C:\trusted", files), r"C:\trusted\gws.EXE")
+        unc = r"\\server\share\bin"
+        self.assertEqual(self.find(unc, {unc + r"\gws.EXE"}), unc + r"\gws.EXE")
+
+    def test_batch_files_are_never_returned(self):
+        self.assertIsNone(self.find(r"C:\npm", {r"C:\npm\gws.CMD", r"C:\npm\gws.BAT"}))
+        self.assertIsNone(self.find(r"C:\npm", {r"C:\npm\gws.cmd"}, name="gws.cmd"))
+        both = {r"C:\npm\gws.CMD", r"C:\bin\gws.EXE"}
+        self.assertEqual(self.find(r"C:\npm;C:\bin", both), r"C:\bin\gws.EXE")
 
 
 if __name__ == "__main__":
