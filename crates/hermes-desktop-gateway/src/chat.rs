@@ -309,7 +309,12 @@ impl Turn {
     }
 
     async fn run(mut self, text: String, session: &Arc<LiveSession>) {
-        self.emit(session, "message.start", json!({"turn_id": self.turn_id}), None);
+        self.emit(
+            session,
+            "message.start",
+            json!({"turn_id": self.turn_id}),
+            None,
+        );
         let streamed = Arc::new(Mutex::new(Streamed::default()));
         let payload = match self.ask(text, session, &streamed).await {
             Ok((reply, None)) => json!({"text": reply, "status": "complete"}),

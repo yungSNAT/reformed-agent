@@ -653,7 +653,10 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     for (_, session) in &stalled {
         let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
         while history(started.addr, session).await.len() < 2 {
-            assert!(tokio::time::Instant::now() < deadline, "turn {session} did not finish");
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "turn {session} did not finish"
+            );
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
     }
