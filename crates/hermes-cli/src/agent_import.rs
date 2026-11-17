@@ -652,7 +652,7 @@ fn is_secret_flag(arg: &str) -> bool {
 fn url_origin(url: &str) -> &str {
     let start = url.find("://").map_or(0, |at| at + 3);
     let end = url[start..]
-        .find(|c| matches!(c, '/' | '?' | '#'))
+        .find(['/', '?', '#'])
         .map_or(url.len(), |at| start + at);
     &url[..end]
 }
