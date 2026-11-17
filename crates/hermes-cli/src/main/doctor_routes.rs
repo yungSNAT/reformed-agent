@@ -695,8 +695,18 @@ fn write_doctor_snapshot(
     }
     let body = serde_json::to_string_pretty(snapshot_payload)
         .map_err(|e| AgentError::Config(format!("serialize doctor snapshot: {}", e)))?;
-    std::fs::write(&path, body)
-        .map_err(|e| AgentError::Io(format!("write {}: {}", path.display(), e)))?;
+    // Diagnostics, so written as the bundle is: to a new file with mode 0600
+    // on Unix, renamed into place, never into a file someone may hold open.
+    // An ACL the folder passes to new files (Windows, macOS, POSIX default
+    // ACLs) still applies: the folder's owner chose it.
+    let dir = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    let write = |e: std::io::Error| AgentError::Io(format!("write {}: {}", path.display(), e));
+    let mut file = tempfile::NamedTempFile::new_in(dir).map_err(write)?;
+    file.write_all(body.as_bytes()).map_err(write)?;
+    file.persist(&path).map_err(|e| write(e.error))?;
     Ok(path)
 }
 
