@@ -1508,6 +1508,17 @@ mod tests {
         let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}/mcp", server.local_addr().unwrap());
         let mut transport = HttpSseTransport::new(&url, None);
+        // The server answers any GET with 200, as one serving both kinds would.
+        let (started, probe) = tokio::join!(
+            transport.start(),
+            answer_once(
+                &server,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: 0\r\n\r\n"
+                    .to_string()
+            )
+        );
+        started.expect("start");
+        assert!(probe.starts_with("get /mcp "), "{probe}");
         let (sent, head) = tokio::join!(
             transport.send(serde_json::json!({"jsonrpc": "2.0", "id": 1, "method": "initialize"})),
             answer_once(
