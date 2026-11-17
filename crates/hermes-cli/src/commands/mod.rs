@@ -103,6 +103,8 @@ async fn read_dir_entries(dir: &Path) -> std::io::Result<Vec<std::fs::DirEntry>>
     .unwrap_or_else(|e| std::panic::resume_unwind(e.into_panic()))
 }
 
+mod review_command;
+
 // The command surface is intentionally split by subsystem. These files are
 // included in the original item order so this refactor changes layout only;
 // follow-up passes can promote stable shards into stricter Rust submodules.

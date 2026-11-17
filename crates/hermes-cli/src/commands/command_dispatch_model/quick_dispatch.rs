@@ -263,6 +263,7 @@ async fn dispatch_slash_command(
         "/handoff" => handle_handoff_command(app, args),
         "/steer" => handle_steer_command(app, args),
         "/btw" => handle_btw_command(app, args),
+        "/review" => review_command::handle_review_command(app, args),
         "/subgoal" => handle_subgoal_command(app, args),
         "/sethome" => handle_sethome_command(app, args),
         "/evolve" => handle_ops_evolve_command(app, args).await,

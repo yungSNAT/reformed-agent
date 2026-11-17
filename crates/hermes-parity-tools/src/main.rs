@@ -5,11 +5,11 @@
 
 mod divergence;
 mod git;
-mod py;
 mod slash_gate;
 mod surface_gate;
 
 use clap::{Parser, Subcommand};
+use hermes_parity_tools::py;
 
 #[derive(Parser, Debug)]
 #[command(name = "hermes-parity-tools", infer_long_args = true)]

@@ -68,6 +68,7 @@ const COMMAND_CATALOG_SECTIONS: &[CommandCatalogSection] = &[
             "/ask",
             "/steer",
             "/btw",
+            "/review",
             "/simulate",
             "/specpatch",
             "/quorum",
