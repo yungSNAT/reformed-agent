@@ -822,12 +822,15 @@ async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
     wait_for_lock.recv().unwrap();
     let probe = rusqlite::Connection::open(store.db_path()).unwrap();
     probe.busy_timeout(Duration::ZERO).unwrap();
-    assert!(
-        probe
-            .query_row("SELECT count(*) FROM sqlite_master", [], |row| row
-                .get::<_, i64>(0))
-            .is_err(),
-        "the database is not locked against readers"
+    let refused = probe
+        .query_row("SELECT count(*) FROM sqlite_master", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .expect_err("the database is not locked against readers");
+    assert_eq!(
+        refused.sqlite_error_code(),
+        Some(rusqlite::ErrorCode::DatabaseBusy),
+        "{refused}"
     );
 
     let reply = client.submit(2, &session, "hi").await;
