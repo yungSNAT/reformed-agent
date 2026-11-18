@@ -550,9 +550,10 @@ async fn renewal_skips_a_subscription_whose_new_expiry_is_out_of_range() {
     let client = MicrosoftGraphClient::new(provider, server.uri());
 
     // u32::MAX hours is about 490,000 years.
-    let result = maintain_graph_subscriptions(&client, &store, 24, u32::MAX, false, Some("state-1"))
-        .await
-        .unwrap();
+    let result =
+        maintain_graph_subscriptions(&client, &store, 24, u32::MAX, false, Some("state-1"))
+            .await
+            .unwrap();
 
     assert_eq!(result["renewed_count"], 0);
     assert_eq!(
