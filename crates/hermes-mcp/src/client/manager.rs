@@ -282,7 +282,8 @@ impl McpManager {
     /// replaces it. The old client leaves the manager at once; a close that
     /// fails or takes over `MCP_CLOSE_TIMEOUT_SECS` is logged and the client
     /// dropped, as a failed connect's is, so it never holds up or fails the
-    /// replacement.
+    /// replacement. A tool call still holding the old client keeps it, and a
+    /// stdio server, running until that call ends.
     async fn close_replaced(&mut self, name: &str) {
         if !self.clients.contains_key(name) {
             return;
