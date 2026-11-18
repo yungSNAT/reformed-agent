@@ -230,7 +230,7 @@ fn extract_marker_values(text: &str, marker: &str, limit: usize) -> Vec<String> 
 /// names version 5, not 5.2.
 fn anthropic_cache_read_multiplier(model: &str) -> f64 {
     let model = model.to_ascii_lowercase().replace('.', "-");
-    let parts: Vec<&str> = model.split(['-', '/', ':']).collect();
+    let parts: Vec<&str> = model.split(['-', '/', ':', '@']).collect();
     for name in parts.windows(3) {
         match (name[0], name[1], name[2]) {
             ("fable" | "mythos", "5", "1" | "2") => return 0.025,
