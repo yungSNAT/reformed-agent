@@ -138,8 +138,9 @@ pub(super) fn convert(
                 .get("run_at")
                 .and_then(Value::as_str)
                 .and_then(parse_rfc3339)
-                .and_then(whole_second)
                 .ok_or("its one-off time is not a time with a zone")?;
+            let at = whole_second(at)
+                .ok_or("its one-off time is after the latest time Reformed can schedule")?;
             if at <= now {
                 return Err("its one-off time has passed".into());
             }
