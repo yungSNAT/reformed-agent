@@ -254,9 +254,7 @@ impl McpManager {
                 issues.join("; ")
             )));
         }
-        if self.clients.contains_key(name) {
-            self.disconnect(name).await?;
-        }
+        self.close_replaced(name).await;
 
         let mut client = McpClient::new(config);
         if let Some(config) = self.sampling_config.clone() {
@@ -280,6 +278,30 @@ impl McpManager {
         Ok(())
     }
 
+    /// Closes the client named `name`, if there is one, before a new one
+    /// replaces it. The old client leaves the manager at once; a close that
+    /// fails or takes over `MCP_CLOSE_TIMEOUT_SECS` is logged and the client
+    /// dropped, as a failed connect's is, so it never holds up or fails the
+    /// replacement. A tool call still holding the old client keeps it, and a
+    /// stdio server, running until that call ends.
+    async fn close_replaced(&mut self, name: &str) {
+        if !self.clients.contains_key(name) {
+            return;
+        }
+        let close = Duration::from_secs(MCP_CLOSE_TIMEOUT_SECS);
+        match tokio::time::timeout(close, self.disconnect(name)).await {
+            Ok(Ok(())) => {}
+            Ok(Err(err)) => warn!(
+                "Closing the MCP client that '{}' replaces failed: {}",
+                name, err
+            ),
+            Err(_) => warn!(
+                "The MCP client that '{}' replaces did not close within {}s; dropping it",
+                name, MCP_CLOSE_TIMEOUT_SECS
+            ),
+        }
+    }
+
     #[cfg(test)]
     async fn connect_with_transport_for_test(
         &mut self,
@@ -287,9 +309,7 @@ impl McpManager {
         config: McpServerConfig,
         transport: Box<dyn McpTransport>,
     ) -> Result<(), McpError> {
-        if self.clients.contains_key(name) {
-            self.disconnect(name).await?;
-        }
+        self.close_replaced(name).await;
         let mut client = McpClient::new(config);
         client.finish_connect_with_transport(transport).await?;
         self.clients.insert(

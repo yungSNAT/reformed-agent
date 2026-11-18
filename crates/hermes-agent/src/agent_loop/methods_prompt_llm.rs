@@ -1032,6 +1032,8 @@ impl AgentLoop {
                         })
                 })
                 .transpose()?;
+            // The reply is labelled, and so priced, as the model actually streamed.
+            let mut streamed_model = active_model;
             let mut stream = if let Some(rt) = route {
                 let (provider_name, model_name) = self.extract_provider_and_model(active_model);
                 let runtime_provider_name = rt.provider.as_deref().unwrap_or(provider_name.as_str());
@@ -1063,8 +1065,9 @@ impl AgentLoop {
                             rt.routing_reason,
                             e
                         );
+                        streamed_model = self.config.model.as_str();
                         let (fallback_provider_name, fallback_model_name) =
-                            self.extract_provider_and_model(self.config.model.as_str());
+                            self.extract_provider_and_model(streamed_model);
                         let fallback_wire_model_name = Self::runtime_wire_model_for_provider(
                             fallback_provider_name.as_str(),
                             fallback_model_name,
@@ -1133,7 +1136,7 @@ impl AgentLoop {
                     return Ok(StreamCollectOutcome::Interrupted(LlmResponse {
                         message,
                         usage: last_usage.clone(),
-                        model: active_model.to_string(),
+                        model: streamed_model.to_string(),
                         finish_reason: Some("interrupted".to_string()),
                     }));
                 }
@@ -1327,7 +1330,7 @@ impl AgentLoop {
             return Ok(StreamCollectOutcome::Complete(LlmResponse {
                 message,
                 usage: last_usage,
-                model: active_model.to_string(),
+                model: streamed_model.to_string(),
                 finish_reason,
             }));
         }

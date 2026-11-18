@@ -1169,6 +1169,33 @@
     }
 
     #[tokio::test]
+    async fn a_stream_that_falls_back_from_its_route_is_labelled_with_the_model_streamed() {
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SlowStream));
+        let cfg = AgentConfig {
+            model: "primary-model".to_string(),
+            stream_read_max_retries: 0,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
+        // A provider with no key and no local endpoint: the route cannot be built.
+        let mut route = agent.turn_route_cost_guard("routed-model".to_string());
+        route.provider = Some("no-such-provider-for-this-test".to_string());
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::system("system"));
+        ctx.add_message(Message::user("run"));
+
+        let out = agent
+            .collect_stream_llm_response(&ctx, &[], Some(&route), "routed-model", None, &|_| {})
+            .await
+            .expect("stream should collect");
+
+        let StreamCollectOutcome::Complete(resp) = out else {
+            panic!("expected complete response");
+        };
+        assert_eq!(resp.model, "primary-model");
+    }
+
+    #[tokio::test]
     async fn stream_mid_tool_call_silent_retry_recovers_tool_call() {
         let provider = Arc::new(StreamRetryProvider::new(
             StreamRetryScenario::RecoverOnSecondAttempt,
