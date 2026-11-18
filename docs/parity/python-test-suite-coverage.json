@@ -9291,11 +9291,23 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Not ported: upstream strips all ECMA-48 escape sequences from terminal and code output before the model sees it. Rust strips CSI sequences only in the RTK output filter (cited test); ledger follow-up under R3524.",
+      "rationale": "strip_ansi is covered: terminal, background process and code execution output and the RTK filter drop every ECMA-48 escape sequence before the model sees it (cited tests). Not ported: sanitize_display_text, which upstream uses when it replays stored text in a terminal; ledger follow-up under R3634.",
       "rust_tests": [
         {
-          "file": "crates/hermes-tools/src/rtk_filter.rs",
-          "name": "filter_preserves_signal_and_summarizes_long_output"
+          "file": "crates/hermes-tools/src/ansi_strip.rs",
+          "name": "removes_every_kind_of_escape_sequence"
+        },
+        {
+          "file": "crates/hermes-tools/src/ansi_strip.rs",
+          "name": "leaves_clean_text_alone"
+        },
+        {
+          "file": "crates/hermes-tools/src/ansi_strip.rs",
+          "name": "strips_every_string_in_a_json_value"
+        },
+        {
+          "file": "crates/hermes-tools/src/tools/terminal.rs",
+          "name": "format_command_output_strips_terminal_escapes"
         }
       ]
     },

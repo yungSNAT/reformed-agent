@@ -135,7 +135,7 @@ impl RtkFilterEngine {
     }
 
     fn filter_output(&self, tool_name: &str, params: &Value, raw_output: &str) -> String {
-        let mut text = strip_ansi(raw_output);
+        let mut text = crate::ansi_strip::strip_ansi(raw_output).into_owned();
         if text.is_empty() {
             return text;
         }
@@ -313,15 +313,6 @@ fn is_command_oriented_tool(tool_name: &str, params: &Value) -> bool {
         return true;
     }
     extract_command(params).is_some()
-}
-
-fn ansi_regex() -> &'static Regex {
-    static RE: OnceLock<Regex> = OnceLock::new();
-    RE.get_or_init(|| Regex::new(r"\x1B\[[0-9;?]*[ -/]*[@-~]").expect("ansi regex"))
-}
-
-fn strip_ansi(s: &str) -> String {
-    ansi_regex().replace_all(s, "").to_string()
 }
 
 fn noise_regexes() -> &'static [Regex] {

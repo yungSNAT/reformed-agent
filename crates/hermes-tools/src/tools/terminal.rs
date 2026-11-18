@@ -12,6 +12,7 @@ use hermes_core::{
     tool_schema, CommandOutput, JsonSchema, TerminalBackend, ToolError, ToolHandler, ToolSchema,
 };
 
+use crate::ansi_strip::{strip_ansi, strip_ansi_in_value};
 use crate::approval::{ApprovalDecision, ApprovalManager};
 use crate::gateway_approval::GatewayApprovalBinding;
 
@@ -379,13 +380,13 @@ impl ToolHandler for TerminalHandler {
 fn format_command_output(output: &CommandOutput) -> String {
     let mut result = String::new();
     if !output.stdout.is_empty() {
-        result.push_str(&redact_terminal_output_text(&output.stdout));
+        result.push_str(&redact_terminal_output_text(&strip_ansi(&output.stdout)));
     }
     if !output.stderr.is_empty() {
         if !result.is_empty() {
             result.push_str("\n--- STDERR ---\n");
         }
-        result.push_str(&redact_terminal_output_text(&output.stderr));
+        result.push_str(&redact_terminal_output_text(&strip_ansi(&output.stderr)));
     }
     if output.exit_code != 0 {
         result.push_str(&format!("\n[exit code: {}]", output.exit_code));
@@ -576,7 +577,10 @@ impl ProcessBackend for TerminalProcessBackendAdapter {
         self.backend
             .poll_process(session_id)
             .await
-            .map(|v| v.to_string())
+            .map(|mut v| {
+                strip_ansi_in_value(&mut v);
+                v.to_string()
+            })
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 
@@ -589,7 +593,10 @@ impl ProcessBackend for TerminalProcessBackendAdapter {
         self.backend
             .read_process_log(session_id, offset, limit)
             .await
-            .map(|v| v.to_string())
+            .map(|mut v| {
+                strip_ansi_in_value(&mut v);
+                v.to_string()
+            })
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 
@@ -601,7 +608,10 @@ impl ProcessBackend for TerminalProcessBackendAdapter {
         self.backend
             .wait_process(session_id, timeout)
             .await
-            .map(|v| v.to_string())
+            .map(|mut v| {
+                strip_ansi_in_value(&mut v);
+                v.to_string()
+            })
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))
     }
 
@@ -1413,6 +1423,20 @@ mod tests {
         assert!(formatted.contains("out"));
         assert!(formatted.contains("err"));
         assert!(formatted.contains("exit code: 1"));
+    }
+
+    #[test]
+    fn format_command_output_strips_terminal_escapes() {
+        let output = CommandOutput {
+            exit_code: 2,
+            stdout: "\x1b[32m#!/usr/bin/env python3\x1b[0m\nprint(1)".to_string(),
+            stderr: "\x1b[31merror\x1b[0m \x1b]0;title\x07".to_string(),
+        };
+
+        assert_eq!(
+            format_command_output(&output),
+            "#!/usr/bin/env python3\nprint(1)\n--- STDERR ---\nerror \n[exit code: 2]"
+        );
     }
 
     #[test]
