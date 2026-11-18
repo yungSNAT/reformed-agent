@@ -1,0 +1,169 @@
+# Secret scanning with betterleaks, which needs this file named outright:
+#   betterleaks dir . --config .gitleaks.toml
+#   betterleaks git . --config .gitleaks.toml
+#
+# The default betterleaks rules cover credentials. The allowlists below were triaged from a
+# scan of main's tree and history on 18 November 2026, by rule, file and line without reading
+# the values: each flagged line either appears verbatim in upstream Hermes Agent's public
+# history or lies in a test, comment, docstring or documentation example. Each file is allowed
+# only the rules it was found with, so a new file, or another rule in a listed file, still
+# fails. 3 of the files are found only in history: the Unsloth references at their earlier
+# path, and an earlier version of tests/tools/test_terminal_tool.py. Other history findings,
+# in files since removed or changed, are listed by fingerprint in .gitleaksignore.
+
+title = "reformed-agent"
+
+[extend]
+useDefault = true
+
+# betterleaks reports each credential below only beside its companion value: an AWS key ID
+# within 5 lines of its secret key, say, or an Azure client secret near its tenant and client
+# IDs. gitleaks reported each by itself. Clearing the components keeps that, so one committed
+# alone still fails.
+[[rules]]
+id = "algolia-api-key"
+components = []
+
+[[rules]]
+id = "artifactory-api-key"
+components = []
+
+[[rules]]
+id = "artifactory-reference-token"
+components = []
+
+[[rules]]
+id = "aws-access-token"
+components = []
+
+[[rules]]
+id = "azure-ad-client-secret"
+components = []
+
+[[rules]]
+id = "clickhouse-cloud-api-secret-key"
+components = []
+
+[[rules]]
+id = "planetscale-api-token"
+components = []
+
+[[allowlists]]
+description = "curl-auth-header in the files it was triaged in"
+targetRules = ["curl-auth-header"]
+paths = [
+  '''^website/docs/user-guide/features/api-server\.md$''',
+  '''^website/docs/user-guide/messaging/matrix\.md$''',
+  '''^website/docs/user-guide/messaging/mattermost\.md$''',
+  '''^website/docs/user-guide/messaging/open-webui\.md$''',
+]
+
+[[allowlists]]
+description = "discord-client-id in the files it was triaged in"
+targetRules = ["discord-client-id"]
+paths = [
+  '''^website/docs/guides/tips\.md$''',
+  '''^website/docs/user-guide/features/voice-mode\.md$''',
+  '''^website/docs/user-guide/messaging/discord\.md$''',
+  '''^website/docs/user-guide/messaging/index\.md$''',
+]
+
+[[allowlists]]
+description = "gcp-application-default-credentials in the files it was triaged in"
+targetRules = ["gcp-application-default-credentials"]
+paths = [
+  '''^crates/hermes-agent/src/vertex/tests\.rs$''',
+  '''^tests/skills/test_google_workspace_api\.py$''',
+]
+
+[[allowlists]]
+description = "generic-api-key in the files it was triaged in"
+targetRules = ["generic-api-key"]
+paths = [
+  '''^crates/hermes-intelligence/src/redact\.rs$''',
+  '''^crates/hermes-tools/src/credential_guard\.rs$''',
+  '''^crates/hermes-tools/src/tools/browser\.rs$''',
+  '''^optional-skills/mlops/training/unsloth/references/llms-full\.md$''',
+  '''^optional-skills/mlops/training/unsloth/references/llms-txt\.md$''',
+  '''^optional-skills/productivity/telephony/scripts/telephony\.py$''',
+  '''^skills/mlops/training/unsloth/references/llms-full\.md$''',
+  '''^skills/mlops/training/unsloth/references/llms-txt\.md$''',
+  '''^tests/agent/test_copilot_acp_client\.py$''',
+  '''^tests/agent/test_redact\.py$''',
+  '''^tests/hermes_cli/test_debug\.py$''',
+  '''^tests/run_agent/test_init_fallback_on_exhausted_pool\.py$''',
+  '''^tests/skills/test_openclaw_migration_hardening\.py$''',
+  '''^tests/tools/test_homeassistant_tool\.py$''',
+  '''^tests/tools/test_mcp_tool\.py$''',
+  '''^tests/tools/test_terminal_output_transform_hook\.py$''',
+  '''^third_party/rustsec-patches/tungstenite-0\.29\.0/src/handshake/server\.rs$''',
+]
+
+[[allowlists]]
+description = "generic-credential-uri in the files it was triaged in"
+targetRules = ["generic-credential-uri"]
+paths = [
+  '''^crates/hermes-intelligence/src/redact\.rs$''',
+  '''^crates/hermes-tools/src/tools/url_safety\.rs$''',
+  '''^optional-skills/devops/docker-management/SKILL\.md$''',
+  '''^optional-skills/mlops/pytorch-lightning/references/hyperparameter-tuning\.md$''',
+  '''^optional-skills/research/scrapling/SKILL\.md$''',
+  '''^tests/agent/test_redact\.py$''',
+  '''^tests/tools/test_mcp_tool\.py$''',
+  '''^website/docs/user-guide/skills/optional/devops/devops-docker-management\.md$''',
+  '''^website/docs/user-guide/skills/optional/research/research-scrapling\.md$''',
+]
+
+[[allowlists]]
+description = "generic-password in the files it was triaged in"
+targetRules = ["generic-password"]
+paths = [
+  '''^crates/hermes-gateway/src/platforms/email\.rs$''',
+  '''^optional-skills/migration/openclaw-migration/scripts/openclaw_to_hermes\.py$''',
+  '''^optional-skills/security/1password/SKILL\.md$''',
+  '''^optional-skills/security/1password/references/cli-examples\.md$''',
+  '''^plugins/dashboard_auth/basic/__init__\.py$''',
+  '''^tests/gateway/test_bluebubbles\.py$''',
+  '''^tests/gateway/test_email\.py$''',
+  '''^tests/gateway/test_matrix\.py$''',
+  '''^tests/gateway/test_send_multiple_images\.py$''',
+  '''^tests/gateway/test_session\.py$''',
+  '''^tests/hermes_cli/test_backup\.py$''',
+  '''^tests/skills/test_openclaw_migration_hardening\.py$''',
+  '''^tests/tools/test_code_execution\.py$''',
+  '''^tests/tools/test_code_execution_modes\.py$''',
+  '''^tests/tools/test_code_execution_windows_env\.py$''',
+  '''^tests/tools/test_local_env_blocklist\.py$''',
+  '''^tests/tools/test_terminal_tool\.py$''',
+  '''^website/docs/user-guide/messaging/bluebubbles\.md$''',
+  '''^website/docs/user-guide/skills/optional/security/security-1password\.md$''',
+]
+
+[[allowlists]]
+description = "jwt in the files it was triaged in"
+targetRules = ["jwt"]
+paths = [
+  '''^crates/hermes-intelligence/src/redact\.rs$''',
+]
+
+[[allowlists]]
+description = "mattermost-access-token in the files it was triaged in"
+targetRules = ["mattermost-access-token"]
+paths = [
+  '''^website/docs/user-guide/messaging/index\.md$''',
+  '''^website/docs/user-guide/messaging/mattermost\.md$''',
+]
+
+[[allowlists]]
+description = "private-key in the files it was triaged in"
+targetRules = ["private-key"]
+paths = [
+  '''^crates/hermes-tools/src/credential_guard\.rs$''',
+]
+
+[[allowlists]]
+description = "telegram-bot-api-token in the files it was triaged in"
+targetRules = ["telegram-bot-api-token"]
+paths = [
+  '''^crates/hermes-tools/src/rtk_filter\.rs$''',
+]
