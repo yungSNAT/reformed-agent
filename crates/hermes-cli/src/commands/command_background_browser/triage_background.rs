@@ -228,7 +228,7 @@ fn append_triage_learning_feedback(
         .trim()
         .to_string();
     let entry = TriggerTriageLearningEntry {
-        at: chrono::Utc::now().to_rfc3339(),
+        at: hermes_core::time::now_rfc3339(),
         source: source.trim().to_ascii_lowercase(),
         outcome: outcome.trim().to_ascii_lowercase(),
         decision: assessment.decision.as_str().to_string(),
@@ -494,8 +494,8 @@ fn handle_subconscious_command(app: &mut App, args: &[&str]) -> Result<CommandRe
                     "pending".to_string()
                 },
                 job_id: None,
-                created_at: chrono::Utc::now().to_rfc3339(),
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                created_at: hermes_core::time::now_rfc3339(),
+                updated_at: hermes_core::time::now_rfc3339(),
             };
             state.tasks.push(task.clone());
             save_subconscious_state(&state)?;
@@ -530,7 +530,7 @@ fn handle_subconscious_command(app: &mut App, args: &[&str]) -> Result<CommandRe
                     } else {
                         "rejected".to_string()
                     };
-                    task.updated_at = chrono::Utc::now().to_rfc3339();
+                    task.updated_at = hermes_core::time::now_rfc3339();
                     break;
                 }
             }
@@ -590,7 +590,7 @@ fn handle_subconscious_command(app: &mut App, args: &[&str]) -> Result<CommandRe
                 let job = queue_background_job(&task.prompt)?;
                 task.status = "dispatched".to_string();
                 task.job_id = Some(job.id.clone());
-                task.updated_at = chrono::Utc::now().to_rfc3339();
+                task.updated_at = hermes_core::time::now_rfc3339();
                 dispatched += 1;
                 notes.push(format!("{} dispatched id={}", task.id, job.id));
             }
@@ -778,8 +778,8 @@ fn handle_trigger_triage_command(
                             requires_approval: true,
                             status: "pending-approval".to_string(),
                             job_id: None,
-                            created_at: chrono::Utc::now().to_rfc3339(),
-                            updated_at: chrono::Utc::now().to_rfc3339(),
+                            created_at: hermes_core::time::now_rfc3339(),
+                            updated_at: hermes_core::time::now_rfc3339(),
                         });
                         save_subconscious_state(&state)?;
                         let _ = write!(
@@ -818,7 +818,7 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
     }
     let job_id = format!(
         "{}-{}",
-        chrono::Utc::now().format("%Y%m%d%H%M%S"),
+        jiff::Timestamp::now().strftime("%Y%m%d%H%M%S"),
         uuid::Uuid::new_v4().simple()
     );
     let jobs_dir = background_jobs_dir()?;
@@ -830,7 +830,7 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
         "task": task,
         "status": "queued",
         "attempts": 0,
-        "created_at": chrono::Utc::now().to_rfc3339(),
+        "created_at": hermes_core::time::now_rfc3339(),
         "started_at": serde_json::Value::Null,
         "finished_at": serde_json::Value::Null,
         "exit_code": serde_json::Value::Null,
@@ -1133,7 +1133,7 @@ fn terminate_background_job(id_or_prefix: &str) -> Result<String, AgentError> {
     );
     map.insert(
         "finished_at".into(),
-        serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+        serde_json::Value::String(hermes_core::time::now_rfc3339()),
     );
     map.insert(
         "error".into(),
@@ -1170,7 +1170,7 @@ fn claim_queued_background_job(
     if status != "queued" {
         return Ok(None);
     }
-    let started = chrono::Utc::now().to_rfc3339();
+    let started = hermes_core::time::now_rfc3339();
     let attempts = queued
         .get("attempts")
         .and_then(|v| v.as_u64())
@@ -1207,7 +1207,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                 failed.insert("status".into(), serde_json::Value::String("failed".into()));
                 failed.insert(
                     "finished_at".into(),
-                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    serde_json::Value::String(hermes_core::time::now_rfc3339()),
                 );
                 failed.insert(
                     "error".into(),
@@ -1225,7 +1225,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                 failed.insert("status".into(), serde_json::Value::String("failed".into()));
                 failed.insert(
                     "finished_at".into(),
-                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    serde_json::Value::String(hermes_core::time::now_rfc3339()),
                 );
                 failed.insert(
                     "error".into(),
@@ -1255,7 +1255,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                         .and_then(|v| v.as_str())
                         .unwrap_or(""),
                     started,
-                    chrono::Utc::now().to_rfc3339(),
+                    hermes_core::time::now_rfc3339(),
                     exit,
                     stdout,
                     stderr
@@ -1273,7 +1273,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                 );
                 done.insert(
                     "finished_at".into(),
-                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    serde_json::Value::String(hermes_core::time::now_rfc3339()),
                 );
                 done.insert("exit_code".into(), serde_json::json!(exit));
                 done.insert("pid".into(), serde_json::Value::Null);
@@ -1284,7 +1284,7 @@ fn schedule_background_job_execution(status_path: PathBuf, log_path: PathBuf, ta
                 failed.insert("status".into(), serde_json::Value::String("failed".into()));
                 failed.insert(
                     "finished_at".into(),
-                    serde_json::Value::String(chrono::Utc::now().to_rfc3339()),
+                    serde_json::Value::String(hermes_core::time::now_rfc3339()),
                 );
                 failed.insert(
                     "error".into(),

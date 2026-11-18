@@ -25,8 +25,8 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use chrono::{DateTime, Utc};
 use hermes_core::{AgentError, LlmProvider, Message, ToolSchema};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::time::timeout;
@@ -72,9 +72,14 @@ pub struct SubAgentLineage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub parent_budget_remaining_usd: Option<f64>,
     pub status: SubAgentStatus,
-    pub started_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ended_at: Option<DateTime<Utc>>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub started_at: Timestamp,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub ended_at: Option<Timestamp>,
     #[serde(default)]
     pub total_turns: u32,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -230,7 +235,7 @@ impl SubAgentOrchestrator {
     }
 
     async fn execute_inner(self: Arc<Self>, req: SubAgentRequest, sub_agent_id: String) -> String {
-        let started_at = Utc::now();
+        let started_at = Timestamp::now();
 
         let mut lineage = SubAgentLineage {
             sub_agent_id: sub_agent_id.clone(),
@@ -270,7 +275,7 @@ impl SubAgentOrchestrator {
                     lineage.completion_tokens = Some(usage.completion_tokens);
                     lineage.estimated_cost_usd = usage.estimated_cost;
                 }
-                lineage.ended_at = Some(Utc::now());
+                lineage.ended_at = Some(Timestamp::now());
                 self.persist_lineage(&lineage).await;
 
                 let final_text = extract_final_assistant_text(&result.messages);
@@ -301,7 +306,7 @@ impl SubAgentOrchestrator {
                 };
                 lineage.status = status;
                 lineage.error = Some(e.to_string());
-                lineage.ended_at = Some(Utc::now());
+                lineage.ended_at = Some(Timestamp::now());
                 self.persist_lineage(&lineage).await;
 
                 json!({

@@ -12,8 +12,8 @@ use std::{
     sync::{Mutex, OnceLock},
 };
 
-use chrono::{Duration as ChronoDuration, Utc};
 use hermes_core::{AgentError, AgentResult, Message, MessageRole};
+use jiff::{SignedDuration, Timestamp};
 
 // ---------------------------------------------------------------------------
 // SessionPersistence
@@ -440,7 +440,7 @@ impl SessionPersistence {
     }
 
     fn backup_db_file(db_path: &Path) -> Option<PathBuf> {
-        let stamp = Utc::now().format("%Y%m%d_%H%M%S");
+        let stamp = jiff::Timestamp::now().strftime("%Y%m%d_%H%M%S");
         let backup_path = db_path.with_file_name(format!(
             "{}.malformed-backup-{stamp}",
             db_path.file_name()?.to_string_lossy()
@@ -864,7 +864,13 @@ impl SessionPersistence {
     /// Returns the number of deleted sessions.
     pub fn prune_sessions(&self, older_than_days: u32) -> Result<u64, AgentError> {
         self.ensure_db()?;
-        let cutoff = (Utc::now() - ChronoDuration::days(older_than_days as i64)).to_rfc3339();
+        // No session predates the earliest instant, so a longer window stops
+        // there instead of overflowing.
+        let cutoff = hermes_core::time::rfc3339(
+            Timestamp::now()
+                .checked_sub(SignedDuration::from_hours(24 * i64::from(older_than_days)))
+                .unwrap_or(Timestamp::MIN),
+        );
         let conn = rusqlite::Connection::open(&self.db_path)
             .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
 
@@ -1025,7 +1031,7 @@ impl SessionPersistence {
             error: None,
         };
 
-        let now = Utc::now().timestamp() as f64;
+        let now = jiff::Timestamp::now().as_second() as f64;
         let min_seconds = (min_interval_hours as f64) * 3600.0;
 
         match self.get_meta("last_auto_prune") {

@@ -83,8 +83,8 @@ struct OAuthStoreCredential {
     token_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<String>,
-    #[serde(default)]
-    expires_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "hermes_core::time::serde_utc::option")]
+    expires_at: Option<Timestamp>,
 }
 
 const MEMORY_GUIDANCE: &str = "You have persistent memory across sessions. Save durable facts using the memory tool: user preferences, environment details, tool quirks, and stable conventions. Memory is injected into every turn, so keep it compact and focused on facts that will still matter later. Prioritize what reduces future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to memory.";
@@ -753,3 +753,25 @@ impl Default for AgentConfig {
     }
 }
 
+#[cfg(test)]
+mod oauth_store_credential_tests {
+    use super::*;
+
+    #[test]
+    fn oauth_store_credential_keeps_its_timestamp_form() {
+        let credential: OAuthStoreCredential = serde_json::from_str(
+            r#"{"access_token":"a","expires_at":"2026-03-08T19:30:15.25+10:00"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&credential).unwrap(),
+            r#"{"access_token":"a","expires_at":"2026-03-08T09:30:15.250Z"}"#
+        );
+        let credential: OAuthStoreCredential =
+            serde_json::from_str(r#"{"access_token":"a"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&credential).unwrap(),
+            r#"{"access_token":"a","expires_at":null}"#
+        );
+    }
+}

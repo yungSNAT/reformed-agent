@@ -71,7 +71,7 @@ impl Runner {
         A: BenchmarkAdapter + Send + Sync + 'static,
         R: TaskRollout + Send + Sync + 'static,
     {
-        let started_at = chrono::Utc::now();
+        let started_at = jiff::Timestamp::now();
         let run_id = Uuid::new_v4().to_string();
         let meta = adapter.metadata();
 
@@ -125,7 +125,7 @@ impl Runner {
         }
 
         let metrics = aggregate_metrics(&task_results);
-        let finished_at = chrono::Utc::now();
+        let finished_at = jiff::Timestamp::now();
 
         Ok(RunRecord {
             run_id,

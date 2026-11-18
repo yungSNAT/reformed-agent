@@ -11,8 +11,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use indexmap::IndexMap;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
@@ -211,8 +211,12 @@ pub struct ToolLoopEvent {
     pub no_action: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub step_text: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timestamp: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub timestamp: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -343,8 +347,10 @@ pub struct AutonomyBoard {
     pub instructions: Vec<String>,
     #[serde(default)]
     pub cards: Vec<AutonomyCard>,
-    pub created_at: DateTime<Utc>,
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub updated_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -373,7 +379,8 @@ pub struct AutonomyCard {
 pub struct CardComment {
     pub author: String,
     pub body: String,
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -836,7 +843,7 @@ fn record_loop_event(state: &UltraAutonomyState, params: &Value) -> Result<Value
         failed: bool_param(params, "failed", false),
         no_action: bool_param(params, "no_action", false),
         step_text: optional_str(params, "step_text").map(str::to_string),
-        timestamp: Some(Utc::now()),
+        timestamp: Some(Timestamp::now()),
     });
     if events.len() > LOOP_ABSOLUTE_MAX {
         let drain = events.len() - LOOP_ABSOLUTE_MAX;
@@ -867,9 +874,9 @@ fn evaluate_loop_action(state: &UltraAutonomyState, params: &Value) -> Result<Va
 fn create_board(state: &UltraAutonomyState, params: &Value) -> Result<Value, ToolError> {
     let id = optional_str(params, "board_id")
         .map(str::to_string)
-        .unwrap_or_else(|| format!("board-{}", Utc::now().timestamp_millis()));
+        .unwrap_or_else(|| format!("board-{}", jiff::Timestamp::now().as_millisecond()));
     let title = optional_str(params, "title").unwrap_or("Hermes autonomy board");
-    let now = Utc::now();
+    let now = Timestamp::now();
     let board = AutonomyBoard {
         id: id.clone(),
         title: title.to_string(),
@@ -920,7 +927,7 @@ fn add_board_card(state: &UltraAutonomyState, params: &Value) -> Result<Value, T
         attachments: string_array(params.get("attachments")),
     };
     board.cards.push(card);
-    board.updated_at = Utc::now();
+    board.updated_at = Timestamp::now();
     save_board(state, &board)?;
     let plan = plan_board_execution(&board);
     Ok(
@@ -950,10 +957,10 @@ fn update_board_card(state: &UltraAutonomyState, params: &Value) -> Result<Value
                 .unwrap_or("hermes")
                 .to_string(),
             body: comment.to_string(),
-            created_at: Utc::now(),
+            created_at: Timestamp::now(),
         });
     }
-    board.updated_at = Utc::now();
+    board.updated_at = Timestamp::now();
     save_board(state, &board)?;
     let plan = plan_board_execution(&board);
     Ok(
@@ -971,8 +978,8 @@ fn objective_bridge_action(state: &UltraAutonomyState, params: &Value) -> Result
     let objective = required_str(params, "objective")?;
     let board_id = optional_str(params, "board_id")
         .map(str::to_string)
-        .unwrap_or_else(|| format!("objective-{}", Utc::now().timestamp_millis()));
-    let now = Utc::now();
+        .unwrap_or_else(|| format!("objective-{}", jiff::Timestamp::now().as_millisecond()));
+    let now = Timestamp::now();
     let titles = [
         "Confirm objective and constraints",
         "Fetch ContextLattice scoped pack",
@@ -1164,7 +1171,7 @@ fn event_catalog() -> Vec<Value> {
 fn board_events(board_id: &str, event: &str) -> Vec<AutonomyEvent> {
     vec![AutonomyEvent {
         event: event.to_string(),
-        payload: json!({"board_id": board_id, "ts": Utc::now().to_rfc3339()}),
+        payload: json!({"board_id": board_id, "ts": hermes_core::time::now_rfc3339()}),
     }]
 }
 
@@ -1356,7 +1363,7 @@ mod tests {
 
     #[test]
     fn board_plan_respects_dependencies_feedback_and_budget() {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let board = AutonomyBoard {
             id: "b".to_string(),
             title: "board".to_string(),

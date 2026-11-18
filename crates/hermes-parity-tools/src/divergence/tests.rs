@@ -47,8 +47,8 @@ fn paths(items: &[&str]) -> BTreeSet<String> {
     items.iter().map(|p| p.to_string()).collect()
 }
 
-fn today() -> NaiveDate {
-    NaiveDate::from_ymd_opt(2026, 11, 17).unwrap()
+fn today() -> Date {
+    jiff::civil::date(2026, 11, 17)
 }
 
 #[test]

@@ -5,7 +5,8 @@
 use std::collections::HashMap;
 use std::sync::Mutex;
 
-use chrono::{Duration, NaiveDate, Utc};
+use jiff::civil::Date;
+use jiff::{Timestamp, ToSpan};
 
 use crate::usage::{ModelUsage, UsageSummary, UsageTracker};
 
@@ -32,15 +33,15 @@ impl Insights {
     }
 
     /// Get a usage summary for a specific day.
-    pub fn daily_summary(&self, date: NaiveDate) -> UsageSummary {
+    pub fn daily_summary(&self, date: Date) -> UsageSummary {
         let tracker = self.usage_tracker.lock().unwrap();
         tracker.get_usage_summary(date)
     }
 
     /// Get a usage summary for the week starting on `week_start` (Monday).
-    pub fn weekly_summary(&self, week_start: NaiveDate) -> UsageSummary {
+    pub fn weekly_summary(&self, week_start: Date) -> UsageSummary {
         let tracker = self.usage_tracker.lock().unwrap();
-        let week_end = week_start + Duration::days(6);
+        let week_end = week_start + 6.days();
         tracker.get_usage_summary_range(week_start, week_end)
     }
 
@@ -68,13 +69,13 @@ impl Insights {
     }
 
     /// Get daily cost trend over the last `days` days.
-    pub fn cost_trend(&self, days: u32) -> Vec<(NaiveDate, f64)> {
+    pub fn cost_trend(&self, days: u32) -> Vec<(Date, f64)> {
         let tracker = self.usage_tracker.lock().unwrap();
-        let today = Utc::now().date_naive();
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
 
         let mut trend = Vec::new();
         for i in (0..days).rev() {
-            let date = today - Duration::days(i as i64);
+            let date = today - i64::from(i).days();
             let summary = tracker.get_usage_summary(date);
             trend.push((date, summary.total_cost));
         }
@@ -82,13 +83,13 @@ impl Insights {
     }
 
     /// Get daily total token trend over the last `days` days.
-    pub fn token_trend(&self, days: u32) -> Vec<(NaiveDate, u64)> {
+    pub fn token_trend(&self, days: u32) -> Vec<(Date, u64)> {
         let tracker = self.usage_tracker.lock().unwrap();
-        let today = Utc::now().date_naive();
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
 
         let mut trend = Vec::new();
         for i in (0..days).rev() {
-            let date = today - Duration::days(i as i64);
+            let date = today - i64::from(i).days();
             let summary = tracker.get_usage_summary(date);
             trend.push((date, summary.total_tokens));
         }
@@ -111,7 +112,6 @@ impl Insights {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Datelike;
 
     #[test]
     fn test_daily_summary() {
@@ -119,7 +119,7 @@ mod tests {
         insights.track("gpt-4o", 1000, 500);
         insights.track("gpt-4o", 2000, 1000);
 
-        let today = Utc::now().date_naive();
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
         let summary = insights.daily_summary(today);
         assert_eq!(summary.total_tokens, 4500);
         assert!(summary.total_cost > 0.0);
@@ -145,7 +145,7 @@ mod tests {
         let trend = insights.cost_trend(7);
         assert_eq!(trend.len(), 7);
         // Today should have a cost > 0
-        let today = Utc::now().date_naive();
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
         let today_entry = trend.iter().find(|(d, _)| *d == today);
         assert!(today_entry.map(|(_, c)| *c > 0.0).unwrap_or(false));
     }
@@ -164,8 +164,8 @@ mod tests {
         let insights = Insights::with_default_pricing();
         insights.track("gpt-4o", 1000, 500);
 
-        let today = Utc::now().date_naive();
-        let week_start = today - Duration::days(today.weekday().num_days_from_monday() as i64);
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
+        let week_start = today - i64::from(today.weekday().to_monday_zero_offset()).days();
         let summary = insights.weekly_summary(week_start);
         assert!(summary.total_tokens > 0);
     }

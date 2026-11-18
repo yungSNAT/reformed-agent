@@ -15,7 +15,7 @@ tracing = { workspace = true }
 directories = { workspace = true }
 url = { workspace = true }
 indexmap = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 tokio = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

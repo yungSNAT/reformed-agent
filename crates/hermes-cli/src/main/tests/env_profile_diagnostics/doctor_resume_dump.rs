@@ -368,10 +368,10 @@ fn load_resume_payload_follows_compression_tip_snapshot() {
             None,
         )
         .unwrap();
-    let base = chrono::Utc::now() - chrono::Duration::hours(1);
-    let root_created = base.to_rfc3339();
-    let root_ended = (base + chrono::Duration::seconds(10)).to_rfc3339();
-    let cont_created = (base + chrono::Duration::seconds(20)).to_rfc3339();
+    let base = jiff::Timestamp::now() - jiff::SignedDuration::from_hours(1);
+    let root_created = hermes_core::time::rfc3339(base);
+    let root_ended = hermes_core::time::rfc3339(base + jiff::SignedDuration::from_secs(10));
+    let cont_created = hermes_core::time::rfc3339(base + jiff::SignedDuration::from_secs(20));
     assert!(persistence
         .update_session_lineage(
             "root",

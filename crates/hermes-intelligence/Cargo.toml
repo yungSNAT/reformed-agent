@@ -17,7 +17,7 @@ async-trait = { workspace = true }
 reqwest = { workspace = true }
 minijinja = { workspace = true }
 regex = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 futures = { workspace = true }

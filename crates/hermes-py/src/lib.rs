@@ -305,20 +305,20 @@ fn is_printable(c: char) -> bool {
 
 /// `datetime.now(timezone.utc).isoformat()`.
 pub fn utc_isoformat() -> String {
-    isoformat(chrono::Utc::now())
+    isoformat(jiff::Timestamp::now())
 }
 
-pub fn isoformat(now: chrono::DateTime<chrono::Utc>) -> String {
-    if now.timestamp_subsec_micros() == 0 {
-        now.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
+pub fn isoformat(now: jiff::Timestamp) -> String {
+    if now.subsec_microsecond() == 0 {
+        now.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string()
     } else {
-        now.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
+        now.strftime("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
     }
 }
 
 /// `datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")`.
 pub fn utc_stamp() -> String {
-    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string()
 }
 
 /// `pathlib.Path(raw).expanduser()`: `~` and `~user` become a home

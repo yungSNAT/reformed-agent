@@ -128,10 +128,12 @@ pub struct StreamHandle {
     pub buffered_since_edit: usize,
 
     /// When this stream was created.
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: jiff::Timestamp,
 
     /// When the last edit was performed.
-    pub last_edit_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[serde(default, with = "hermes_core::time::serde_utc::option")]
+    pub last_edit_at: Option<jiff::Timestamp>,
 
     /// Whether edit operations are still supported for this stream.
     #[serde(default = "default_true")]
@@ -192,7 +194,7 @@ impl StreamHandle {
             message_id: None,
             content: String::new(),
             buffered_since_edit: 0,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
             last_edit_at: None,
             edit_supported: true,
             fallback_final_send: false,
@@ -253,9 +255,9 @@ impl StreamManager {
         handle.content.push_str(new_content);
         handle.buffered_since_edit += new_content.len();
 
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let should_flush = if let Some(last_edit) = handle.last_edit_at {
-            let elapsed_ms = (now - last_edit).num_milliseconds() as u64;
+            let elapsed_ms = now.duration_since(last_edit).as_millis() as u64;
             elapsed_ms >= self.config.edit_interval_ms
                 || handle.buffered_since_edit >= self.config.buffer_threshold
         } else {

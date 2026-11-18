@@ -3,7 +3,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use chrono::{Duration as ChronoDuration, SecondsFormat, Utc};
 use hermes_config::{load_config, GatewayConfig, PlatformConfig};
 use hermes_core::AgentError;
 use hermes_tools::{
@@ -12,6 +11,7 @@ use hermes_tools::{
     MicrosoftGraphTeamsBackend, MicrosoftGraphTokenProvider, TeamsGraphBackend,
     TeamsMeetingPipeline, TeamsPipelineConfig, TeamsPipelineError, TeamsPipelineStore,
 };
+use jiff::{SignedDuration, Timestamp};
 use serde_json::{json, Map, Value};
 
 #[derive(Debug, Clone, Default)]
@@ -233,9 +233,7 @@ async fn cmd_subscribe(options: &TeamsPipelineCliOptions) -> Result<(), AgentErr
         .expiration
         .clone()
         .filter(|s| !s.trim().is_empty())
-        .unwrap_or_else(|| {
-            (Utc::now() + ChronoDuration::hours(24)).to_rfc3339_opts(SecondsFormat::Secs, true)
-        });
+        .unwrap_or_else(|| format!("{:.0}", Timestamp::now() + SignedDuration::from_hours(24)));
 
     let mut body = Map::new();
     body.insert("changeType".into(), Value::String(change_type.into()));

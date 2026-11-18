@@ -243,7 +243,7 @@ async fn ensure_openai_oauth_credential(
         .tokens
         .expires_in
         .filter(|secs| *secs > 0)
-        .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+        .map(hermes_core::time::now_plus_secs);
     let credential = OAuthCredential {
         provider: provider.to_string(),
         access_token: imported.state.tokens.access_token.clone(),
@@ -454,7 +454,7 @@ async fn verify_single_oauth_provider(
         oauth_state_present: auth_state_present,
         expires_at: stored_credential
             .as_ref()
-            .and_then(|c| c.expires_at.as_ref().map(|dt| dt.to_rfc3339())),
+            .and_then(|c| c.expires_at.map(hermes_core::time::rfc3339)),
         detail: None,
     };
 
@@ -500,7 +500,7 @@ async fn verify_single_oauth_provider(
             }
             Err(err) => {
                 if let Some(credential) = stored_credential.as_ref() {
-                    let expires_at = credential.expires_at.as_ref().map(|dt| dt.to_rfc3339());
+                    let expires_at = credential.expires_at.map(hermes_core::time::rfc3339);
                     if let Ok(state) = nous_auth_state_from_runtime_token(
                         &credential.access_token,
                         credential.refresh_token.clone(),
@@ -582,8 +582,8 @@ async fn verify_single_oauth_provider(
                 result.source = creds.source;
                 result.expires_at = creds
                     .expires_at_ms
-                    .and_then(chrono::DateTime::from_timestamp_millis)
-                    .map(|dt| dt.to_rfc3339());
+                    .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
+                    .map(hermes_core::time::rfc3339);
                 result.credential_present = true;
                 return Ok(result);
             }
@@ -613,8 +613,8 @@ async fn verify_single_oauth_provider(
                 result.source = creds.source;
                 result.expires_at = creds
                     .expires_at_ms
-                    .and_then(chrono::DateTime::from_timestamp_millis)
-                    .map(|dt| dt.to_rfc3339());
+                    .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
+                    .map(hermes_core::time::rfc3339);
                 result.credential_present = true;
                 return Ok(result);
             }
@@ -649,8 +649,8 @@ async fn verify_single_oauth_provider(
                     .unwrap_or_else(|| "anthropic_oauth".to_string());
                 result.expires_at = status
                     .expires_at_ms
-                    .and_then(chrono::DateTime::from_timestamp_millis)
-                    .map(|dt| dt.to_rfc3339());
+                    .and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
+                    .map(hermes_core::time::rfc3339);
                 result.credential_present = true;
                 return Ok(result);
             }
@@ -670,7 +670,7 @@ async fn verify_single_oauth_provider(
                 {
                     Ok(refreshed) => {
                         manager.save_credential(refreshed.clone()).await?;
-                        let expires_at_ms = refreshed.expires_at.map(|dt| dt.timestamp_millis());
+                        let expires_at_ms = refreshed.expires_at.map(|dt| dt.as_millisecond());
                         let auth_state = serde_json::json!({
                             "access_token": refreshed.access_token,
                             "refresh_token": refreshed.refresh_token,
@@ -680,7 +680,7 @@ async fn verify_single_oauth_provider(
                         let _ = save_provider_auth_state("anthropic", auth_state)?;
                         result.outcome = AuthVerifyOutcome::ValidRefreshed;
                         result.source = "hermes_pkce_refresh".to_string();
-                        result.expires_at = refreshed.expires_at.map(|dt| dt.to_rfc3339());
+                        result.expires_at = refreshed.expires_at.map(hermes_core::time::rfc3339);
                         result.credential_present = true;
                         return Ok(result);
                     }
@@ -692,11 +692,12 @@ async fn verify_single_oauth_provider(
                 }
             }
             if let Some(expires_ms) = status.expires_at_ms {
-                let expired = chrono::Utc::now().timestamp_millis() >= expires_ms;
+                let expired = jiff::Timestamp::now().as_millisecond() >= expires_ms;
                 if expired {
                     result.outcome = AuthVerifyOutcome::Expired;
-                    result.expires_at = chrono::DateTime::from_timestamp_millis(expires_ms)
-                        .map(|dt| dt.to_rfc3339());
+                    result.expires_at = jiff::Timestamp::from_millisecond(expires_ms)
+                        .ok()
+                        .map(hermes_core::time::rfc3339);
                 } else {
                     result.outcome = AuthVerifyOutcome::Unverified;
                 }
@@ -716,7 +717,7 @@ async fn verify_single_oauth_provider(
             if let Some(credential) = stored_credential {
                 if !credential.is_expired(60) && !credential.access_token.trim().is_empty() {
                     result.outcome = AuthVerifyOutcome::Valid;
-                    result.expires_at = credential.expires_at.map(|dt| dt.to_rfc3339());
+                    result.expires_at = credential.expires_at.map(hermes_core::time::rfc3339);
                     result.credential_present = true;
                     return Ok(result);
                 }
@@ -731,7 +732,7 @@ async fn verify_single_oauth_provider(
                             manager.save_credential(refreshed.clone()).await?;
                             result.outcome = AuthVerifyOutcome::ValidRefreshed;
                             result.source = "token_store_refresh".to_string();
-                            result.expires_at = refreshed.expires_at.map(|dt| dt.to_rfc3339());
+                            result.expires_at = refreshed.expires_at.map(hermes_core::time::rfc3339);
                             result.credential_present = true;
                             return Ok(result);
                         }
@@ -743,7 +744,7 @@ async fn verify_single_oauth_provider(
                     }
                 }
                 result.outcome = AuthVerifyOutcome::Expired;
-                result.expires_at = credential.expires_at.map(|dt| dt.to_rfc3339());
+                result.expires_at = credential.expires_at.map(hermes_core::time::rfc3339);
                 return Ok(result);
             }
             if env_present {
@@ -769,7 +770,7 @@ async fn verify_single_oauth_provider(
         if let Some(cred) = stored_credential {
             if cred.is_expired(60) {
                 result.outcome = AuthVerifyOutcome::Expired;
-                result.expires_at = cred.expires_at.map(|dt| dt.to_rfc3339());
+                result.expires_at = cred.expires_at.map(hermes_core::time::rfc3339);
             } else {
                 result.outcome = AuthVerifyOutcome::Valid;
             }

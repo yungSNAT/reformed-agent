@@ -4,7 +4,7 @@
 //! `format_gateway` line-for-line. The output is plain ASCII / unicode and
 //! contains no colour codes — callers can wrap or restyle as they wish.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 
 use crate::usage_pricing::format_duration_compact;
 
@@ -320,9 +320,9 @@ pub fn format_gateway(report: &InsightsReport) -> String {
 // ---------------------------------------------------------------------------
 
 fn format_full_date(ts: f64) -> String {
-    DateTime::<Utc>::from_timestamp(ts as i64, 0)
-        .map(|dt| dt.format("%b %d, %Y").to_string())
-        .unwrap_or_else(|| "?".into())
+    Timestamp::from_second(ts as i64)
+        .map(|at| at.strftime("%b %d, %Y").to_string())
+        .unwrap_or_else(|_| "?".into())
 }
 
 fn format_tool_row(t: &ToolBreakdownRow) -> String {

@@ -25,7 +25,7 @@ fn append_transcript_message_lines(
         state
             .message_time_labels
             .entry(fp)
-            .or_insert_with(|| Local::now().format("%H:%M:%S").to_string())
+            .or_insert_with(|| jiff::Zoned::now().strftime("%H:%M:%S").to_string())
             .clone()
     } else {
         String::new()

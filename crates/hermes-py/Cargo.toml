@@ -8,7 +8,7 @@ description = "Python behaviour the parity tools and the CLI's /review reproduce
 publish = false
 
 [dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }
 finl_unicode = { version = "1.4", default-features = false, features = ["categories"] }
 
 [dev-dependencies]

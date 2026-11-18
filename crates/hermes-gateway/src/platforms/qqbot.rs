@@ -120,13 +120,13 @@ impl QqBotAdapter {
             serde_json::json!({
                 "msg_type": 2,
                 "markdown": { "content": text },
-                "msg_seq": (chrono::Utc::now().timestamp_millis() % 65535)
+                "msg_seq": (jiff::Timestamp::now().as_millisecond() % 65535)
             })
         } else {
             serde_json::json!({
                 "msg_type": 0,
                 "content": text,
-                "msg_seq": (chrono::Utc::now().timestamp_millis() % 65535)
+                "msg_seq": (jiff::Timestamp::now().as_millisecond() % 65535)
             })
         };
         let resp = self
@@ -263,7 +263,7 @@ impl QqBotAdapter {
         let mut body = serde_json::json!({
             "msg_type": QQ_MSG_TYPE_MEDIA,
             "media": { "file_info": file_info },
-            "msg_seq": (chrono::Utc::now().timestamp_millis() % 65535)
+            "msg_seq": (jiff::Timestamp::now().as_millisecond() % 65535)
         });
         if let Some(c) = caption.map(str::trim).filter(|s| !s.is_empty()) {
             body["content"] = serde_json::Value::String(c.to_string());

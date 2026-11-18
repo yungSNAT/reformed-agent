@@ -343,7 +343,7 @@ async fn run_cron(
             );
         }
         "tick" => {
-            let now = chrono::Utc::now();
+            let now = jiff::Timestamp::now();
             let due: Vec<String> = sched
                 .list_jobs()
                 .await
@@ -582,7 +582,7 @@ async fn run_webhook(
                 prompt: prompt.unwrap_or_default(),
                 skills: skills_vec,
                 deliver: deliver.clone(),
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: hermes_core::time::now_rfc3339(),
                 deliver_extra,
                 deliver_only,
             };
@@ -611,7 +611,7 @@ async fn run_webhook(
             let rec = hermes_cli::webhook_delivery::WebhookRecord {
                 id: uuid::Uuid::new_v4().to_string(),
                 url: url.clone(),
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: hermes_core::time::now_rfc3339(),
             };
             store.webhooks.push(rec.clone());
             hermes_cli::webhook_delivery::save_webhook_store(&path, &store)?;
@@ -918,7 +918,7 @@ fn run_dump(cli: Cli, session: Option<String>, output: Option<String>) -> Result
     let out = output.map(PathBuf::from).unwrap_or_else(|| {
         home.join("sessions").join("saved").join(format!(
             "hermes_conversation_{}.json",
-            chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ")
+            jiff::Timestamp::now().strftime("%Y%m%dT%H%M%S%.3fZ")
         ))
     });
     if let Some(parent) = out.parent().filter(|p| !p.as_os_str().is_empty()) {
@@ -942,7 +942,7 @@ fn run_dump(cli: Cli, session: Option<String>, output: Option<String>) -> Result
         "personality": payload.personality,
         "system_prompt": system_prompt,
         "session_start": payload.session_start,
-        "exported_at": chrono::Utc::now().to_rfc3339(),
+        "exported_at": hermes_core::time::now_rfc3339(),
         "messages": payload.messages,
     });
     std::fs::write(

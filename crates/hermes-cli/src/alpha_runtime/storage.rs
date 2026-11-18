@@ -1,5 +1,5 @@
 fn now_rfc3339() -> String {
-    Utc::now().to_rfc3339()
+    hermes_core::time::now_rfc3339()
 }
 
 pub fn alpha_state_dir() -> PathBuf {
