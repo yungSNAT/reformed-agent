@@ -574,7 +574,8 @@ async fn handle_route_payload(
     if secret.trim() != INSECURE_NO_AUTH
         && !WebhookAdapter::validate_signature(headers, body_bytes, secret)
     {
-        write_json_response(writer, 403, r#"{"error":"bad signature"}"#).await?;
+        // The unknown-route reply, so a probe cannot tell which route names exist.
+        write_empty_response(writer, 404).await?;
         return Ok(());
     }
 
