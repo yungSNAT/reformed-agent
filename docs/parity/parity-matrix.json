@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-18T23:21:09.081305+00:00",
+  "generated_at_utc": "2026-11-18T23:28:15.734229+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "8c5198a99ca7f30c39fed0156d1f5ab67760f11b",
+    "local_sha": "c58dfe360204e675ed70ddb99f41e8bffa008c12",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1614,
+    "commits_ahead": 1616,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1344,
+    "local_patch_unique": 1346,
     "files_only_upstream": 24117,
     "files_only_local": 2021,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
     "tree_files_changed": 27375,
     "tree_insertions": 4528863,
-    "tree_deletions": 931031
+    "tree_deletions": 931554
   },
   "top_upstream_only": [
     {
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1344,
+    "local_patch_unique": 1346,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
@@ -936,7 +936,7 @@
     ],
     "local_patch_equivalent_sample": [],
     "intentional_divergence_items": 23,
-    "intentional_divergence_covered_files": 2802
+    "intentional_divergence_covered_files": 2805
   },
   "intentional_divergence": [
     {
@@ -1219,7 +1219,7 @@
       "status": "approved",
       "workstream": "WS4",
       "summary": "Upstream moved these skills after July 2026; this tree keeps each at its earlier path.",
-      "matched_files": 144,
+      "matched_files": 147,
       "matched_sample": [
         "optional-skills/autonomous-ai-agents/opencode/SKILL.md",
         "optional-skills/creative/ascii-art/SKILL.md",

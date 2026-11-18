@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-18T23:21:09.081305+00:00`
+Generated: `2026-11-18T23:28:15.734229+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`8c5198a99ca7f30c39fed0156d1f5ab67760f11b`)
+- Local ref: `HEAD` (`c58dfe360204e675ed70ddb99f41e8bffa008c12`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-18T23:21:09.081305+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1614 |
+| Commits ahead local (`local` ancestry only) | 1616 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1344 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1346 |
 | Files only in upstream tree | 24117 |
 | Files only in local tree | 2021 |
 | Shared files identical content | 565 |
 | Shared files different content | 1508 |
 | Total files changed (`local` vs `upstream`) | 27375 |
 | Insertions (`local` vs `upstream`) | 4528863 |
-| Deletions (`local` vs `upstream`) | 931031 |
+| Deletions (`local` vs `upstream`) | 931554 |
 
 ## Top 40 upstream-only buckets
 
@@ -176,8 +176,8 @@ Generated: `2026-11-18T23:21:09.081305+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1344`
-- Intentional divergence tracked items: `23` (covered files: `2802`)
+- Local unique by patch-id: `1346`
+- Intentional divergence tracked items: `23` (covered files: `2805`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
 ## Intentional Divergence Registry
@@ -202,7 +202,7 @@ Generated: `2026-11-18T23:21:09.081305+00:00`
 | `rust-no-memory-query-rewrite` | temporary | WS3 | 1 | Upstream's model-written memory retrieval query is not ported. |
 | `rust-no-gateway-profile-routing` | temporary | WS3 | 0 | Upstream's per-source profile routing for one gateway is not ported, so its design note is not carried. |
 | `rust-no-nous-billing-or-desktop-app` | approved | WS3 | 1 | Nous Portal billing and the Hermes desktop app are upstream products this port does not ship. |
-| `skills-kept-at-earlier-paths` | approved | WS4 | 144 | Upstream moved these skills after July 2026; this tree keeps each at its earlier path. |
+| `skills-kept-at-earlier-paths` | approved | WS4 | 147 | Upstream moved these skills after July 2026; this tree keeps each at its earlier path. |
 | `skills-with-scripts-not-imported` | temporary | WS4 | 235 | New upstream skills that carry scripts are not imported yet. |
 | `skill-files-added-upstream-not-merged` | temporary | WS4 | 40 | Files upstream added to skills this tree already carries are not merged. |
 | `python-plugins-not-ported` | temporary | WS3 | 208 | Upstream Python plugins and plugin files added after July 2026 are not ported. |
