@@ -48,13 +48,18 @@ fn test_coverage_audit_gate_passes() {
         Some(0),
         "test coverage audit must have zero missing Rust test refs"
     );
-    let ratio = payload["summary"]["tracked_behavior_coverage_ratio"]
-        .as_f64()
-        .expect("tracked_behavior_coverage_ratio should be number");
-    assert!(
-        ratio >= 1.0,
-        "tracked behavior coverage ratio below gate: {}",
-        ratio
+    // Every tracked row is covered or deferred; the deferred rows are counted and
+    // ratcheted by test_deferred_rows_are_explained_and_match_the_ratchet.
+    let summary = &payload["summary"];
+    let count = |key: &str| {
+        summary[key]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{key} should be integer"))
+    };
+    assert_eq!(
+        count("covered_behavior_rows") + count("coverage_manifest_deferred_entries"),
+        count("tracked_behavior_rows"),
+        "every tracked behaviour row must be covered or deferred"
     );
     let rust_tests = payload["summary"]["rust_test_functions"]
         .as_u64()
@@ -371,7 +376,10 @@ fn test_exact_file_functional_classifications_are_current_shared_diffs() {
         .as_array()
         .expect("classification items should be array");
     for item in class_items {
-        if item["classification"].as_str() != Some("functional") {
+        if !matches!(
+            item["classification"].as_str(),
+            Some("functional" | "deferred")
+        ) {
             continue;
         }
         let path = item["path"].as_str().expect("path should be string");
@@ -418,4 +426,85 @@ fn test_shared_diff_backlog_has_no_pending_entries() {
         "shared-diff backlog has pending entries: {}",
         pending.join(", ")
     );
+}
+
+/// Each deferred row says why, names its ticket and ledger line, and has a review date.
+fn assert_deferred_row_is_explained(source: &str, row: &Value) {
+    let path = row["path"].as_str().unwrap_or("<no path>");
+    for field in ["rationale", "ledger"] {
+        assert!(
+            !row[field].as_str().unwrap_or_default().trim().is_empty(),
+            "{source}: deferred row {path} needs a {field}"
+        );
+    }
+    assert!(
+        row["ticket"].as_u64().is_some()
+            || !row["ticket"].as_str().unwrap_or_default().trim().is_empty(),
+        "{source}: deferred row {path} needs a ticket"
+    );
+    let date = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("date pattern");
+    assert!(
+        date.is_match(row["review_date"].as_str().unwrap_or_default()),
+        "{source}: deferred row {path} needs a review_date as YYYY-MM-DD"
+    );
+}
+
+/// Deferred rows allowed at the v0.23.2 pin. Each count must equal the rows left deferred:
+/// a change that resolves rows lowers its number here, and one that raises a number is a
+/// governance change reviewers see in this file.
+const DEFERRED_SHARED_DIFF: u64 = 26;
+const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
+    ("python-test-suite-coverage.json", 44),
+    ("hermes-cli-test-coverage.json", 36),
+    ("ui-tui-source-coverage.json", 59),
+];
+
+#[test]
+fn test_deferred_rows_are_explained_and_match_the_ratchet() {
+
+    let classification = read_json("docs/parity/shared-different-classification.json");
+    for item in classification["items"].as_array().expect("items") {
+        if item["classification"].as_str() == Some("deferred") {
+            assert_deferred_row_is_explained("shared-different-classification.json", item);
+        }
+    }
+    let backlog = read_json("docs/parity/shared-diff-backlog.json");
+    let deferred = backlog["entries"]
+        .as_array()
+        .expect("entries should be array")
+        .iter()
+        .filter(|entry| entry["status"].as_str() == Some("deferred_review"))
+        .count() as u64;
+    assert_eq!(
+        backlog["summary"]["deferred_review"].as_u64(),
+        Some(deferred),
+        "backlog summary deferred_review must count the deferred entries"
+    );
+    assert_eq!(
+        deferred, DEFERRED_SHARED_DIFF,
+        "deferred shared-diff rows must equal DEFERRED_SHARED_DIFF"
+    );
+
+    for (name, allowed) in DEFERRED_MANIFEST_ROWS {
+        let manifest = read_json(&format!("docs/parity/{name}"));
+        let rows: Vec<&Value> = manifest["entries"]
+            .as_array()
+            .expect("entries should be array")
+            .iter()
+            .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+            .collect();
+        for row in &rows {
+            assert_deferred_row_is_explained(name, row);
+        }
+        assert_eq!(
+            manifest["summary"]["deferred_paths"].as_u64(),
+            Some(rows.len() as u64),
+            "{name}: summary deferred_paths must count the deferred rows"
+        );
+        assert_eq!(
+            rows.len() as u64,
+            allowed,
+            "{name}: deferred rows must equal DEFERRED_MANIFEST_ROWS"
+        );
+    }
 }

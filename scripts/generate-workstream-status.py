@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import re
 import subprocess
@@ -117,6 +118,34 @@ def divergence_has_prefix(items: list[dict], prefix: str) -> bool:
             if p == prefix:
                 return True
     return False
+
+
+def deferred_rows_by_workstream() -> Counter[str]:
+    """Count rows deferred without review or Rust test coverage, by workstream."""
+    spec = importlib.util.spec_from_file_location(
+        "shared_diff_backlog", Path(__file__).with_name("generate-shared-diff-backlog.py")
+    )
+    assert spec and spec.loader
+    backlog = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(backlog)
+
+    parity = REPO_ROOT / "docs/parity"
+    paths = [
+        item["path"]
+        for item in json.loads(read_text(parity / "shared-different-classification.json"))["items"]
+        if item.get("classification") == "deferred"
+    ]
+    for name in [
+        "python-test-suite-coverage.json",
+        "hermes-cli-test-coverage.json",
+        "ui-tui-source-coverage.json",
+    ]:
+        paths += [
+            entry["path"]
+            for entry in json.loads(read_text(parity / name))["entries"]
+            if entry.get("status") == "deferred_not_covered"
+        ]
+    return Counter(backlog.classify_workstream(path) for path in paths)
 
 
 @dataclass
@@ -303,6 +332,15 @@ def build_status(upstream_ref: str) -> tuple[dict, str]:
     )
 
     statuses = [ws2, ws3, ws4, ws5, ws6, ws7, ws8]
+    deferred = deferred_rows_by_workstream()
+    for status in statuses:
+        if deferred[status.id]:
+            status.state = "in_progress"
+            status.metrics["deferred_rows"] = deferred[status.id]
+            status.evidence.append(
+                f"{deferred[status.id]} rows are deferred without review or Rust test coverage "
+                "(docs/parity/shared-diff-backlog.md and the coverage manifests)."
+            )
     summary = {
         "generated_at_utc": run_git(["show", "-s", "--format=%cI", "HEAD"]),
         "head_sha": head_sha,

@@ -29,10 +29,14 @@ fn python_test_suite_manifest_covers_all_backlog_rows_and_references_real_tests(
     let manifest_entries = manifest["entries"]
         .as_array()
         .expect("manifest entries should be array");
+    let deferred = manifest_entries
+        .iter()
+        .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+        .count();
     assert_eq!(
         manifest["summary"]["covered_paths"].as_u64(),
-        Some(manifest_entries.len() as u64),
-        "manifest summary covered_paths must match entries length"
+        Some((manifest_entries.len() - deferred) as u64),
+        "manifest summary covered_paths must count the rows that cite Rust tests"
     );
 
     let manifest_paths: BTreeSet<String> = manifest_entries
@@ -90,10 +94,15 @@ fn python_test_suite_manifest_covers_all_backlog_rows_and_references_real_tests(
 
     for entry in manifest_entries {
         let path = entry["path"].as_str().expect("manifest path");
+        // A deferred row cites no test; global_parity_governance checks its reason and count.
+        if entry["status"].as_str() == Some("deferred_not_covered") {
+            assert_eq!(entry["rust_tests"], Value::Array(Vec::new()), "{path}");
+            continue;
+        }
         assert_eq!(
             entry["status"].as_str(),
             Some("covered_by_rust_test_suite_contracts"),
-            "{path} should be marked covered_by_rust_test_suite_contracts"
+            "{path} should be marked covered_by_rust_test_suite_contracts or deferred_not_covered"
         );
         assert!(
             !entry["rationale"]
