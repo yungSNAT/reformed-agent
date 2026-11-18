@@ -1308,6 +1308,86 @@ mod tests {
         );
     }
 
+    #[test]
+    fn a_config_save_that_fails_after_writing_leaves_both_files_as_they_were() {
+        let root = claude_fixture();
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let records = "{
+  \"kept\": {\"command\": \"kept-server\"}
+}
+";
+        let config = "mcp_servers: []
+";
+        std::fs::write(home.join("mcp_servers.json"), records).unwrap();
+        std::fs::write(home.join("config.yaml"), config).unwrap();
+
+        // As a saver that replaces the file and then fails, such as on its permission change.
+        let report = import_with(&claude_request(&source, &home, true), |path, _| {
+            std::fs::write(
+                path,
+                "mcp_servers: [partial]
+",
+            )
+            .unwrap();
+            Err("permission change failed".to_string())
+        });
+        assert!(report.failed);
+        assert_eq!(
+            std::fs::read_to_string(home.join("mcp_servers.json")).unwrap(),
+            records
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("config.yaml")).unwrap(),
+            config
+        );
+    }
+
+    #[test]
+    fn a_server_named_like_a_credential_is_skipped_without_its_name() {
+        let root = tempfile::tempdir().expect("temp root");
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            source.join("settings.json"),
+            r#"{"mcpServers": {
+              "ghp_fixtureName01": {"command": "srv"},
+              "plain": {"command": "srv"}
+            }}"#,
+        )
+        .unwrap();
+
+        let plan = import_agent(&claude_request(&source, &home, false));
+        let applied = import_agent(&claude_request(&source, &home, true));
+        assert!(!applied.failed, "{:#?}", applied.lines);
+        let text = format!(
+            "{}
+{}",
+            plan.lines.join(
+                "
+"
+            ),
+            applied.lines.join(
+                "
+"
+            )
+        );
+        assert!(!text.contains("ghp_fixtureName01"), "{text}");
+        assert!(!all_text(&home).contains("ghp_fixtureName01"));
+        assert!(
+            text.contains(
+                "skipped      an MCP server: its name looks like a credential; add it yourself"
+            ),
+            "{text}"
+        );
+        let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
+        let names: Vec<_> = config.mcp_servers.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(names, vec!["plain"]);
+    }
+
     #[cfg(unix)]
     #[test]
     fn links_are_followed_neither_out_of_the_source_nor_out_of_the_home() {
