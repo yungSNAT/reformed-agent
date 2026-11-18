@@ -1023,9 +1023,19 @@ mod tests {
         );
     }
 
+    /// A temporary folder in no workspace: `TMPDIR` can sit inside a project
+    /// whose marker would make every folder below it one.
+    fn tempdir_outside_workspaces() -> tempfile::TempDir {
+        [std::env::temp_dir(), PathBuf::from("/tmp")]
+            .into_iter()
+            .find(|base| workspace_root(base).is_none())
+            .map(|base| tempfile::tempdir_in(base).unwrap())
+            .expect("no temporary folder outside a workspace")
+    }
+
     #[test]
     fn focus_mode_selects_coding_toolset_only_inside_workspace() {
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir_outside_workspaces();
         assert_eq!(
             coding_toolset_selection(Some("cli"), Some(tmp.path()), Some("focus")),
             None
