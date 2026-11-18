@@ -114,11 +114,15 @@ impl AgentLoop {
     /// result it stays pending. `turn_user` is the user message that opened
     /// the turn; user messages the loop adds itself, such as a finaliser's
     /// request to re-issue the answer, do not hide the tool results before
-    /// them. The end-of-turn summary calls do not deliver.
-    fn deliver_pending_steer(&self, ctx: &mut ContextManager, turn_user: Option<&Message>) {
-        let Some(text) = self.interrupt.take_steer() else {
-            return;
-        };
+    /// them. The end-of-turn summary calls do not deliver. Returns the text
+    /// delivered, which an auto-rollback to an earlier checkpoint must
+    /// restore.
+    fn deliver_pending_steer(
+        &self,
+        ctx: &mut ContextManager,
+        turn_user: Option<&Message>,
+    ) -> Option<String> {
+        let text = self.interrupt.take_steer()?;
         let messages = ctx.get_messages_mut();
         // shortcut: found by value, as in `messages_for_persisted_result`;
         // if compression summarised the opening message away, the whole
@@ -132,11 +136,17 @@ impl AgentLoop {
             .rev()
             .find(|message| message.role == MessageRole::Tool);
         match tool_result {
-            Some(message) => message
-                .content
-                .get_or_insert_with(String::new)
-                .push_str(&format_steer_marker(&text)),
-            None => self.interrupt.restore_steer(text),
+            Some(message) => {
+                message
+                    .content
+                    .get_or_insert_with(String::new)
+                    .push_str(&format_steer_marker(&text));
+                Some(text)
+            }
+            None => {
+                self.interrupt.restore_steer(text);
+                None
+            }
         }
     }
 
