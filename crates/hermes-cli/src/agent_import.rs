@@ -2099,6 +2099,33 @@ enabled = false
 
     #[cfg(unix)]
     #[test]
+    fn a_copy_that_fails_part_way_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp root");
+        let source = root.path().join("skill");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(source.join("a")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("a/SKILL.md"), "a skill\n").unwrap();
+        std::fs::write(source.join("z.md"), "locked\n").unwrap();
+        let locked = source.join("z.md");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::File::open(&locked).is_err();
+
+        let destination = home.join("skill");
+        let copied = copy_tree(&source, &destination, &mut 0);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        assert!(copied.is_err(), "the locked file was copied");
+        // A partial folder would read as an existing skill on the next run.
+        let left: Vec<_> = std::fs::read_dir(&home).unwrap().flatten().collect();
+        assert!(left.is_empty(), "left behind: {left:?}");
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn files_and_links_among_the_entries_do_not_fail_the_import() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().expect("temp root");
