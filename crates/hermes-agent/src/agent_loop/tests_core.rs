@@ -2187,4 +2187,84 @@
                 .is_some_and(|c| c.contains("repo_map_marker_fn"))));
     }
 
+    #[test]
+    fn streamed_and_plain_runs_both_expand_file_references() {
+        #[derive(Default)]
+        struct CapturingProvider {
+            seen: Mutex<Vec<Vec<Message>>>,
+        }
+        #[async_trait::async_trait]
+        impl LlmProvider for CapturingProvider {
+            async fn chat_completion(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("read it"),
+                    usage: None,
+                    model: "dummy".into(),
+                    finish_reason: Some("stop".into()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                self.seen.lock().expect("seen lock").push(messages.to_vec());
+                futures::stream::iter(vec![
+                    Ok(stream_chunk_content("read it")),
+                    Ok(stream_chunk_finish("stop")),
+                ])
+                .boxed()
+            }
+        }
+
+        // Tests run in the crate's folder, which holds this Cargo.toml.
+        let _lock = env_test_lock();
+        let mut config = AgentConfig {
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(CapturingProvider::default());
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let ask = || vec![Message::user("what is this package? @file:Cargo.toml")];
+
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        rt.block_on(agent.run(ask(), None)).expect("run");
+        rt.block_on(agent.run_stream(ask(), None, Some(Box::new(|_| {}))))
+            .expect("streamed run");
+
+        let seen = provider.seen.lock().expect("seen lock");
+        assert_eq!(seen.len(), 2, "one model call per run");
+        for (sent, run) in seen.iter().zip(["run", "run_stream"]) {
+            let asked = sent
+                .iter()
+                .rev()
+                .find(|m| m.role == MessageRole::User)
+                .and_then(|m| m.content.as_deref())
+                .unwrap_or_default();
+            assert!(
+                asked.contains("name = \"hermes-agent\""),
+                "{run} sends the file's text to the model"
+            );
+        }
+    }
+
     include!("tests/coding_route_learning.rs");
