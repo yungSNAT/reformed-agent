@@ -394,11 +394,248 @@ async fn a_steer_during_a_streamed_answer_leaves_the_answer_whole() {
         .messages
         .iter()
         .any(|message| message.content.as_deref() == Some("first second")));
-    // No tool result came to carry it: it waits for the caller or the next run.
+    // No tool result came to carry it, so it is still pending when the run
+    // ends; the controller's owner decides what happens to it.
     assert_eq!(
         interrupt.take_steer().as_deref(),
         Some("also mention the tests")
     );
+}
+
+#[tokio::test]
+async fn a_steer_during_an_answer_the_loop_rejects_reaches_the_retry() {
+    use futures::stream::BoxStream;
+    use hermes_core::{FunctionCall, JsonSchema};
+
+    struct RejectedAnswerProvider {
+        interrupt: InterruptController,
+        calls: std::sync::Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RejectedAnswerProvider {
+        async fn chat_completion(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(messages.to_vec());
+            let message = match calls.len() {
+                1 => Message::assistant_with_tool_calls(
+                    None,
+                    vec![ToolCall {
+                        id: "call_1".to_string(),
+                        function: FunctionCall {
+                            name: "plain_tool".to_string(),
+                            arguments: "{}".to_string(),
+                        },
+                        extra_content: None,
+                    }],
+                ),
+                2 => {
+                    // Sent whilst the model writes an answer that names none of
+                    // the user's anchors, so the loop asks for it again.
+                    self.interrupt.steer("prefer the simpler fix");
+                    Message::assistant("done")
+                }
+                _ => Message::assistant("Re-issued: src/main.rs is fixed"),
+            };
+            Ok(hermes_core::LlmResponse {
+                message,
+                usage: None,
+                model: "dummy".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    let interrupt = InterruptController::new();
+    let mut registry = ToolRegistry::new();
+    registry.register(
+        "plain_tool",
+        ToolSchema::new("plain_tool", "Plain tool", JsonSchema::new("object")),
+        Arc::new(|_args| Ok("tool output".to_string())),
+    );
+    let provider = Arc::new(RejectedAnswerProvider {
+        interrupt: interrupt.clone(),
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let config = AgentConfig {
+        skip_memory: true,
+        skip_context_files: true,
+        ..AgentConfig::default()
+    };
+    let agent = AgentLoop::with_interrupt(
+        config,
+        Arc::new(registry),
+        provider.clone(),
+        interrupt.clone(),
+    );
+
+    let result = agent
+        .run(vec![Message::user("fix src/main.rs")], None)
+        .await
+        .expect("agent run");
+
+    assert!(!result.interrupted);
+    let calls = provider.calls.lock().expect("calls lock").clone();
+    assert!(calls.len() >= 3);
+    let retry = &calls[2];
+    let tool_at = retry
+        .iter()
+        .position(|message| message.role == MessageRole::Tool)
+        .expect("tool result in the retry");
+    // The loop's own request to re-issue the answer follows the tool result.
+    assert!(retry[tool_at..]
+        .iter()
+        .any(|message| message.role == MessageRole::User));
+    let content = retry[tool_at].content.as_deref().expect("tool content");
+    assert!(content.ends_with(&crate::steer::format_steer_marker("prefer the simpler fix")));
+    assert_eq!(interrupt.take_steer(), None);
+}
+
+#[tokio::test]
+async fn a_steer_during_a_streamed_tool_call_reaches_the_next_stream() {
+    use futures::stream::BoxStream;
+    use hermes_core::{FunctionCallDelta, JsonSchema, StreamDelta, ToolCallDelta};
+
+    struct SteeredToolStream {
+        interrupt: InterruptController,
+        calls: std::sync::Mutex<Vec<Vec<Message>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for SteeredToolStream {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            Err(AgentError::LlmApi("this run streams".to_string()))
+        }
+
+        fn chat_completion_stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(messages.to_vec());
+            let chunk = |delta: StreamDelta, finish: Option<&str>| {
+                Ok(StreamChunk {
+                    delta: Some(delta),
+                    finish_reason: finish.map(str::to_string),
+                    usage: None,
+                })
+            };
+            if calls.len() > 1 {
+                let text = StreamDelta {
+                    content: Some("done".to_string()),
+                    tool_calls: None,
+                    extra: None,
+                };
+                return futures::stream::iter(vec![chunk(text, Some("stop"))]).boxed();
+            }
+            let call = StreamDelta {
+                content: None,
+                tool_calls: Some(vec![ToolCallDelta {
+                    index: 0,
+                    id: Some("call_1".to_string()),
+                    function: Some(FunctionCallDelta {
+                        name: Some("plain_tool".to_string()),
+                        arguments: Some("{}".to_string()),
+                    }),
+                }]),
+                extra: None,
+            };
+            let end = StreamDelta {
+                content: None,
+                tool_calls: None,
+                extra: None,
+            };
+            let chunks = vec![chunk(call, None), chunk(end, Some("tool_calls"))];
+            let interrupt = self.interrupt.clone();
+            futures::stream::iter(chunks)
+                .enumerate()
+                .map(move |(index, chunk)| {
+                    // Sent whilst the tool call streams in.
+                    if index == 1 {
+                        interrupt.steer("prefer the simpler fix");
+                    }
+                    chunk
+                })
+                .boxed()
+        }
+    }
+
+    let interrupt = InterruptController::new();
+    let mut registry = ToolRegistry::new();
+    registry.register(
+        "plain_tool",
+        ToolSchema::new("plain_tool", "Plain tool", JsonSchema::new("object")),
+        Arc::new(|_args| Ok("tool output".to_string())),
+    );
+    let provider = Arc::new(SteeredToolStream {
+        interrupt: interrupt.clone(),
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let config = AgentConfig {
+        skip_memory: true,
+        skip_context_files: true,
+        ..AgentConfig::default()
+    };
+    let agent = AgentLoop::with_interrupt(
+        config,
+        Arc::new(registry),
+        provider.clone(),
+        interrupt.clone(),
+    );
+
+    let result = agent
+        .run_stream(
+            vec![Message::user("use the tool")],
+            None,
+            Some(Box::new(|_| {})),
+        )
+        .await
+        .expect("agent run");
+
+    assert!(!result.interrupted);
+    let calls = provider.calls.lock().expect("calls lock").clone();
+    assert_eq!(calls.len(), 2);
+    let tool_message = calls[1]
+        .iter()
+        .find(|message| message.role == MessageRole::Tool)
+        .expect("tool result in the second stream");
+    let content = tool_message.content.as_deref().expect("tool content");
+    assert!(content.starts_with("tool output"));
+    assert!(content.ends_with(&crate::steer::format_steer_marker("prefer the simpler fix")));
+    assert_eq!(interrupt.take_steer(), None);
 }
 
 #[test]
