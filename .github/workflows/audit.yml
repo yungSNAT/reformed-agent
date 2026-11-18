@@ -57,6 +57,34 @@ jobs:
       - name: package-lock.json matches package.json
         working-directory: ${{ matrix.dir }}
         run: npm ci --dry-run --ignore-scripts --no-audit
+      # Every advisory fails the job except those in ALLOWED, each of which has
+      # no fixed release to move to. GHSA-fc5q-39xc-vjpf (picomatch ReDoS,
+      # high) covers every picomatch release to 4.0.7, the latest, with no fix
+      # listed (read 17 November 2026). ui-tui locks it through anymatch, fdir,
+      # readdirp, tinyglobby, vite and vitest; website through anymatch,
+      # jest-util, micromatch and readdirp.
+      # Remove it once a fixed picomatch is released and locked.
       - name: npm audit
         working-directory: ${{ matrix.dir }}
-        run: npm audit --package-lock-only
+        env:
+          ALLOWED: GHSA-fc5q-39xc-vjpf
+        run: |
+          npm audit --package-lock-only --json > "$RUNNER_TEMP/npm-audit.json" || true
+          # The quoted script is JavaScript: its ${...} are template literals.
+          # shellcheck disable=SC2016
+          node -e '
+            const report = JSON.parse(require("fs").readFileSync(process.argv[1], "utf8"));
+            if (report.error || !report.vulnerabilities) {
+              console.error(JSON.stringify(report.error ?? report));
+              process.exit(1);
+            }
+            const allowed = process.env.ALLOWED.split(/\s+/).filter(Boolean);
+            const found = Object.values(report.vulnerabilities).flatMap((v) =>
+              v.via.filter((via) => typeof via === "object").map((via) => `${v.name}: ${via.url}`));
+            const blocking = found.filter((line) => !allowed.some((id) => line.endsWith(`/${id}`)));
+            console.log(found.join("\n") || "no advisories");
+            if (blocking.length) {
+              console.error(`advisories not allowed:\n${blocking.join("\n")}`);
+              process.exit(1);
+            }
+          ' "$RUNNER_TEMP/npm-audit.json"
