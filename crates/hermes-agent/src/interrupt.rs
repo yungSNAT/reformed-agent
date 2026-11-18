@@ -55,8 +55,11 @@ impl InterruptController {
     /// Queue guidance for the model without stopping the turn. The agent
     /// loop delivers it with the turn's latest tool result before its next
     /// model call. One still pending when a run ends stays here for
-    /// [`Self::take_steer`]; the ACP server and the gateway make a controller
-    /// per turn, so today they drop it. Returns `false` for blank text.
+    /// [`Self::take_steer`]; the ACP server and the gateway take it then and
+    /// send it as the next turn. The text reaches the model as written:
+    /// `@file:`, `@folder:`, `@diff`, `@git` and `@url:` references in it are
+    /// not expanded, as upstream's `/steer` hands its text to the agent
+    /// unchanged. Returns `false` for blank text.
     pub fn steer(&self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {
