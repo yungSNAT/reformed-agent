@@ -8,8 +8,8 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use chrono::Utc;
 use hermes_core::{AgentResult, MessageRole};
+use jiff::Timestamp;
 use tokio::sync::{broadcast, Mutex, Notify};
 use tokio::time::{self, Duration};
 
@@ -341,7 +341,7 @@ impl CronScheduler {
     async fn finish_scheduled_job(
         ctx: ScheduledJobFinishContext,
         mut job: CronJob,
-        scheduled_at: chrono::DateTime<Utc>,
+        scheduled_at: Timestamp,
         run_result: Result<AgentResult, CronError>,
     ) {
         match run_result {
@@ -401,7 +401,7 @@ impl CronScheduler {
     async fn collect_due_runs(
         jobs: Arc<Mutex<HashMap<String, CronJob>>>,
         running_job_ids: Arc<Mutex<HashSet<String>>>,
-        now: chrono::DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<ScheduledCronRun> {
         let guard = jobs.lock().await;
         let mut running = running_job_ids.lock().await;
@@ -439,7 +439,7 @@ impl CronScheduler {
         sequential_run_lock: Arc<Mutex<()>>,
         managed_provider: Option<Arc<dyn ManagedCronProvider>>,
     ) -> usize {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let due_jobs = Self::collect_due_runs(jobs.clone(), running_job_ids.clone(), now).await;
         let dispatched = due_jobs.len();
 
@@ -646,7 +646,7 @@ impl CronScheduler {
 
         // Compute next_run if not set
         if job.next_run.is_none() && job.status == JobStatus::Active {
-            job.next_run = job.compute_next_run(Utc::now());
+            job.next_run = job.compute_next_run(Timestamp::now());
         }
 
         // Persist
@@ -695,7 +695,7 @@ impl CronScheduler {
 
         // Recompute next_run if schedule changed
         if job.status == JobStatus::Active && job.next_run.is_none() {
-            job.next_run = job.compute_next_run(Utc::now());
+            job.next_run = job.compute_next_run(Timestamp::now());
         }
 
         // Persist
@@ -755,7 +755,7 @@ impl CronScheduler {
         }
 
         job.status = JobStatus::Active;
-        job.next_run = job.compute_next_run(Utc::now());
+        job.next_run = job.compute_next_run(Timestamp::now());
         drop(guard);
 
         // Persist the change
@@ -848,7 +848,7 @@ impl CronScheduler {
             {
                 let mut guard = self.jobs.lock().await;
                 if let Some(j) = guard.get_mut(id) {
-                    j.last_run = Some(Utc::now());
+                    j.last_run = Some(Timestamp::now());
                     j.last_output = latest_assistant_output(&result)
                         .map(|s| truncate_chars(&s, MAX_STORED_OUTPUT_CHARS));
                     if j.status == JobStatus::Failed {
@@ -879,7 +879,7 @@ impl CronScheduler {
     pub async fn fire_managed_job(
         &self,
         id: &str,
-        fire_at: Option<chrono::DateTime<Utc>>,
+        fire_at: Option<Timestamp>,
     ) -> Result<bool, CronError> {
         let (job, runnable_job, scheduled_at) = {
             let guard = self.jobs.lock().await;
@@ -906,7 +906,7 @@ impl CronScheduler {
             if let Some(ctx_prefix) = build_context_prefix_for_job(&runnable_job, &guard) {
                 runnable_job.prompt = format!("{}\n\n{}", ctx_prefix, runnable_job.prompt);
             }
-            let scheduled_at = fire_at.or(job.next_run).unwrap_or_else(Utc::now);
+            let scheduled_at = fire_at.or(job.next_run).unwrap_or_else(Timestamp::now);
             (job, runnable_job, scheduled_at)
         };
 
@@ -958,8 +958,8 @@ mod tests {
     use std::sync::Mutex as StdMutex;
     use std::time::Duration as StdDuration;
 
-    use chrono::Duration as ChronoDuration;
     use hermes_core::Message;
+    use jiff::SignedDuration;
     use tempfile::tempdir;
     use tokio::sync::Semaphore;
     use tokio::time::sleep;
@@ -1099,7 +1099,7 @@ mod tests {
 
     fn due_test_job(prompt: &str) -> CronJob {
         let mut job = CronJob::new("*/5 * * * * *", prompt);
-        job.next_run = Some(Utc::now() - ChronoDuration::seconds(5));
+        job.next_run = Some(Timestamp::now() - SignedDuration::from_secs(5));
         job
     }
 
@@ -1294,13 +1294,13 @@ mod tests {
         let executor = Arc::new(BlockingTestExecutor::default());
         let provider = Arc::new(RecordingManagedProvider::default());
         let (sched, _dir) = make_executor_scheduler_with_provider(executor.clone(), provider);
-        let fire_at = Utc::now() + ChronoDuration::seconds(30);
+        let fire_at = Timestamp::now() + SignedDuration::from_secs(30);
         let mut job = CronJob::new("*/5 * * * * *", "managed fire");
         job.next_run = Some(fire_at);
         let id = sched.create_job(job).await.expect("create");
 
         let stale = sched
-            .fire_managed_job(&id, Some(fire_at + ChronoDuration::seconds(1)))
+            .fire_managed_job(&id, Some(fire_at + SignedDuration::from_secs(1)))
             .await
             .expect("stale fire");
         assert!(!stale);

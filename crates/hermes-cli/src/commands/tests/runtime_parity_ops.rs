@@ -44,7 +44,7 @@ async fn p2_subconscious_profile_dry_run_blocks_high_risk_tasks() {
     let tmp = tempdir().expect("tempdir");
     let _home_guard = TempHomeGuard::new(tmp.path());
     let mut app = build_test_app_with_stream(tmp.path()).await;
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     let state = SubconsciousQueueState {
         tasks: vec![SubconsciousTask {
             id: "sc-risky".to_string(),

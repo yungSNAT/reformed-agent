@@ -4,7 +4,8 @@
 
 use std::collections::HashMap;
 
-use chrono::{NaiveDate, Utc};
+use jiff::civil::Date;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 // ---------------------------------------------------------------------------
@@ -31,7 +32,8 @@ pub struct UsageRecord {
     pub model: String,
     pub prompt_tokens: u64,
     pub completion_tokens: u64,
-    pub timestamp: chrono::DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub timestamp: Timestamp,
     pub estimated_cost: f64,
 }
 
@@ -157,17 +159,17 @@ impl UsageTracker {
             model: model.to_string(),
             prompt_tokens,
             completion_tokens,
-            timestamp: Utc::now(),
+            timestamp: Timestamp::now(),
             estimated_cost,
         });
     }
 
     /// Get a usage summary for all records on a given date.
-    pub fn get_usage_summary(&self, date: NaiveDate) -> UsageSummary {
+    pub fn get_usage_summary(&self, date: Date) -> UsageSummary {
         let mut summary = UsageSummary::default();
 
         for record in &self.records {
-            if record.timestamp.date_naive() == date {
+            if hermes_core::time::utc_civil(record.timestamp).date() == date {
                 summary.total_tokens += record.prompt_tokens + record.completion_tokens;
                 summary.total_cost += record.estimated_cost;
 
@@ -183,11 +185,11 @@ impl UsageTracker {
     }
 
     /// Get a usage summary for a date range (inclusive).
-    pub fn get_usage_summary_range(&self, start: NaiveDate, end: NaiveDate) -> UsageSummary {
+    pub fn get_usage_summary_range(&self, start: Date, end: Date) -> UsageSummary {
         let mut summary = UsageSummary::default();
 
         for record in &self.records {
-            let date = record.timestamp.date_naive();
+            let date = hermes_core::time::utc_civil(record.timestamp).date();
             if date >= start && date <= end {
                 summary.total_tokens += record.prompt_tokens + record.completion_tokens;
                 summary.total_cost += record.estimated_cost;
@@ -248,7 +250,7 @@ mod tests {
         tracker.track("gpt-4o", 1000, 500);
         tracker.track("claude-sonnet-4-20250514", 2000, 1000);
 
-        let today = Utc::now().date_naive();
+        let today = hermes_core::time::utc_civil(Timestamp::now()).date();
         let summary = tracker.get_usage_summary(today);
         assert_eq!(summary.total_tokens, 4500);
         assert!(summary.total_cost > 0.0);

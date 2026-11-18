@@ -99,7 +99,7 @@ impl PairingStore {
 
         dev.status = PairingStatus::Approved;
         dev.shared_secret = Some(generate_shared_secret());
-        dev.last_seen = Some(chrono::Utc::now().to_rfc3339());
+        dev.last_seen = Some(hermes_core::time::now_rfc3339());
 
         let result = dev.clone();
         self.save(&devices)?;
@@ -116,7 +116,7 @@ impl PairingStore {
 
         dev.status = PairingStatus::Revoked;
         dev.shared_secret = None;
-        dev.last_seen = Some(chrono::Utc::now().to_rfc3339());
+        dev.last_seen = Some(hermes_core::time::now_rfc3339());
 
         let result = dev.clone();
         self.save(&devices)?;

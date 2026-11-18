@@ -72,11 +72,34 @@ jobs:
           persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
+      - name: Install betterleaks
+        env:
+          # The release .gitleaks.toml was tested with, and the SHA-256 that
+          # release's checksums.txt gives for its Linux x64 archive.
+          BETTERLEAKS_VERSION: 1.10.1
+          BETTERLEAKS_SHA256: c174b42d7aa60caf58c0c3e555c0e4bed01fe6b0d99a412bce777b5af4ce913e
+        run: |
+          archive="betterleaks_${BETTERLEAKS_VERSION}_linux_x64.tar.gz"
+          curl --proto '=https' --proto-redir '=https' --fail --silent --show-error --location --retry 3 \
+            --output "${RUNNER_TEMP:?}/$archive" \
+            "https://github.com/betterleaks/betterleaks/releases/download/v${BETTERLEAKS_VERSION}/$archive"
+          echo "${BETTERLEAKS_SHA256}  ${RUNNER_TEMP}/$archive" | sha256sum --check --strict -
+          mkdir "$RUNNER_TEMP/betterleaks"
+          tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/betterleaks" betterleaks
+          echo "$RUNNER_TEMP/betterleaks" >> "$GITHUB_PATH"
       - name: Secret scan (tracked files)
         run: |
           python3 scripts/release_secret_scan.py \
             --repo-root . \
             --report .sync-reports/release-secret-scan.json
+      - name: Betterleaks (tracked files)
+        # Beside the scan above, not instead of it: its patterns catch some
+        # token shapes betterleaks's rules do not, such as a short sk-ant- key
+        # or a Telegram bot token with no keyword nearby. The checkout holds
+        # only tracked files. Findings are redacted in the report.
+        run: |
+          betterleaks dir . --config .gitleaks.toml --redact --no-banner \
+            --report-format json --report-path .sync-reports/release-betterleaks.json
       - name: Config redaction tests (CLI)
         run: |
           cargo test -p hermes-cli secret_stdout_gate_defaults_false -- --nocapture
@@ -98,6 +121,7 @@ jobs:
           name: sbom-and-secret-scan
           path: |
             .sync-reports/release-secret-scan.json
+            .sync-reports/release-betterleaks.json
             release-sbom.cdx.json
 
   cross-build:

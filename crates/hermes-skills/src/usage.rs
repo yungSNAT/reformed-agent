@@ -7,7 +7,6 @@ use std::path::{Path, PathBuf};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -76,7 +75,7 @@ fn default_state() -> String {
 }
 
 fn now_iso() -> String {
-    Utc::now().to_rfc3339()
+    hermes_core::time::now_rfc3339()
 }
 
 pub fn usage_file(skills_dir: &Path) -> PathBuf {
@@ -444,7 +443,11 @@ pub fn archive_skill(skills_dir: &Path, skill_name: &str) -> Result<(bool, Strin
     fs::create_dir_all(&archive_root)?;
     let mut dest = archive_root.join(name);
     if dest.exists() {
-        dest = archive_root.join(format!("{}-{}", name, Utc::now().format("%Y%m%d%H%M%S")));
+        dest = archive_root.join(format!(
+            "{}-{}",
+            name,
+            jiff::Timestamp::now().strftime("%Y%m%d%H%M%S")
+        ));
     }
     fs::rename(&src, &dest)?;
     set_state(skills_dir, name, STATE_ARCHIVED)?;

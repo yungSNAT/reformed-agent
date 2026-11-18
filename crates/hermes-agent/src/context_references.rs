@@ -8,12 +8,13 @@
 
 use std::collections::VecDeque;
 use std::path::{Component, Path, PathBuf};
+use std::time::Duration;
 
-use hermes_core::subprocess::CommandNoWindowExt;
 use hermes_intelligence::estimate_tokens_rough;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use tokio::process::Command as TokioCommand;
+
+use crate::coding_context::{output_within_timeout, read_only_git};
 
 const TRAILING_PUNCTUATION: &str = ",.;!?";
 const SENSITIVE_HOME_DIRS: &[&str] = &[".ssh", ".aws", ".gnupg", ".kube"];
@@ -231,9 +232,16 @@ async fn expand_reference(
     match reference.kind.as_str() {
         "file" => expand_file_reference(reference, cwd, allowed_root).await,
         "folder" => expand_folder_reference(reference, cwd, allowed_root).await,
-        "diff" => expand_git_reference(reference, cwd, &["diff"], "git diff").await,
+        "diff" => expand_git_reference(reference, cwd, "diff", Vec::new(), "git diff").await,
         "staged" => {
-            expand_git_reference(reference, cwd, &["diff", "--staged"], "git diff --staged").await
+            expand_git_reference(
+                reference,
+                cwd,
+                "diff",
+                vec!["--staged".into()],
+                "git diff --staged",
+            )
+            .await
         }
         "git" => {
             let count = reference
@@ -243,13 +251,8 @@ async fn expand_reference(
                 .map(|v| v.clamp(1, 10))
                 .unwrap_or(1);
             let arg = format!("-{count}");
-            expand_git_reference(
-                reference,
-                cwd,
-                &["log", &arg, "-p"],
-                &format!("git log {arg} -p"),
-            )
-            .await
+            let label = format!("git log {arg} -p");
+            expand_git_reference(reference, cwd, "log", vec![arg, "-p".into()], &label).await
         }
         "url" => expand_url_reference(reference).await,
         _ => (
@@ -341,20 +344,42 @@ async fn expand_folder_reference(
     (None, Some(block))
 }
 
+/// How long one `@diff`, `@staged` or `@git` reference may run git. A config
+/// key can name a FIFO, and git then waits for a writer that never comes.
+const GIT_REFERENCE_TIMEOUT: Duration = Duration::from_secs(30);
+
+/// Runs `git <subcommand> <args>` in `cwd` as the workspace snapshot does, so
+/// the repository's own configuration cannot make it run a program: the
+/// repository may be a clone of anyone's. `--no-ext-diff` and
+/// `--no-textconv` turn off the diff drivers a `.gitattributes` names, which
+/// no fixed override can.
 async fn expand_git_reference(
     reference: &ContextReference,
     cwd: &Path,
-    args: &[&str],
+    subcommand: &'static str,
+    args: Vec<String>,
     label: &str,
 ) -> (Option<String>, Option<String>) {
-    let output = match TokioCommand::new("git")
-        .args(args)
-        .current_dir(cwd)
-        .suppress_windows_console()
-        .output()
-        .await
-    {
-        Ok(v) => v,
+    let cwd = cwd.to_path_buf();
+    let run = tokio::task::spawn_blocking(move || {
+        let mut git = read_only_git(&cwd).ok_or(
+            "git could not be run safely here: it is missing, older than 2.39.1, \
+             or this repository's configuration could not be read",
+        )?;
+        // `diff.submodule=diff` would start a second diff inside a submodule.
+        git.args(["-c", "diff.submodule=short", subcommand])
+            .args([
+                "--no-ext-diff",
+                "--no-textconv",
+                "--ignore-submodules=dirty",
+            ])
+            .args(args);
+        output_within_timeout(&mut git, GIT_REFERENCE_TIMEOUT).ok_or("git timed out")
+    })
+    .await;
+    let output = match run {
+        Ok(Ok(output)) => output,
+        Ok(Err(msg)) => return (Some(format!("{}: {msg}", reference.raw)), None),
         Err(e) => {
             return (
                 Some(format!("{}: git command failed ({e})", reference.raw)),
@@ -363,13 +388,13 @@ async fn expand_git_reference(
         }
     };
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-        let msg = if stderr.is_empty() {
-            "git command failed".to_string()
-        } else {
-            stderr
-        };
-        return (Some(format!("{}: {msg}", reference.raw)), None);
+        return (
+            Some(format!(
+                "{}: git {subcommand} failed ({}); is this folder in a git repository?",
+                reference.raw, output.status
+            )),
+            None,
+        );
     }
     let content = String::from_utf8_lossy(&output.stdout).trim().to_string();
     let final_content = if content.is_empty() {
@@ -886,5 +911,75 @@ mod tests {
         let refs = parse_context_references("foo/bar@file:test.txt and @file:ok.txt");
         assert_eq!(refs.len(), 1);
         assert_eq!(refs[0].target, "ok.txt");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn git_references_run_no_program_the_repository_names() {
+        use std::os::unix::fs::PermissionsExt;
+        use std::process::Command;
+        let td = tempdir().unwrap();
+        let repo = td.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str]| {
+            let out = Command::new("git")
+                .arg("-C")
+                .arg(&repo)
+                .args(["-c", "user.name=T", "-c", "user.email=t@example.com"])
+                .args(args)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "git {args:?}: {out:?}");
+        };
+        git(&["init", "-q"]);
+        std::fs::write(
+            repo.join(".gitattributes"),
+            "*.txt diff=croft filter=croft\n",
+        )
+        .unwrap();
+        std::fs::write(repo.join("a.txt"), "first\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "first\n").unwrap();
+        git(&["add", "."]);
+        git(&["commit", "-q", "-m", "one"]);
+        std::fs::write(repo.join("a.txt"), "unstaged change\n").unwrap();
+        std::fs::write(repo.join("b.txt"), "staged change\n").unwrap();
+        git(&["add", "b.txt"]);
+
+        // Each program the repository's config names leaves a marker when run.
+        let mut markers = Vec::new();
+        for key in [
+            "diff.croft.textconv",
+            "diff.croft.command",
+            "diff.external",
+            "filter.croft.clean",
+            "core.fsmonitor",
+        ] {
+            let marker = td.path().join(format!("{key}-ran"));
+            let program = td.path().join(format!("{key}.sh"));
+            std::fs::write(
+                &program,
+                format!("#!/bin/sh\ntouch '{}'\ncat\n", marker.display()),
+            )
+            .unwrap();
+            std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+            git(&["config", key, &program.display().to_string()]);
+            markers.push((key, marker));
+        }
+
+        let result =
+            preprocess_context_references_async("@diff @staged @git:1", &repo, 100_000, None).await;
+
+        for (key, marker) in &markers {
+            assert!(
+                !marker.exists(),
+                "a git reference ran the repository's {key}"
+            );
+        }
+        if read_only_git(&repo).is_some() {
+            for change in ["+unstaged change", "+staged change"] {
+                assert!(result.message.contains(change), "{}", result.message);
+            }
+            assert!(result.warnings.is_empty(), "{:?}", result.warnings);
+        }
     }
 }

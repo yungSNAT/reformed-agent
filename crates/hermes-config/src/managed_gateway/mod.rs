@@ -43,7 +43,9 @@ pub mod test_lock {
     //! crates' tests can serialise on the same lock.
     use std::sync::{Mutex, MutexGuard};
 
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
+    /// Held by every test in this crate that changes environment variables:
+    /// `load_config` reads the variables the other modules' tests set.
+    pub(crate) static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     pub fn lock() -> MutexGuard<'static, ()> {
         ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner())

@@ -14,7 +14,9 @@
 //! session is touched.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
+use std::task::Poll;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
@@ -27,6 +29,7 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
+mod attach;
 pub mod chat;
 
 pub use chat::Chat;
@@ -38,15 +41,23 @@ pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
 /// Shortest token accepted from the environment.
 pub const MIN_TOKEN_LEN: usize = 32;
 
-/// Largest inbound WebSocket message (and frame); a larger one closes the connection. This
-/// is the only memory bound on a message: it is parsed whole before anything else is checked.
+/// Largest inbound WebSocket message other than a `file.attach` request; a larger one closes
+/// the connection. This is the only memory bound on such a message: it is parsed whole before
+/// anything else is checked.
 // shortcut: 16 MiB, uvicorn's default. Parsing a message can cost about 100 times its size
 // (a 16 MiB array of tiny objects, estimated at 1.5 GB; not measured), and connections are
-// not limited; only a token holder, who controls the agent anyway, can send one. Upstream
-// allows 384 MiB (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py)
-// because `file.attach` sends a whole base64 file in one frame. Upgrade path: when this
-// crate serves `file.attach`, raise the cap with a streaming reader instead of a whole parse.
+// not limited; only a token holder, who controls the agent anyway, can send one.
 pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
+
+/// Largest inbound WebSocket message (and frame) at all, as upstream allows
+/// (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py), because
+/// `file.attach` sends a whole base64 file in one message. Over [`MAX_MESSAGE_BYTES`], only a
+/// single `file.attach` request with a string or number id is read, into fixed fields, so its
+/// parse costs about its size; anything else closes the connection.
+// shortcut: such a message is held twice while parsed (the text and its data_url), up to
+// 768 MiB a connection, and connections are not limited. Upgrade path: a streaming reader
+// that decodes the data_url as it arrives.
+pub const ATTACH_MAX_MESSAGE_BYTES: usize = 384 << 20;
 
 /// Most requests one JSON-RPC batch may hold; a longer batch gets a single -32600. It bounds
 /// the reply, not memory: the batch is already parsed when it is counted. Upstream's gateway
@@ -235,8 +246,8 @@ async fn upgrade(
     }
     let epoch = gw.replay_epoch.clone();
     let chat = Arc::clone(&gw.chat);
-    ws.max_message_size(MAX_MESSAGE_BYTES)
-        .max_frame_size(MAX_MESSAGE_BYTES)
+    ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
+        .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
         .on_upgrade(move |socket| session(socket, epoch, chat))
 }
 
@@ -252,41 +263,64 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             "replay_epoch": replay_epoch,
         }},
     });
-    if socket
-        .send(Message::Text(ready.to_string().into()))
-        .await
-        .is_err()
-    {
-        return;
-    }
-    // Turns stream their events through this connection's outbox; replies go out first, as
-    // each is written before the next outbox frame is read. Queued events are written before
-    // the next request is read, so a client that reads slowly cannot start more turns while
-    // finished ones wait. A turn keeps its slot until its last event is written, so the turn
-    // cap bounds the replies waiting across all connections; a write that waits past the
-    // write timeout closes the connection, which drops its queued events and frees their slots.
+    // Turns stream their events through this connection's outbox, after `gateway.ready`;
+    // replies go out first, as each is written before the next outbox frame is read. Queued
+    // events are written before the next request is read, so a client that reads slowly cannot
+    // start more turns while finished ones wait. A turn keeps its slot until its last event is
+    // written, so the turn cap bounds the replies waiting across all connections. A frame not
+    // written within the write timeout of being queued closes the connection, which drops its
+    // queued events and frees their slots.
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
+    // Cannot fail: `events` lives until the session ends.
+    let _ = outbox.send(Outgoing::from(ready));
     let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
     loop {
         let frame = tokio::select! {
             biased;
             Some(event) = events.recv() => Some(event),
             inbound = socket.recv() => match inbound {
-                Some(Ok(Message::Text(text))) => reply_to(&text, &call).map(Outgoing::from),
+                Some(Ok(Message::Text(text))) if text.len() <= MAX_MESSAGE_BYTES => {
+                    reply_to(&text, &call).map(Outgoing::from)
+                }
+                Some(Ok(Message::Text(text))) => match attach_request(&text) {
+                    Some(request) => reply_to_one(&request, &call).map(Outgoing::from),
+                    None => break,
+                },
+                Some(Ok(Message::Binary(data))) if data.len() > MAX_MESSAGE_BYTES => break,
                 Some(Ok(Message::Close(_)) | Err(_)) | None => break,
                 Some(Ok(_)) => None,
             },
         };
         if let Some(outgoing) = frame {
-            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
-            if !matches!(
-                tokio::time::timeout(chat.write_timeout(), write).await,
-                Ok(Ok(()))
-            ) {
+            let text = outgoing.frame.to_string();
+            let deadline = outgoing.queued + chat.write_timeout();
+            if !write_by(deadline, socket.send(Message::Text(text.into()))).await {
                 break;
             }
         }
     }
+}
+
+/// Runs `write` until it finishes or `deadline` passes: true if it finished first. `write` is
+/// never polled at or after the deadline, where `timeout_at` would still poll it first and take
+/// a write that is ready by then.
+async fn write_by<E>(
+    deadline: tokio::time::Instant,
+    write: impl Future<Output = Result<(), E>>,
+) -> bool {
+    let mut write = std::pin::pin!(write);
+    let mut expiry = std::pin::pin!(tokio::time::sleep_until(deadline));
+    std::future::poll_fn(|cx| {
+        if tokio::time::Instant::now() >= deadline {
+            return Poll::Ready(false);
+        }
+        if let Poll::Ready(result) = write.as_mut().poll(cx) {
+            return Poll::Ready(result.is_ok());
+        }
+        // Wakes this task at the deadline, so a stalled write ends then.
+        expiry.as_mut().poll(cx).map(|()| false)
+    })
+    .await
 }
 
 fn rpc_error(id: Value, code: i64, message: String) -> Value {
@@ -321,6 +355,84 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
         }
         single => reply_to_one(&single, call),
     }
+}
+
+/// A message over [`MAX_MESSAGE_BYTES`] as a request [`reply_to_one`] can check, if it is a
+/// single `file.attach` request or notification with a string, number or null id and string
+/// params. Every other member is skipped unparsed, so no part of the message is built into a
+/// tree.
+fn attach_request(text: &str) -> Option<Value> {
+    #[derive(serde::Deserialize)]
+    struct Request {
+        jsonrpc: String,
+        // Absent for a notification; `Some(Id(Null))` for an explicit null.
+        #[serde(default, deserialize_with = "present")]
+        id: Option<Id>,
+        method: String,
+        params: Params,
+    }
+    fn present<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<Id>, D::Error> {
+        serde::Deserialize::deserialize(from).map(Some)
+    }
+    #[derive(serde::Deserialize)]
+    struct Params {
+        session_id: String,
+        data_url: String,
+        name: Option<String>,
+    }
+    /// A string, number or null id. Not an untagged enum, which would buffer an array or
+    /// object id whole before refusing it.
+    struct Id(Value);
+    impl<'de> serde::Deserialize<'de> for Id {
+        fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+            struct Scalar;
+            impl serde::de::Visitor<'_> for Scalar {
+                type Value = Value;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("a string or number id")
+                }
+                fn visit_unit<E>(self) -> Result<Value, E> {
+                    Ok(Value::Null)
+                }
+                fn visit_str<E>(self, id: &str) -> Result<Value, E> {
+                    Ok(Value::String(id.to_owned()))
+                }
+                fn visit_u64<E>(self, id: u64) -> Result<Value, E> {
+                    Ok(id.into())
+                }
+                fn visit_i64<E>(self, id: i64) -> Result<Value, E> {
+                    Ok(id.into())
+                }
+                fn visit_f64<E: serde::de::Error>(self, id: f64) -> Result<Value, E> {
+                    serde_json::Number::from_f64(id)
+                        .map(Value::Number)
+                        .ok_or_else(|| E::custom("id is not finite"))
+                }
+            }
+            from.deserialize_any(Scalar).map(Id)
+        }
+    }
+    let request: Request = serde_json::from_str(text).ok()?;
+    if request.method != "file.attach" {
+        return None;
+    }
+    let mut params = serde_json::Map::new();
+    params.insert(
+        "session_id".into(),
+        Value::String(request.params.session_id),
+    );
+    params.insert("data_url".into(), Value::String(request.params.data_url));
+    if let Some(name) = request.params.name {
+        params.insert("name".into(), Value::String(name));
+    }
+    let mut frame = serde_json::Map::new();
+    frame.insert("jsonrpc".into(), Value::String(request.jsonrpc));
+    if let Some(Id(id)) = request.id {
+        frame.insert("id".into(), id);
+    }
+    frame.insert("method".into(), Value::String(request.method));
+    frame.insert("params".into(), Value::Object(params));
+    Some(Value::Object(frame))
 }
 
 /// A request carries "jsonrpc": "2.0", a non-empty string method, an id that is a string, a
@@ -376,6 +488,42 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use tokio::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn a_write_is_not_started_once_its_deadline_has_passed() {
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            Poll::Ready(Ok::<(), ()>(()))
+        });
+        assert!(!write_by(Instant::now(), write).await);
+        assert_eq!(polls.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_pending_write_is_not_polled_again_once_its_deadline_has_passed() {
+        // Pending at first and ready on the next poll, which only the deadline's timer causes.
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            if polls.get() == 1 {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok::<(), ()>(()))
+            }
+        });
+        assert!(!write_by(Instant::now() + Duration::from_millis(50), write).await);
+        assert_eq!(polls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_write_that_finishes_before_its_deadline_counts() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(write_by(deadline, async { Ok::<(), ()>(()) }).await);
+        assert!(!write_by(deadline, async { Err(()) }).await);
+    }
 
     #[test]
     fn loopback_authorities() {

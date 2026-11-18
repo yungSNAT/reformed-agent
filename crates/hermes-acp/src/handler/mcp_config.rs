@@ -8,8 +8,18 @@ fn acp_mcp_servers_from_params(p: Option<&serde_json::Map<String, Value>>) -> Ve
     };
     items
         .iter()
+        .map(|item| {
+            // ACP's stdio server has no `type`; only http and sse name one.
+            let mut item = item.clone();
+            if let Some(server) = item.as_object_mut() {
+                if !server.contains_key("type") {
+                    server.insert("type".to_string(), Value::from("stdio"));
+                }
+            }
+            item
+        })
         .filter_map(
-            |item| match serde_json::from_value::<McpServerConfig>(item.clone()) {
+            |item| match serde_json::from_value::<McpServerConfig>(item) {
                 Ok(server) => Some(server),
                 Err(err) => {
                     tracing::warn!("Ignoring invalid ACP MCP server entry: {}", err);

@@ -33,7 +33,7 @@ mod tests {
     use super::*;
     use crate::adapter::BenchmarkMetadata;
     use crate::result::AggregateMetrics;
-    use chrono::Utc;
+    use jiff::Timestamp;
 
     #[test]
     fn json_reporter_writes_file() {
@@ -49,7 +49,7 @@ mod tests {
                 source: "x".into(),
                 version: "0".into(),
             },
-            started_at: Utc::now(),
+            started_at: Timestamp::now(),
             finished_at: None,
             seed: 0,
             concurrency: 1,

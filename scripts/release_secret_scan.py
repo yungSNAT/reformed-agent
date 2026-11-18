@@ -74,6 +74,7 @@ SAFE_FIXTURE_SUBSTRINGS = (
     "xoxb-workspace2-token",
     "xoxb-workspace3-token",
     "xoxb-workspace-token-here",
+    "sk-ant-api03-abcdefghijklmnopqrstuvwxyz0123456789",
 )
 
 

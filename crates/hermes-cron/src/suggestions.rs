@@ -8,7 +8,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 
 use crate::blueprints::{catalog as blueprint_catalog, fill_blueprint};
@@ -49,17 +49,26 @@ pub struct SuggestionRecord {
     pub job_spec: SuggestionJobSpec,
     pub dedup_key: String,
     pub status: SuggestionStatus,
-    pub created_at: DateTime<Utc>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub resolved_at: Option<DateTime<Utc>>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub resolved_at: Option<Timestamp>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 struct SuggestionFile {
     #[serde(default)]
     suggestions: Vec<SuggestionRecord>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    updated_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    updated_at: Option<Timestamp>,
 }
 
 #[derive(Debug, thiserror::Error)]
@@ -237,7 +246,7 @@ impl SuggestionStore {
 
         let file = SuggestionFile {
             suggestions: records.to_vec(),
-            updated_at: Some(Utc::now()),
+            updated_at: Some(Timestamp::now()),
         };
         let raw = serde_json::to_string_pretty(&file)?;
         let tmp = parent.join(format!(
@@ -317,7 +326,7 @@ fn add_suggestion_to_records(
         job_spec: input.job_spec,
         dedup_key: dedup_key.to_string(),
         status: SuggestionStatus::Pending,
-        created_at: Utc::now(),
+        created_at: Timestamp::now(),
         resolved_at: None,
     };
     records.push(record.clone());
@@ -363,7 +372,7 @@ fn set_status(
         return false;
     }
     record.status = status;
-    record.resolved_at = Some(Utc::now());
+    record.resolved_at = Some(Timestamp::now());
     true
 }
 
@@ -406,6 +415,21 @@ fn secure_file(_path: &std::path::Path) -> Result<(), std::io::Error> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggestion_file_keeps_its_timestamp_form() {
+        let file: SuggestionFile =
+            serde_json::from_str(r#"{"updated_at":"2026-03-08T19:30:15.25+10:00"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&file).unwrap(),
+            r#"{"suggestions":[],"updated_at":"2026-03-08T09:30:15.250Z"}"#
+        );
+        let file: SuggestionFile = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            serde_json::to_string(&file).unwrap(),
+            r#"{"suggestions":[]}"#
+        );
+    }
 
     fn temp_store() -> (SuggestionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");

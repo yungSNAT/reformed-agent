@@ -16,7 +16,7 @@ tracing = { workspace = true }
 reqwest = { workspace = true }
 jsonwebtoken = { workspace = true }
 minijinja = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 thiserror = { workspace = true }

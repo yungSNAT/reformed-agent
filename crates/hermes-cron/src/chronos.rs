@@ -8,9 +8,9 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::SecondsFormat;
 use hermes_config::managed_gateway::peek_nous_access_token;
 use hermes_config::read_nous_access_token;
+use jiff::tz::Offset;
 use jsonwebtoken::jwk::{AlgorithmParameters, Jwk, JwkSet};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
@@ -274,7 +274,7 @@ impl ManagedCronProvider for ChronosNasCronProvider {
             .filter_map(|job| {
                 let fire_at = job
                     .next_run
-                    .map(|dt| dt.to_rfc3339_opts(SecondsFormat::Secs, false))?;
+                    .map(|at| format!("{:.0}", at.display_with_offset(Offset::UTC)))?;
                 Some((job.id, fire_at))
             })
             .collect::<BTreeMap<_, _>>();

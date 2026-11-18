@@ -997,10 +997,10 @@ impl SystemPromptBuilder {
 
     /// Add current date/time and optional metadata.
     pub fn with_timestamp(mut self, model: Option<&str>, provider: Option<&str>) -> Self {
-        let now = chrono::Local::now();
+        let now = jiff::Zoned::now();
         let mut line = format!(
             "Conversation started: {}",
-            now.format("%A, %B %d, %Y %I:%M %p")
+            now.strftime("%A, %B %d, %Y %I:%M %p")
         );
         if let Some(m) = model {
             line.push_str(&format!("\nModel: {m}"));

@@ -9,7 +9,7 @@
 //!
 //! Also integrates `StreamManager` for progressive message editing.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -303,7 +303,7 @@ struct UsageStats {
     assistant_messages: u64,
     input_chars: u64,
     output_chars: u64,
-    last_updated_at: Option<DateTime<Utc>>,
+    last_updated_at: Option<Timestamp>,
 }
 
 enum SlashCommandOutcome {

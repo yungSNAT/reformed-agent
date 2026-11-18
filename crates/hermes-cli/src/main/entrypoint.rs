@@ -100,6 +100,32 @@ async fn run_main() {
         }
         return;
     }
+    if let CliCommand::ImportAgent(ImportAgentArgs {
+        agent,
+        source,
+        apply,
+    }) = &effective_command
+    {
+        use hermes_cli::agent_import::{default_source_dir, import_agent, AgentImportRequest};
+        let Some(source) = source.clone().or_else(|| default_source_dir(*agent)) else {
+            eprintln!("Error: no home folder found; name the agent's folder with --source.");
+            std::process::exit(1);
+        };
+        let home = hermes_config::hermes_home();
+        let report = import_agent(&AgentImportRequest {
+            agent: *agent,
+            source: &source,
+            home: &home,
+            apply: *apply,
+        });
+        for line in &report.lines {
+            println!("{line}");
+        }
+        if report.failed {
+            std::process::exit(1);
+        }
+        return;
+    }
     if cli.ignore_user_config {
         std::env::set_var("HERMES_IGNORE_USER_CONFIG", "1");
     }
@@ -706,6 +732,7 @@ async fn run_main() {
         }
         CliCommand::ImportHermesSessions(_) => unreachable!("offline import already handled"),
         CliCommand::Migrate(_) => unreachable!("migration already handled"),
+        CliCommand::ImportAgent(_) => unreachable!("agent import already handled"),
         CliCommand::Version => hermes_cli::commands::handle_cli_version(),
         CliCommand::Cron(CronArgs {
             action,
