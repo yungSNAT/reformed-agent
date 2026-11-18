@@ -1218,12 +1218,24 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
 
 /// Copies `source` into a new folder `destination`, creating every folder and
 /// file afresh so nothing already there, a link included, is written through.
-/// Copied files are owner-only on Unix.
+/// Copied files are owner-only on Unix. The copy is built in a hidden folder
+/// beside `destination` and renamed into place, so a copy that fails part way
+/// leaves nothing that a later run would take for the finished folder.
 pub(crate) fn copy_tree(
     source: &Path,
     destination: &Path,
     links: &mut usize,
 ) -> std::io::Result<()> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let staging = tempfile::Builder::new()
+        .prefix(".copying-")
+        .tempdir_in(parent)?;
+    let staged = staging.path().join("copy");
+    copy_into(source, &staged, links)?;
+    std::fs::rename(&staged, destination)
+}
+
+fn copy_into(source: &Path, destination: &Path, links: &mut usize) -> std::io::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
@@ -1232,7 +1244,7 @@ pub(crate) fn copy_tree(
         if kind.is_symlink() {
             *links += 1;
         } else if kind.is_dir() {
-            copy_tree(&entry.path(), &target, links)?;
+            copy_into(&entry.path(), &target, links)?;
         } else {
             let mut from = std::fs::File::open(entry.path())?;
             let mut to = std::fs::OpenOptions::new()
