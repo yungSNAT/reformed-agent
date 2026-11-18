@@ -477,6 +477,181 @@ mod tests {
         assert!(content.contains("KEY1=existing"));
     }
 
+    /// Migrates `source` into `home` (as `HERMES_HOME`) and returns the result.
+    fn migrate_into(source: &Path, home: &Path) -> MigrationResult {
+        let _lock = crate::test_env_lock::lock();
+        let saved = std::env::var_os("HERMES_HOME");
+        std::env::set_var("HERMES_HOME", home);
+        let result = run_migration(&MigrateOptions {
+            source: Some(source.to_path_buf()),
+            ..Default::default()
+        });
+        match saved {
+            Some(value) => std::env::set_var("HERMES_HOME", value),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        result
+    }
+
+    /// Every file name and file text under `dir`.
+    fn all_text(dir: &Path) -> String {
+        let mut text = String::new();
+        for entry in std::fs::read_dir(dir).unwrap().flatten() {
+            let path = entry.path();
+            text.push_str(&entry.file_name().to_string_lossy());
+            if path.is_dir() {
+                text.push_str(&all_text(&path));
+            } else if let Ok(bytes) = std::fs::read(&path) {
+                text.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        text
+    }
+
+    fn items(result: &MigrationResult) -> String {
+        format!("{result:?}")
+    }
+
+    #[test]
+    fn files_holding_or_named_like_credentials_are_not_carried_over() {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        for skill in ["notes", "keys", "names", "ghp_fixtureClaw03"] {
+            std::fs::create_dir_all(source.join("skills").join(skill)).unwrap();
+            std::fs::write(
+                source.join("skills").join(skill).join("SKILL.md"),
+                "A skill.\n",
+            )
+            .unwrap();
+        }
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("SOUL.md"), "Be kind.\n").unwrap();
+        std::fs::write(source.join("MEMORY.md"), "- token ghp_fixtureClaw01\n").unwrap();
+        std::fs::write(source.join("skills/keys/keys.txt"), "ghp_fixtureClaw02\n").unwrap();
+        std::fs::write(source.join("skills/names/ghp_fixtureClaw04.md"), "x\n").unwrap();
+        std::fs::write(
+            source.join("gateway.json"),
+            "{\"token\": \"ghp_fixtureClaw05\"}\n",
+        )
+        .unwrap();
+
+        let result = migrate_into(&source, &home);
+        let report = items(&result);
+        let files = all_text(&home);
+        for secret in [
+            "ghp_fixtureClaw01",
+            "ghp_fixtureClaw02",
+            "ghp_fixtureClaw03",
+            "ghp_fixtureClaw04",
+            "ghp_fixtureClaw05",
+        ] {
+            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+            assert!(
+                !report.contains(secret),
+                "{secret} in the report:\n{report}"
+            );
+        }
+        assert_eq!(
+            std::fs::read_to_string(home.join("SOUL.md")).unwrap(),
+            "Be kind.\n"
+        );
+        assert!(home
+            .join("skills/openclaw-imports/notes/SKILL.md")
+            .is_file());
+        let credential_skips = result
+            .skipped
+            .iter()
+            .filter(|item| {
+                item.reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("credential"))
+            })
+            .count();
+        // MEMORY.md, gateway.json and the keys, names and credential-named skills.
+        assert_eq!(credential_skips, 5, "{report}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_skills_folder_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(source.join("skills/notes")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("skills/notes/SKILL.md"), "A skill.\n").unwrap();
+        let skills = source.join("skills");
+        std::fs::set_permissions(&skills, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::read_dir(&skills).is_err();
+
+        let result = migrate_into(&source, &home);
+        std::fs::set_permissions(&skills, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        assert!(
+            result.errors.iter().any(|item| item.kind == "skills"),
+            "{}",
+            items(&result)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn api_keys_are_written_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(&source).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join(".env"), "OPENROUTER_API_KEY=fixture-value\n").unwrap();
+
+        let result = migrate_into(&source, &home);
+        assert!(result.errors.is_empty(), "{}", items(&result));
+        let mode = std::fs::metadata(home.join(".env"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o077, 0, "mode {mode:o}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn links_are_followed_neither_out_of_the_source_nor_out_of_the_home() {
+        use std::os::unix::fs::symlink;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        let outside = tmp.path().join("outside");
+        std::fs::create_dir_all(source.join("skills")).unwrap();
+        std::fs::create_dir_all(outside.join("skill")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(outside.join("soul.md"), "outside soul\n").unwrap();
+        std::fs::write(outside.join("skill/SKILL.md"), "outside skill\n").unwrap();
+        symlink(outside.join("soul.md"), source.join("SOUL.md")).unwrap();
+        symlink(outside.join("skill"), source.join("skills/linked")).unwrap();
+        std::fs::write(source.join("USER.md"), "A user.\n").unwrap();
+        let elsewhere = tmp.path().join("elsewhere.md");
+        symlink(&elsewhere, home.join("USER.md")).unwrap();
+
+        let result = migrate_into(&source, &home);
+        let files = all_text(&home);
+        assert!(!files.contains("outside"), "{files}");
+        assert!(!elsewhere.exists(), "written through the home's link");
+        assert!(!result.errors.is_empty(), "{}", items(&result));
+        assert!(result
+            .skipped
+            .iter()
+            .any(|item| item.kind == "personality:SOUL.md"
+                && item
+                    .reason
+                    .as_deref()
+                    .is_some_and(|reason| reason.contains("link"))));
+    }
+
     #[test]
     fn test_migration_status_eq() {
         assert_eq!(MigrationStatus::Migrated, MigrationStatus::Migrated);
