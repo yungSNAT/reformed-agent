@@ -14,7 +14,9 @@
 //! session is touched.
 
 use std::collections::HashMap;
+use std::future::Future;
 use std::sync::Arc;
+use std::task::Poll;
 
 use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::extract::{Path, Query, Request, State};
@@ -252,20 +254,16 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             "replay_epoch": replay_epoch,
         }},
     });
-    if socket
-        .send(Message::Text(ready.to_string().into()))
-        .await
-        .is_err()
-    {
-        return;
-    }
-    // Turns stream their events through this connection's outbox; replies go out first, as
-    // each is written before the next outbox frame is read. Queued events are written before
-    // the next request is read, so a client that reads slowly cannot start more turns while
-    // finished ones wait. A turn keeps its slot until its last event is written, so the turn
-    // cap bounds the replies waiting across all connections; a write that waits past the
-    // write timeout closes the connection, which drops its queued events and frees their slots.
+    // Turns stream their events through this connection's outbox, after `gateway.ready`;
+    // replies go out first, as each is written before the next outbox frame is read. Queued
+    // events are written before the next request is read, so a client that reads slowly cannot
+    // start more turns while finished ones wait. A turn keeps its slot until its last event is
+    // written, so the turn cap bounds the replies waiting across all connections. A frame not
+    // written within the write timeout of being queued closes the connection, which drops its
+    // queued events and frees their slots.
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
+    // Cannot fail: `events` lives until the session ends.
+    let _ = outbox.send(Outgoing::from(ready));
     let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
     loop {
         let frame = tokio::select! {
@@ -278,15 +276,35 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             },
         };
         if let Some(outgoing) = frame {
-            let write = socket.send(Message::Text(outgoing.frame.to_string().into()));
-            if !matches!(
-                tokio::time::timeout(chat.write_timeout(), write).await,
-                Ok(Ok(()))
-            ) {
+            let text = outgoing.frame.to_string();
+            let deadline = outgoing.queued + chat.write_timeout();
+            if !write_by(deadline, socket.send(Message::Text(text.into()))).await {
                 break;
             }
         }
     }
+}
+
+/// Runs `write` until it finishes or `deadline` passes: true if it finished first. `write` is
+/// never polled at or after the deadline, where `timeout_at` would still poll it first and take
+/// a write that is ready by then.
+async fn write_by<E>(
+    deadline: tokio::time::Instant,
+    write: impl Future<Output = Result<(), E>>,
+) -> bool {
+    let mut write = std::pin::pin!(write);
+    let mut expiry = std::pin::pin!(tokio::time::sleep_until(deadline));
+    std::future::poll_fn(|cx| {
+        if tokio::time::Instant::now() >= deadline {
+            return Poll::Ready(false);
+        }
+        if let Poll::Ready(result) = write.as_mut().poll(cx) {
+            return Poll::Ready(result.is_ok());
+        }
+        // Wakes this task at the deadline, so a stalled write ends then.
+        expiry.as_mut().poll(cx).map(|()| false)
+    })
+    .await
 }
 
 fn rpc_error(id: Value, code: i64, message: String) -> Value {
@@ -376,6 +394,42 @@ fn reply_to_one(frame: &Value, call: &Call<'_>) -> Option<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::Cell;
+    use tokio::time::{Duration, Instant};
+
+    #[tokio::test]
+    async fn a_write_is_not_started_once_its_deadline_has_passed() {
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            Poll::Ready(Ok::<(), ()>(()))
+        });
+        assert!(!write_by(Instant::now(), write).await);
+        assert_eq!(polls.get(), 0);
+    }
+
+    #[tokio::test]
+    async fn a_pending_write_is_not_polled_again_once_its_deadline_has_passed() {
+        // Pending at first and ready on the next poll, which only the deadline's timer causes.
+        let polls = Cell::new(0);
+        let write = std::future::poll_fn(|_| {
+            polls.set(polls.get() + 1);
+            if polls.get() == 1 {
+                Poll::Pending
+            } else {
+                Poll::Ready(Ok::<(), ()>(()))
+            }
+        });
+        assert!(!write_by(Instant::now() + Duration::from_millis(50), write).await);
+        assert_eq!(polls.get(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_write_that_finishes_before_its_deadline_counts() {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        assert!(write_by(deadline, async { Ok::<(), ()>(()) }).await);
+        assert!(!write_by(deadline, async { Err(()) }).await);
+    }
 
     #[test]
     fn loopback_authorities() {

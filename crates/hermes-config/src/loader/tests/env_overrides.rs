@@ -506,7 +506,6 @@ fn an_unknown_terminal_backend_in_the_environment_stops_loading() {
 /// so commands would run on this machine in place of the isolation chosen.
 #[test]
 fn a_config_file_naming_a_backend_that_cannot_load_stops_loading() {
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for (file, text, name) in [
         ("config.yaml", "terminal:\n  backend: vercel_sandbox\n", "vercel_sandbox"),
@@ -539,7 +538,6 @@ fn a_config_file_naming_a_backend_that_cannot_load_stops_loading() {
 /// than local is still skipped with a warning.
 #[test]
 fn a_config_file_that_cannot_load_and_names_no_other_backend_is_skipped() {
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for text in [
         "terminal:\n  backend: local\n  timeout: soon\n",
