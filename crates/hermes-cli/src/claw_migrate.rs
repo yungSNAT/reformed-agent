@@ -141,13 +141,17 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
     for &filename in PERSONALITY_FILES {
         let src = source_dir.join(filename);
         let kind = format!("personality:{}", filename);
-        if !is_link(&src) && !src.exists() {
-            let dst = hermes_home.join(filename);
-            let missing = (
+        let missing = match present(&src) {
+            Ok(true) => None,
+            Ok(false) => Some((
                 MigrationStatus::Skipped,
                 "Source file not found".to_string(),
-            );
-            record(&mut result, kind, Some(src), Some(dst), Err(missing));
+            )),
+            Err(failed) => Some(failed),
+        };
+        if let Some(why) = missing {
+            let dst = hermes_home.join(filename);
+            record(&mut result, kind, Some(src), Some(dst), Err(why));
             continue;
         }
         migrate_file(
@@ -162,24 +166,28 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
 
     // Skills, each to skills/openclaw-imports/
     let src_skills = source_dir.join("skills");
-    if is_link(&src_skills) {
-        let link = (MigrationStatus::Skipped, LINK_REASON.to_string());
-        record(
-            &mut result,
-            "skills".to_string(),
-            Some(src_skills),
-            None,
-            Err(link),
-        );
-    } else if src_skills.exists() {
-        migrate_skills(&src_skills, &hermes_home, options, &mut result);
+    let skills = match present(&src_skills) {
+        Ok(false) => None,
+        Ok(true) if !is_link(&src_skills) => {
+            migrate_skills(&src_skills, &hermes_home, options, &mut result);
+            None
+        }
+        Ok(true) => Some((MigrationStatus::Skipped, LINK_REASON.to_string())),
+        Err(failed) => Some(failed),
+    };
+    if let Some(why) = skills {
+        let kind = "skills".to_string();
+        record(&mut result, kind, Some(src_skills), None, Err(why));
     }
 
     // .env file (API keys): this home keeps its keys in its own .env.
     let src_env = source_dir.join(".env");
-    if is_link(&src_env) || src_env.exists() {
+    let env = present(&src_env);
+    if !matches!(env, Ok(false)) {
         let dst_env = hermes_home.join(".env");
-        let outcome = if is_link(&src_env) {
+        let outcome = if let Err(failed) = env {
+            Err(failed)
+        } else if is_link(&src_env) {
             Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
         } else if let Err(err) = check_destination(&hermes_home, &dst_env) {
             Err((MigrationStatus::Error, err))
@@ -202,14 +210,33 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
     // Platform configs (config.yaml / gateway.json)
     for config_name in ["config.yaml", "gateway.json"] {
         let src_cfg = source_dir.join(config_name);
-        if is_link(&src_cfg) || src_cfg.exists() {
-            let kind = format!("config:{}", config_name);
-            let relative = Path::new(config_name);
-            migrate_file(kind, src_cfg, &hermes_home, relative, options, &mut result);
+        let kind = format!("config:{}", config_name);
+        let relative = Path::new(config_name);
+        match present(&src_cfg) {
+            Ok(false) => {}
+            Ok(true) => migrate_file(kind, src_cfg, &hermes_home, relative, options, &mut result),
+            Err(failed) => {
+                let dst = hermes_home.join(relative);
+                record(&mut result, kind, Some(src_cfg), Some(dst), Err(failed));
+            }
         }
     }
 
     result
+}
+
+/// Whether `path` is there, a link included, without following it. A lookup
+/// that fails other than with not-found is an error, so an entry that cannot
+/// be looked up is never taken for a missing one.
+fn present(path: &Path) -> Result<bool, (MigrationStatus, String)> {
+    match std::fs::symlink_metadata(path) {
+        Ok(_) => Ok(true),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(err) => Err((
+            MigrationStatus::Error,
+            format!("could not look it up: {err}"),
+        )),
+    }
 }
 
 /// Why a link is skipped.
