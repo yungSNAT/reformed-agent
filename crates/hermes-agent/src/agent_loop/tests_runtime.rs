@@ -1062,9 +1062,55 @@
             cache_write_tokens: 200_000,
         };
         // 400,000 uncached, 400,000 read at 0.1 and 200,000 written at 1.25,
-        // at Sonnet's fallback input price of $2.50 a million.
+        // at the fallback table's input price for "sonnet" names, $2.50 a
+        // million.
         let cost = estimate_usage_cost_usd(&u, "anthropic:claude-sonnet-4-6", &cfg).unwrap();
         assert!((cost - 2.5 * (0.4 + 0.04 + 0.25)).abs() < 1e-9, "{cost}");
+    }
+
+    #[test]
+    fn test_cache_reads_cost_what_anthropic_charges_each_model() {
+        for (model, multiplier) in [
+            ("claude-fable-5-2", 0.025),
+            ("claude-mythos-5-2", 0.025),
+            ("claude-fable-5-1-20261001", 0.025),
+            ("anthropic/claude-mythos-5.1", 0.025),
+            ("claude-opus-5-5", 0.05),
+            ("anthropic:claude-sonnet-5-5", 0.05),
+            ("claude-sonnet-5.5", 0.05),
+            ("claude-fable-5", 0.1),
+            ("claude-fable-5-20260101", 0.1),
+            ("claude-opus-5", 0.1),
+            ("claude-sonnet-5", 0.1),
+            ("claude-opus-4-8", 0.1),
+            ("claude-sonnet-4-6", 0.1),
+            ("claude-haiku-4-5", 0.1),
+        ] {
+            assert_eq!(
+                anthropic_cache_read_multiplier(model),
+                multiplier,
+                "{model}"
+            );
+        }
+
+        // A Fable 5.2 turn at its $8 input price: 10,000 uncached prompt
+        // tokens and 90,000 read from the cache cost $0.098, as Anthropic
+        // bills (90,000 at $0.20 a million).
+        let cfg = AgentConfig {
+            prompt_cost_per_million_usd: Some(8.0),
+            completion_cost_per_million_usd: Some(40.0),
+            ..AgentConfig::default()
+        };
+        let u = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 0,
+            total_tokens: 100_000,
+            estimated_cost: None,
+            cache_read_tokens: 90_000,
+            cache_write_tokens: 0,
+        };
+        let cost = estimate_usage_cost_usd(&u, "claude-fable-5-2", &cfg).unwrap();
+        assert!((cost - 0.098).abs() < 1e-9, "{cost}");
     }
 
     include!("tests/runtime_provider_resolution.rs");
