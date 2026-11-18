@@ -1092,6 +1092,59 @@ mod tests {
         assert!(seen.read().await.contains_key(&key));
     }
 
+    /// What `handle_route_payload` writes for `route_name` with an unsigned body.
+    async fn unsigned_route_reply(config: &WebhookConfig, route_name: &str) -> String {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, _) = listener.accept().await.unwrap();
+        let (_read, mut writer) = server.into_split();
+        let ctx = RoutePayloadContext {
+            config,
+            outbound_queue: Arc::new(RwLock::new(VecDeque::new())),
+            inbound_tx: Arc::new(RwLock::new(None)),
+            seen_deliveries: Arc::new(RwLock::new(HashMap::new())),
+            rate_windows: Arc::new(RwLock::new(HashMap::new())),
+        };
+        let mut headers = HashMap::new();
+        headers.insert("x-hub-signature-256".into(), "sha256=00".into());
+        handle_route_payload(&mut writer, route_name, &headers, b"{}", ctx)
+            .await
+            .unwrap();
+        drop(writer);
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        reply
+    }
+
+    /// A bad signature on a configured route gets the reply an unknown route gets, so route
+    /// names cannot be found by probing (upstream's webhook signature fix).
+    #[tokio::test]
+    async fn a_bad_signature_reads_as_an_unknown_route() {
+        let mut routes = BTreeMap::new();
+        routes.insert(
+            "deploys".into(),
+            WebhookRouteConfig {
+                secret: Some("route-secret".into()),
+                ..WebhookRouteConfig::default()
+            },
+        );
+        let config = WebhookConfig {
+            host: "127.0.0.1".into(),
+            port: 0,
+            path: "/webhook".into(),
+            secret: "global-secret".into(),
+            rate_limit: 30,
+            max_body_bytes: default_webhook_max_body_bytes(),
+            routes,
+        };
+        let unknown = unsigned_route_reply(&config, "no-such-route").await;
+        assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
+        assert_eq!(unsigned_route_reply(&config, "deploys").await, unknown);
+    }
+
     #[test]
     fn deliver_only_route_renders_target_chat() {
         let payload = serde_json::json!({"payload":{"user":"a","other":"b"}});
