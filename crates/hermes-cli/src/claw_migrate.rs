@@ -606,6 +606,43 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn entries_that_cannot_be_looked_up_are_errors_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(source.join("skills/notes")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("SOUL.md"), "Be kind.\n").unwrap();
+        std::fs::write(source.join(".env"), "OPENAI_API_KEY=fixture\n").unwrap();
+        std::fs::write(source.join("config.yaml"), "model: x\n").unwrap();
+        // Readable but not searchable: its entries cannot be looked up.
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let unreadable = std::fs::symlink_metadata(source.join("SOUL.md")).is_err();
+
+        let result = migrate_into(&source, &home);
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop lookups
+        }
+        let report = items(&result);
+        assert!(result.migrated.is_empty(), "{report}");
+        assert!(!report.contains("Source file not found"), "{report}");
+        for kind in [
+            "personality:SOUL.md",
+            "skills",
+            "api-keys",
+            "config:config.yaml",
+        ] {
+            assert!(
+                result.errors.iter().any(|item| item.kind == kind),
+                "no error for {kind}: {report}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn api_keys_are_written_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
