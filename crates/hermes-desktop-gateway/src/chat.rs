@@ -19,20 +19,27 @@ use hermes_core::{AgentResult, Message, MessageRole, StreamChunk};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::Instant;
 
 /// Frames for one connection's socket.
 pub(crate) type Outbox = UnboundedSender<Outgoing>;
 
-/// A frame for the connection to write. A turn's last event carries the turn's slot, so the
-/// slot frees once that event is written or dropped with a closed connection.
+/// A frame for the connection to write and when it was queued. A turn's last event carries
+/// the turn's slot, so the slot frees once that event is written or dropped with a closed
+/// connection.
 pub(crate) struct Outgoing {
     pub(crate) frame: Value,
+    pub(crate) queued: Instant,
     _slot: Option<OwnedSemaphorePermit>,
 }
 
 impl From<Value> for Outgoing {
     fn from(frame: Value) -> Self {
-        Self { frame, _slot: None }
+        Self {
+            frame,
+            queued: Instant::now(),
+            _slot: None,
+        }
     }
 }
 
@@ -52,7 +59,9 @@ const NO_TURN_SLOT: i64 = 4090;
 /// replies held in memory, as a turn keeps its slot until its last event is written.
 const MAX_TURNS: usize = 8;
 
-/// How long one socket write may wait for a client that is not reading.
+/// How long a frame may wait, from being queued until it is written, before the connection
+/// closes. A turn's events are all queued by its end, so its slot frees within this time of
+/// the turn's end however slowly the client reads.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Longest session id a request may name.
@@ -113,7 +122,7 @@ impl Chat {
         self.write_timeout
     }
 
-    /// How long one socket write may wait for a client that is not reading before the
+    /// How long a frame may wait, from being queued until it is written, before the
     /// connection closes (30 seconds unless set).
     pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
         self.write_timeout = timeout;
@@ -232,6 +241,18 @@ impl Chat {
         Ok(json!({"status": "streaming"}))
     }
 
+    /// Runs `work` on the sessions database on the blocking pool. A turn's store calls block,
+    /// and on the turn's thread they would hold its queued events past their write deadline.
+    async fn with_store<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(SessionPersistence) -> T + Send + 'static,
+    ) -> Result<T, String> {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || work(SessionPersistence::new(home)))
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<LiveSession>>> {
         // A panic while the map is held cannot leave it half-updated (single inserts and
         // reads), so a poisoned lock is still safe to use.
@@ -299,12 +320,12 @@ impl Turn {
         // A closed socket drops the frame, and with it any slot; the turn still runs and is
         // saved.
         let _ = self.outbox.send(Outgoing {
-            frame: json!({
+            _slot: slot,
+            ..Outgoing::from(json!({
                 "jsonrpc": "2.0",
                 "method": "event",
                 "params": {"type": kind, "session_id": self.id, "payload": payload, "seq": seq},
-            }),
-            _slot: slot,
+            }))
         });
     }
 
@@ -347,8 +368,12 @@ impl Turn {
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
-        let store = SessionPersistence::new(&self.chat.home);
-        let mut transcript = store.load_session(&self.id).map_err(|e| e.to_string())?;
+        let id = self.id.clone();
+        let mut transcript = self
+            .chat
+            .with_store(move |store| store.load_session(&id))
+            .await?
+            .map_err(|e| e.to_string())?;
         // The leading system rows hold the stored system prompt, which the agent adds itself.
         let prompt_rows = transcript
             .iter()
@@ -365,14 +390,21 @@ impl Turn {
                 if !partial.is_empty() {
                     transcript.push(Message::assistant(partial));
                 }
-                let saved = store.persist_session(
-                    &self.id,
-                    &transcript,
-                    Some(&model),
-                    Some("desktop"),
-                    None,
-                    None,
-                );
+                let (id, model) = (self.id.clone(), model.clone());
+                let saved = self
+                    .chat
+                    .with_store(move |store| {
+                        store.persist_session(
+                            &id,
+                            &transcript,
+                            Some(&model),
+                            Some("desktop"),
+                            None,
+                            None,
+                        )
+                    })
+                    .await
+                    .and_then(|saved| saved.map_err(|e| e.to_string()));
                 return Err(match saved {
                     Ok(()) => error,
                     Err(e) => format!("{error} (the prompt was not saved: {e})"),
@@ -380,8 +412,16 @@ impl Turn {
             }
         };
         let reply = hermes_app_runtime::assistant_reply_from_result(&result);
-        let warning = store
-            .persist_agent_result(&self.id, &result, Some(&model), Some("desktop"))
+        let id = self.id.clone();
+        let warning = self
+            .chat
+            .with_store(move |store| {
+                store
+                    .persist_agent_result(&id, &result, Some(&model), Some("desktop"))
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .and_then(|saved| saved)
             .err()
             .map(|e| format!("The reply was not saved: {e}"));
         Ok((reply, warning))
@@ -398,8 +438,14 @@ impl Turn {
         let chat = &self.chat;
         let mut agent_config = hermes_app_runtime::build_agent_config(&chat.config, model);
         agent_config.session_id = Some(self.id.clone());
-        AgentLoop::hydrate_stored_system_prompt_from_hermes_home(&mut agent_config, &chat.home)
-            .map_err(|e| e.to_string())?;
+        let home = chat.home.clone();
+        let agent_config = tokio::task::spawn_blocking(move || {
+            AgentLoop::hydrate_stored_system_prompt_from_hermes_home(&mut agent_config, &home)
+                .map(|()| agent_config)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
         let provider = hermes_provider_runtime::build_provider(&chat.config, model);
         let agent = AgentLoop::new(agent_config, Arc::new(ToolRegistry::new()), provider);
 

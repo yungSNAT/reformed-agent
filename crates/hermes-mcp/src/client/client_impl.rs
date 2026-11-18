@@ -16,6 +16,7 @@ impl McpClient {
             sampling_metrics: SamplingMetrics::default(),
             connected_at: None,
             ping_unsupported: false,
+            connect_timeout: Duration::from_secs(MCP_CONNECT_TIMEOUT_SECS),
         }
     }
 
@@ -26,32 +27,66 @@ impl McpClient {
             return Err(McpError::ConnectionError("Already connected".to_string()));
         }
 
-        let transport = self.create_transport().await?;
-        self.finish_connect_with_transport(transport).await
+        // A server that never answers would otherwise hold its caller (a
+        // session start, the CLI's start-up) for good.
+        let deadline = tokio::time::Instant::now() + self.connect_timeout;
+        let transport = tokio::time::timeout_at(deadline, self.create_transport())
+            .await
+            .unwrap_or_else(|_| Err(self.connect_timed_out()))?;
+        self.finish_connect_by(transport, deadline).await
     }
 
+    #[cfg(test)]
     async fn finish_connect_with_transport(
         &mut self,
-        mut transport: Box<dyn McpTransport>,
+        transport: Box<dyn McpTransport>,
     ) -> Result<(), McpError> {
-        transport.start().await?;
-        self.transport = Some(transport);
+        let deadline = tokio::time::Instant::now() + self.connect_timeout;
+        self.finish_connect_by(transport, deadline).await
+    }
 
-        let discovery = match self.initialize().await {
-            Ok(_) => self.discover_tools().await,
-            Err(err) => Err(err),
+    fn connect_timed_out(&self) -> McpError {
+        McpError::ConnectionError(format!(
+            "MCP server did not connect within {}s",
+            self.connect_timeout.as_secs()
+        ))
+    }
+
+    /// Start `transport`, then run the handshake and tool discovery, giving
+    /// up at `deadline`. On failure the transport is closed, or dropped if
+    /// closing it takes over `MCP_CLOSE_TIMEOUT_SECS`.
+    async fn finish_connect_by(
+        &mut self,
+        mut transport: Box<dyn McpTransport>,
+        deadline: tokio::time::Instant,
+    ) -> Result<(), McpError> {
+        let attempt = async {
+            // Dropped with this future if `start` overruns the deadline.
+            transport.start().await?;
+            self.transport = Some(transport);
+            self.initialize().await?;
+            self.discover_tools().await
         };
+        let discovery = tokio::time::timeout_at(deadline, attempt)
+            .await
+            .unwrap_or_else(|_| Err(self.connect_timed_out()));
         if let Err(err) = discovery {
             self.connected = false;
             self.connected_at = None;
             self.tools.clear();
             self.resources.clear();
             if let Some(mut transport) = self.transport.take() {
-                if let Err(close_err) = transport.close().await {
-                    warn!(
+                let close = Duration::from_secs(MCP_CLOSE_TIMEOUT_SECS);
+                match tokio::time::timeout(close, transport.close()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(close_err)) => warn!(
                         "MCP transport close after failed connect also failed: {}",
                         close_err
-                    );
+                    ),
+                    Err(_) => warn!(
+                        "MCP transport did not close within {}s after a failed connect; dropping it",
+                        MCP_CLOSE_TIMEOUT_SECS
+                    ),
                 }
             }
             return Err(err);

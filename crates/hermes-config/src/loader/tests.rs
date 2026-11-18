@@ -1,8 +1,7 @@
 use super::*;
 use std::collections::HashMap;
-use std::sync::Mutex;
-
-static ENV_LOCK: Mutex<()> = Mutex::new(());
+// The crate's one lock for tests that change environment variables.
+use crate::managed_gateway::test_lock::ENV_LOCK;
 
 fn clear_terminal_env_bridge_vars() {
     for (_, env_key) in terminal_config_env_bridge_pairs() {

@@ -142,10 +142,12 @@ impl HermesAcpHandler {
             state.session_id,
             enabled_toolsets
         );
-        let reports = {
-            let mut manager = self.mcp_manager.lock().await;
-            manager.connect_all_parallel(configs).await
-        };
+        // The manager is shared by every session, so it stays unlocked
+        // whilst the servers connect: another session's start must not wait
+        // on a slow server it did not name.
+        let mut connects = self.mcp_manager.lock().await.start_connects(configs);
+        connects.wait().await;
+        let reports = self.mcp_manager.lock().await.finish_connects(connects).await;
         let connected = reports.iter().filter(|report| report.connected).count();
         let failed = reports.len().saturating_sub(connected);
         if failed > 0 {
