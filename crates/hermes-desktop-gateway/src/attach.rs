@@ -524,6 +524,17 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_staged_image_is_owner_only_in_an_existing_open_folder() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let images = tempfile::tempdir().unwrap();
+        fs::set_permissions(images.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let staged = stage_image(images.path(), "iVBORw0KGgoB").unwrap();
+        let mode = fs::metadata(&staged.path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn a_linked_images_folder_is_refused() {
         let outside = tempfile::tempdir().unwrap();
         let home = tempfile::tempdir().unwrap();
