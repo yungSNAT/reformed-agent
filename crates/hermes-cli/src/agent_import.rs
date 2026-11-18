@@ -1391,6 +1391,11 @@ enabled = false
             "Agents: Run tests first.\n§\nFirst note.\n§\nSecond note."
         );
         assert!(home.join("skills/codex-imports/fmt/SKILL.md").is_file());
+        // Loading config.yaml with both variables unset keeps each reference as written: the
+        // server gets the literal text, never an invented or empty value.
+        for unset in ["REMOTE_TOKEN", "TEAM_ID"] {
+            assert!(std::env::var_os(unset).is_none(), "{unset} is set");
+        }
         let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
         let remote = config
             .mcp_servers
@@ -1415,6 +1420,66 @@ enabled = false
         assert_eq!(docs.args, vec!["--stdio"]);
         assert_eq!(docs.env.keys().collect::<Vec<_>>(), vec!["DOCS_ROOT"]);
         assert!(records.get("off").is_none());
+    }
+
+    #[test]
+    fn credentials_in_instructions_memories_and_skills_reach_neither_the_report_nor_the_home() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/leaky/notes")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/fmt")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            codex.join("AGENTS.md"),
+            "- CI uses ghp_fixtureAgents01.\n- Run tests first.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            codex.join("memories/a.md"),
+            "- Deploy with ghp_fixtureMemory02.\n- First note.\n",
+        )
+        .unwrap();
+        std::fs::write(codex.join("skills/leaky/SKILL.md"), "leaky\n").unwrap();
+        std::fs::write(
+            codex.join("skills/leaky/notes/setup.md"),
+            "export GH_TOKEN=ghp_fixtureSkill03\n",
+        )
+        .unwrap();
+        std::fs::write(codex.join("skills/fmt/SKILL.md"), "fmt\n").unwrap();
+        let request = |apply| AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply,
+        };
+
+        let plan = import_agent(&request(false));
+        let applied = import_agent(&request(true));
+        assert!(!applied.failed, "{:#?}", applied.lines);
+        let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
+        let files = all_text(&home);
+        for secret in [
+            "ghp_fixtureAgents01",
+            "ghp_fixtureMemory02",
+            "ghp_fixtureSkill03",
+        ] {
+            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
+            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Run tests first.\n§\nFirst note."
+        );
+        for expected in [
+            "1 left out as it looks like a credential",
+            "skipped      skill leaky: a file in it looks like it holds a credential",
+            "imported     skill fmt",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!home.join("skills/codex-imports/leaky").exists());
     }
 
     #[test]
