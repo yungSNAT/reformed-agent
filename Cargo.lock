@@ -2092,6 +2092,7 @@ name = "hermes-py"
 version = "0.22.0"
 dependencies = [
  "chrono",
+ "finl_unicode",
  "tempfile",
 ]
 
