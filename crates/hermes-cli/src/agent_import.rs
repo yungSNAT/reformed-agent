@@ -6,9 +6,10 @@
 //! It only plans unless asked to apply, and it replaces nothing: an MCP
 //! server or skill this home already has is listed and left alone. Credential
 //! files are never read. MCP environment variables and headers whose names or
-//! values look like secrets are left out and named, never shown; a server
-//! whose arguments or URL carry one is skipped, and the report shows only each
-//! server's program or URL origin. Links are not followed out of the source,
+//! values look like secrets are left out and named, never shown (a name that
+//! itself looks like a credential is not named either); a server whose
+//! arguments or URL carry one is skipped, as is a skill holding or named like
+//! one, and the report shows only each server's program or URL origin. Links are not followed out of the source,
 //! and nothing is written through a link in this home.
 
 use std::collections::HashSet;
@@ -564,7 +565,10 @@ impl Importer<'_> {
                 if let Some(Value::Object(found)) = server.get(field) {
                     for (key, value) in found {
                         let value = value.as_str();
-                        if is_secret_name(key)
+                        if looks_secret(key) {
+                            self.left_out
+                                .push(format!("mcp_servers.{name}.{field}.{HIDDEN_NAME}"));
+                        } else if is_secret_name(key)
                             || key.to_ascii_lowercase().contains("authorization")
                             || value.is_some_and(looks_secret)
                         {
@@ -580,13 +584,25 @@ impl Importer<'_> {
             // become `${VAR}` references, which config.yaml expands on load.
             if let Some(Value::Object(found)) = server.get("env_http_headers") {
                 for (key, var) in found {
-                    if let Some(var) = var.as_str().filter(|var| is_env_name(var)) {
+                    let var = var.as_str().filter(|var| is_env_name(var));
+                    if looks_secret(key) {
+                        self.left_out
+                            .push(format!("mcp_servers.{name}.env_http_headers.{HIDDEN_NAME}"));
+                    } else if var.is_some_and(looks_secret) {
+                        self.left_out
+                            .push(format!("mcp_servers.{name}.env_http_headers.{key}"));
+                    } else if let Some(var) = var {
                         headers.insert(key.clone(), format!("${{{var}}}"));
                     }
                 }
             }
             if let Some(var) = text("bearer_token_env_var").filter(|var| is_env_name(var)) {
-                headers.insert("Authorization".to_string(), format!("Bearer ${{{var}}}"));
+                if looks_secret(var) {
+                    self.left_out
+                        .push(format!("mcp_servers.{name}.bearer_token_env_var"));
+                } else {
+                    headers.insert("Authorization".to_string(), format!("Bearer ${{{var}}}"));
+                }
             }
             return Ok((
                 hermes_config::McpServerEntry {
@@ -631,7 +647,10 @@ impl Importer<'_> {
         if let Some(Value::Object(found)) = server.get("env") {
             for (key, value) in found {
                 let value = value.as_str();
-                if is_secret_name(key) || value.is_some_and(looks_secret) {
+                if looks_secret(key) {
+                    self.left_out
+                        .push(format!("mcp_servers.{name}.env.{HIDDEN_NAME}"));
+                } else if is_secret_name(key) || value.is_some_and(looks_secret) {
                     self.left_out.push(format!("mcp_servers.{name}.env.{key}"));
                 } else if let Some(value) = value {
                     env.insert(key.clone(), Value::String(value.to_string()));
@@ -663,16 +682,20 @@ impl Importer<'_> {
     /// `skills/<agent>-imports/<name>/`; a linked skill folder or `SKILL.md`
     /// is skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
-        let Ok(entries) = std::fs::read_dir(source) else {
-            self.record(Status::Skip, "skills", "no skills folder".to_string());
-            return;
+        let skill_dirs: Vec<PathBuf> = match list_dir(source) {
+            Ok(paths) => paths
+                .into_iter()
+                .filter(|path| path.join("SKILL.md").is_file())
+                .collect(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.record(Status::Skip, "skills", "no skills folder".to_string());
+                return;
+            }
+            Err(err) => {
+                self.record(Status::Error, "skills", format!("could not read it: {err}"));
+                return;
+            }
         };
-        let mut skill_dirs: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.join("SKILL.md").is_file())
-            .collect();
-        skill_dirs.sort();
         if skill_dirs.is_empty() {
             self.record(
                 Status::Skip,
@@ -690,6 +713,15 @@ impl Importer<'_> {
             let Some(name) = skill.file_name() else {
                 continue;
             };
+            // The name becomes a folder in this home and a report line.
+            if looks_secret(&name.to_string_lossy()) {
+                self.record(
+                    Status::Skip,
+                    "a skill",
+                    "its folder name looks like a credential; add it yourself".to_string(),
+                );
+                continue;
+            }
             let item = format!("skill {}", name.to_string_lossy());
             if is_link(&skill) {
                 self.record(
@@ -800,6 +832,9 @@ static SECRET_NAME: LazyLock<Regex> = LazyLock::new(|| {
     .expect("valid secret-name pattern")
 });
 
+/// Stands in for a left-out name that itself looks like a credential.
+const HIDDEN_NAME: &str = "<a name that looks like a credential>";
+
 /// Whether an environment variable or header name looks like a credential.
 fn is_secret_name(name: &str) -> bool {
     SECRET_NAME.is_match(name)
@@ -817,14 +852,19 @@ fn looks_secret(text: &str) -> bool {
     redact_sensitive_text(&*text) != text
 }
 
-/// Whether a file under `dir`, reached without following a link, holds what looks like a
-/// credential. A file that is not UTF-8 is read lossily; anything unreadable is an error, so
-/// the caller never copies what it could not check.
+/// Whether a file or folder under `dir`, reached without following a link, holds or is named
+/// like a credential. A file that is not UTF-8 is read lossily; anything unreadable is an
+/// error, so the caller never copies what it could not check.
 fn holds_secret(dir: &Path) -> std::io::Result<bool> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         let found = if is_link(&path) {
             false
+        } else if path
+            .file_name()
+            .is_some_and(|name| looks_secret(&name.to_string_lossy()))
+        {
+            true
         } else if path.is_dir() {
             holds_secret(&path)?
         } else {
@@ -1973,8 +2013,12 @@ enabled = false
         ];
         let err = sorted_paths(entries.into_iter()).unwrap_err();
         assert_eq!(err.to_string(), "entry failed");
-        let listed = sorted_paths([Ok(PathBuf::from("b.md")), Ok(PathBuf::from("a.md"))].into_iter());
-        assert_eq!(listed.unwrap(), vec![PathBuf::from("a.md"), PathBuf::from("b.md")]);
+        let listed =
+            sorted_paths([Ok(PathBuf::from("b.md")), Ok(PathBuf::from("a.md"))].into_iter());
+        assert_eq!(
+            listed.unwrap(),
+            vec![PathBuf::from("a.md"), PathBuf::from("b.md")]
+        );
     }
 
     #[cfg(unix)]
@@ -2010,8 +2054,11 @@ enabled = false
         let home = root.path().join("home");
         for skill in ["ghp_fixtureKey07", "tidy", "clean"] {
             std::fs::create_dir_all(codex.join("skills").join(skill)).unwrap();
-            std::fs::write(codex.join("skills").join(skill).join("SKILL.md"), "A skill.\n")
-                .unwrap();
+            std::fs::write(
+                codex.join("skills").join(skill).join("SKILL.md"),
+                "A skill.\n",
+            )
+            .unwrap();
         }
         std::fs::write(codex.join("skills/tidy/ghp_fixtureKey08.txt"), "plain\n").unwrap();
         std::fs::create_dir_all(&home).unwrap();
