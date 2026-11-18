@@ -99,6 +99,7 @@ pub fn parse_bedrock_response(json: &Value, model: &str) -> Result<LlmResponse, 
                         .unwrap_or_default()
             }),
         estimated_cost: None,
+        ..Default::default()
     });
     let finish_reason = if tool_calls.is_empty() {
         map_bedrock_finish_reason(json.get("stopReason").and_then(Value::as_str))
@@ -661,6 +662,7 @@ fn parse_bedrock_usage(usage: &Value) -> UsageStats {
         completion_tokens,
         total_tokens,
         estimated_cost: None,
+        ..Default::default()
     }
 }
 
@@ -724,6 +726,7 @@ fn parse_openai_like_response(json: &Value, fallback_model: &str) -> Option<LlmR
             .and_then(Value::as_u64)
             .unwrap_or_default(),
         estimated_cost: None,
+        ..Default::default()
     });
     Some(LlmResponse {
         message: Message {

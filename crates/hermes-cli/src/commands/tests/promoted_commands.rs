@@ -751,6 +751,7 @@
             completion_tokens: 45,
             total_tokens: 168,
             estimated_cost: Some(0.0123),
+            ..Default::default()
         };
 
         let acp_usage = acp_usage_from_agent_usage(&usage);
@@ -783,6 +784,7 @@
                 completion_tokens: 3,
                 total_tokens: 15,
                 estimated_cost: Some(0.0123),
+                ..Default::default()
             }),
             interrupted: false,
             session_cost_usd: Some(0.0123),

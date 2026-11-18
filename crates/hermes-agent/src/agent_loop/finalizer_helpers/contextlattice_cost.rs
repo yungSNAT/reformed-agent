@@ -222,6 +222,25 @@ fn extract_marker_values(text: &str, marker: &str, limit: usize) -> Vec<String> 
     out
 }
 
+/// The price of a cache read as a fraction of the model's input price, from
+/// Anthropic's prompt caching page (Pricing, footnotes 1 and 2, read
+/// 18 November 2026): 0.025 for Claude Fable and Mythos 5.1 and 5.2, 0.05 for
+/// Claude Opus and Sonnet 5.5, and 0.1 for every other model. Keep the list
+/// to the page's footnotes. A dated snapshot id such as `claude-fable-5-20260101`
+/// names version 5, not 5.2.
+fn anthropic_cache_read_multiplier(model: &str) -> f64 {
+    let model = model.to_ascii_lowercase().replace('.', "-");
+    let parts: Vec<&str> = model.split(['-', '/', ':', '@']).collect();
+    for name in parts.windows(3) {
+        match (name[0], name[1], name[2]) {
+            ("fable" | "mythos", "5", "1" | "2") => return 0.025,
+            ("opus" | "sonnet", "5", "5") => return 0.05,
+            _ => {}
+        }
+    }
+    0.1
+}
+
 fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig) -> Option<f64> {
     if let Some(v) = usage.estimated_cost {
         return Some(v.max(0.0));
@@ -233,7 +252,20 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
         (Some(i), Some(o)) => (i, o),
         _ => default_model_cost_per_million(model)?,
     };
-    let prompt_cost = (usage.prompt_tokens as f64 / 1_000_000.0) * in_pm;
+    // shortcut: Anthropic's rates, as only the Anthropic provider reports
+    // cache counts here (an Anthropic-compatible endpoint is assumed to price
+    // as Anthropic does): a cache read costs the model's read multiplier and
+    // a 5-minute cache write 1.25 of the input price. The agent never asks
+    // for a 1-hour cache; one requested through `extra_body` is priced as a
+    // 5-minute write, not at its 2x (reading `ephemeral_1h_input_tokens`
+    // would price it exactly). Carry the provider's rates with the counts
+    // once another provider reports them.
+    let cached = usage.cache_read_tokens + usage.cache_write_tokens;
+    let uncached = usage.prompt_tokens.saturating_sub(cached);
+    let prompt_tokens = uncached as f64
+        + anthropic_cache_read_multiplier(model) * usage.cache_read_tokens as f64
+        + 1.25 * usage.cache_write_tokens as f64;
+    let prompt_cost = (prompt_tokens / 1_000_000.0) * in_pm;
     let completion_cost = (usage.completion_tokens as f64 / 1_000_000.0) * out_pm;
     Some(prompt_cost + completion_cost)
 }
@@ -251,6 +283,8 @@ fn merge_usage(existing: Option<UsageStats>, new: &UsageStats) -> UsageStats {
                 (None, Some(b)) => Some(b),
                 (None, None) => None,
             },
+            cache_read_tokens: prev.cache_read_tokens + new.cache_read_tokens,
+            cache_write_tokens: prev.cache_write_tokens + new.cache_write_tokens,
         },
         None => new.clone(),
     }
