@@ -40,6 +40,10 @@ impl ActiveSessionControl for GatewayAgentBusyControl {
     fn steer(&self, message: &str) -> bool {
         self.interrupt.steer(message)
     }
+
+    fn take_steer(&self) -> Option<String> {
+        self.interrupt.take_steer()
+    }
 }
 
 fn normalize_gateway_tool_progress_mode(raw: &str) -> Option<String> {

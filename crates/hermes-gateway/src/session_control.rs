@@ -218,6 +218,8 @@ impl BusyMessageDecision {
 struct ActiveSession {
     control: Option<Arc<dyn ActiveSessionControl>>,
     started_at: Instant,
+    /// The last message passed to the turn as a steer: a leftover goes out as it would have.
+    steered: Option<MessageEvent>,
 }
 
 pub struct BusySessionCoordinator {
@@ -254,6 +256,7 @@ impl BusySessionCoordinator {
             ActiveSession {
                 control,
                 started_at: now,
+                steered: None,
             },
         );
     }
@@ -271,7 +274,22 @@ impl BusySessionCoordinator {
         session_key: &str,
         _outcome: ProcessingOutcome,
     ) -> Option<MessageEvent> {
-        self.active.remove(session_key);
+        // A steer accepted after the turn's last tool result was never delivered: it becomes
+        // the next turn, ahead of anything queued meanwhile, as upstream sends it.
+        if let Some(ActiveSession {
+            control: Some(control),
+            steered: Some(mut event),
+            ..
+        }) = self.active.remove(session_key)
+        {
+            if let Some(text) = control.take_steer() {
+                event.text = text;
+                self.pending
+                    .entry(session_key.to_string())
+                    .or_default()
+                    .push_front(event);
+            }
+        }
         self.busy_ack_ts.remove(session_key);
         self.pop_pending(session_key)
     }
@@ -419,6 +437,9 @@ impl BusySessionCoordinator {
                     .map(|control| control.steer(&event.text))
                     .unwrap_or(false);
                 if steered {
+                    if let Some(active) = self.active.get_mut(session_key) {
+                        active.steered = Some(event);
+                    }
                     BusyMessageDecision {
                         handled: true,
                         queued: false,
