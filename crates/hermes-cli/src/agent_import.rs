@@ -21,6 +21,8 @@ use hermes_tools::backends::memory::{FileMemoryBackend, ENTRY_DELIMITER, MEMORY_
 use regex::Regex;
 use serde_json::{Map, Value};
 
+use crate::source_tree::{read_all, Entry, SourceDir, Tree};
+
 /// Agents `import-agent` reads.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
 pub enum SourceAgent {
@@ -276,10 +278,19 @@ impl Importer<'_> {
     /// Every `*.md` in `folder`, in name order, as memory entries; a linked
     /// file is skipped.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
-        let files = list_dir(folder).and_then(|paths| {
-            keep(paths, |path| {
-                Ok(path.extension().is_some_and(|ext| ext == "md") && is_file_or_link(path)?)
-            })
+        // Every entry is opened before any is read, so one that cannot be
+        // looked up fails the folder rather than dropping quietly.
+        let files = SourceDir::open(folder).and_then(|dir| {
+            let mut files = Vec::new();
+            for name in dir.names()? {
+                if !Path::new(&name).extension().is_some_and(|ext| ext == "md") {
+                    continue;
+                }
+                if let Some(entry @ (Entry::File(_) | Entry::Link)) = dir.entry(&name)? {
+                    files.push((name, entry));
+                }
+            }
+            Ok(files)
         });
         let files = match files {
             Ok(files) => files,
@@ -293,22 +304,25 @@ impl Importer<'_> {
             }
         };
         let mut incoming = Vec::new();
-        for file in files {
-            if is_link(&file) {
-                let name = file.file_name().unwrap_or_default().to_string_lossy();
+        for (name, entry) in files {
+            let Entry::File(file) = entry else {
                 self.record(
                     Status::Skip,
-                    &format!("{item}/{name}"),
+                    &format!("{item}/{}", name.to_string_lossy()),
                     "it is a link, which this import does not follow".to_string(),
                 );
                 continue;
-            }
-            match read_regular_to_string(&file) {
+            };
+            let text = read_all(file).and_then(|bytes| {
+                String::from_utf8(bytes)
+                    .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))
+            });
+            match text {
                 Ok(text) => incoming.extend(markdown_entries(text.trim_start_matches('\u{feff}'))),
                 Err(err) => self.record(
                     Status::Error,
                     item,
-                    format!("could not read {}: {err}", file.display()),
+                    format!("could not read {}: {err}", folder.join(&name).display()),
                 ),
             }
         }
@@ -684,11 +698,22 @@ impl Importer<'_> {
     /// `skills/<agent>-imports/<name>/`; a linked entry or `SKILL.md` is
     /// reported and skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
-        // A linked entry is kept so that it is reported, never followed.
-        let skill_dirs = list_dir(source).and_then(|paths| {
-            keep(paths, |path| {
-                Ok(is_link(path) || is_file_or_link(&path.join("SKILL.md"))?)
-            })
+        // A linked entry is kept so that it is reported, never followed; a
+        // folder is kept with whether its SKILL.md is a link.
+        let skill_dirs = SourceDir::open(source).and_then(|dir| {
+            let mut kept = Vec::new();
+            for name in dir.names()? {
+                match dir.entry(&name)? {
+                    Some(Entry::Link) => kept.push((name, None)),
+                    Some(Entry::Dir(skill)) => match skill.entry("SKILL.md")? {
+                        Some(Entry::File(_)) => kept.push((name, Some((skill, false)))),
+                        Some(Entry::Link) => kept.push((name, Some((skill, true)))),
+                        _ => {}
+                    },
+                    _ => {}
+                }
+            }
+            Ok(kept)
         });
         let skill_dirs = match skill_dirs {
             Ok(dirs) => dirs,
@@ -714,10 +739,7 @@ impl Importer<'_> {
             .home
             .join("skills")
             .join(self.request.agent.skill_folder());
-        for skill in skill_dirs {
-            let Some(name) = skill.file_name() else {
-                continue;
-            };
+        for (name, skill) in skill_dirs {
             // The name becomes a folder in this home and a report line.
             if looks_secret(&name.to_string_lossy()) {
                 self.record(
@@ -728,21 +750,21 @@ impl Importer<'_> {
                 continue;
             }
             let item = format!("skill {}", name.to_string_lossy());
-            if is_link(&skill) {
+            let Some((skill, linked_marker)) = skill else {
                 self.record(
                     Status::Skip,
                     &item,
                     "it is a link, which this import does not follow".to_string(),
                 );
                 continue;
-            }
-            if is_link(&skill.join("SKILL.md")) {
+            };
+            if linked_marker {
                 self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
                 continue;
             }
-            match holds_secret(&skill) {
-                Ok(false) => {}
-                Ok(true) => {
+            // What is checked for credentials is what is copied.
+            let tree = match Tree::read(&skill) {
+                Ok(tree) if tree.holds_secret() => {
                     self.record(
                         Status::Skip,
                         &item,
@@ -751,6 +773,7 @@ impl Importer<'_> {
                     );
                     continue;
                 }
+                Ok(tree) => tree,
                 Err(err) => {
                     self.record(
                         Status::Error,
@@ -759,8 +782,8 @@ impl Importer<'_> {
                     );
                     continue;
                 }
-            }
-            let destination = destination_root.join(name);
+            };
+            let destination = destination_root.join(&name);
             if let Err(err) = check_destination(self.request.home, &destination) {
                 self.record(Status::Error, &item, err);
                 continue;
@@ -773,19 +796,16 @@ impl Importer<'_> {
                 );
                 continue;
             }
-            let mut links = 0;
             if self.request.apply {
                 let copied = std::fs::create_dir_all(&destination_root)
-                    .and_then(|()| copy_tree(&skill, &destination, &mut links));
+                    .and_then(|()| tree.write(&destination));
                 if let Err(err) = copied {
                     self.record(Status::Error, &item, format!("could not copy it: {err}"));
                     continue;
                 }
-            } else {
-                count_links(&skill, &mut links);
             }
-            let note = if links > 0 {
-                format!(" ({links} links inside it are not copied)")
+            let note = if tree.links > 0 {
+                format!(" ({} links inside it are not copied)", tree.links)
             } else {
                 String::new()
             };
@@ -805,12 +825,6 @@ fn is_env_name(name: &str) -> bool {
         .next()
         .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
-}
-
-/// The paths in `dir`, in name order. An entry that cannot be read fails the
-/// whole listing, so a shorter listing is never taken for the folder.
-pub(crate) fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
-    sorted_paths(std::fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.path())))
 }
 
 /// Opens the file `path` for reading as `File::open` does, but never blocks
@@ -850,47 +864,6 @@ pub(crate) fn read_regular_to_string(path: &Path) -> std::io::Result<String> {
     Ok(text)
 }
 
-fn sorted_paths(
-    entries: impl Iterator<Item = std::io::Result<PathBuf>>,
-) -> std::io::Result<Vec<PathBuf>> {
-    let mut paths = entries.collect::<std::io::Result<Vec<_>>>()?;
-    paths.sort();
-    Ok(paths)
-}
-
-/// The `paths` for which `wanted` holds; a path it cannot decide fails the
-/// whole list.
-fn keep(
-    paths: Vec<PathBuf>,
-    wanted: impl Fn(&Path) -> std::io::Result<bool>,
-) -> std::io::Result<Vec<PathBuf>> {
-    let mut kept = Vec::with_capacity(paths.len());
-    for path in paths {
-        if wanted(&path)? {
-            kept.push(path);
-        }
-    }
-    Ok(kept)
-}
-
-/// Whether `path` is a file or a link, without following it. A missing path
-/// is `false`; any other failure to look it up is an error, so an entry that
-/// cannot be looked up is never taken for a missing one.
-fn is_file_or_link(path: &Path) -> std::io::Result<bool> {
-    match std::fs::symlink_metadata(path) {
-        Ok(meta) => Ok(meta.is_file() || meta.is_symlink()),
-        Err(err)
-            if matches!(
-                err.kind(),
-                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
-            ) =>
-        {
-            Ok(false)
-        }
-        Err(err) => Err(err),
-    }
-}
-
 fn markdown_files(dir: &Path) -> usize {
     std::fs::read_dir(dir).map_or(0, |entries| {
         entries
@@ -927,31 +900,6 @@ pub(crate) fn looks_secret(text: &str) -> bool {
     redact_sensitive_text(&*text) != text
 }
 
-/// Whether a file or folder under `dir`, reached without following a link, holds or is named
-/// like a credential. A file that is not UTF-8 is read lossily; anything unreadable is an
-/// error, so the caller never copies what it could not check.
-pub(crate) fn holds_secret(dir: &Path) -> std::io::Result<bool> {
-    for entry in std::fs::read_dir(dir)? {
-        let path = entry?.path();
-        let found = if is_link(&path) {
-            false
-        } else if path
-            .file_name()
-            .is_some_and(|name| looks_secret(&name.to_string_lossy()))
-        {
-            true
-        } else if path.is_dir() {
-            holds_secret(&path)?
-        } else {
-            looks_secret(&String::from_utf8_lossy(&read_regular(&path)?))
-        };
-        if found {
-            return Ok(true);
-        }
-    }
-    Ok(false)
-}
-
 /// Whether `arg` is an option named like a credential, such as `--token` or
 /// `--api-key=...`; its value is in it or in the next argument.
 fn is_secret_flag(arg: &str) -> bool {
@@ -973,10 +921,6 @@ fn url_origin(url: &str) -> &str {
         .find(['/', '?', '#'])
         .map_or(url.len(), |at| start + at);
     &url[..end]
-}
-
-pub(crate) fn is_link(path: &Path) -> bool {
-    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
 }
 
 /// Refuses `path` when it, or a folder between `home` and it, is a link:
@@ -1250,68 +1194,6 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
         servers.push(record);
     } else if let Some(servers) = records.as_object_mut() {
         servers.insert(name.to_string(), record);
-    }
-}
-
-/// Copies `source` into a new folder `destination`, creating every folder and
-/// file afresh so nothing already there, a link included, is written through.
-/// Copied files are owner-only on Unix. The copy is built in a hidden folder
-/// beside `destination` and renamed into place, so a copy that fails part way
-/// leaves nothing that a later run would take for the finished folder.
-pub(crate) fn copy_tree(
-    source: &Path,
-    destination: &Path,
-    links: &mut usize,
-) -> std::io::Result<()> {
-    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
-    let staging = tempfile::Builder::new()
-        .prefix(".copying-")
-        .tempdir_in(parent)?;
-    let staged = staging.path().join("copy");
-    copy_into(source, &staged, links)?;
-    std::fs::rename(&staged, destination)
-}
-
-fn copy_into(source: &Path, destination: &Path, links: &mut usize) -> std::io::Result<()> {
-    std::fs::create_dir(destination)?;
-    for entry in std::fs::read_dir(source)? {
-        let entry = entry?;
-        let kind = entry.file_type()?;
-        let target = destination.join(entry.file_name());
-        if kind.is_symlink() {
-            *links += 1;
-        } else if kind.is_dir() {
-            copy_into(&entry.path(), &target, links)?;
-        } else {
-            let mut from = open_regular(&entry.path())?;
-            let mut to = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&target)?;
-            std::io::copy(&mut from, &mut to)?;
-            let permissions = from.metadata()?.permissions();
-            // Owner-only, keeping the owner's execute bit.
-            #[cfg(unix)]
-            let permissions = {
-                use std::os::unix::fs::PermissionsExt;
-                std::fs::Permissions::from_mode(permissions.mode() & 0o700)
-            };
-            to.set_permissions(permissions)?;
-        }
-    }
-    Ok(())
-}
-
-fn count_links(source: &Path, links: &mut usize) {
-    let Ok(entries) = std::fs::read_dir(source) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        match entry.file_type() {
-            Ok(kind) if kind.is_symlink() => *links += 1,
-            Ok(kind) if kind.is_dir() => count_links(&entry.path(), links),
-            _ => {}
-        }
     }
 }
 
@@ -2103,23 +1985,6 @@ enabled = false
         assert!(!home.join("config.yaml").exists());
     }
 
-    #[test]
-    fn an_entry_that_cannot_be_read_fails_the_listing_instead_of_shortening_it() {
-        let entries = vec![
-            Ok(PathBuf::from("b.md")),
-            Err(std::io::Error::other("entry failed")),
-            Ok(PathBuf::from("a.md")),
-        ];
-        let err = sorted_paths(entries.into_iter()).unwrap_err();
-        assert_eq!(err.to_string(), "entry failed");
-        let listed =
-            sorted_paths([Ok(PathBuf::from("b.md")), Ok(PathBuf::from("a.md"))].into_iter());
-        assert_eq!(
-            listed.unwrap(),
-            vec![PathBuf::from("a.md"), PathBuf::from("b.md")]
-        );
-    }
-
     #[cfg(unix)]
     #[test]
     fn an_unreadable_skills_folder_is_an_error_not_a_quiet_skip() {
@@ -2187,28 +2052,27 @@ enabled = false
         assert!(!home.join("skills/codex-imports/piped").exists());
     }
 
-    #[cfg(unix)]
     #[test]
     fn a_copy_that_fails_part_way_leaves_nothing_behind() {
-        use std::os::unix::fs::PermissionsExt;
+        use crate::source_tree::{Node, Tree};
         let root = tempfile::tempdir().expect("temp root");
-        let source = root.path().join("skill");
         let home = root.path().join("home");
-        std::fs::create_dir_all(source.join("a")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
-        std::fs::write(source.join("a/SKILL.md"), "a skill\n").unwrap();
-        std::fs::write(source.join("z.md"), "locked\n").unwrap();
-        let locked = source.join("z.md");
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
-        let unreadable = std::fs::File::open(&locked).is_err();
+        let file = || {
+            let permissions = std::fs::metadata(root.path()).unwrap().permissions();
+            Node::File(b"a skill\n".to_vec(), permissions)
+        };
+        // The second file cannot be created, so the write stops part way.
+        let tree = Tree {
+            nodes: vec![
+                (PathBuf::from("a"), Node::Dir),
+                (PathBuf::from("a/SKILL.md"), file()),
+                (PathBuf::from("a/SKILL.md"), file()),
+            ],
+            links: 0,
+        };
 
-        let destination = home.join("skill");
-        let copied = copy_tree(&source, &destination, &mut 0);
-        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
-        if !unreadable {
-            return; // running as root: permissions do not stop reads
-        }
-        assert!(copied.is_err(), "the locked file was copied");
+        assert!(tree.write(&home.join("skill")).is_err());
         // A partial folder would read as an existing skill on the next run.
         let left: Vec<_> = std::fs::read_dir(&home).unwrap().flatten().collect();
         assert!(left.is_empty(), "left behind: {left:?}");
