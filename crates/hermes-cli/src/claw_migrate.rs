@@ -722,6 +722,133 @@ mod tests {
                     .is_some_and(|reason| reason.contains("link"))));
     }
 
+    /// A source with `sessions/` holding `files`, and an empty home.
+    fn sessions_fixture(files: &[(&str, &str)]) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(source.join("sessions")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        for (name, text) in files {
+            std::fs::write(source.join("sessions").join(name), text).unwrap();
+        }
+        (tmp, source, home)
+    }
+
+    /// Whether `items` has `kind` with a reason containing `word`.
+    fn has(items: &[MigrationItem], kind: &str, word: &str) -> bool {
+        items.iter().any(|item| {
+            item.kind == kind && item.reason.as_deref().is_some_and(|r| r.contains(word))
+        })
+    }
+
+    #[test]
+    fn a_session_holding_a_credential_is_skipped_and_the_rest_copied() {
+        let (_tmp, source, home) =
+            sessions_fixture(&[("ok.json", "hello\n"), ("k.json", "ghp_fixtureClaw06\n")]);
+
+        let result = migrate_into(&source, &home);
+        let report = items(&result);
+        assert_eq!(
+            std::fs::read_to_string(home.join("sessions/ok.json")).unwrap(),
+            "hello\n"
+        );
+        assert!(!all_text(&home).contains("ghp_fixtureClaw06"), "{report}");
+        assert!(
+            has(&result.skipped, "session:k.json", "credential"),
+            "{report}"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_session_is_skipped_not_followed() {
+        let (tmp, source, home) = sessions_fixture(&[]);
+        let outside = tmp.path().join("outside.json");
+        std::fs::write(&outside, "outside text\n").unwrap();
+        std::os::unix::fs::symlink(&outside, source.join("sessions/x.json")).unwrap();
+
+        let result = migrate_into(&source, &home);
+        assert!(!all_text(&home).contains("outside text"));
+        assert!(
+            has(&result.skipped, "session:x.json", "link"),
+            "{}",
+            items(&result)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_link_in_the_homes_sessions_folder_is_not_written_through() {
+        let (tmp, source, home) = sessions_fixture(&[("a.json", "hello\n")]);
+        let elsewhere = tmp.path().join("elsewhere.json");
+        std::fs::create_dir_all(home.join("sessions")).unwrap();
+        std::os::unix::fs::symlink(&elsewhere, home.join("sessions/a.json")).unwrap();
+
+        let result = migrate_into(&source, &home);
+        assert!(!elsewhere.exists(), "written through the home's link");
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|item| item.kind == "session:a.json"),
+            "{}",
+            items(&result)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_session_that_cannot_be_read_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_tmp, source, home) = sessions_fixture(&[("u.json", "hello\n")]);
+        let session = source.join("sessions/u.json");
+        std::fs::set_permissions(&session, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::read(&session).is_err();
+
+        let result = migrate_into(&source, &home);
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|item| item.kind == "session:u.json"),
+            "{}",
+            items(&result)
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copied_skill_files_are_owner_only_and_keep_their_execute_bit() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        let skill = source.join("skills/notes");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        for (name, mode) in [("SKILL.md", 0o644), ("run.sh", 0o755)] {
+            std::fs::write(skill.join(name), "A skill.\n").unwrap();
+            std::fs::set_permissions(skill.join(name), std::fs::Permissions::from_mode(mode))
+                .unwrap();
+        }
+
+        migrate_into(&source, &home);
+        let copied = home.join("skills/openclaw-imports/notes");
+        let mode = |name: &str| {
+            std::fs::metadata(copied.join(name))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o7777
+        };
+        assert_eq!(mode("SKILL.md"), 0o600);
+        assert_eq!(mode("run.sh"), 0o700);
+    }
+
     #[test]
     fn test_migration_status_eq() {
         assert_eq!(MigrationStatus::Migrated, MigrationStatus::Migrated);
