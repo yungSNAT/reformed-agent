@@ -54,7 +54,7 @@ fn stage_within(
         return Err(format!("attachment larger than {limit} bytes"));
     }
     let dir = attachments_folder(workspace)?;
-    let (path, file) = create_new(&dir, &file_name(name))?;
+    let (path, file) = create_new(&dir, &file_name(name), 0o666)?;
     if let Err(e) = decode_into(payload, file) {
         let _ = fs::remove_file(&path);
         return Err(e);
@@ -117,7 +117,8 @@ pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, I
     let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
     private_folder(images).map_err(ImageError::Write)?;
     let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
-    let (path, mut file) = create_new(images, &name).map_err(ImageError::Write)?;
+    // Owner-only, as upstream's mkstemp, whatever the folder's own mode.
+    let (path, mut file) = create_new(images, &name, 0o600).map_err(ImageError::Write)?;
     if let Err(e) = file.write_all(&data) {
         let _ = fs::remove_file(&path);
         return Err(ImageError::Write(format!("cannot write the image: {e}")));
@@ -235,19 +236,26 @@ fn attachments_folder(workspace: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Creates a new file in `dir` named `name`, or `<stem>-2<ext>` and so on when it is taken.
-fn create_new(dir: &Path, name: &str) -> Result<(PathBuf, File), String> {
+/// Creates a new file in `dir` named `name`, or `<stem>-2<ext>` and so on when it is taken,
+/// with Unix permissions `mode` before the umask.
+fn create_new(dir: &Path, name: &str, mode: u32) -> Result<(PathBuf, File), String> {
     let (stem, ext) = match name.rfind('.') {
         Some(dot) if dot > 0 => name.split_at(dot),
         _ => (name, ""),
     };
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
+    #[cfg(not(unix))]
+    let _ = mode;
     let mut candidate = name.to_string();
     for n in 2u64.. {
         let path = dir.join(&candidate);
         // Any existing entry, a dangling link included, takes the name: Windows' create-new
         // follows a dangling link and would create its target.
         if fs::symlink_metadata(&path).is_err() {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            match options.open(&path) {
                 Ok(file) => return Ok((path, file)),
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
