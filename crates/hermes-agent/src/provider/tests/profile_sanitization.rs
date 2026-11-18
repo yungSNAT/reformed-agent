@@ -60,6 +60,53 @@ fn test_moonshot_tool_schema_sanitizer_repairs_mcp_shapes() {
 }
 
 #[test]
+fn native_gemini_tool_schemas_keep_to_the_gemini_subset() {
+    let mut params = hermes_core::JsonSchema::new("object");
+    params.additional_properties = Some(false);
+    params.required = Some(vec!["action".to_string()]);
+    params.properties = Some(
+        [
+            (
+                "action".to_string(),
+                serde_json::json!({"type": "string", "enum": ["create_thread"]}),
+            ),
+            (
+                "auto_archive_duration".to_string(),
+                serde_json::json!({
+                    "type": "integer",
+                    "enum": [60, 1440, 4320, 10080],
+                    "description": "Thread archive duration in minutes (default 1440)."
+                }),
+            ),
+        ]
+        .into_iter()
+        .collect(),
+    );
+    let tools = vec![ToolSchema::new("discord", "Discord", params)];
+    let native = provider_profiles::GEMINI_NATIVE_BASE_URL;
+
+    let formatted = format_tools_for_openai_api_with_model(&tools, "gemini-2.5-pro", native);
+    let parameters = &formatted[0]["function"]["parameters"];
+    assert!(parameters.get("additionalProperties").is_none());
+    assert_eq!(parameters["required"], serde_json::json!(["action"]));
+    let duration = &parameters["properties"]["auto_archive_duration"];
+    assert!(duration.get("enum").is_none());
+    assert_eq!(duration["type"], "integer");
+    assert_eq!(
+        parameters["properties"]["action"]["enum"],
+        serde_json::json!(["create_thread"])
+    );
+
+    let other = format_tools_for_openai_api_with_model(
+        &tools,
+        "gemini-2.5-pro",
+        "https://openrouter.ai/api/v1",
+    );
+    let duration = &other[0]["function"]["parameters"]["properties"]["auto_archive_duration"];
+    assert_eq!(duration["enum"], serde_json::json!([60, 1440, 4320, 10080]));
+}
+
+#[test]
 fn test_moonshot_model_tool_formatter_applies_sanitizer() {
     let mut params = hermes_core::JsonSchema::new("object");
     params.properties = Some(Default::default());
