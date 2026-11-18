@@ -270,14 +270,14 @@
       "id": "rust-no-gateway-profile-routing",
       "status": "temporary",
       "workstream": "WS3",
-      "summary": "Upstream's per-source profile routing for one gateway is not ported, so its design note is not carried.",
+      "summary": "Upstream's per-source profile routing for one gateway is not ported.",
       "owner": "yungSNAT",
       "ticket": 3524,
-      "last_reviewed": "2026-11-17",
+      "last_reviewed": "2026-11-19",
       "review_date": "2026-12-17",
-      "rationale": "docs/profile-routing.md documents gateway/profile_routing.py, which picks a profile per platform, server, channel or thread. The Rust gateway serves one profile per run; run one gateway per profile instead.",
+      "rationale": "Upstream's gateway/profile_routing.py picks a profile per platform, server, channel or thread; upstream removed its design note, docs/profile-routing.md, at v0.23.2. The Rust gateway serves one profile per run; run one gateway per profile instead.",
       "path_prefixes": [
-        "docs/profile-routing.md"
+        "gateway/profile_routing.py"
       ]
     },
     {
