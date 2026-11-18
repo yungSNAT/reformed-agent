@@ -438,6 +438,20 @@ impl SessionManager {
         false
     }
 
+    /// Queue a prompt to execute before any already queued.
+    pub fn push_queued_prompt_front(&self, session_id: &str, prompt: &str) -> bool {
+        let mut sessions = self.sessions.lock().unwrap();
+        if let Some(state) = sessions.get_mut(session_id) {
+            let prompt = prompt.trim();
+            if !prompt.is_empty() {
+                state.queued_prompts.insert(0, prompt.to_string());
+                state.touch();
+            }
+            return true;
+        }
+        false
+    }
+
     /// Drain queued prompts in FIFO order.
     pub fn take_queued_prompts(&self, session_id: &str) -> Vec<String> {
         let mut sessions = self.sessions.lock().unwrap();
