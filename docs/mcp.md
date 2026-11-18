@@ -65,7 +65,7 @@ Set `COMPOSIO_CONSUMER_KEY` to the consumer key from Composio's dashboard (an ac
 
 `crates/hermes-mcp` provides:
 
-- stdio and Streamable HTTP transports. As the MCP specification advises, the first message is POSTed to the URL; only when that answers with a 4xx other than 401 or 403 and `<url>/sse` answers is the server spoken to as the older HTTP+SSE kind. Such a server must reply in the body of each POST: replies it sends only on its held GET stream are not read.
+- stdio and Streamable HTTP transports. As the MCP specification advises, the first message is POSTed to the URL; only when that answers with a 4xx other than 401 or 403 and `<url>/sse` answers is the server spoken to as the older HTTP+SSE kind. Its message endpoint is the one its `mcp-message-endpoint` header or first `endpoint` event names, within its origin, else `<url>/message`; its replies are read from the body of each POST and from the GET stream, which is held open.
 - `initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`, `prompts/list`, and `prompts/get` client methods.
 - Parallel connection/discovery reporting through `McpManager::connect_all_parallel`.
 - Server-initiated sampling through `sampling/createMessage` with per-client policy, callback wiring, rate limits, token caps, model allowlists, tool-loop limits, and audit counters.

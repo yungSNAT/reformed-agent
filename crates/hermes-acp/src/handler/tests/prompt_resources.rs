@@ -207,11 +207,12 @@ async fn test_prompt_forwards_acp_image_data_blocks_as_multimodal_content() {
     let parts = state.history[0]["content"].as_array().unwrap();
     assert_eq!(parts[0]["type"], "text");
     assert_eq!(parts[0]["text"], "What is in this image?");
-    assert_eq!(parts[1]["type"], "text");
-    assert_eq!(parts[1]["text"], "[Attached image: image/png]");
-    assert_eq!(parts[2]["type"], "image_url");
+    // As upstream sends it: the image alone, with no text header the
+    // finalizer guards would read as the user's words.
+    assert_eq!(parts.len(), 2);
+    assert_eq!(parts[1]["type"], "image_url");
     assert_eq!(
-        parts[2]["image_url"]["url"],
+        parts[1]["image_url"]["url"],
         "data:image/png;base64,aGVsbG8="
     );
 }
