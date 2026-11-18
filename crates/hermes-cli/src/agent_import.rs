@@ -308,11 +308,19 @@ impl Importer<'_> {
         self.merge_memory(item, &incoming);
     }
 
-    fn merge_memory(&mut self, item: &str, incoming: &[String]) {
-        if incoming.is_empty() {
+    fn merge_memory(&mut self, item: &str, found: &[String]) {
+        if found.is_empty() {
             self.record(Status::Skip, item, "no entries found".to_string());
             return;
         }
+        // Memory reaches every prompt, so an entry holding what looks like a credential is
+        // left out; the report gives only the count.
+        let incoming: Vec<String> = found
+            .iter()
+            .filter(|entry| !looks_secret(entry))
+            .cloned()
+            .collect();
+        let credentials = found.len() - incoming.len();
         let destination = self.request.home.join("memories").join("MEMORY.md");
         if let Err(err) = check_destination(self.request.home, &destination) {
             self.record(Status::Error, item, err);
@@ -335,16 +343,27 @@ impl Importer<'_> {
                 return;
             }
         };
-        let merge = merge_entries(&existing, incoming, MEMORY_CHAR_LIMIT);
-        let detail = format!(
-            "{} of {} entries to memories/MEMORY.md ({} already there, {} over its {}-character limit, {} refused by the memory scan)",
+        let merge = merge_entries(&existing, &incoming, MEMORY_CHAR_LIMIT);
+        let mut detail = format!(
+            "{} of {} entries to memories/MEMORY.md ({} already there, {} over its {}-character limit, {} refused by the memory scan",
             merge.added,
-            incoming.len(),
+            found.len(),
             merge.duplicates,
             merge.over_limit,
             MEMORY_CHAR_LIMIT,
             merge.refused
         );
+        if credentials > 0 {
+            let looks = if credentials == 1 {
+                "it looks"
+            } else {
+                "they look"
+            };
+            detail.push_str(&format!(
+                ", {credentials} left out as {looks} like a credential"
+            ));
+        }
+        detail.push(')');
         if merge.added == 0 {
             self.record(Status::Skip, item, detail);
             return;
@@ -680,6 +699,14 @@ impl Importer<'_> {
                 self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
                 continue;
             }
+            if holds_secret(&skill) {
+                self.record(
+                    Status::Skip,
+                    &item,
+                    "a file in it looks like it holds a credential; add it yourself".to_string(),
+                );
+                continue;
+            }
             let destination = destination_root.join(name);
             if let Err(err) = check_destination(self.request.home, &destination) {
                 self.record(Status::Error, &item, err);
@@ -758,6 +785,24 @@ static IPV4: LazyLock<Regex> =
 fn looks_secret(text: &str) -> bool {
     let text = IPV4.replace_all(text, "address");
     redact_sensitive_text(&*text) != text
+}
+
+/// Whether a text file under `dir`, reached without following a link, holds what looks like a
+/// credential.
+fn holds_secret(dir: &Path) -> bool {
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return false;
+    };
+    entries.flatten().any(|entry| {
+        let path = entry.path();
+        if is_link(&path) {
+            false
+        } else if path.is_dir() {
+            holds_secret(&path)
+        } else {
+            std::fs::read_to_string(&path).is_ok_and(|text| looks_secret(&text))
+        }
+    })
 }
 
 /// Whether `arg` is an option named like a credential, such as `--token` or

@@ -120,7 +120,7 @@ hermes-ultra import-agent codex --apply          # the same for Codex
 
 - It reads `~/.claude` (Claude Code, with `~/.claude.json` beside it for MCP servers) or `~/.codex` (Codex, with MCP servers from `config.toml`) unless `--source` names another folder. It never reads either agent's credentials.
 - `CLAUDE.md`, or Codex's `AGENTS.md` and `memories/*.md`, become entries in `memories/MEMORY.md`, within the memory tool's 2,200-character limit and scan; the old file is backed up first. MCP servers go into `config.yaml` (and `mcp_servers.json` for a command's arguments and environment); Codex's `env_http_headers` and `bearer_token_env_var` become `${VAR}` references. Each skill folder with a `SKILL.md` goes into `skills/claude-code-imports/` or `skills/codex-imports/`.
-- It replaces nothing: a server or skill this home already has is listed and left alone. Environment variables and headers whose names look like secrets are left out and named; add them yourself. Permission rules and custom slash commands have no equivalent here and are listed as skipped.
+- It replaces nothing: a server or skill this home already has is listed and left alone. Environment variables and headers whose names look like secrets are left out and named, as are a memory entry or a skill that looks like it holds a credential; add them yourself. Permission rules and custom slash commands have no equivalent here and are listed as skipped.
 
 ## Against Hermes Agent
 
