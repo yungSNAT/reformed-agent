@@ -1630,22 +1630,24 @@ mod tests {
         assert!(matches!(err, McpError::Protocol { .. }));
     }
 
-    /// Reads one HTTP request from `listener` and answers `reply`; returns
-    /// the request's head, lower-cased. The reply says `Connection: close`,
-    /// as the connection is dropped after it: a client that pooled it could
-    /// send its next request there and fail, leaving the next `answer_once`
-    /// waiting for a connection that never comes.
+    /// Reads one HTTP request from `listener`, body included, and answers
+    /// `reply`; returns the request's head, lower-cased. The reply says
+    /// `Connection: close`, as the connection is dropped after it: a client
+    /// that pooled it could send its next request there and fail. The whole
+    /// request is read first, as dropping a connection with unread bytes
+    /// resets it, and the client can then fail before reading the reply.
+    /// Either failure leaves the next `answer_once` waiting for a connection
+    /// that never comes.
     async fn answer_once(listener: &tokio::net::TcpListener, reply: String) -> String {
-        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        use tokio::io::AsyncWriteExt;
         let (mut stream, _) = listener.accept().await.expect("accept");
-        let mut buf = vec![0; 8192];
-        let n = stream.read(&mut buf).await.expect("read request");
+        let (head, _) = read_request(&mut stream).await;
         let reply = reply.replacen("\r\n", "\r\nConnection: close\r\n", 1);
         stream
             .write_all(reply.as_bytes())
             .await
             .expect("write reply");
-        String::from_utf8_lossy(&buf[..n]).to_ascii_lowercase()
+        head
     }
 
     #[tokio::test]
@@ -1778,8 +1780,13 @@ mod tests {
             .await;
             (first, probe, posted)
         };
-        let (sent, (first, probe, posted)) =
-            tokio::join!(transport.send(initialize.clone()), script);
+        // Bounded: a client that fails early leaves the script waiting for
+        // a connection for good.
+        let (sent, (first, probe, posted)) = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(transport.send(initialize.clone()), script)
+        })
+        .await
+        .expect("the exchange with the stub waited");
         sent.expect("legacy reply");
         assert!(first.starts_with("post /mcp "), "{first}");
         assert!(probe.starts_with("get /mcp/sse "), "{probe}");
@@ -1793,7 +1800,11 @@ mod tests {
             answer_once(&server, NOT_FOUND.to_string()).await;
             answer_once(&server, sse(&other_endpoint)).await
         };
-        let (sent, _) = tokio::join!(transport.send(initialize), script);
+        let (sent, _) = tokio::time::timeout(Duration::from_secs(30), async {
+            tokio::join!(transport.send(initialize), script)
+        })
+        .await
+        .expect("the exchange with the stub waited");
         let err = sent.expect_err("endpoint on another origin");
         assert!(err.to_string().contains("another origin"), "{err}");
         let reached = tokio::time::timeout(Duration::from_millis(300), other.accept()).await;
@@ -2021,6 +2032,9 @@ mod tests {
         PingsBeforeEndpoint,
         /// Names its endpoint, then sends a comment every 20 ms and no reply.
         PingsInsteadOfReplies,
+        /// Names its endpoint, then writes one event 40 bytes at a time and
+        /// never ends it.
+        UnendingEvent,
     }
 
     /// An older HTTP+SSE server on `server` whose stream has `content_type`
@@ -2072,6 +2086,12 @@ mod tests {
                             | OlderStream::PingsInsteadOfReplies => {
                                 while stream.write_all(b": ping\n\n").await.is_ok() {
                                     tokio::time::sleep(Duration::from_millis(20)).await;
+                                }
+                            }
+                            OlderStream::UnendingEvent => {
+                                let _ = stream.write_all(b"data: ").await;
+                                while stream.write_all(&[b'x'; 40]).await.is_ok() {
+                                    tokio::time::sleep(Duration::from_millis(10)).await;
                                 }
                             }
                         }
@@ -2155,6 +2175,22 @@ mod tests {
                 .expect("2 events under the limit, read in one chunk");
         assert_eq!(first["id"], 1);
         assert_eq!(second["id"], 2);
+        stub.abort();
+    }
+
+    #[tokio::test]
+    async fn an_older_server_event_that_never_ends_is_refused_once_over_the_limit() {
+        let (mut transport, stub) =
+            older_server("text/event-stream", ENDPOINT, OlderStream::UnendingEvent).await;
+        // Each chunk is under the limit; the event they add up to is not.
+        transport.max_message_bytes = 100;
+        let refused = tokio::time::timeout(Duration::from_secs(10), exchange_three(&mut transport))
+            .await
+            .expect("the exchange waited");
+        assert!(
+            matches!(refused, Err(McpError::Protocol { code: -32600, .. })),
+            "{refused:?}"
+        );
         stub.abort();
     }
 

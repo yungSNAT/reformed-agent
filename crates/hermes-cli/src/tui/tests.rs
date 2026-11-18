@@ -324,6 +324,8 @@ mod tests {
 
     #[test]
     fn test_processing_cycle_yields_flash_credit_notice() {
+        // The credits state is process-wide; the usage command tests clear it.
+        let _guard = env_test_lock();
         hermes_core::credits::clear_last_nous_credits_state();
         hermes_core::credits::capture_nous_credits_from_pairs([
             ("x-nous-credits-version", "1"),
