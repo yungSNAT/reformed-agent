@@ -276,11 +276,13 @@ impl Importer<'_> {
     /// Every `*.md` in `folder`, in name order, as memory entries; a linked
     /// file is skipped.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
-        let files: Vec<PathBuf> = match list_dir(folder) {
-            Ok(paths) => paths
-                .into_iter()
-                .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
-                .collect(),
+        let files = list_dir(folder).and_then(|paths| {
+            keep(paths, |path| {
+                Ok(path.extension().is_some_and(|ext| ext == "md") && is_file_or_link(path)?)
+            })
+        });
+        let files = match files {
+            Ok(files) => files,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 self.record(Status::Skip, item, "no memories folder".to_string());
                 return;
@@ -679,14 +681,17 @@ impl Importer<'_> {
     }
 
     /// Each `skills/<name>/` holding a `SKILL.md` is copied to
-    /// `skills/<agent>-imports/<name>/`; a linked skill folder or `SKILL.md`
-    /// is skipped, and links inside a skill are not copied.
+    /// `skills/<agent>-imports/<name>/`; a linked entry or `SKILL.md` is
+    /// reported and skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
-        let skill_dirs: Vec<PathBuf> = match list_dir(source) {
-            Ok(paths) => paths
-                .into_iter()
-                .filter(|path| path.join("SKILL.md").is_file())
-                .collect(),
+        // A linked entry is kept so that it is reported, never followed.
+        let skill_dirs = list_dir(source).and_then(|paths| {
+            keep(paths, |path| {
+                Ok(is_link(path) || is_file_or_link(&path.join("SKILL.md"))?)
+            })
+        });
+        let skill_dirs = match skill_dirs {
+            Ok(dirs) => dirs,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 self.record(Status::Skip, "skills", "no skills folder".to_string());
                 return;
@@ -814,6 +819,39 @@ fn sorted_paths(
     let mut paths = entries.collect::<std::io::Result<Vec<_>>>()?;
     paths.sort();
     Ok(paths)
+}
+
+/// The `paths` for which `wanted` holds; a path it cannot decide fails the
+/// whole list.
+fn keep(
+    paths: Vec<PathBuf>,
+    wanted: impl Fn(&Path) -> std::io::Result<bool>,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut kept = Vec::with_capacity(paths.len());
+    for path in paths {
+        if wanted(&path)? {
+            kept.push(path);
+        }
+    }
+    Ok(kept)
+}
+
+/// Whether `path` is a file or a link, without following it. A missing path
+/// is `false`; any other failure to look it up is an error, so an entry that
+/// cannot be looked up is never taken for a missing one.
+fn is_file_or_link(path: &Path) -> std::io::Result<bool> {
+    match std::fs::symlink_metadata(path) {
+        Ok(meta) => Ok(meta.is_file() || meta.is_symlink()),
+        Err(err)
+            if matches!(
+                err.kind(),
+                std::io::ErrorKind::NotFound | std::io::ErrorKind::NotADirectory
+            ) =>
+        {
+            Ok(false)
+        }
+        Err(err) => Err(err),
+    }
 }
 
 fn markdown_files(dir: &Path) -> usize {
