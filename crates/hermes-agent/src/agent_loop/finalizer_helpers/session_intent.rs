@@ -15,12 +15,25 @@ fn extract_last_user_assistant(messages: &[Message]) -> (String, String) {
     (user, assistant)
 }
 
-fn latest_user_content(messages: &[Message]) -> Option<&str> {
-    messages
+/// The latest user message's words. A message an ACP client sent with an
+/// image holds its parts as prefixed JSON; only their text is the user's.
+fn latest_user_content(messages: &[Message]) -> Option<std::borrow::Cow<'_, str>> {
+    let content = messages
         .iter()
         .rev()
         .find(|m| matches!(m.role, hermes_core::MessageRole::User))
-        .and_then(|m| m.content.as_deref())
+        .and_then(|m| m.content.as_deref())?;
+    Some(match crate::provider::parse_acp_multimodal_parts(content) {
+        Some(parts) => std::borrow::Cow::Owned(
+            parts
+                .iter()
+                .filter(|part| part.get("type").and_then(Value::as_str) == Some("text"))
+                .filter_map(|part| part.get("text").and_then(Value::as_str))
+                .collect::<Vec<_>>()
+                .join("\n"),
+        ),
+        None => std::borrow::Cow::Borrowed(content),
+    })
 }
 
 fn extract_session_objective(messages: &[Message]) -> Option<String> {
