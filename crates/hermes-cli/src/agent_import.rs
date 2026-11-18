@@ -203,7 +203,7 @@ impl Importer<'_> {
     /// unreadable. A parse error names only the line: the text around it
     /// could hold a secret.
     fn toml_table(&mut self, item: &str, path: &Path) -> Map<String, Value> {
-        let text = match std::fs::read_to_string(path) {
+        let text = match read_regular_to_string(path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 self.record(Status::Skip, item, "not found".to_string());
@@ -235,7 +235,7 @@ impl Importer<'_> {
     /// A JSON object from `path`, or an empty one when the file is missing,
     /// unreadable or not an object (the last 2 are recorded as errors).
     fn json_object(&mut self, item: &str, path: &Path) -> Map<String, Value> {
-        let text = match std::fs::read_to_string(path) {
+        let text = match read_regular_to_string(path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Map::new(),
             Err(err) => {
@@ -259,7 +259,7 @@ impl Importer<'_> {
     /// An instructions file's headings, bullets and paragraphs become entries
     /// in `memories/MEMORY.md`, within the memory tool's limit and scan.
     fn memory_entries(&mut self, item: &str, path: &Path) {
-        let text = match std::fs::read_to_string(path) {
+        let text = match read_regular_to_string(path) {
             Ok(text) => text,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
                 self.record(Status::Skip, item, "not found".to_string());
@@ -303,7 +303,7 @@ impl Importer<'_> {
                 );
                 continue;
             }
-            match std::fs::read_to_string(&file) {
+            match read_regular_to_string(&file) {
                 Ok(text) => incoming.extend(markdown_entries(text.trim_start_matches('\u{feff}'))),
                 Err(err) => self.record(
                     Status::Error,
@@ -333,7 +333,7 @@ impl Importer<'_> {
             self.record(Status::Error, item, err);
             return;
         }
-        let existing = match std::fs::read_to_string(&destination) {
+        let existing = match read_regular_to_string(&destination) {
             Ok(text) => text
                 .split(ENTRY_DELIMITER)
                 .map(str::trim)
@@ -813,6 +813,39 @@ pub(crate) fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     sorted_paths(std::fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.path())))
 }
 
+/// Opens the file `path` for reading as `File::open` does, but never blocks
+/// on a FIFO or device: on Unix it is opened non-blocking, and anything but a
+/// regular file is refused once open.
+pub(crate) fn open_regular(path: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::custom_flags(&mut options, libc::O_NONBLOCK);
+    let file = options.open(path)?;
+    if file.metadata()?.is_file() {
+        Ok(file)
+    } else {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "it is not a regular file",
+        ))
+    }
+}
+
+/// `std::fs::read` through [`open_regular`].
+pub(crate) fn read_regular(path: &Path) -> std::io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    std::io::Read::read_to_end(&mut open_regular(path)?, &mut bytes)?;
+    Ok(bytes)
+}
+
+/// `std::fs::read_to_string` through [`open_regular`].
+pub(crate) fn read_regular_to_string(path: &Path) -> std::io::Result<String> {
+    let mut text = String::new();
+    std::io::Read::read_to_string(&mut open_regular(path)?, &mut text)?;
+    Ok(text)
+}
+
 fn sorted_paths(
     entries: impl Iterator<Item = std::io::Result<PathBuf>>,
 ) -> std::io::Result<Vec<PathBuf>> {
@@ -906,7 +939,7 @@ pub(crate) fn holds_secret(dir: &Path) -> std::io::Result<bool> {
         } else if path.is_dir() {
             holds_secret(&path)?
         } else {
-            looks_secret(&String::from_utf8_lossy(&std::fs::read(&path)?))
+            looks_secret(&String::from_utf8_lossy(&read_regular(&path)?))
         };
         if found {
             return Ok(true);
@@ -1158,7 +1191,7 @@ fn write_servers(
 
 /// The bytes of `path`, or `None` when it does not exist.
 fn read_original(path: &Path, label: &str) -> Result<Option<Vec<u8>>, String> {
-    match std::fs::read(path) {
+    match read_regular(path) {
         Ok(bytes) => Ok(Some(bytes)),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(err) => Err(format!("could not read {label}: {err}")),
@@ -1179,7 +1212,7 @@ fn restore(path: &Path, original: Option<Vec<u8>>) -> Result<(), String> {
 /// `mcp_servers.json` as a JSON value: an object of servers, or the
 /// `{"servers": [...]}` form; a missing file is an empty object.
 fn read_records(path: &Path) -> Result<Value, String> {
-    let text = match std::fs::read_to_string(path) {
+    let text = match read_regular_to_string(path) {
         Ok(text) => text,
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Value::Object(Map::new()))
@@ -1234,7 +1267,7 @@ pub(crate) fn copy_tree(
         } else if kind.is_dir() {
             copy_tree(&entry.path(), &target, links)?;
         } else {
-            let mut from = std::fs::File::open(entry.path())?;
+            let mut from = open_regular(&entry.path())?;
             let mut to = std::fs::OpenOptions::new()
                 .write(true)
                 .create_new(true)
