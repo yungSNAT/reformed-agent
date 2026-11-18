@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-18T23:28:15.734229+00:00`
+Generated: `2026-11-18T23:35:41.035085+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`c58dfe360204e675ed70ddb99f41e8bffa008c12`)
+- Local ref: `HEAD` (`208177d74489541f833ce4cf99450fd9f0b8e0f7`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,10 +13,10 @@ Generated: `2026-11-18T23:28:15.734229+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1616 |
+| Commits ahead local (`local` ancestry only) | 1619 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1346 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1349 |
 | Files only in upstream tree | 24117 |
 | Files only in local tree | 2021 |
 | Shared files identical content | 565 |
@@ -176,8 +176,8 @@ Generated: `2026-11-18T23:28:15.734229+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1346`
-- Intentional divergence tracked items: `23` (covered files: `2805`)
+- Local unique by patch-id: `1349`
+- Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
 ## Intentional Divergence Registry
@@ -200,7 +200,7 @@ Generated: `2026-11-18T23:28:15.734229+00:00`
 | `rust-direct-provider-plugin-parity` | approved | WS3 | 6 | Upstream's DeepInfra, Fireworks AI and Upstage Solar Python provider plugins stay reference-only; the 3 providers are ported to Rust provider profiles. |
 | `rust-no-deepinfra-media-generation` | temporary | WS3 | 4 | Upstream's DeepInfra image and video generation plugins are not ported. |
 | `rust-no-memory-query-rewrite` | temporary | WS3 | 1 | Upstream's model-written memory retrieval query is not ported. |
-| `rust-no-gateway-profile-routing` | temporary | WS3 | 0 | Upstream's per-source profile routing for one gateway is not ported, so its design note is not carried. |
+| `rust-no-gateway-profile-routing` | temporary | WS3 | 1 | Upstream's per-source profile routing for one gateway is not ported. |
 | `rust-no-nous-billing-or-desktop-app` | approved | WS3 | 1 | Nous Portal billing and the Hermes desktop app are upstream products this port does not ship. |
 | `skills-kept-at-earlier-paths` | approved | WS4 | 147 | Upstream moved these skills after July 2026; this tree keeps each at its earlier path. |
 | `skills-with-scripts-not-imported` | temporary | WS4 | 235 | New upstream skills that carry scripts are not imported yet. |

@@ -1,18 +1,18 @@
 {
-  "generated_at_utc": "2026-11-18T23:28:15.734229+00:00",
+  "generated_at_utc": "2026-11-18T23:35:41.035085+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "c58dfe360204e675ed70ddb99f41e8bffa008c12",
+    "local_sha": "208177d74489541f833ce4cf99450fd9f0b8e0f7",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1616,
+    "commits_ahead": 1619,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1346,
+    "local_patch_unique": 1349,
     "files_only_upstream": 24117,
     "files_only_local": 2021,
     "files_shared_identical": 565,
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1346,
+    "local_patch_unique": 1349,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
@@ -936,7 +936,7 @@
     ],
     "local_patch_equivalent_sample": [],
     "intentional_divergence_items": 23,
-    "intentional_divergence_covered_files": 2805
+    "intentional_divergence_covered_files": 2806
   },
   "intentional_divergence": [
     {
@@ -1200,9 +1200,11 @@
       "id": "rust-no-gateway-profile-routing",
       "status": "temporary",
       "workstream": "WS3",
-      "summary": "Upstream's per-source profile routing for one gateway is not ported, so its design note is not carried.",
-      "matched_files": 0,
-      "matched_sample": []
+      "summary": "Upstream's per-source profile routing for one gateway is not ported.",
+      "matched_files": 1,
+      "matched_sample": [
+        "gateway/profile_routing.py"
+      ]
     },
     {
       "id": "rust-no-nous-billing-or-desktop-app",
