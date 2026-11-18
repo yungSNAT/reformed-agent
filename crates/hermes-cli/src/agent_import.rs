@@ -1587,6 +1587,79 @@ enabled = false
         );
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_memories_folder_or_skill_file_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/locked")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- A note.\n").unwrap();
+        std::fs::write(codex.join("skills/locked/SKILL.md"), "locked\n").unwrap();
+        std::fs::write(codex.join("skills/locked/notes.md"), "notes\n").unwrap();
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        mode(&codex.join("memories"), 0o000);
+        mode(&codex.join("skills/locked/notes.md"), 0o000);
+        let unreadable = std::fs::read_dir(codex.join("memories")).is_err();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        mode(&codex.join("memories"), 0o755);
+        mode(&codex.join("skills/locked/notes.md"), 0o644);
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        for expected in [
+            "error        memories: could not read it: ",
+            "error        skill locked: could not check it for credentials: ",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!text.contains("no memories folder"), "{text}");
+        assert!(!home.join("skills/codex-imports/locked").exists());
+    }
+
+    #[test]
+    fn a_credential_in_a_skill_file_that_is_not_utf8_still_keeps_the_skill_out() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("skills/blob")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("skills/blob/SKILL.md"), "blob\n").unwrap();
+        std::fs::write(
+            codex.join("skills/blob/data.bin"),
+            b"\xff\xfe\nexport GH_TOKEN=ghp_fixtureBinary04\n",
+        )
+        .unwrap();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains(
+                "skipped      skill blob: a file in it looks like it holds a credential"
+            ),
+            "{text}"
+        );
+        assert!(!all_text(&home).contains("ghp_fixtureBinary04"));
+    }
+
     fn claude_request<'a>(source: &'a Path, home: &'a Path, apply: bool) -> AgentImportRequest<'a> {
         AgentImportRequest {
             agent: SourceAgent::ClaudeCode,
