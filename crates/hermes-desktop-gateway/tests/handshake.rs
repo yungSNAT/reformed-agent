@@ -394,14 +394,24 @@ async fn only_a_file_attach_request_may_exceed_the_size_limit() {
         "the next reply answers the small request: {reply}"
     );
 
-    // A batch holding one, or one without its data_url, closes the socket as any other
-    // message over the limit does.
+    // A batch holding one, or one without its own method's data, closes the socket as any
+    // other message over the limit does.
+    let image_attach = |params: Value| {
+        json!({"jsonrpc": "2.0", "id": 12, "method": "image.attach_bytes", "params": params})
+            .to_string()
+    };
     for oversized in [
         format!("[{}]", attach(9, params.clone())),
         attach(
             10,
             json!({"session_id": "no-such-session", "padding": data_url}),
         ),
+        attach(
+            11,
+            json!({"session_id": "no-such-session", "content_base64": data_url}),
+        ),
+        image_attach(json!({"session_id": "no-such-session", "padding": data_url})),
+        image_attach(json!({"session_id": "no-such-session", "data_url": data_url})),
     ] {
         let mut socket = connected().await;
         let _ = socket.send(Message::text(oversized)).await;
