@@ -165,20 +165,37 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
     }
 
     // Skills, each to skills/openclaw-imports/
-    let src_skills = source_dir.join("skills");
-    let skills = match present(&src_skills) {
-        Ok(false) => None,
-        Ok(true) if !is_link(&src_skills) => {
-            migrate_skills(&src_skills, &hermes_home, options, &mut result);
-            None
-        }
-        Ok(true) => Some((MigrationStatus::Skipped, LINK_REASON.to_string())),
-        Err(failed) => Some(failed),
-    };
-    if let Some(why) = skills {
-        let kind = "skills".to_string();
-        record(&mut result, kind, Some(src_skills), None, Err(why));
-    }
+    for_each_entry(
+        &source_dir,
+        "skills",
+        "skill",
+        &mut result,
+        |path, kind, result| migrate_skill(path, kind, &hermes_home, options, result),
+    );
+
+    // Session files, each to sessions/
+    for_each_entry(
+        &source_dir,
+        "sessions",
+        "session",
+        &mut result,
+        |path, kind, result| {
+            if !is_link(&path) && path.is_dir() {
+                let reason = "it is a folder; only session files are copied".to_string();
+                record(
+                    result,
+                    kind,
+                    Some(path),
+                    None,
+                    Err((MigrationStatus::Skipped, reason)),
+                );
+                return;
+            }
+            let name = path.file_name().unwrap_or_default().to_owned();
+            let relative = Path::new("sessions").join(name);
+            migrate_file(kind, path, &hermes_home, &relative, options, result);
+        },
+    );
 
     // .env file (API keys): this home keeps its keys in its own .env.
     let src_env = source_dir.join(".env");
@@ -308,30 +325,35 @@ fn migrate_file(
     record(result, kind, Some(src), Some(dst), outcome);
 }
 
-/// Copies each folder in `src` to `home/skills/openclaw-imports/<name>/`
-/// (links inside it are not copied) and each file to that folder. A link, a
-/// name that looks like a credential, a folder holding what looks like one
-/// and an existing folder are skipped: a folder is never replaced.
-fn migrate_skills(src: &Path, home: &Path, options: &MigrateOptions, result: &mut MigrationResult) {
-    let entries = match list_dir(src) {
-        Ok(entries) => entries,
-        Err(e) => {
-            let failed = (MigrationStatus::Error, format!("could not read it: {e}"));
-            record(
-                result,
-                "skills".to_string(),
-                Some(src.to_path_buf()),
-                None,
-                Err(failed),
-            );
-            return;
+/// Hands each entry of the folder `folder` in `source` to `migrate`, with its
+/// kind (`<item>:<name>`). The folder is passed over when missing; a folder
+/// that is a link or cannot be looked up or listed is recorded instead, as is
+/// an entry whose name looks like a credential (under a hidden name).
+fn for_each_entry(
+    source: &Path,
+    folder: &str,
+    item: &str,
+    result: &mut MigrationResult,
+    mut migrate: impl FnMut(PathBuf, String, &mut MigrationResult),
+) {
+    let src = source.join(folder);
+    let entries = match present(&src) {
+        Ok(false) => return,
+        Ok(true) if is_link(&src) => Err((MigrationStatus::Skipped, LINK_REASON.to_string())),
+        Ok(true) => {
+            list_dir(&src).map_err(|e| (MigrationStatus::Error, format!("could not read it: {e}")))
         }
+        Err(failed) => Err(failed),
+    };
+    let entries = match entries {
+        Ok(entries) => entries,
+        Err(why) => return record(result, folder.to_string(), Some(src), None, Err(why)),
     };
     for path in entries {
-        let name = path.file_name().unwrap_or_default();
-        if looks_secret(&name.to_string_lossy()) {
+        let name = path.file_name().unwrap_or_default().to_string_lossy();
+        if looks_secret(&name) {
             let reason = "its name looks like a credential; add it yourself".to_string();
-            let kind = format!("skill:{HIDDEN_NAME}");
+            let kind = format!("{item}:{HIDDEN_NAME}");
             record(
                 result,
                 kind,
@@ -341,37 +363,51 @@ fn migrate_skills(src: &Path, home: &Path, options: &MigrateOptions, result: &mu
             );
             continue;
         }
-        let kind = format!("skill:{}", name.to_string_lossy());
-        let relative = Path::new("skills").join("openclaw-imports").join(name);
-        if is_link(&path) || !path.is_dir() {
-            migrate_file(kind, path, home, &relative, options, result);
-            continue;
-        }
-        let dst = home.join(&relative);
-        let outcome = match holds_secret(&path) {
-            Ok(true) => Err((MigrationStatus::Skipped, SECRET_REASON.to_string())),
-            Ok(false) => check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err)),
-            Err(e) => Err((
-                MigrationStatus::Error,
-                format!("could not check it for credentials: {e}"),
-            )),
-        }
-        .and_then(|()| {
-            if dst.exists() {
-                return Err((MigrationStatus::Conflict, "Already exists".to_string()));
-            }
-            if options.dry_run {
-                return Ok(Some("(dry run)".to_string()));
-            }
-            let mut links = 0;
-            dst.parent()
-                .map_or(Ok(()), std::fs::create_dir_all)
-                .and_then(|()| copy_tree(&path, &dst, &mut links))
-                .map_err(|e| (MigrationStatus::Error, format!("could not copy it: {e}")))?;
-            Ok((links > 0).then(|| format!("{links} links inside it are not copied")))
-        });
-        record(result, kind, Some(path), Some(dst), outcome);
+        let kind = format!("{item}:{name}");
+        migrate(path, kind, result);
     }
+}
+
+/// Copies the skill folder `path` to `home/skills/openclaw-imports/<name>/`
+/// (links inside it are not copied), or a file there. A link, a folder holding
+/// what looks like a credential and an existing folder are skipped: a folder
+/// is never replaced.
+fn migrate_skill(
+    path: PathBuf,
+    kind: String,
+    home: &Path,
+    options: &MigrateOptions,
+    result: &mut MigrationResult,
+) {
+    let name = path.file_name().unwrap_or_default().to_owned();
+    let relative = Path::new("skills").join("openclaw-imports").join(name);
+    if is_link(&path) || !path.is_dir() {
+        return migrate_file(kind, path, home, &relative, options, result);
+    }
+    let dst = home.join(&relative);
+    let outcome = match holds_secret(&path) {
+        Ok(true) => Err((MigrationStatus::Skipped, SECRET_REASON.to_string())),
+        Ok(false) => check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err)),
+        Err(e) => Err((
+            MigrationStatus::Error,
+            format!("could not check it for credentials: {e}"),
+        )),
+    }
+    .and_then(|()| {
+        if dst.exists() {
+            return Err((MigrationStatus::Conflict, "Already exists".to_string()));
+        }
+        if options.dry_run {
+            return Ok(Some("(dry run)".to_string()));
+        }
+        let mut links = 0;
+        dst.parent()
+            .map_or(Ok(()), std::fs::create_dir_all)
+            .and_then(|()| copy_tree(&path, &dst, &mut links))
+            .map_err(|e| (MigrationStatus::Error, format!("could not copy it: {e}")))?;
+        Ok((links > 0).then(|| format!("{links} links inside it are not copied")))
+    });
+    record(result, kind, Some(path), Some(dst), outcome);
 }
 
 /// Merge environment variables from source .env into destination .env,

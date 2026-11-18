@@ -1218,6 +1218,7 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
 
 /// Copies `source` into a new folder `destination`, creating every folder and
 /// file afresh so nothing already there, a link included, is written through.
+/// Copied files are owner-only on Unix.
 pub(crate) fn copy_tree(
     source: &Path,
     destination: &Path,
@@ -1239,7 +1240,14 @@ pub(crate) fn copy_tree(
                 .create_new(true)
                 .open(&target)?;
             std::io::copy(&mut from, &mut to)?;
-            to.set_permissions(from.metadata()?.permissions())?;
+            let permissions = from.metadata()?.permissions();
+            // Owner-only, keeping the owner's execute bit.
+            #[cfg(unix)]
+            let permissions = {
+                use std::os::unix::fs::PermissionsExt;
+                std::fs::Permissions::from_mode(permissions.mode() & 0o700)
+            };
+            to.set_permissions(permissions)?;
         }
     }
     Ok(())
