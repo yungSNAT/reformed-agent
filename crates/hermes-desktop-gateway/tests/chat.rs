@@ -35,7 +35,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
     let fail = body["messages"]
         .as_array()
         .and_then(|m| m.last())
-        .and_then(|m| m["content"].as_str())
+        .and_then(|m| m["content"].as_str().or(m["content"][0]["text"].as_str()))
         .is_some_and(|text| text.contains("FAIL"));
     model.requests.lock().unwrap().push(body);
     tokio::time::sleep(model.delay).await;
@@ -900,27 +900,54 @@ async fn an_attached_image_goes_to_the_model_with_the_next_prompt() {
     let complete = client.turn_events(&session).await.pop().unwrap().1;
     assert_eq!(complete["status"], "complete", "{complete}");
 
+    // Upstream's prompt text: the words, then a marker naming each staged image, which the
+    // desktop matches against its own row.
+    let words = format!("U2 what is this\n\n[Image attached at: {}]", staged.display());
     let user = |body: &Value| body["messages"].as_array().unwrap().last().unwrap().clone();
     let first = user(&started.requests.lock().unwrap()[0]);
     let parts = first["content"].as_array().expect("text and image parts");
-    let text = parts[0]["text"].as_str().unwrap();
-    assert!(text.starts_with("U2 what is this"), "{text}");
-    assert!(text.contains(&staged.display().to_string()), "{text}");
+    assert_eq!(parts[0]["text"], words.as_str());
     let url = parts[1]["image_url"]["url"].as_str().unwrap();
     assert_eq!(url, format!("data:image/png;base64,{}", b64(&image)));
     assert_eq!(parts.len(), 2);
 
-    // The transcript shows the prompt's text, not its parts.
+    // As upstream, the saved prompt is its text, so the transcript holds no image data.
     let shown = history(started.addr, &session).await;
-    assert_eq!(shown[0].0, "user");
-    assert!(shown[0].1.starts_with("U2 what is this"), "{shown:?}");
-    assert!(!shown[0].1.contains("data:image"), "{shown:?}");
+    assert_eq!(shown[0], ("user".to_string(), words.clone()));
 
-    // The image went with that prompt only.
+    // The image went with that prompt only: the next request carries it as text.
     client.submit(4, &session, "U3 and now").await;
     client.turn_events(&session).await;
-    let second = user(&started.requests.lock().unwrap()[1]);
-    assert_eq!(second["content"], "U3 and now");
+    let second = started.requests.lock().unwrap()[1]["messages"].clone();
+    let users: Vec<&Value> = second
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .map(|m| &m["content"])
+        .collect();
+    assert_eq!(users, [&json!(words), &json!("U3 and now")]);
+}
+
+/// A failed turn with an image keeps its prompt as text, as a turn that completes does.
+#[tokio::test]
+async fn a_failed_image_turn_keeps_its_prompt_as_text() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["x"], Duration::ZERO, None, native).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let params = json!({"session_id": session, "content_base64": b64(&png("x"))});
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    let staged = reply["result"]["path"].as_str().unwrap().to_string();
+
+    client.submit(3, &session, "FAIL with an image").await;
+    let complete = client.turn_events(&session).await.pop().unwrap().1;
+    assert_eq!(complete["status"], "error", "{complete}");
+    let words = format!("FAIL with an image\n\n[Image attached at: {staged}]");
+    assert_eq!(
+        history(started.addr, &session).await,
+        vec![("user".to_string(), words)]
+    );
 }
 
 /// Each refusal comes before anything is written under the home.
