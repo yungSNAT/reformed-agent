@@ -414,9 +414,10 @@ async fn connect_kills_a_stdio_server_that_never_answers() {
     assert!(err.to_string().contains("did not connect within"), "{err}");
     let pid = std::fs::read_to_string(&pid_file).expect("the server started and wrote its pid");
     let pid = pid.trim();
-    let alive = std::process::Command::new("kill")
+    let alive = tokio::process::Command::new("kill")
         .args(["-0", pid])
         .status()
+        .await
         .expect("run kill")
         .success();
     assert!(!alive, "server {pid} still running after connect gave up");
