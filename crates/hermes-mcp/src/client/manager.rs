@@ -254,9 +254,7 @@ impl McpManager {
                 issues.join("; ")
             )));
         }
-        if self.clients.contains_key(name) {
-            self.disconnect(name).await?;
-        }
+        self.close_replaced(name).await?;
 
         let mut client = McpClient::new(config);
         if let Some(config) = self.sampling_config.clone() {
@@ -280,6 +278,15 @@ impl McpManager {
         Ok(())
     }
 
+    /// Closes the client named `name`, if there is one, before a new one
+    /// replaces it.
+    async fn close_replaced(&mut self, name: &str) -> Result<(), McpError> {
+        if self.clients.contains_key(name) {
+            self.disconnect(name).await?;
+        }
+        Ok(())
+    }
+
     #[cfg(test)]
     async fn connect_with_transport_for_test(
         &mut self,
@@ -287,9 +294,7 @@ impl McpManager {
         config: McpServerConfig,
         transport: Box<dyn McpTransport>,
     ) -> Result<(), McpError> {
-        if self.clients.contains_key(name) {
-            self.disconnect(name).await?;
-        }
+        self.close_replaced(name).await?;
         let mut client = McpClient::new(config);
         client.finish_connect_with_transport(transport).await?;
         self.clients.insert(
