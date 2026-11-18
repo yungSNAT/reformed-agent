@@ -46,7 +46,7 @@ struct ChatRequestParams<'a> {
     stream: bool,
 }
 
-pub(crate) const ACP_MULTIMODAL_PREFIX: &str = "__hermes_acp_parts_json__:";
+const ACP_MULTIMODAL_PREFIX: &str = "__hermes_acp_parts_json__:";
 pub const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const OPENAI_CODEX_DYNAMIC_WIRE_MODEL: &str = "gpt-5.4";
 const CODEX_CLOUDFLARE_ORIGINATOR: &str = "codex_cli_rs";

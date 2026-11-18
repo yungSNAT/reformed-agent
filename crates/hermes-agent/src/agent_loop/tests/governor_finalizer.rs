@@ -5,9 +5,9 @@ fn memory_sync_keeps_the_words_of_an_acp_image_prompt() {
         {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
         {"type": "text", "text": "Answer briefly."}
     ]);
-    let prefix = crate::provider::ACP_MULTIMODAL_PREFIX;
+    // As the ACP adapter sends a prompt with an image: its parts as JSON.
     let messages = vec![
-        Message::user(format!("{prefix}{parts}")),
+        Message::user(format!("__hermes_acp_parts_json__:{parts}")),
         Message::assistant("A rising line."),
     ];
     assert_eq!(
@@ -556,6 +556,38 @@ fn test_task_focus_finalizer_retries_when_explicit_anchors_disappear() {
     assert!(!finalizer_task_focus_requires_retry(
         &msgs,
         "Gmail is blocked: not authenticated for sheawinkler@gmail.com.",
+        0
+    ));
+}
+
+#[test]
+fn test_finalizer_guards_read_the_words_of_an_acp_image_prompt() {
+    // As the ACP adapter sends a prompt with an image: its parts as JSON.
+    let parts = serde_json::json!([
+        {"type": "text", "text": "describe this picture"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+    ]);
+    let msgs = vec![Message::user(format!("__hermes_acp_parts_json__:{parts}"))];
+    assert_eq!(
+        latest_user_content(&msgs).as_deref(),
+        Some("describe this picture")
+    );
+    // The marker and the JSON are not words the reply must repeat, so a
+    // plain answer is not asked again.
+    assert!(!finalizer_task_focus_requires_retry(
+        &msgs,
+        "Hello from the stub model.",
+        0
+    ));
+    // An anchor in the text still counts.
+    let parts = serde_json::json!([
+        {"type": "text", "text": "check crates/hermes-acp in this screenshot"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="}},
+    ]);
+    let msgs = vec![Message::user(format!("__hermes_acp_parts_json__:{parts}"))];
+    assert!(finalizer_task_focus_requires_retry(
+        &msgs,
+        "Hello from the stub model.",
         0
     ));
 }
