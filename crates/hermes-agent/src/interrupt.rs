@@ -39,6 +39,9 @@ pub struct InterruptController {
     /// Steer text the model has not seen yet, several steers joined by
     /// newlines.
     pending_steer: Arc<Mutex<Option<String>>>,
+    /// Set by [`Self::take_leftover_steer`]; read and written under
+    /// `pending_steer`'s lock, so no steer lands after the leftover is taken.
+    steer_closed: Arc<AtomicBool>,
 }
 
 impl InterruptController {
@@ -49,29 +52,44 @@ impl InterruptController {
             redirect_message: Arc::new(Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
             pending_steer: Arc::new(Mutex::new(None)),
+            steer_closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Queue guidance for the model without stopping the turn. The agent
     /// loop delivers it with the turn's latest tool result before its next
-    /// model call. One still pending when a run ends stays here for
-    /// [`Self::take_steer`]; the ACP server and the gateway take it then and
-    /// send it as the next turn. The text reaches the model as written:
-    /// `@file:`, `@folder:`, `@diff`, `@git` and `@url:` references in it are
-    /// not expanded, as upstream's `/steer` hands its text to the agent
-    /// unchanged. Returns `false` for blank text.
+    /// model call. One still pending when a run ends stays here: the gateway
+    /// takes it with [`Self::take_steer`] and the ACP server with
+    /// [`Self::take_leftover_steer`], and each sends it as the next turn. A
+    /// delivered steer reaches the model as written: `@file:`, `@folder:`,
+    /// `@diff`, `@git` and `@url:` references in it are not expanded, as
+    /// upstream's `/steer` hands its text to the agent unchanged. A leftover
+    /// runs as an ordinary turn, so its references are expanded. Returns
+    /// `false` for blank text, or once the leftover has been taken.
     pub fn steer(&self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {
             return false;
         }
         if let Ok(mut guard) = self.pending_steer.lock() {
+            if self.steer_closed.load(Ordering::Acquire) {
+                return false;
+            }
             *guard = Some(match guard.take() {
                 Some(earlier) => format!("{earlier}\n{text}"),
                 None => text.to_string(),
             });
         }
         true
+    }
+
+    /// Take the steer a finished run never delivered, and refuse any later
+    /// steer, so a caller still holding a clone of this controller sees
+    /// `false` and queues its text instead of leaving it here unread.
+    pub fn take_leftover_steer(&self) -> Option<String> {
+        let mut guard = self.pending_steer.lock().ok()?;
+        self.steer_closed.store(true, Ordering::Release);
+        guard.take()
     }
 
     /// Take the steer text the model has not seen yet.

@@ -184,7 +184,8 @@ pub trait ActiveSessionControl: Send + Sync {
     fn steer(&self, _message: &str) -> bool {
         false
     }
-    /// Steer text the turn accepted but never delivered, taken once the turn has ended.
+    /// Steer text the turn accepted but has not delivered, taken when the turn ends or a
+    /// message interrupts it.
     fn take_steer(&self) -> Option<String> {
         None
     }
@@ -405,6 +406,17 @@ impl BusySessionCoordinator {
             }
             BusyInputMode::Interrupt => {
                 if let Some(control) = active.control.as_ref() {
+                    // The interrupt drops a pending steer, but this message redirects the
+                    // turn rather than stopping it: the steer runs first, as upstream keeps it.
+                    if let (Some(text), Some(mut steered)) =
+                        (control.take_steer(), active.steered.clone())
+                    {
+                        steered.text = text;
+                        self.pending
+                            .entry(session_key.to_string())
+                            .or_default()
+                            .push_front(steered);
+                    }
                     control.interrupt(&event.text);
                     self.queue_event(session_key, event);
                     BusyMessageDecision {

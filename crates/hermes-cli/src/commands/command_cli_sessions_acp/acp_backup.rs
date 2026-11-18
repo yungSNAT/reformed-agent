@@ -242,13 +242,14 @@ fn register_interrupt(
 
 /// Queues a steer the turn accepted but never delivered as the session's next prompt, ahead of
 /// anything queued meanwhile, as upstream sends it. Call it once the turn's controller is out of
-/// the registry, so a later steer finds no controller and the handler queues it instead.
+/// the registry. A later steer then finds no controller, or is refused by one it cloned before,
+/// and either way the handler queues it instead.
 fn requeue_leftover_steer(
     interrupt: &hermes_agent::InterruptController,
     sessions: &hermes_acp::SessionManager,
     session_id: &str,
 ) {
-    if let Some(text) = interrupt.take_steer() {
+    if let Some(text) = interrupt.take_leftover_steer() {
         sessions.push_queued_prompt_front(session_id, &text);
     }
 }
