@@ -66,6 +66,18 @@ fn nous_timestamp_is_expiring_treats_missing_as_expiring() {
 }
 
 #[test]
+fn nous_access_expires_at_refuses_an_expiry_past_year_9999() {
+    let now = jiff::Timestamp::from_second(1_772_962_215).unwrap();
+    assert_eq!(
+        nous_access_expires_at(now, 3600).unwrap(),
+        "2026-03-08T10:30:15Z"
+    );
+    // Kept, 9999-12-30T22:00:00Z would read back as a token still valid.
+    assert!(nous_access_expires_at(now, 300_000_000_000).is_err());
+    assert!(nous_access_expires_at(now, i64::MAX).is_err());
+}
+
+#[test]
 fn nous_invoke_jwt_usable_uses_invoke_scope_and_jwt_expiry() {
     let token = nous_test_jwt(900, Value::String(NOUS_INFERENCE_INVOKE_SCOPE.to_string()));
     assert!(nous_invoke_jwt_is_usable(

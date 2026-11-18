@@ -36,21 +36,22 @@ pub fn now_rfc3339() -> String {
     rfc3339(Timestamp::now())
 }
 
-/// `ts` moved by `secs` seconds, clamped to the range of instants: an
-/// issuer's `expires_in` can be any integer.
-pub fn plus_secs(ts: Timestamp, secs: i64) -> Timestamp {
+/// `ts` moved by `secs` seconds, or `None` outside the range of instants
+/// (years -9999 to 9999). Token responses go through this, so an issuer's
+/// out-of-range `expires_in` is refused instead of reading as a credential
+/// that never expires.
+pub fn checked_plus_secs(ts: Timestamp, secs: i64) -> Option<Timestamp> {
+    ts.checked_add(SignedDuration::from_secs(secs)).ok()
+}
+
+/// Now moved by `secs` seconds, clamped to the range of instants.
+pub fn now_plus_secs(secs: i64) -> Timestamp {
     let edge = if secs < 0 {
         Timestamp::MIN
     } else {
         Timestamp::MAX
     };
-    ts.checked_add(SignedDuration::from_secs(secs))
-        .unwrap_or(edge)
-}
-
-/// [`plus_secs`] from now.
-pub fn now_plus_secs(secs: i64) -> Timestamp {
-    plus_secs(Timestamp::now(), secs)
+    checked_plus_secs(Timestamp::now(), secs).unwrap_or(edge)
 }
 
 /// Reads RFC 3339 as chrono's `DateTime::parse_from_rfc3339` did:

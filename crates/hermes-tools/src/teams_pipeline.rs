@@ -19,6 +19,7 @@ use tokio::process::Command;
 use uuid::Uuid;
 
 use hermes_config::hermes_home;
+use hermes_core::time::checked_plus_secs;
 use hermes_core::{subprocess::CommandNoWindowExt, ToolError, ToolHandler};
 
 pub const DEFAULT_TEAMS_PIPELINE_STORE_FILENAME: &str = "teams_pipeline_store.json";

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
-use hermes_core::time::now_plus_secs;
+use hermes_core::time::{checked_plus_secs, now_plus_secs};
 use hermes_core::AgentError;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -413,6 +413,18 @@ struct TokenEndpointJson {
     scope: Option<String>,
 }
 
+/// When a token issued now with `expires_in` seconds expires. A lifetime that
+/// ends past year 9999 is refused: kept, it would read as never expiring.
+fn token_expires_at(expires_in: Option<i64>) -> Result<Option<Timestamp>, AgentError> {
+    expires_in
+        .map(|secs| {
+            checked_plus_secs(Timestamp::now(), secs).ok_or_else(|| {
+                AgentError::AuthFailed(format!("token expires_in {secs} is out of range"))
+            })
+        })
+        .transpose()
+}
+
 fn oauth_basic_component(value: &str) -> String {
     form_urlencoded::byte_serialize(value.as_bytes()).collect()
 }
@@ -492,7 +504,7 @@ pub async fn exchange_authorization_code(
         .json()
         .await
         .map_err(|e| AgentError::Io(e.to_string()))?;
-    let expires_at = body.expires_in.map(now_plus_secs);
+    let expires_at = token_expires_at(body.expires_in)?;
     Ok(OAuthCredential {
         provider: provider_id.to_string(),
         access_token: body.access_token,
@@ -537,7 +549,7 @@ pub async fn exchange_refresh_token(
         .json()
         .await
         .map_err(|e| AgentError::Io(e.to_string()))?;
-    let expires_at = body.expires_in.map(now_plus_secs);
+    let expires_at = token_expires_at(body.expires_in)?;
     Ok(OAuthCredential {
         provider: provider_id.to_string(),
         access_token: body.access_token,

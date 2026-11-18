@@ -214,11 +214,20 @@ fn workspace_strftime_patterns_keep_their_output() {
 }
 
 #[test]
-fn plus_secs_adds_and_clamps() {
-    assert_eq!(plus_secs(at(SECOND, 5), 60), at(SECOND + 60, 5));
-    assert_eq!(plus_secs(at(SECOND, 5), -60), at(SECOND - 60, 5));
-    assert_eq!(plus_secs(at(SECOND, 0), i64::MAX), Timestamp::MAX);
-    assert_eq!(plus_secs(at(SECOND, 0), i64::MIN), Timestamp::MIN);
+fn checked_plus_secs_refuses_out_of_range() {
+    assert_eq!(
+        checked_plus_secs(at(SECOND, 5), 60),
+        Some(at(SECOND + 60, 5))
+    );
+    assert_eq!(
+        checked_plus_secs(at(SECOND, 5), -60),
+        Some(at(SECOND - 60, 5))
+    );
+    assert_eq!(checked_plus_secs(Timestamp::MAX, 0), Some(Timestamp::MAX));
+    assert_eq!(checked_plus_secs(Timestamp::MAX, 1), None);
+    assert_eq!(checked_plus_secs(Timestamp::MIN, -1), None);
+    assert_eq!(checked_plus_secs(at(SECOND, 0), i64::MAX), None);
+    assert_eq!(checked_plus_secs(at(SECOND, 0), i64::MIN), None);
 }
 
 #[test]

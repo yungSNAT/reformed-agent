@@ -702,6 +702,16 @@ fn timestamp_is_expiring(expires_at: Option<&str>, skew_seconds: i64) -> bool {
     remaining <= skew_seconds.max(0)
 }
 
+/// A Nous access token's stored expiry, issued at `now`. A lifetime that ends
+/// past year 9999 is refused: kept, it would read as never expiring.
+fn nous_access_expires_at(now: Timestamp, expires_in: i64) -> Result<String, AgentError> {
+    hermes_core::time::checked_plus_secs(now, expires_in)
+        .map(|at| format!("{at:.0}"))
+        .ok_or_else(|| {
+            AgentError::AuthFailed(format!("Nous expires_in {expires_in} is out of range"))
+        })
+}
+
 fn decode_jwt_claims(token: &str) -> Option<Value> {
     let payload = token.trim().split('.').nth(1)?;
     let decoded = BASE64_URL_SAFE_NO_PAD
@@ -959,8 +969,9 @@ async fn refresh_nous_access_token(
 
     let now = Timestamp::now();
     let access_expires_in = payload.expires_in.filter(|v| *v > 0);
-    let access_expires_at =
-        access_expires_in.map(|secs| format!("{:.0}", hermes_core::time::plus_secs(now, secs)));
+    let access_expires_at = access_expires_in
+        .map(|secs| nous_access_expires_at(now, secs))
+        .transpose()?;
 
     state.access_token = access_token;
     state.refresh_token = payload.refresh_token.or(Some(refresh_token));

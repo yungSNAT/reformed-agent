@@ -452,9 +452,9 @@ pub async fn login_nous_device_code(
         .to_string();
     let access_expires_in = token_payload.expires_in.filter(|v| *v > 0);
     let now = Timestamp::now();
-    let access_expires_at = access_expires_in.map(|secs| {
-        format!("{:.0}", hermes_core::time::plus_secs(now, secs))
-    });
+    let access_expires_at = access_expires_in
+        .map(|secs| nous_access_expires_at(now, secs))
+        .transpose()?;
 
     let resolved_inference_url = token_payload
         .inference_base_url
