@@ -1078,7 +1078,8 @@
             ("claude-opus-5-5", 0.05),
             ("anthropic:claude-sonnet-5-5", 0.05),
             ("claude-sonnet-5.5", 0.05),
-            ("us.anthropic.claude-opus-5-5-20261101-v1:0", 0.05),
+            ("anthropic.claude-opus-5-5", 0.05),
+            ("global.anthropic.claude-fable-5-2", 0.025),
             ("claude-fable-5-2@20261001", 0.025),
             ("claude-fable-5", 0.1),
             ("claude-fable-5-20260101", 0.1),
@@ -1087,6 +1088,7 @@
             ("claude-opus-4-8", 0.1),
             ("claude-sonnet-4-6", 0.1),
             ("claude-haiku-4-5", 0.1),
+            ("claude-haiku-5-5", 0.1),
         ] {
             assert_eq!(
                 anthropic_cache_read_multiplier(model),

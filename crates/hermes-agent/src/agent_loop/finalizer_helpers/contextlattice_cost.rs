@@ -255,9 +255,11 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
     // shortcut: Anthropic's rates, as only the Anthropic provider reports
     // cache counts here (an Anthropic-compatible endpoint is assumed to price
     // as Anthropic does): a cache read costs the model's read multiplier and
-    // a 5-minute cache write 1.25 of the input price. A 1-hour write (2x) is
-    // priced as a 5-minute one, as no request asks for a 1-hour cache; carry
-    // the provider's rates with the counts once another provider reports them.
+    // a 5-minute cache write 1.25 of the input price. The agent never asks
+    // for a 1-hour cache; one requested through `extra_body` is priced as a
+    // 5-minute write, not at its 2x (reading `ephemeral_1h_input_tokens`
+    // would price it exactly). Carry the provider's rates with the counts
+    // once another provider reports them.
     let cached = usage.cache_read_tokens + usage.cache_write_tokens;
     let uncached = usage.prompt_tokens.saturating_sub(cached);
     let prompt_tokens = uncached as f64
