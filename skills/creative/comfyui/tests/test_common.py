@@ -375,14 +375,16 @@ class TestMediaType:
 class TestRedirectHeaderStripping:
     """Verify X-API-Key is dropped when redirect crosses to a different host
     (e.g. cloud /api/view → S3 signed URL). Critical to prevent leaking auth
-    tokens to the storage backend.
+    tokens to the storage backend. The session exists only when `requests` is
+    installed; without it the stdlib redirect handler does the stripping.
     """
 
+    @pytest.fixture(autouse=True)
+    def _needs_requests(self):
+        pytest.importorskip("requests")
+
     def _build_session(self):
-        from _common import _StripSensitiveOnRedirectSession, HAS_REQUESTS
-        if not HAS_REQUESTS:
-            import pytest
-            pytest.skip("requests not installed")
+        from _common import _StripSensitiveOnRedirectSession
         return _StripSensitiveOnRedirectSession()
 
     def test_strips_x_api_key_cross_host(self):
