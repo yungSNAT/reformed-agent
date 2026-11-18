@@ -104,7 +104,10 @@ pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, I
     if decoded_len(payload) > MAX_IMAGE_BYTES {
         return Err(ImageError::TooLarge);
     }
-    let compact: Vec<u8> = payload.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let compact: Vec<u8> = payload
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
     let data = base64::engine::general_purpose::STANDARD
         .decode(compact)
         .map_err(|_| ImageError::Invalid("data is not valid base64".into()))?;
@@ -473,7 +476,11 @@ mod tests {
         let mut webp = b"RIFF0000WEBPVP8 ".to_vec();
         webp.push(1);
         let cases: [(&[u8], &str, &str); 5] = [
-            (&[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 1], "png", "image/png"),
+            (
+                &[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 1],
+                "png",
+                "image/png",
+            ),
             (&[0xff, 0xd8, 0xff, 0xe0, 1], "jpg", "image/jpeg"),
             (b"GIF89a1", "gif", "image/gif"),
             (&webp, "webp", "image/webp"),
@@ -497,9 +504,18 @@ mod tests {
         let images = tempfile::tempdir().unwrap();
         let dir = images.path().join("images");
         let text = base64::engine::general_purpose::STANDARD.encode("hello");
-        assert_eq!(stage_image(&dir, &text).err(), Some(ImageError::Unsupported));
-        assert!(matches!(stage_image(&dir, "!!"), Err(ImageError::Invalid(_))));
-        assert!(matches!(stage_image(&dir, "data:image/png,x"), Err(ImageError::Invalid(_))));
+        assert_eq!(
+            stage_image(&dir, &text).err(),
+            Some(ImageError::Unsupported)
+        );
+        assert!(matches!(
+            stage_image(&dir, "!!"),
+            Err(ImageError::Invalid(_))
+        ));
+        assert!(matches!(
+            stage_image(&dir, "data:image/png,x"),
+            Err(ImageError::Invalid(_))
+        ));
         // Over the limit by its length alone, so nothing is decoded or made.
         let large = "A".repeat((MAX_IMAGE_BYTES / 3 + 1) * 4);
         assert_eq!(stage_image(&dir, &large).err(), Some(ImageError::TooLarge));

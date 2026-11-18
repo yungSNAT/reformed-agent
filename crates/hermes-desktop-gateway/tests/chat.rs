@@ -74,16 +74,16 @@ struct Started {
 /// Starts the scripted model and a gateway whose Hermes home names it as upstream's tests do
 /// (`providers.<name>.api` and `key_env`).
 async fn start(pieces: Vec<&'static str>, delay: Duration) -> Started {
-    start_with(pieces, delay, None, "mock-model").await
+    start_with(pieces, delay, None, "").await
 }
 
-/// As [`start`], with the gateway's socket write timeout when given and `model_name` as the
-/// configured model.
+/// As [`start`], with the gateway's socket write timeout when given and `extra_config` appended
+/// to `config.yaml`.
 async fn start_with(
     pieces: Vec<&'static str>,
     delay: Duration,
     write_timeout: Option<Duration>,
-    model_name: &str,
+    extra_config: &str,
 ) -> Started {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let model = Model {
@@ -102,9 +102,9 @@ async fn start_with(
     std::fs::write(
         home.path().join("config.yaml"),
         format!(
-            "model:\n  default: {model_name}\n  provider: mock\nproviders:\n  mock:\n    \
+            "model:\n  default: mock-model\n  provider: mock\nproviders:\n  mock:\n    \
              api: http://{model_addr}/v1\n    name: Mock\n    api_mode: chat_completions\n    \
-             key_env: DESKTOP_CHAT_TEST_KEY\n    models:\n      {model_name}: {{}}\n"
+             key_env: DESKTOP_CHAT_TEST_KEY\n    models:\n      mock-model: {{}}\n{extra_config}"
         ),
     )
     .unwrap();
@@ -684,7 +684,7 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     // The timeout runs from when each frame is queued, so all 8 stalled turns and the check
     // below must fit inside it: 10 seconds was too short on a loaded runner.
     let timeout = Duration::from_secs(30);
-    let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout), "mock-model").await;
+    let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout), "").await;
     let mut stalled = Vec::new();
     for _ in 0..8 {
         stalled.push(stalled_turn(started.addr).await);
@@ -731,7 +731,7 @@ async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
     let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
     let timeout = Duration::from_secs(6);
     let pause = Duration::from_secs(4);
-    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout), "mock-model").await;
+    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let reply = client.submit(2, &session, "hi").await;
@@ -771,7 +771,7 @@ async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
 /// at once: with no time allowed, not even `gateway.ready` is written.
 #[tokio::test]
 async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
-    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO), "mock-model").await;
+    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO), "").await;
     let request = format!("ws://{}/api/ws?token={TOKEN}", started.addr)
         .into_client_request()
         .unwrap();
@@ -790,7 +790,7 @@ async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
     let timeout = Duration::from_secs(1);
-    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout), "mock-model").await;
+    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let reply = client.submit(2, &session, "hi").await;
@@ -807,7 +807,7 @@ async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
 #[tokio::test]
 async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
     let timeout = Duration::from_millis(200);
-    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout), "mock-model").await;
+    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let store = hermes_agent::SessionPersistence::new(started.home.path());
@@ -866,8 +866,9 @@ fn staged_images(home: &std::path::Path) -> Vec<std::path::PathBuf> {
 /// sends the model the image and the staged path, as upstream's remote-topology spec expects.
 #[tokio::test]
 async fn an_attached_image_goes_to_the_model_with_the_next_prompt() {
-    // gpt-4o takes images, so the provider sends image parts as they are.
-    let started = start_with(vec!["saw it"], Duration::ZERO, None, "gpt-4o").await;
+    // As the spec's backend: mock-model has no vision support, so only `native` sends the parts.
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["saw it"], Duration::ZERO, None, native).await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let image = png("client-only");
@@ -938,7 +939,10 @@ async fn image_attach_bytes_refuses_bad_requests() {
         (json!({"session_id": session}), 4015),
         (json!({"session_id": session, "content_base64": "  "}), 4015),
         (json!({"session_id": session, "content_base64": 5}), 4000),
-        (json!({"session_id": session, "content_base64": "not base64!"}), 4017),
+        (
+            json!({"session_id": session, "content_base64": "not base64!"}),
+            4017,
+        ),
         // Text, not an image, under the `data` alias.
         (json!({"session_id": session, "data": b64(b"hello")}), 4016),
     ];
