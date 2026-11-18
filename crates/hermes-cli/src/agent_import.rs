@@ -275,12 +275,7 @@ impl Importer<'_> {
     /// Every `*.md` in `folder`, in name order, as memory entries; a linked
     /// file is skipped.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
-        let listed = std::fs::read_dir(folder).and_then(|entries| {
-            entries
-                .map(|entry| entry.map(|entry| entry.path()))
-                .collect::<std::io::Result<Vec<PathBuf>>>()
-        });
-        let mut files: Vec<PathBuf> = match listed {
+        let files: Vec<PathBuf> = match list_dir(folder) {
             Ok(paths) => paths
                 .into_iter()
                 .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
@@ -294,7 +289,6 @@ impl Importer<'_> {
                 return;
             }
         };
-        files.sort();
         let mut incoming = Vec::new();
         for file in files {
             if is_link(&file) {
@@ -774,6 +768,20 @@ fn is_env_name(name: &str) -> bool {
         .next()
         .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
         && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
+/// The paths in `dir`, in name order. An entry that cannot be read fails the
+/// whole listing, so a shorter listing is never taken for the folder.
+fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+    sorted_paths(std::fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.path())))
+}
+
+fn sorted_paths(
+    entries: impl Iterator<Item = std::io::Result<PathBuf>>,
+) -> std::io::Result<Vec<PathBuf>> {
+    let mut paths = entries.collect::<std::io::Result<Vec<_>>>()?;
+    paths.sort();
+    Ok(paths)
 }
 
 fn markdown_files(dir: &Path) -> usize {
@@ -1933,5 +1941,138 @@ enabled = false
             .file_type()
             .is_symlink());
         assert!(!missing.exists());
+    }
+
+    #[test]
+    fn a_failed_config_save_removes_the_files_the_import_created() {
+        let root = claude_fixture();
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+
+        let report = import_with(&claude_request(&source, &home, true), |path, _| {
+            std::fs::write(path, "mcp_servers: [partial]\n").unwrap();
+            Err("disk full".to_string())
+        });
+        assert!(report.failed);
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains("disk full; mcp_servers.json and config.yaml are restored"),
+            "{text}"
+        );
+        assert!(!home.join("mcp_servers.json").exists());
+        assert!(!home.join("config.yaml").exists());
+    }
+
+    #[test]
+    fn an_entry_that_cannot_be_read_fails_the_listing_instead_of_shortening_it() {
+        let entries = vec![
+            Ok(PathBuf::from("b.md")),
+            Err(std::io::Error::other("entry failed")),
+            Ok(PathBuf::from("a.md")),
+        ];
+        let err = sorted_paths(entries.into_iter()).unwrap_err();
+        assert_eq!(err.to_string(), "entry failed");
+        let listed = sorted_paths([Ok(PathBuf::from("b.md")), Ok(PathBuf::from("a.md"))].into_iter());
+        assert_eq!(listed.unwrap(), vec![PathBuf::from("a.md"), PathBuf::from("b.md")]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_skills_folder_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = claude_fixture();
+        let source = root.path().join(".claude");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&home).unwrap();
+        let skills = source.join("skills");
+        std::fs::set_permissions(&skills, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::read_dir(&skills).is_err();
+
+        let report = import_agent(&claude_request(&source, &home, true));
+        std::fs::set_permissions(&skills, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        assert!(
+            text.contains("error        skills: could not read it: "),
+            "{text}"
+        );
+        assert!(!text.contains("no skills folder"), "{text}");
+    }
+
+    #[test]
+    fn names_that_look_like_credentials_reach_neither_the_report_nor_the_home() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        for skill in ["ghp_fixtureKey07", "tidy", "clean"] {
+            std::fs::create_dir_all(codex.join("skills").join(skill)).unwrap();
+            std::fs::write(codex.join("skills").join(skill).join("SKILL.md"), "A skill.\n")
+                .unwrap();
+        }
+        std::fs::write(codex.join("skills/tidy/ghp_fixtureKey08.txt"), "plain\n").unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            codex.join("config.toml"),
+            r#"
+[mcp_servers.local]
+command = "srv"
+env = { ghp_fixtureKey05 = "on", MODE = "fast" }
+
+[mcp_servers.remote]
+url = "https://r.example/mcp"
+bearer_token_env_var = "ghp_fixtureKey10"
+http_headers = { ghp_fixtureKey06 = "v", X-Zone = "eu" }
+env_http_headers = { ghp_fixtureKey09 = "REGION", X-Team = "ghp_fixtureKey11" }
+"#,
+        )
+        .unwrap();
+        let request = |apply| AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply,
+        };
+
+        let plan = import_agent(&request(false));
+        let applied = import_agent(&request(true));
+        assert!(!applied.failed, "{:#?}", applied.lines);
+        let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
+        let files = all_text(&home);
+        for secret in [
+            "ghp_fixtureKey05",
+            "ghp_fixtureKey06",
+            "ghp_fixtureKey07",
+            "ghp_fixtureKey08",
+            "ghp_fixtureKey09",
+            "ghp_fixtureKey10",
+            "ghp_fixtureKey11",
+        ] {
+            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
+            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+        }
+        for expected in [
+            "skipped      a skill: its folder name looks like a credential; add it yourself",
+            "skipped      skill tidy: a file in it looks like it holds a credential",
+            "imported     skill clean",
+            "imported     MCP server local: srv\n",
+            "imported     MCP server remote: https://r.example\n",
+            "mcp_servers.local.env.<a name that looks like a credential>, mcp_servers.remote.bearer_token_env_var, mcp_servers.remote.env_http_headers.<a name that looks like a credential>, mcp_servers.remote.env_http_headers.X-Team, mcp_servers.remote.http_headers.<a name that looks like a credential>",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
+        let remote = config
+            .mcp_servers
+            .iter()
+            .find(|server| server.name == "remote")
+            .expect("remote server");
+        assert_eq!(remote.headers.keys().collect::<Vec<_>>(), vec!["X-Zone"]);
+        let records = crate::mcp_config::load_mcp_config(&home.join("mcp_servers.json")).unwrap();
+        let local = records.get("local").expect("local record");
+        assert_eq!(local.env.keys().collect::<Vec<_>>(), vec!["MODE"]);
     }
 }
