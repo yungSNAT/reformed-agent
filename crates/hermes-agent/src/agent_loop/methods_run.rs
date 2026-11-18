@@ -116,6 +116,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
+        let mut steers = TurnSteers::new(ctx.get_messages());
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
                 .iter()
@@ -271,6 +272,7 @@ impl AgentLoop {
                 && (total_turns - 1).is_multiple_of(self.config.checkpoint_interval_turns)
             {
                 last_checkpoint_messages = Some(ctx.get_messages().to_vec());
+                steers.checkpoint();
             }
 
             // Notify memory + plugins of new turn
@@ -381,6 +383,7 @@ impl AgentLoop {
                         prefill_range.clone(),
                     ));
                 }
+                self.deliver_pending_steer(&mut ctx, &mut steers);
                 let r = match self
                     .call_llm_with_retry(
                         &ctx,
@@ -1055,8 +1058,7 @@ impl AgentLoop {
             }
 
             // --- Execute tool calls in parallel ---
-            let mut steer_markers = Vec::new();
-            if self.collect_tool_batch_interrupt(&mut steer_markers) {
+            if self.interrupt.take_interrupt_graceful().is_some() {
                 Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
                 return Ok(self.graceful_interrupt_result(
                     &mut ctx,
@@ -1155,6 +1157,7 @@ impl AgentLoop {
             {
                 if let Some(snapshot) = last_checkpoint_messages.clone() {
                     *ctx.get_messages_mut() = snapshot;
+                    steers.rolled_back(&self.interrupt);
                     ctx.add_message(Message::system(format!(
                         "Auto-rollback: {} tool call(s) failed in one turn. Restored latest checkpoint and continuing.",
                         turn_tool_error_count
@@ -1200,8 +1203,7 @@ impl AgentLoop {
                 }
                 inject_budget_pressure_into_last_tool_result(&mut results, w.as_deref());
             }
-            let stop_after_tool_results = self.collect_tool_batch_interrupt(&mut steer_markers);
-            Self::append_steer_markers_to_last_tool_result(&mut results, &steer_markers);
+            let stop_after_tool_results = self.interrupt.take_interrupt_graceful().is_some();
             let lsp_note = self.lsp_context_note(&tool_calls, &results);
 
             for result in results {

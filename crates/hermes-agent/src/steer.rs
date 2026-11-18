@@ -4,6 +4,10 @@
 //! that is the role-alternation-safe slot available mid-turn. The marker below
 //! tells the model that this bounded block is direct user input, not tool output.
 
+use hermes_core::{Message, MessageRole};
+
+use crate::interrupt::InterruptController;
+
 pub const STEER_MARKER_OPEN: &str = concat!(
     "[OUT-OF-BAND USER MESSAGE ",
     "\u{2014}",
@@ -33,9 +37,43 @@ pub fn format_steer_marker(steer_text: &str) -> String {
     format!("\n\n{STEER_MARKER_OPEN}\n{steer_text}\n{STEER_MARKER_CLOSE}")
 }
 
-pub fn is_formatted_steer_marker(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    trimmed.starts_with(STEER_MARKER_OPEN) && trimmed.trim_end().ends_with(STEER_MARKER_CLOSE)
+/// One run's steer state: the user message that opened the turn, which bounds
+/// where a steer may land, and the steer text delivered since the last
+/// checkpoint, which a rollback to that checkpoint must deliver again.
+pub(crate) struct TurnSteers {
+    pub(crate) turn_user: Option<Message>,
+    since_checkpoint: Vec<String>,
+}
+
+impl TurnSteers {
+    /// Takes the latest user message in `messages` as the one opening the turn.
+    pub(crate) fn new(messages: &[Message]) -> Self {
+        Self {
+            turn_user: messages
+                .iter()
+                .rfind(|m| m.role == MessageRole::User)
+                .cloned(),
+            since_checkpoint: Vec::new(),
+        }
+    }
+
+    pub(crate) fn delivered(&mut self, text: String) {
+        self.since_checkpoint.push(text);
+    }
+
+    /// A checkpoint was taken: it holds every steer delivered so far.
+    pub(crate) fn checkpoint(&mut self) {
+        self.since_checkpoint.clear();
+    }
+
+    /// The history was restored to the last checkpoint, which predates the
+    /// steers delivered since: queue their text again.
+    pub(crate) fn rolled_back(&mut self, interrupt: &InterruptController) {
+        if !self.since_checkpoint.is_empty() {
+            interrupt.restore_steer(self.since_checkpoint.join("\n"));
+            self.since_checkpoint.clear();
+        }
+    }
 }
 
 #[cfg(test)]
@@ -51,7 +89,8 @@ mod tests {
         assert!(marker.contains("stop after next step"));
         assert!(marker.contains(STEER_MARKER_CLOSE));
         assert!(!marker.contains("User guidance:"));
-        assert!(is_formatted_steer_marker(&marker));
+        assert!(marker.trim_start().starts_with(STEER_MARKER_OPEN));
+        assert!(marker.ends_with(STEER_MARKER_CLOSE));
     }
 
     #[test]
@@ -59,14 +98,5 @@ mod tests {
         assert!(STEER_CHANNEL_NOTE.contains(STEER_MARKER_OPEN));
         assert!(STEER_CHANNEL_NOTE.contains(STEER_MARKER_CLOSE));
         assert!(!STEER_CHANNEL_NOTE.contains("User guidance:"));
-    }
-
-    #[test]
-    fn only_bounded_steer_markers_are_recognized() {
-        assert!(!is_formatted_steer_marker("parent cancelled"));
-        assert!(!is_formatted_steer_marker("User guidance: stop"));
-        assert!(!is_formatted_steer_marker(&format!(
-            "[OUT-OF-BAND USER MESSAGE]\nmissing exact open\n{STEER_MARKER_CLOSE}"
-        )));
     }
 }

@@ -38,9 +38,7 @@ impl ActiveSessionControl for GatewayAgentBusyControl {
     }
 
     fn steer(&self, message: &str) -> bool {
-        self.interrupt
-            .interrupt(Some(hermes_agent::format_steer_marker(message)));
-        true
+        self.interrupt.steer(message)
     }
 }
 

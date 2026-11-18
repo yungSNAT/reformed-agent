@@ -85,7 +85,7 @@
     }
 
     #[test]
-    fn acp_steer_prompt_interrupts_with_trusted_marker() {
+    fn acp_steer_prompt_queues_the_guidance_without_interrupting() {
         let session_id = "session-steer-marker".to_string();
         let controller = hermes_agent::InterruptController::new();
         let interrupts = Arc::new(Mutex::new(HashMap::from([(
@@ -108,14 +108,13 @@
         )
         .expect("steer prompt"));
 
-        let marker = controller
-            .take_interrupt_graceful()
-            .expect("interrupt set")
-            .expect("marker");
-        assert!(marker.contains(hermes_agent::STEER_MARKER_OPEN));
-        assert!(marker.contains("prefer the simpler fix"));
-        assert!(marker.contains(hermes_agent::STEER_MARKER_CLOSE));
-        assert!(!marker.contains("User guidance:"));
+        // The agent wraps the guidance in the steer markers when it delivers
+        // it with a tool result; the turn goes on.
+        assert!(controller.take_interrupt_graceful().is_none());
+        assert_eq!(
+            controller.take_steer().as_deref(),
+            Some("prefer the simpler fix")
+        );
     }
 
     struct CliNoopTool {

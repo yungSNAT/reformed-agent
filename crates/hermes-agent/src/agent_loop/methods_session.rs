@@ -108,38 +108,42 @@ impl AgentLoop {
         }
     }
 
-    fn drain_tool_batch_interrupt(&self) -> ToolBatchInterrupt {
-        match self.interrupt.take_interrupt_graceful() {
-            None => ToolBatchInterrupt::None,
-            Some(Some(message)) if is_formatted_steer_marker(&message) => {
-                ToolBatchInterrupt::Steer(message)
-            }
-            Some(_) => ToolBatchInterrupt::Stop,
-        }
-    }
-
-    fn collect_tool_batch_interrupt(&self, steer_markers: &mut Vec<String>) -> bool {
-        match self.drain_tool_batch_interrupt() {
-            ToolBatchInterrupt::None => false,
-            ToolBatchInterrupt::Stop => true,
-            ToolBatchInterrupt::Steer(marker) => {
-                steer_markers.push(marker);
-                false
-            }
-        }
-    }
-
-    fn append_steer_markers_to_last_tool_result(
-        results: &mut [ToolResult],
-        steer_markers: &[String],
-    ) {
-        if steer_markers.is_empty() {
+    /// Before a main model call, deliver the steer text sent since the last
+    /// one, as upstream does: appended to the turn's latest tool result, the
+    /// one slot that keeps roles alternating. Before the turn's first tool
+    /// result it stays pending. `steers.turn_user` is the user message that
+    /// opened the turn; user messages the loop adds itself, such as a
+    /// finaliser's request to re-issue the answer, do not hide the tool
+    /// results before them. The end-of-turn summary calls do not deliver. The
+    /// text delivered is recorded in `steers`, as an auto-rollback to an
+    /// earlier checkpoint must restore it.
+    fn deliver_pending_steer(&self, ctx: &mut ContextManager, steers: &mut TurnSteers) {
+        let Some(text) = self.interrupt.take_steer() else {
             return;
-        }
-        if let Some(result) = results.last_mut() {
-            for marker in steer_markers {
-                result.content.push_str(marker);
+        };
+        let messages = ctx.get_messages_mut();
+        // shortcut: found by value, as in `messages_for_persisted_result`;
+        // if compression summarised the opening message away, the whole
+        // history is searched. Tracking its index through each compression
+        // would remove that.
+        let turn_start = steers
+            .turn_user
+            .as_ref()
+            .and_then(|user| messages.iter().rposition(|message| message == user))
+            .map_or(0, |at| at + 1);
+        let tool_result = messages[turn_start..]
+            .iter_mut()
+            .rev()
+            .find(|message| message.role == MessageRole::Tool);
+        match tool_result {
+            Some(message) => {
+                message
+                    .content
+                    .get_or_insert_with(String::new)
+                    .push_str(&format_steer_marker(&text));
+                steers.delivered(text);
             }
+            None => self.interrupt.restore_steer(text),
         }
     }
 
