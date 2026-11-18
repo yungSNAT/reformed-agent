@@ -45,6 +45,22 @@ async fn acp_mcp_server_params_convert_to_hermes_configs() {
 }
 
 #[test]
+fn acp_stdio_mcp_server_without_a_type_is_kept() {
+    // The protocol's stdio server, as AionUi and DeepChat send it: no `type`.
+    let params = json!({
+        "mcpServers": [
+            {"name": "files", "command": "/bin/mcp", "args": [], "env": []},
+            {"name": "no-command", "args": [], "env": []}
+        ]
+    });
+    let servers = acp_mcp_servers_from_params(params.as_object());
+    assert_eq!(servers.len(), 1);
+    let (name, config) = acp_mcp_server_to_hermes_config(&servers[0]).expect("stdio config");
+    assert_eq!(name, "files");
+    assert_eq!(config.command.as_deref(), Some("/bin/mcp"));
+}
+
+#[test]
 fn acp_enabled_toolsets_include_explicit_mcp_toolsets() {
     let expanded = expand_acp_enabled_toolsets(
         vec!["hermes-acp".to_string(), "hermes-acp".to_string()],
