@@ -312,6 +312,12 @@ mod tests {
         }
         assert!(files(work.path()).is_empty(), "no folder was made");
         assert_eq!(MAX_ATTACHMENT_BYTES, 256 << 20);
+
+        // The size is only estimated from a valid payload's length; a malformed one under the
+        // limit is still refused when it is decoded, leaving no file.
+        let refused = stage_within(work.path(), "d.txt", "aGVsbG8", 5);
+        assert_eq!(refused.err().as_deref(), Some(INVALID));
+        assert!(files(&work.path().join(".hermes/attachments")).is_empty());
     }
 
     #[test]

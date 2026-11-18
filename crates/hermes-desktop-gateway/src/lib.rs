@@ -358,15 +358,21 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
 }
 
 /// A message over [`MAX_MESSAGE_BYTES`] as a request [`reply_to_one`] can check, if it is a
-/// single `file.attach` request with a string or number id and string params. Every other
-/// member is skipped unparsed, so no part of the message is built into a tree.
+/// single `file.attach` request or notification with a string, number or null id and string
+/// params. Every other member is skipped unparsed, so no part of the message is built into a
+/// tree.
 fn attach_request(text: &str) -> Option<Value> {
     #[derive(serde::Deserialize)]
     struct Request {
         jsonrpc: String,
-        id: Id,
+        // Absent for a notification; `Some(Id(Null))` for an explicit null.
+        #[serde(default, deserialize_with = "present")]
+        id: Option<Id>,
         method: String,
         params: Params,
+    }
+    fn present<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<Id>, D::Error> {
+        serde::Deserialize::deserialize(from).map(Some)
     }
     #[derive(serde::Deserialize)]
     struct Params {
@@ -374,8 +380,8 @@ fn attach_request(text: &str) -> Option<Value> {
         data_url: String,
         name: Option<String>,
     }
-    /// A string or number id. Not an untagged enum, which would buffer an array or object id
-    /// whole before refusing it.
+    /// A string, number or null id. Not an untagged enum, which would buffer an array or
+    /// object id whole before refusing it.
     struct Id(Value);
     impl<'de> serde::Deserialize<'de> for Id {
         fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
@@ -384,6 +390,9 @@ fn attach_request(text: &str) -> Option<Value> {
                 type Value = Value;
                 fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
                     f.write_str("a string or number id")
+                }
+                fn visit_unit<E>(self) -> Result<Value, E> {
+                    Ok(Value::Null)
                 }
                 fn visit_str<E>(self, id: &str) -> Result<Value, E> {
                     Ok(Value::String(id.to_owned()))
@@ -416,10 +425,11 @@ fn attach_request(text: &str) -> Option<Value> {
     if let Some(name) = request.params.name {
         params.insert("name".into(), Value::String(name));
     }
-    let Id(id) = request.id;
     let mut frame = serde_json::Map::new();
     frame.insert("jsonrpc".into(), Value::String(request.jsonrpc));
-    frame.insert("id".into(), id);
+    if let Some(Id(id)) = request.id {
+        frame.insert("id".into(), id);
+    }
     frame.insert("method".into(), Value::String(request.method));
     frame.insert("params".into(), Value::Object(params));
     Some(Value::Object(frame))
