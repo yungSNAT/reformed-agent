@@ -2015,26 +2015,6 @@ fn claw_migrate_cmd() -> Result<(), hermes_core::AgentError> {
     println!("Source: {}", source_dir.display());
     println!("Target: {}\n", hermes_config::hermes_home().display());
 
-    // Also copy sessions if they exist
-    let src_sessions = source_dir.join("sessions");
-    let dst_sessions = hermes_config::hermes_home().join("sessions");
-    let mut session_count = 0usize;
-
-    if src_sessions.is_dir() {
-        std::fs::create_dir_all(&dst_sessions).map_err(|e| {
-            hermes_core::AgentError::Io(format!("Failed to create sessions dir: {}", e))
-        })?;
-        if let Ok(entries) = std::fs::read_dir(&src_sessions) {
-            for entry in entries.flatten() {
-                let src = entry.path();
-                let dst = dst_sessions.join(entry.file_name());
-                if src.is_file() && !dst.exists() && std::fs::copy(&src, &dst).is_ok() {
-                    session_count += 1;
-                }
-            }
-        }
-    }
-
     let options = MigrateOptions {
         source: Some(source_dir),
         dry_run: false,
@@ -2078,14 +2058,9 @@ fn claw_migrate_cmd() -> Result<(), hermes_core::AgentError> {
         }
     }
 
-    if session_count > 0 {
-        println!("\nSessions copied: {}", session_count);
-    }
-
-    let total = result.migrated.len() + session_count;
     println!(
         "\nMigration complete: {} item(s) migrated, {} skipped, {} error(s).",
-        total,
+        result.migrated.len(),
         result.skipped.len(),
         result.errors.len()
     );
