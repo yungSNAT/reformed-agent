@@ -621,7 +621,7 @@ fn markdown_files(dir: &Path) -> usize {
 
 static SECRET_NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r"(?i)(?:^|_)(?:API[_-]?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)(?:_|$)|KEY$",
+        r"(?i)(?:(?:^|_)(?:API[_-]?KEY|APIKEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIALS?|AUTH|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)(?:_|$)|KEY$)",
     )
     .expect("valid secret-name pattern")
 });
