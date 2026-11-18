@@ -432,7 +432,7 @@
       "owner": "yungSNAT",
       "path": "plugins/google_meet/node/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring and the order of `__all__` changed, and `VALID_REQUEST_TYPES` is now exported. No behaviour changed."
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring, the import layout and the order of `__all__` changed; the same names are exported. No behaviour changed."
     },
     {
       "classification": "policy_only",
@@ -549,7 +549,7 @@
       "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/hermes-achievements/tests/test_achievement_engine.py",
-      "rationale": "Upstream's Python test for its achievements engine; the Rust runtime has no achievements engine and runs no Python tests.",
+      "rationale": "Upstream's Python test for its achievements engine; the Rust runtime has no achievements engine, and this tree does not run upstream's Python test suite.",
       "ticket": 3524
     },
     {
@@ -837,7 +837,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/ai-gateway/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared this tree's file with v0.23.2: upstream moved the reasoning passthrough into a profile subclass with the same three cases (no reasoning support: no extras; a config: passed through; none: enabled at medium effort). Behaviour is unchanged."
+      "rationale": "Compared this tree's file with v0.23.2 (upstream had no such file at b51fbc73): both define the same profile subclass with the same three reasoning cases (no reasoning support: no extras; a config: passed through; none: enabled at medium effort), the same aliases, headers and auxiliary model. Upstream's copy is shorter; behaviour is the same."
     },
     {
       "classification": "intentional_divergence",
@@ -851,7 +851,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/alibaba/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream added the alibaba-cn, alibaba-token-plan and alibaba-token-plan-cn profiles, the aliyun alias and DashScope's preserve-thinking extras. The Rust provider tables (crates/hermes-agent/src/provider_profiles.rs, crates/hermes-core/src/providers.rs) have none of them. Deferred until ported.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added the alibaba-cn, alibaba-token-plan and alibaba-token-plan-cn profiles, the aliyun alias and DashScope's preserve-thinking extras. The Rust CLI already maps aliyun to alibaba (crates/hermes-cli/src/main/auth_providers.rs); the Rust provider tables (crates/hermes-agent/src/provider_profiles.rs, crates/hermes-core/src/providers.rs) have none of the 3 profiles or the extras. Deferred until ported.",
       "ledger": "R2338",
       "review_date": "2027-02-18"
     },
@@ -983,7 +983,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/nvidia/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. No Rust code strips those fields for NVIDIA. Deferred until ported.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported.",
       "ledger": "R2338",
       "review_date": "2027-02-18"
     },
@@ -2797,11 +2797,13 @@
       "ticket": 25
     },
     {
-      "classification": "policy_only",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_notice_delivery.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining case's thread metadata gains a user_id, which the test calls additive."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning (39975613) and added none, and the kept case now expects a private notice's thread metadata to carry the author's user_id (upstream's per-turn identity stamp). No Rust code matches notice_delivery or private_notice under crates/, so the private notice path was not compared. Deferred until compared with the Rust gateway's notice delivery.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2922,7 +2924,7 @@
       "owner": "yungSNAT",
       "path": "tests/gateway/test_reload_skills_command.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The kept case lost 4 assertions on the reply and note wording and gained none. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
     },
     {
       "classification": "intentional_divergence",
@@ -3043,7 +3045,7 @@
       "owner": "yungSNAT",
       "path": "tests/gateway/test_runtime_footer.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 8 runtime-footer cases (turn latency and an opt-in served-model field). No Rust footer renders latency. Deferred until ported.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 8 runtime-footer cases (turn latency and an opt-in served-model field) and removed 14. No Rust footer renders latency. Deferred until ported.",
       "ledger": "R2338",
       "review_date": "2027-02-18"
     },
@@ -3622,7 +3624,7 @@
       "owner": "yungSNAT",
       "path": "tests/gateway/test_webhook_signature_rate_limit.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream now answers a bad webhook signature with the same 404 an unknown route gets, so route names cannot be probed. Rust answered 403 (crates/hermes-gateway/src/platforms/webhook.rs). Deferred until the port lands.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream now answers a bad webhook signature with the 404 an unknown route gets, so route names cannot be probed, and removed 2 rate-limit cases. Since PR #164 Rust gives a bad signature the unknown-route reply (crates/hermes-gateway/src/platforms/webhook.rs, test a_bad_signature_reads_as_an_unknown_route), with an empty body where upstream's says 'Unknown route'. Rust checks the signature before the rate limit, but no Rust test sends more bad requests than the limit as upstream's remaining case does. Deferred until that case has a Rust test.",
       "ledger": "R2338",
       "review_date": "2027-02-18"
     },
@@ -4336,6 +4338,13 @@
       "path": "tests/skills",
       "rationale": "Upstream Python test-suite rows are reference-only in Ultra; Rust runtime behavior is covered by docs/parity/python-test-suite-coverage.json and enforced by crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/skills/test_google_workspace_setup_permissions.py",
+      "ticket": 3524,
+      "rationale": "Upstream's v0.23.2 test, taken in PR #162 with its platform marker replaced by a POSIX skipif, because this tree's suite has no conftest that defines the marker. CI runs it against the skill's Python scripts (ci.yml, 'Google Workspace credential files')."
     },
     {
       "classification": "intentional_divergence",

@@ -452,7 +452,7 @@ fn assert_deferred_row_is_explained(source: &str, row: &Value) {
 /// Deferred rows allowed at the v0.23.2 pin. Each count must equal the rows left deferred:
 /// a change that resolves rows lowers its number here, and one that raises a number is a
 /// governance change reviewers see in this file.
-const DEFERRED_SHARED_DIFF: u64 = 26;
+const DEFERRED_SHARED_DIFF: u64 = 27;
 const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
     ("python-test-suite-coverage.json", 44),
     ("hermes-cli-test-coverage.json", 36),
@@ -461,7 +461,6 @@ const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
 
 #[test]
 fn test_deferred_rows_are_explained_and_match_the_ratchet() {
-
     let classification = read_json("docs/parity/shared-different-classification.json");
     for item in classification["items"].as_array().expect("items") {
         if item["classification"].as_str() == Some("deferred") {
