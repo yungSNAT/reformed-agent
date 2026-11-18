@@ -88,11 +88,18 @@ jobs:
           tar -xzf "$RUNNER_TEMP/$archive" -C "$RUNNER_TEMP/betterleaks" betterleaks
           echo "$RUNNER_TEMP/betterleaks" >> "$GITHUB_PATH"
       - name: Secret scan (tracked files)
-        # The checkout holds only tracked files. Findings are redacted in the report.
         run: |
-          mkdir -p .sync-reports
+          python3 scripts/release_secret_scan.py \
+            --repo-root . \
+            --report .sync-reports/release-secret-scan.json
+      - name: Betterleaks (tracked files)
+        # Beside the scan above, not instead of it: its patterns catch some
+        # token shapes betterleaks's rules do not, such as a short sk-ant- key
+        # or a Telegram bot token with no keyword nearby. The checkout holds
+        # only tracked files. Findings are redacted in the report.
+        run: |
           betterleaks dir . --config .gitleaks.toml --redact --no-banner \
-            --report-format json --report-path .sync-reports/release-secret-scan.json
+            --report-format json --report-path .sync-reports/release-betterleaks.json
       - name: Config redaction tests (CLI)
         run: |
           cargo test -p hermes-cli secret_stdout_gate_defaults_false -- --nocapture
@@ -114,6 +121,7 @@ jobs:
           name: sbom-and-secret-scan
           path: |
             .sync-reports/release-secret-scan.json
+            .sync-reports/release-betterleaks.json
             release-sbom.cdx.json
 
   cross-build:
