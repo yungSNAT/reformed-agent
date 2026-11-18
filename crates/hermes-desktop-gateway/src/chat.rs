@@ -19,20 +19,27 @@ use hermes_core::{AgentResult, Message, MessageRole, StreamChunk};
 use serde_json::{json, Map, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
+use tokio::time::Instant;
 
 /// Frames for one connection's socket.
 pub(crate) type Outbox = UnboundedSender<Outgoing>;
 
-/// A frame for the connection to write. A turn's last event carries the turn's slot, so the
-/// slot frees once that event is written or dropped with a closed connection.
+/// A frame for the connection to write and when it was queued. A turn's last event carries
+/// the turn's slot, so the slot frees once that event is written or dropped with a closed
+/// connection.
 pub(crate) struct Outgoing {
     pub(crate) frame: Value,
+    pub(crate) queued: Instant,
     _slot: Option<OwnedSemaphorePermit>,
 }
 
 impl From<Value> for Outgoing {
     fn from(frame: Value) -> Self {
-        Self { frame, _slot: None }
+        Self {
+            frame,
+            queued: Instant::now(),
+            _slot: None,
+        }
     }
 }
 
@@ -52,7 +59,9 @@ const NO_TURN_SLOT: i64 = 4090;
 /// replies held in memory, as a turn keeps its slot until its last event is written.
 const MAX_TURNS: usize = 8;
 
-/// How long one socket write may wait for a client that is not reading.
+/// How long a frame may wait, from being queued until it is written, before the connection
+/// closes. A turn's events are all queued by its end, so its slot frees within this time of
+/// the turn's end however slowly the client reads.
 const WRITE_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Longest session id a request may name.
@@ -113,7 +122,7 @@ impl Chat {
         self.write_timeout
     }
 
-    /// How long one socket write may wait for a client that is not reading before the
+    /// How long a frame may wait, from being queued until it is written, before the
     /// connection closes (30 seconds unless set).
     pub fn with_write_timeout(mut self, timeout: Duration) -> Self {
         self.write_timeout = timeout;
@@ -299,12 +308,12 @@ impl Turn {
         // A closed socket drops the frame, and with it any slot; the turn still runs and is
         // saved.
         let _ = self.outbox.send(Outgoing {
-            frame: json!({
+            _slot: slot,
+            ..Outgoing::from(json!({
                 "jsonrpc": "2.0",
                 "method": "event",
                 "params": {"type": kind, "session_id": self.id, "payload": payload, "seq": seq},
-            }),
-            _slot: slot,
+            }))
         });
     }
 

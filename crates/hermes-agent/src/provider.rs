@@ -206,7 +206,7 @@ fn resolve_openai_compatible_dynamic_wire_model(
     }
 }
 
-fn parse_acp_multimodal_parts(content: &str) -> Option<Vec<Value>> {
+pub(crate) fn parse_acp_multimodal_parts(content: &str) -> Option<Vec<Value>> {
     let payload = content.trim().strip_prefix(ACP_MULTIMODAL_PREFIX)?;
     let parsed: Value = serde_json::from_str(payload).ok()?;
     let parts = parsed.as_array()?.clone();
