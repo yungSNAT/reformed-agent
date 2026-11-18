@@ -41,7 +41,7 @@ use hermes_cli::auth::{
 use hermes_cli::cli::{
     AcpArgs, AuthArgs, BackupArgs, BillingArgs, ChatArgs, ClawArgs, Cli, CliCommand,
     CloudflareArgs, CompletionArgs, ComputerUseArgs, ConfigArgs, CronArgs, DashboardArgs,
-    DebugArgs, DoctorArgs, DumpArgs, EliteCheckArgs, GatewayArgs, ImportArgs,
+    DebugArgs, DoctorArgs, DumpArgs, EliteCheckArgs, GatewayArgs, ImportAgentArgs, ImportArgs,
     ImportHermesSessionsArgs, IncidentPackArgs, InsightsArgs, KanbanArgs, LoginArgs, LogoutArgs,
     LogsArgs, LumioArgs, McpArgs, MemoryArgs, MigrateArgs, ModelArgs, PairingArgs, PluginsArgs,
     PortalArgs, ProfileArgs, ResumeArgs, RotateProvenanceKeyArgs, RouteAutotuneArgs,

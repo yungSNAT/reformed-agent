@@ -222,7 +222,7 @@ pub fn wire_stdio_clarify_backend(tool_registry: &Arc<ToolRegistry>) {
 /// config.yaml holds each server's URL or command line. `hermes mcp add` also
 /// writes a `mcp_servers.json` record, which alone keeps `args`, `env` and
 /// `enabled`; a same-named record applies only while it names the same target.
-fn session_mcp_server_configs(
+pub(crate) fn session_mcp_server_configs(
     servers: &[hermes_config::McpServerEntry],
     records: Option<&McpConfig>,
 ) -> Vec<(String, McpServerConfig)> {
