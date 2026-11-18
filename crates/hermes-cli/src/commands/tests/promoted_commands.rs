@@ -137,6 +137,23 @@
         assert_eq!(controller.take_steer(), None);
     }
 
+    #[test]
+    fn acp_refuses_a_steer_that_arrives_after_the_turn_took_its_leftover() {
+        let sessions = hermes_acp::SessionManager::new();
+        let session = sessions.create_session(".");
+        let controller = hermes_agent::InterruptController::new();
+        // A `/steer` that cloned the controller before the turn ended still holds it.
+        let held_by_steer = controller.clone();
+
+        requeue_leftover_steer(&controller, &sessions, &session.session_id);
+
+        assert!(
+            !held_by_steer.steer("prefer the simpler fix"),
+            "a steer no one will deliver was accepted"
+        );
+        assert_eq!(controller.take_steer(), None);
+    }
+
     struct CliNoopTool {
         schema: hermes_core::ToolSchema,
     }

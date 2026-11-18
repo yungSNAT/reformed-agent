@@ -580,6 +580,8 @@ mod tests {
     impl ActiveSessionControl for MockControl {
         fn interrupt(&self, message: &str) {
             self.interrupts.lock().unwrap().push(message.to_string());
+            // As `InterruptController::interrupt` does, an interrupt drops a pending steer.
+            self.leftover_steer.lock().unwrap().take();
         }
 
         fn steer(&self, _message: &str) -> bool {
@@ -622,6 +624,31 @@ mod tests {
         assert_eq!(next.source, source("10"));
         assert_eq!(coord.pending(&key).unwrap().text, "queued");
         assert!(control.leftover_steer.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_message_that_interrupts_keeps_a_steer_the_turn_never_delivered() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control.clone()));
+        coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        // The agent still holds the steer when a message interrupts the turn.
+        *control.leftover_steer.lock().unwrap() = Some("use tabs".to_string());
+        let redirect = coord.handle_busy_message(
+            &key,
+            event("also check the docs", "10"),
+            BusyInputMode::Interrupt,
+        );
+        assert!(redirect.interrupted);
+
+        let next = coord.finish(&key, ProcessingOutcome::Success).unwrap();
+        assert_eq!(next.text, "use tabs");
+        assert_eq!(coord.pending(&key).unwrap().text, "also check the docs");
+        assert_eq!(coord.pending_len(&key), 1);
     }
 
     #[test]
