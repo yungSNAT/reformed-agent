@@ -446,7 +446,11 @@ fn with_images(text: String, images: &[StagedImage]) -> Result<(String, String),
 /// so the session keeps the prompt's words and markers, not the image data, and later turns
 /// do not send the images again.
 fn keep_words(rows: &mut [Message]) {
-    for row in rows.iter_mut().rev().filter(|row| row.role == MessageRole::User) {
+    for row in rows
+        .iter_mut()
+        .rev()
+        .filter(|row| row.role == MessageRole::User)
+    {
         let parts = row
             .content
             .as_deref()
@@ -547,10 +551,9 @@ impl Turn {
         let (text, content) = if images.is_empty() {
             (text, None)
         } else {
-            let (words, content) =
-                tokio::task::spawn_blocking(move || with_images(text, &images))
-                    .await
-                    .map_err(|e| e.to_string())??;
+            let (words, content) = tokio::task::spawn_blocking(move || with_images(text, &images))
+                .await
+                .map_err(|e| e.to_string())??;
             (words, Some(content))
         };
         let id = self.id.clone();

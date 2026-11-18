@@ -902,7 +902,10 @@ async fn an_attached_image_goes_to_the_model_with_the_next_prompt() {
 
     // Upstream's prompt text: the words, then a marker naming each staged image, which the
     // desktop matches against its own row.
-    let words = format!("U2 what is this\n\n[Image attached at: {}]", staged.display());
+    let words = format!(
+        "U2 what is this\n\n[Image attached at: {}]",
+        staged.display()
+    );
     let user = |body: &Value| body["messages"].as_array().unwrap().last().unwrap().clone();
     let first = user(&started.requests.lock().unwrap()[0]);
     let parts = first["content"].as_array().expect("text and image parts");
