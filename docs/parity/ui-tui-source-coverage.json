@@ -1,6 +1,6 @@
 {
   "summary": {
-    "covered_paths": 122,
+    "covered_paths": 177,
     "required_backlog_classification_paths": [
       "ui-tui",
       "ui-tui/packages",
@@ -737,6 +737,59 @@
       "classification_path": "ui-tui/packages"
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/components/Text.tsx",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/constants.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -789,6 +842,112 @@
         }
       ],
       "classification_path": "ui-tui/packages"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/dom.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/events/cmd-shortcuts.test.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/events/input-event.ts",
@@ -910,6 +1069,59 @@
         {
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/hooks/use-terminal-title.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -1097,6 +1309,59 @@
       ]
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/output.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/parse-keypress.test.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -1221,6 +1486,112 @@
       ]
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/reconciler.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/render-border.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/render-node-to-output.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -1339,6 +1710,218 @@
         {
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/screen.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/selection.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/terminal.test.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/terminal.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -1529,6 +2112,59 @@
       ]
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/termio/parser.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/tokenize.ts",
       "classification_path": "ui-tui/packages",
       "status": "covered_by_rust_primary_tui_contracts",
@@ -1586,6 +2222,112 @@
         {
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/termio/types.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/native-ts/yoga-layout/index.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -1710,74 +2452,6 @@
         {
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
-        }
-      ]
-    },
-    {
-      "path": "ui-tui/scripts/build.mjs",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui",
-        "package_surface",
-        "build_surface"
-      ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_serve_alias_for_headless_dashboard_api"
-        },
-        {
-          "file": "crates/hermes-cli/src/banner.rs",
-          "name": "startup_banner_names_reformed_agent"
-        }
-      ]
-    },
-    {
-      "path": "ui-tui/src/__tests__/asCommandDispatch.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui"
-      ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
         }
       ]
     },
@@ -1926,6 +2600,112 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/details.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/emoji.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -2189,6 +2969,112 @@
       "classification_path": "ui-tui/src"
     },
     {
+      "path": "ui-tui/src/__tests__/messages.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/osc52.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/__tests__/paths.test.ts",
       "classification_path": "ui-tui/src",
       "status": "covered_by_rust_primary_tui_contracts",
@@ -2292,6 +3178,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/__tests__/scroll.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/__tests__/slashParity.test.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -2348,6 +3287,59 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/streamingMarkdown.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -2443,6 +3435,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/__tests__/terminalParity.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/__tests__/terminalSetup.test.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -2485,6 +3530,59 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/textInputLineNav.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -2545,6 +3643,59 @@
         {
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/textInputRightClick.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -2661,6 +3812,165 @@
         }
       ],
       "classification_path": "ui-tui/src"
+    },
+    {
+      "path": "ui-tui/src/__tests__/turnStore.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/useCompletion.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/useComposerState.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
     },
     {
       "path": "ui-tui/src/__tests__/useConfigSync.test.ts",
@@ -2783,6 +4093,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/__tests__/useQueue.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/__tests__/useSessionLifecycle.test.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -2831,6 +4194,59 @@
         {
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/__tests__/useVirtualHistoryHeights.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -2993,6 +4409,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/__tests__/wheelAccel.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/app/createGatewayEventHandler.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -3105,6 +4574,112 @@
       ]
     },
     {
+      "path": "ui-tui/src/app/delegationStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/app/inputSelectionStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/app/interfaces.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -3192,6 +4767,112 @@
       ]
     },
     {
+      "path": "ui-tui/src/app/scroll.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/app/setupHandoff.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/app/slash/commands/core.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -3248,6 +4929,59 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/app/slash/commands/debug.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -3372,6 +5106,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/app/slash/commands/setup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/app/slash/registry.ts",
       "classification_path": "ui-tui/src",
       "status": "covered_by_rust_primary_tui_contracts",
@@ -3429,6 +5216,59 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/app/slash/types.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -4370,6 +6210,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/components/maskedPrompt.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/components/messageLine.tsx",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -4542,6 +6435,112 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/components/queuedMessages.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/components/skillsHub.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -4752,6 +6751,59 @@
       ]
     },
     {
+      "path": "ui-tui/src/components/todoPanel.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/config/env.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -4894,6 +6946,112 @@
       ]
     },
     {
+      "path": "ui-tui/src/content/faces.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/content/fortunes.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/content/hotkeys.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -4954,6 +7112,218 @@
       ]
     },
     {
+      "path": "ui-tui/src/content/placeholders.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/content/setup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/content/verbs.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/domain/messages.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/domain/paths.ts",
       "classification_path": "ui-tui/src",
       "status": "covered_by_rust_primary_tui_contracts",
@@ -4983,15 +7353,15 @@
       ]
     },
     {
-      "path": "ui-tui/src/domain/slash.ts",
+      "path": "ui-tui/src/domain/usage.ts",
+      "classification_path": "ui-tui/src",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
-        "state_or_domain_surface",
-        "slash"
+        "repin_v0_23_2"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5010,39 +7380,30 @@
           "name": "test_default_mouse_enabled_respects_env_override"
         },
         {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_completions_update"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_completion_popup_hidden_when_slash_deleted"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_completion_popup_hidden_when_modal_or_processing_active"
-        },
-        {
-          "file": "crates/hermes-cli/src/commands.rs",
-          "name": "quick_alias_rewrites_to_builtin_and_passes_args"
-        },
-        {
           "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_status"
+          "name": "cli_parse_default"
         },
         {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_resume_latest_default"
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "app_new_session_invokes_session_lifecycle_hooks"
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "app_reset_session_invokes_session_lifecycle_hooks"
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
-      ],
-      "classification_path": "ui-tui/src"
+      ]
     },
     {
       "path": "ui-tui/src/entry.tsx",
@@ -5098,58 +7459,6 @@
     },
     {
       "path": "ui-tui/src/gatewayClient.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui",
-        "gateway_session"
-      ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        },
-        {
-          "file": "crates/hermes-cli/src/runtime_tool_wiring.rs",
-          "name": "gateway_messaging_backend_sends_real_message"
-        },
-        {
-          "file": "crates/hermes-cli/src/runtime_tool_wiring.rs",
-          "name": "stdio_clarify_backend_uses_auto_answer_in_non_interactive_mode"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_session_info_serialization"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_new_session_persists_startup_stub_snapshot"
-        },
-        {
-          "file": "crates/hermes-acp/src/handler.rs",
-          "name": "test_session_lifecycle"
-        },
-        {
-          "file": "crates/hermes-acp/src/handler.rs",
-          "name": "test_prompt_slash_command"
-        }
-      ]
-    },
-    {
-      "path": "ui-tui/src/gatewayTypes.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
@@ -5263,6 +7572,112 @@
       "classification_path": "ui-tui/src"
     },
     {
+      "path": "ui-tui/src/hooks/useInputHistory.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/hooks/useQueue.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/hooks/useVirtualHistory.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -5347,6 +7762,59 @@
         {
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "promoted_paste_command_uses_test_clipboard_override"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/editor.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -5600,6 +8068,112 @@
       ]
     },
     {
+      "path": "ui-tui/src/lib/liveProgress.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/liveProgress.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/lib/mathUnicode.ts",
       "status": "covered_by_rust_primary_tui_contracts",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
@@ -5684,6 +8258,59 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/messages.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -5905,6 +8532,59 @@
       "classification_path": "ui-tui/src"
     },
     {
+      "path": "ui-tui/src/lib/syntax.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
       "path": "ui-tui/src/lib/terminalModes.ts",
       "classification_path": "ui-tui/src",
       "status": "covered_by_rust_primary_tui_contracts",
@@ -5931,6 +8611,112 @@
         {
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/terminalParity.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/terminalSetup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },
@@ -6016,6 +8802,165 @@
         {
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/todo.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/todo.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
+        }
+      ]
+    },
+    {
+      "path": "ui-tui/src/lib/viewportStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "covered_by_rust_primary_tui_contracts",
+      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "Added at the v0.23.2 re-pin. Upstream's TypeScript/Ink TUI file; Reformed's TUI is the Rust Ratatui one and the cited tests cover its base behaviour. Whether this file's behaviour has a Rust equivalent was not checked.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_tui_state_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_input_mode_display"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_fit_status_line_pads_and_respects_display_width"
+        },
+        {
+          "file": "crates/hermes-cli/src/app.rs",
+          "name": "test_default_mouse_enabled_respects_env_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/cli.rs",
+          "name": "cli_parse_default"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_named"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_parse_color_hex"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_resolved_styles"
+        },
+        {
+          "file": "crates/hermes-cli/src/theme.rs",
+          "name": "test_status_bar_color_fields_respect_overrides"
+        },
+        {
+          "file": "crates/hermes-cli/src/tui.rs",
+          "name": "test_status_message_style_critical_for_error"
         }
       ]
     },

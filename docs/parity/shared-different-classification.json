@@ -248,6 +248,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/browser_use/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/browser/browser_use/provider.py",
       "rationale": "Browser Use runtime behavior is now covered by the Rust-native browser backend, including browser-use provider selection, direct BROWSER_USE_API_KEY auth, managed Nous gateway fallback/preference, managed timeout/proxy payload, idempotency-key retry preservation, external-call-id capture, and stop-session PATCH; the Python plugin remains reference-only compatibility material.",
@@ -255,10 +262,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/browserbase/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/browser/browserbase/provider.py",
       "rationale": "Browserbase runtime behavior is now covered by the Rust-native browser backend, including direct env config, seconds timeout, keepAlive/proxies/advanced-stealth feature knobs, 402 fallbacks, and session release; the Python plugin remains reference-only compatibility material.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/firecrawl/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -273,6 +294,13 @@
       "path": "plugins/context_engine/__init__.py",
       "rationale": "No current shared-different content remains for this upstream file; the Rust-first command surface rejects Python plugin dispatch and the Python context-engine loader is retained only as upstream reference material.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/dashboard_auth/basic/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -324,6 +352,20 @@
       "ticket": 25
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/README.md",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/SKILL.md",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
       "classification": "policy_only",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/__init__.py",
@@ -352,11 +394,32 @@
       "ticket": 304
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
       "classification": "policy_only",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/node/cli.py",
       "rationale": "The shared diff is behavior-equivalent tuple membership for node status and ping command dispatch.",
       "ticket": 304
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/client.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/protocol.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -374,10 +437,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/process_manager.py",
       "rationale": "Ultra uses the plugin-local Hermes home helper so local meeting state remains importable in the Rust-first tree without vendoring upstream hermes_constants.",
       "ticket": 304
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/realtime/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "policy_only",
@@ -422,6 +499,13 @@
       "ticket": 3524
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/hermes-achievements/dashboard/plugin_api.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
       "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/hermes-achievements/tests/test_achievement_engine.py",
@@ -444,6 +528,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/fal/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/image_gen/openai-codex/__init__.py",
       "rationale": "OpenAI Codex image generation is implemented in Rust OpenAICodexImageGenBackend with image_gen provider selection, gpt-image-2 tier precedence, gpt-5.5 Codex Responses host payload, auth-store/env token lookup, Cloudflare headers, raw SSE image extraction, cache/images PNG persistence, and focused wiremocked tests; the Python plugin remains reference-only compatibility material.",
@@ -451,10 +542,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/openai-codex/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/image_gen/openai/__init__.py",
       "rationale": "OpenAI image generation is implemented by the Rust OpenAiImageGenBackend with direct Images API generation/edit routing, env/config credentials, multipart reference-image edits, b64/url persistence, and focused hermes-tools tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/openai/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -511,6 +616,13 @@
       "path": "plugins/memory/byterover/__init__.py",
       "rationale": "The shared diff is behavior-equivalent tuple membership for action and role guards; no ByteRover runtime behavior is missing.",
       "ticket": 304
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/byterover/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -633,10 +745,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/retaindb/README.md",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/memory/retaindb/__init__.py",
       "rationale": "RetainDB runtime behavior is owned by the Rust RetainDbMemoryPlugin: core profile/search/context/remember/forget tools, shared file-store upload/list/read/ingest/delete tools, SOUL.md agent seeding, context plus user-synthesis/self-model prefetch, and durable SQLite queued turn ingest are implemented and covered by focused hermes-agent tests; the Python plugin remains reference-only in the Rust runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/retaindb/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -668,6 +794,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/ai-gateway/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/alibaba-coding-plan/__init__.py",
       "rationale": "Bundled Alibaba Coding Plan provider parity is covered by Rust provider registry and CLI routing contracts: the manifest directory is known, the provider alias is normalized, and the provider-specific default base URL routes through the Rust Qwen-compatible runtime.",
@@ -675,10 +808,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/alibaba/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/anthropic/__init__.py",
       "rationale": "Anthropic provider behavior is implemented through Rust provider registry, setup/auth detection, Anthropic Messages request shaping, OAuth import, and request-body tests; Python provider files are not loaded at runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/arcee/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -738,6 +885,27 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/gmi/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/huggingface/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/kilocode/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/kimi-coding/__init__.py",
       "rationale": "Local Kimi provider delta is a behavior-equivalent tuple membership guard covered by focused model-provider contracts.",
@@ -759,10 +927,31 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/novita/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/nvidia/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/ollama-cloud/__init__.py",
       "rationale": "Ollama Cloud provider behavior is implemented by Rust provider normalization, ACP auth env-key support, setup/provider defaults, and runtime provider config; the Python profile is reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/openai-codex/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -783,6 +972,20 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/qwen-oauth/__init__.py",
       "rationale": "Upstream copies image parts before editing a request so the caller's messages stay unchanged. The Rust providers take the conversation by shared reference (ChatRequestParams.messages) and build a new request body, so the caller's messages cannot be edited.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/stepfun/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/xai/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
       "ticket": 3524
     },
     {
@@ -857,6 +1060,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/discord/voice_mixer.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/platforms/google_chat/adapter.py",
       "rationale": "Ultra retains a Rust-first loop bridge that avoids the absent agent.async_utils module and rejects unsupported standalone attachments explicitly while preserving upstream proxy-env support.",
@@ -899,6 +1109,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/line/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/platforms/ntfy/adapter.py",
       "rationale": "Ultra supersedes the upstream Python ntfy adapter with the Rust-native gateway adapter in crates/hermes-gateway/src/platforms/ntfy.rs, including X-Tags echo-loop prevention, auth/header handling, inbound event filtering, env enablement, and cron delivery target parsing.",
@@ -938,6 +1155,20 @@
       "path": "plugins/platforms/teams/adapter.py",
       "rationale": "Ultra keeps explicit standalone attachment rejection and tuple membership contracts while porting upstream proxy-env support and resilient Teams port coercion.",
       "ticket": 304
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/teams/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/plugin_utils.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1018,10 +1249,31 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/brave_free/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/brave_free/provider.py",
       "rationale": "Brave free web search is implemented by Rust BraveFreeSearchBackend with BRAVE_SEARCH_API_KEY gating, free endpoint routing, X-Subscription-Token auth, count clamping, result normalization, explicit/generic backend aliases, auto-detect, and search-only extract/crawl error routing covered by web backend tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/ddgs/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1032,10 +1284,31 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/exa/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/exa/provider.py",
       "rationale": "Exa search and extraction are implemented by Rust ExaSearchBackend and ExaExtractBackend with EXA_API_KEY/EXA_BASE_URL config, /search and /contents request contracts, source-quality result normalization, explicit/generic extract routing, auto-detect, and focused mocked web backend tests; the Python SDK plugin remains reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/firecrawl/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/firecrawl/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1046,10 +1319,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/parallel/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/parallel/provider.py",
       "rationale": "Parallel search and extraction are implemented by Rust ParallelWebBackend with PARALLEL_API_KEY/PARALLEL_BASE_URL/PARALLEL_SEARCH_MODE config, /v1/search and /v1/extract REST payloads, full-content extraction, result/error normalization, explicit/generic backend routing, auto-detect, and focused mocked web backend tests; the Python SDK plugin remains reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/searxng/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1067,10 +1354,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/tavily/plugin.yaml",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/tavily/provider.py",
       "rationale": "Tavily search, extract, and crawl are covered by Rust-native web backends, including /crawl Bearer auth plus body api_key and standard document/error normalization; this legacy upstream Python provider is reference-only and is not used by the Rust-only runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "plugins/web/xai/__init__.py",
+      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1088,10 +1389,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/apple/apple-notes/SKILL.md",
+      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "skills/apple/apple-reminders/SKILL.md",
       "rationale": "Apple Reminders skill documentation is curated locally; skill catalog drift is tracked separately from the Rust runtime skill-loader contract.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/apple/findmy/SKILL.md",
+      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1130,6 +1445,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/media/DESCRIPTION.md",
+      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "skills/media/youtube-content/SKILL.md",
       "rationale": "The YouTube content skill is catalog/helper material, not Rust runtime code; Ultra adopted the upstream uv-based setup/run instructions while preserving the local skill-helper contract.",
@@ -1141,6 +1463,13 @@
       "path": "skills/media/youtube-content/scripts/fetch_transcript.py",
       "rationale": "The transcript fetcher is an allowed skill helper script, not Hermes runtime; Ultra adopted upstream uv instructions without introducing Python runtime dispatch.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/note-taking/obsidian/SKILL.md",
+      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1578,6 +1907,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/cron/test_compute_next_run_last_run_at.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/cron/test_cron_context_from.py",
       "rationale": "Upstream context_from create/update/prompt-injection intent is covered by Rust CronJob context_from persistence, scheduler prefix assembly, invalid-ref filtering, and truncation tests; the Python test file remains reference-only.",
@@ -1634,6 +1970,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/cron/test_rewrite_skill_refs.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/cron/test_scheduler.py",
       "rationale": "Upstream scheduler tick/run/delivery/history intent is covered by Rust CronScheduler create/update/run/manual-trigger, context prefix, completion broadcast, delivery suppression, and runner contract tests; the Python test file remains reference-only.",
@@ -1666,6 +2009,13 @@
       "path": "tests/gateway",
       "rationale": "Gateway test deltas exercise platform adapter behavior and must be reviewed as runtime parity coverage.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/_plugin_adapter_loader.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1736,6 +2086,13 @@
       "path": "tests/gateway/test_api_server_jobs.py",
       "rationale": "API-server cron jobs behavior is covered by Rust-native gateway contracts backed by hermes_cron: list/create/get/update/delete, include_disabled filtering, pause/resume/manual run, default local delivery, whitelisted updates including skill aliases, required-field and length validation, repeat validation, invalid-ID rejection with source-context logging, and bearer-auth gating. Python-only cron-unavailable and mock self-binding branches are not applicable because the Rust gateway links the scheduler directly and exercises real scheduler calls.",
       "ticket": 303
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_api_server_multimodal.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1851,6 +2208,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_complete_path_at_filter.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_compress_command.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
@@ -1897,6 +2261,13 @@
       "path": "tests/gateway/test_delivery.py",
       "rationale": "Upstream delivery target parsing is covered by Rust DeliveryTarget tests for origin resolution, local fallback, platform-home targets, explicit chat IDs, thread IDs, case-insensitive platform names, case-preserving chat IDs, Matrix-style colon splitting, target string roundtrips, and unknown-platform local fallback.",
       "ticket": 302
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_destructive_slash_confirm.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2215,6 +2586,20 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_goal_max_turns_config.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_goal_status_notice.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_goal_verdict_send.py",
       "rationale": "Goal/verdict send behavior is covered by Rust gateway command parsing, delivery routing, status/profile tests, and primary-platform send contracts rather than Python gateway tests.",
@@ -2226,6 +2611,13 @@
       "path": "tests/gateway/test_google_chat.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_home_target_env_var.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2362,6 +2754,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_notice_delivery.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_ntfy_plugin.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
@@ -2387,6 +2786,13 @@
       "path": "tests/gateway/test_pending_drain_race.py",
       "rationale": "Pending-drain race intent is covered by Rust gateway busy-session queue, reset/finish, and primary-platform contract tests for deterministic deferred-message delivery.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_pii_redaction.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2432,6 +2838,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_pre_gateway_dispatch.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_proxy_mode.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
@@ -2457,6 +2870,13 @@
       "path": "tests/gateway/test_reasoning_command.py",
       "rationale": "Reasoning command behavior is covered by Rust CLI/gateway slash command handling, model/provider reasoning controls, TUI rendering tests, and reasoning-content parser tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_reload_skills_command.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2558,10 +2978,31 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_running_agent_session_toggles.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_runtime_env_reload_config_authority.py",
       "rationale": "Runtime env reload/config authority is covered by Rust config/env bridge tests, gateway runtime controls, and provider setup diagnostics; Python reload tests are reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_runtime_footer.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_safe_adapter_disconnect.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2635,10 +3076,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_session_list_allowed_sources.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_session_model_override_routing.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_session_model_reset.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2684,10 +3139,24 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_shared_group_sender_prefix.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_shutdown_cache_cleanup.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_shutdown_memory_provider_messages.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2775,6 +3244,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_steer_command.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_step_callback_compat.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
@@ -2821,6 +3297,13 @@
       "path": "tests/gateway/test_teams.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_teams_pipeline_runtime_wiring.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -2978,6 +3461,20 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_unavailable_skill_hint.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_unknown_command.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_update_command.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
@@ -3003,6 +3500,13 @@
       "path": "tests/gateway/test_verbose_command.py",
       "rationale": "Upstream gateway /verbose tool-progress behavior is covered by Rust DisplayConfig and gateway runtime tests: bool-like display.tool_progress_command gating, quoted false disablement, per-platform/default tool_progress resolution, off/new/all/verbose cycling, and runtime verbose/tool_progress state updates.",
       "ticket": 302
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_vision_memory_leak.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -3052,6 +3556,13 @@
       "path": "tests/gateway/test_webhook_integration.py",
       "rationale": "Upstream webhook integration intent is covered by Rust end-to-end webhook route handling: signed provider payload validation, dot-notation template rendering into MessageEvent text, route event filtering, deliver/log/direct outbound handling, health checks, and route-specific chat/user/session isolation.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_webhook_signature_rate_limit.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -3108,6 +3619,13 @@
       "path": "tests/gateway/test_ws_auth_retry.py",
       "rationale": "Upstream auth-aware retry intent is covered by Rust Matrix sync_loop auth failure handling for 401/403 and Rust Mattermost WebSocket reconnect contracts that stop immediately on auth errors while retrying transient failures with backoff.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_yolo_command.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -3297,6 +3815,13 @@
       "path": "tests/providers",
       "rationale": "Provider tests cover model transport compatibility and error handling.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/providers/test_e2e_wiring.py",
+      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
+      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
