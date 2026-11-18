@@ -23,7 +23,7 @@ pub struct BackgroundTask {
     pub prompt: String,
     pub status: TaskStatus,
     pub result: Option<String>,
-    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub created_at: jiff::Timestamp,
 }
 
 /// Manages background tasks.
@@ -63,7 +63,7 @@ impl BackgroundTaskManager {
             prompt,
             status: TaskStatus::Running,
             result: None,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
 
         self.tasks.lock().unwrap().insert(id.clone(), task);
@@ -93,7 +93,7 @@ impl BackgroundTaskManager {
             prompt,
             status: TaskStatus::Running,
             result: None,
-            created_at: chrono::Utc::now(),
+            created_at: jiff::Timestamp::now(),
         };
 
         self.tasks.lock().unwrap().insert(id.clone(), task);
@@ -156,8 +156,11 @@ impl BackgroundTaskManager {
     }
 
     /// Clean up completed/failed/cancelled tasks older than the given duration.
-    pub fn cleanup(&self, max_age: chrono::Duration) {
-        let cutoff = chrono::Utc::now() - max_age;
+    pub fn cleanup(&self, max_age: jiff::SignedDuration) {
+        // An age beyond the earliest instant keeps every task.
+        let cutoff = jiff::Timestamp::now()
+            .checked_sub(max_age)
+            .unwrap_or(jiff::Timestamp::MIN);
         let mut tasks = self.tasks.lock().unwrap();
         tasks.retain(|_, t| t.status == TaskStatus::Running || t.created_at > cutoff);
     }

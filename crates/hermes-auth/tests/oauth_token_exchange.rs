@@ -151,3 +151,37 @@ async fn exchange_refresh_token_supports_confidential_client_secret_post() {
     assert_eq!(cred.access_token, "at-post");
     assert_eq!(cred.refresh_token.as_deref(), Some("rt-post"));
 }
+
+#[tokio::test]
+async fn token_exchanges_refuse_an_expiry_past_year_9999() {
+    // About 9,500 years, then the largest integer: neither may read as a
+    // credential that never expires.
+    for expires_in in [300_000_000_000_i64, i64::MAX] {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "at-forever",
+                "token_type": "Bearer",
+                "expires_in": expires_in
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let endpoints = OAuth2Endpoints {
+            authorize_url: "https://id.example/authorize".to_string(),
+            token_url: format!("{}/oauth/token", server.uri()),
+            client_id: "public-client".to_string(),
+            redirect_uri: "http://127.0.0.1:9999/cb".to_string(),
+            scopes: vec![],
+            client_secret: None,
+            client_auth_method: OAuth2ClientAuthMethod::default(),
+        };
+
+        let code = exchange_authorization_code("acme", &endpoints, "code", "verifier").await;
+        let refresh = exchange_refresh_token("acme", &endpoints, "old-refresh").await;
+
+        assert!(code.is_err(), "{expires_in}: {code:?}");
+        assert!(refresh.is_err(), "{expires_in}: {refresh:?}");
+    }
+}

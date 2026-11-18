@@ -414,7 +414,7 @@ impl ReplayRecorder {
             };
         }
         let sid = if session_id.trim().is_empty() {
-            format!("session-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"))
+            format!("session-{}", jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ"))
         } else {
             session_id
                 .chars()
@@ -462,7 +462,7 @@ impl ReplayRecorder {
             (seq, prev_hash, event_hash, trace_id)
         };
         let line = serde_json::json!({
-            "ts": chrono::Utc::now().to_rfc3339(),
+            "ts": hermes_core::time::now_rfc3339(),
             "seq": seq,
             "trace_id": trace_id,
             "event": event,
@@ -771,7 +771,7 @@ fn smart_routing_learning_half_life_secs() -> i64 {
 }
 
 fn now_unix_ms() -> i64 {
-    chrono::Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 fn default_route_learning_home(config: &AgentConfig) -> PathBuf {

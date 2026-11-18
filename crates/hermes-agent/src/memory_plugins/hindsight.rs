@@ -569,7 +569,7 @@ impl MemoryProviderPlugin for HindsightPlugin {
             return;
         }
 
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         let turn = hindsight_turn_payload(user_content, assistant_content, &now);
         self.session_turns.lock().unwrap().push(turn);
 

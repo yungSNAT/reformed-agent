@@ -403,7 +403,7 @@ pub async fn handle_cli_mcp(
                     srv.clone(),
                     serde_json::json!({
                         "token": token,
-                        "updated_at": chrono::Utc::now().to_rfc3339(),
+                        "updated_at": hermes_core::time::now_rfc3339(),
                     }),
                 );
             }

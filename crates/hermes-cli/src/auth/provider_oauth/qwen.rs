@@ -91,7 +91,7 @@ fn qwen_access_token_is_expiring(expiry_date_ms: Option<i64>, skew_seconds: i64)
         return true;
     };
     let skew = skew_seconds.max(0);
-    Utc::now().timestamp_millis() + skew.saturating_mul(1000) >= expiry_ms
+    jiff::Timestamp::now().as_millisecond() + skew.saturating_mul(1000) >= expiry_ms
 }
 
 async fn refresh_qwen_cli_tokens(
@@ -198,7 +198,7 @@ async fn refresh_qwen_cli_tokens(
         refresh_token: Some(refreshed_refresh_token),
         token_type,
         resource_url,
-        expiry_date: Some(Utc::now().timestamp_millis() + expires_in_seconds * 1000),
+        expiry_date: Some(jiff::Timestamp::now().as_millisecond() + expires_in_seconds * 1000),
     };
     let _ = save_qwen_cli_tokens(&refreshed)?;
     Ok(refreshed)

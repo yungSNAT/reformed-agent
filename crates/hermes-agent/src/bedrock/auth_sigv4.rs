@@ -174,7 +174,7 @@ struct BedrockHeaderRequest<'a> {
     service: &'a str,
     body: &'a [u8],
     anthropic_beta: Option<&'a str>,
-    now: DateTime<Utc>,
+    now: Timestamp,
 }
 
 fn bedrock_request_headers(
@@ -212,8 +212,8 @@ fn sign_sigv4_headers(
     let host = url
         .host_str()
         .ok_or_else(|| AgentError::Config("Bedrock SigV4 URL missing host".to_string()))?;
-    let amz_date = request.now.format("%Y%m%dT%H%M%SZ").to_string();
-    let short_date = request.now.format("%Y%m%d").to_string();
+    let amz_date = request.now.strftime("%Y%m%dT%H%M%SZ").to_string();
+    let short_date = request.now.strftime("%Y%m%d").to_string();
     let payload_hash = hex::encode(Sha256::digest(request.body));
 
     headers.insert("host".to_string(), host.to_string());

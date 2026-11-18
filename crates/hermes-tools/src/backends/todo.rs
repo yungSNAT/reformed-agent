@@ -76,7 +76,7 @@ impl TodoBackend for FileTodoBackend {
             description: description.map(String::from),
             status: "pending".to_string(),
             priority: priority.unwrap_or("medium").to_string(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: hermes_core::time::now_rfc3339(),
         };
         items.push(item.clone());
         self.save(&items)?;

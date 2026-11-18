@@ -78,7 +78,7 @@ async fn run_slo_auto_rollback_native(
         serde_json::Value::Null
     };
     let report = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "repo_root": repo_root,
         "ok": !violated,
         "violated": violated,
@@ -153,7 +153,7 @@ pub async fn run_elite_sync_gate_native(
     let total = section_values.len();
     let ok = total > 0 && passed == total;
     let report = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "repo_root": repo_root,
         "ok": ok,
         "summary": {

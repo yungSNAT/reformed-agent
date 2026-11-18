@@ -374,14 +374,12 @@ fn resolve_auth_type_for_provider(provider: &str, requested: Option<&str>) -> St
     }
 }
 
-fn parse_rfc3339_utc(value: Option<&str>) -> Option<chrono::DateTime<chrono::Utc>> {
-    value
-        .and_then(|v| chrono::DateTime::parse_from_rfc3339(v).ok())
-        .map(|dt| dt.with_timezone(&chrono::Utc))
+fn parse_rfc3339_utc(value: Option<&str>) -> Option<jiff::Timestamp> {
+    value.and_then(hermes_core::time::parse_rfc3339)
 }
 
-fn parse_unix_millis_utc(value: Option<i64>) -> Option<chrono::DateTime<chrono::Utc>> {
-    value.and_then(chrono::DateTime::from_timestamp_millis)
+fn parse_unix_millis_utc(value: Option<i64>) -> Option<jiff::Timestamp> {
+    value.and_then(|ms| jiff::Timestamp::from_millisecond(ms).ok())
 }
 
 fn secret_vault_path_for_cli(cli: &Cli) -> PathBuf {
@@ -725,7 +723,7 @@ fn save_persisted_weixin_account(
         "token": token,
         "base_url": base_url.unwrap_or(""),
         "user_id": user_id.unwrap_or(""),
-        "saved_at": chrono::Utc::now().to_rfc3339(),
+        "saved_at": hermes_core::time::now_rfc3339(),
     });
     std::fs::write(&p, payload.to_string())
         .map_err(|e| AgentError::Io(format!("write weixin account file {}: {e}", p.display())))?;

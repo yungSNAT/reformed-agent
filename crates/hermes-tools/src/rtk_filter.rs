@@ -11,7 +11,6 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
-use chrono::Utc;
 use regex::Regex;
 use serde::Serialize;
 use serde_json::Value;
@@ -176,7 +175,7 @@ impl RtkFilterEngine {
         }
         let command = extract_command(params);
         let record = RtkLogRecord {
-            ts: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Millis, true),
+            ts: format!("{:.3}", jiff::Timestamp::now()),
             tool: tool_name,
             command,
             bypassed,

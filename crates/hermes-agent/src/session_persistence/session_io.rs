@@ -98,7 +98,7 @@ impl SessionPersistence {
         title: Option<&str>,
         system_prompt: Option<&str>,
     ) -> Result<(), AgentError> {
-        let now = Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         conn.execute(
             "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count, system_prompt)
              VALUES (?1, COALESCE(?2, 'unknown'), COALESCE(?3, 'cli'), ?4, ?4, ?5, ?6, ?7)
@@ -132,7 +132,7 @@ impl SessionPersistence {
         transcript: &[Message],
     ) -> Result<(), AgentError> {
         let parent_id = uuid::Uuid::new_v4().to_string();
-        let now = Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         conn.execute(
             "INSERT INTO sessions (id, model, platform, created_at, updated_at, title, message_count,
                                    system_prompt, parent_session_id, model_config, end_reason, ended_at)
@@ -190,7 +190,7 @@ impl SessionPersistence {
             .map_err(|e| AgentError::Io(format!("Failed to open sessions db: {e}")))?;
         match conn.execute(
             "UPDATE sessions SET model = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![model, Utc::now().to_rfc3339(), session_id],
+            rusqlite::params![model, hermes_core::time::now_rfc3339(), session_id],
         ) {
             Ok(changed) => Ok(changed > 0),
             Err(rusqlite::Error::SqliteFailure(_, Some(message)))
@@ -447,7 +447,7 @@ impl SessionPersistence {
             rusqlite::params![
                 rewind_count as i64,
                 active_message_count as i64,
-                Utc::now().to_rfc3339(),
+                hermes_core::time::now_rfc3339(),
                 session_id
             ],
         )
@@ -535,7 +535,7 @@ impl SessionPersistence {
             .unwrap_or(0);
         conn.execute(
             "UPDATE sessions SET message_count = ?1, updated_at = ?2 WHERE id = ?3",
-            rusqlite::params![active_count, Utc::now().to_rfc3339(), session_id],
+            rusqlite::params![active_count, hermes_core::time::now_rfc3339(), session_id],
         )
         .map_err(|e| AgentError::Io(format!("Failed to update restored session row: {e}")))?;
         Ok(restored)
@@ -555,7 +555,7 @@ impl SessionPersistence {
         )
         .map_err(|e| AgentError::Io(format!("Failed to clear old messages: {e}")))?;
 
-        let now = Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         Self::insert_messages(
             conn,
             session_id,
@@ -615,7 +615,7 @@ impl SessionPersistence {
         std::fs::create_dir_all(&self.sessions_dir)
             .map_err(|e| AgentError::Io(format!("Failed to create sessions dir: {e}")))?;
 
-        let timestamp = Utc::now().format("%Y-%m-%d_%H%M%S");
+        let timestamp = jiff::Timestamp::now().strftime("%Y-%m-%d_%H%M%S");
         let filename = format!("{timestamp}-{session_id}.md");
         let path = self.sessions_dir.join(&filename);
 
@@ -626,7 +626,7 @@ impl SessionPersistence {
         }
         content.push_str(&format!(
             "Date: {}\n\n---\n\n",
-            Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+            jiff::Timestamp::now().strftime("%Y-%m-%d %H:%M:%S UTC")
         ));
 
         for msg in messages {
@@ -671,7 +671,7 @@ impl SessionPersistence {
         std::fs::create_dir_all(&self.trajectories_dir)
             .map_err(|e| AgentError::Io(format!("Failed to create trajectories dir: {e}")))?;
 
-        let timestamp = Utc::now().format("%Y-%m-%d_%H%M%S");
+        let timestamp = jiff::Timestamp::now().strftime("%Y-%m-%d_%H%M%S");
         let filename = format!("{timestamp}-{session_id}.json");
         let path = self.trajectories_dir.join(&filename);
 
@@ -679,7 +679,7 @@ impl SessionPersistence {
             "session_id": session_id,
             "user_query": user_query,
             "completed": completed,
-            "timestamp": Utc::now().to_rfc3339(),
+            "timestamp": hermes_core::time::now_rfc3339(),
             "messages": messages,
             "turn_count": messages.iter().filter(|m| m.role == MessageRole::Assistant).count(),
         });

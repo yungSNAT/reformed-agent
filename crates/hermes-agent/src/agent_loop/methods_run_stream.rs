@@ -96,6 +96,7 @@ impl AgentLoop {
             }
         }
         strip_budget_warnings_from_messages(&mut messages);
+        self.expand_context_references(&mut messages).await;
 
         let task_hint = messages
             .iter()

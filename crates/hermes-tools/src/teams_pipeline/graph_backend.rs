@@ -48,7 +48,7 @@ impl MicrosoftGraphTokenProvider {
         }
         if !force_refresh {
             if let Some(cached) = self.cache.lock().await.clone() {
-                if cached.expires_at > Utc::now() + ChronoDuration::seconds(60) {
+                if cached.expires_at > Timestamp::now() + SignedDuration::from_secs(60) {
                     return Ok(cached.access_token);
                 }
             }
@@ -98,9 +98,14 @@ impl MicrosoftGraphTokenProvider {
             .and_then(Value::as_i64)
             .unwrap_or(3600)
             .max(120);
+        let expires_at = checked_plus_secs(Timestamp::now(), expires_in - 60).ok_or_else(|| {
+            TeamsPipelineError::Config(format!(
+                "Graph token response expires_in {expires_in} is out of range."
+            ))
+        })?;
         let cached = CachedGraphToken {
             access_token: access_token.clone(),
-            expires_at: Utc::now() + ChronoDuration::seconds(expires_in - 60),
+            expires_at,
         };
         *self.cache.lock().await = Some(cached);
         Ok(access_token)

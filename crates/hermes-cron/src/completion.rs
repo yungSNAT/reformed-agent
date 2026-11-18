@@ -1,6 +1,5 @@
 //! Events emitted when a cron job finishes (for gateway HTTP webhooks, metrics, etc.).
 
-use chrono::Utc;
 use hermes_core::{AgentResult, MessageRole};
 use serde::Serialize;
 
@@ -46,7 +45,7 @@ impl CronCompletionEvent {
         trigger: &'static str,
         outcome: Result<&AgentResult, String>,
     ) -> Self {
-        let finished_at = Utc::now().to_rfc3339();
+        let finished_at = hermes_core::time::now_rfc3339();
         let (ok, error, total_turns, assistant_output, assistant_snippet) = match outcome {
             Ok(r) => {
                 let output = r.messages.iter().rev().find_map(|m| {

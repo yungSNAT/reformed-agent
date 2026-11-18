@@ -228,7 +228,7 @@ impl App {
             model: self.current_model.clone(),
             personality: self.current_personality.clone(),
             message_count: self.messages.len(),
-            created_at: chrono::Utc::now().to_rfc3339(),
+            created_at: hermes_core::time::now_rfc3339(),
         }
     }
 
@@ -396,7 +396,7 @@ pub fn save_oneshot_session(
         model: model.to_string(),
         personality,
         message_count: messages.len(),
-        created_at: chrono::Utc::now().to_rfc3339(),
+        created_at: hermes_core::time::now_rfc3339(),
     };
     let path = write_session_snapshot(
         state_root,

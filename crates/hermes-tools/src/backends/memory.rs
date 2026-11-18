@@ -11,8 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::tools::memory::MemoryBackend;
 use hermes_core::ToolError;
 
-const ENTRY_DELIMITER: &str = "\n§\n";
-const MEMORY_CHAR_LIMIT: usize = 2200;
+/// Separates the entries of `MEMORY.md` and `USER.md`.
+pub const ENTRY_DELIMITER: &str = "\n§\n";
+/// Characters `MEMORY.md` may hold, delimiters included.
+pub const MEMORY_CHAR_LIMIT: usize = 2200;
 const USER_CHAR_LIMIT: usize = 1375;
 
 static MEMORY_THREAT_PATTERNS: LazyLock<Vec<(Regex, &'static str)>> = LazyLock::new(|| {
@@ -274,7 +276,9 @@ impl FileMemoryBackend {
         Ok(Self::dedupe_entries(Self::parse_entries(&content)))
     }
 
-    fn scan_memory_content(content: &str) -> Result<(), ToolError> {
+    /// Refuses content that must not reach the system prompt: invisible
+    /// characters and injection or exfiltration patterns.
+    pub fn scan_memory_content(content: &str) -> Result<(), ToolError> {
         for ch in content.chars() {
             if matches!(
                 ch,

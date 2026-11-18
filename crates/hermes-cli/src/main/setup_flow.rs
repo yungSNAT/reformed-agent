@@ -1022,7 +1022,7 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
                                 .tokens
                                 .expires_in
                                 .filter(|secs| *secs > 0)
-                                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs)),
+                                .map(hermes_core::time::now_plus_secs),
                         })
                         .await?;
                     selected_oauth_token_url = Some(CODEX_OAUTH_TOKEN_URL.to_string());
@@ -1054,7 +1054,7 @@ async fn run_setup(cli: Cli) -> Result<(), AgentError> {
                                 .tokens
                                 .expires_in
                                 .filter(|secs| *secs > 0)
-                                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs)),
+                                .map(hermes_core::time::now_plus_secs),
                         })
                         .await?;
                     selected_oauth_token_url = Some(CODEX_OAUTH_TOKEN_URL.to_string());

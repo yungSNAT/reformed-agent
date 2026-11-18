@@ -157,7 +157,7 @@ fn gemini_access_token_is_expiring(expiry_ms: Option<i64>, skew_seconds: i64) ->
         return true;
     };
     let skew = skew_seconds.max(0);
-    Utc::now().timestamp_millis() + skew.saturating_mul(1000) >= expiry_ms
+    jiff::Timestamp::now().as_millisecond() + skew.saturating_mul(1000) >= expiry_ms
 }
 
 fn default_http_timeout_seconds(timeout_seconds: f64, fallback: f64) -> f64 {
@@ -492,7 +492,7 @@ async fn refresh_gemini_cli_state(
             state.managed_project_id.as_deref(),
         ),
         access: Some(access_token),
-        expires: Some(Utc::now().timestamp_millis() + expires_in_seconds * 1000),
+        expires: Some(jiff::Timestamp::now().as_millisecond() + expires_in_seconds * 1000),
         email,
         project_id: state.project_id.clone(),
         managed_project_id: state.managed_project_id.clone(),
@@ -732,7 +732,7 @@ pub async fn login_google_gemini_cli_oauth(
     let state = GeminiOAuthFileState {
         refresh: pack_gemini_refresh(Some(&refresh_token), project_id.as_deref(), None),
         access: Some(access_token.clone()),
-        expires: Some(Utc::now().timestamp_millis() + expires_in_seconds * 1000),
+        expires: Some(jiff::Timestamp::now().as_millisecond() + expires_in_seconds * 1000),
         email: email.clone(),
         project_id: project_id.clone(),
         managed_project_id: None,

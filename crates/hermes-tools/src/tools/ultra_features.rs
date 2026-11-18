@@ -3,7 +3,6 @@
 //! workspaces, eval kernels, output minimization, inheritance, and benchmarks.
 
 use async_trait::async_trait;
-use chrono::Utc;
 use indexmap::IndexMap;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -1420,7 +1419,7 @@ async fn transaction_preview(
         "create" => {
             let kind = required_str(&params, "kind")?.to_string();
             let id = format!("txn-{}", uuid::Uuid::new_v4());
-            let now = Utc::now().to_rfc3339();
+            let now = hermes_core::time::now_rfc3339();
             let txn = PreviewTransaction {
                 id: id.clone(),
                 kind,
@@ -1461,7 +1460,7 @@ async fn transaction_preview(
             } else {
                 txn.status = "rejected".into();
             }
-            txn.updated_at = Utc::now().to_rfc3339();
+            txn.updated_at = hermes_core::time::now_rfc3339();
             write_transaction(state, &txn)?;
             Ok(json!(txn).to_string())
         }
@@ -1880,7 +1879,7 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                 path: path.clone(),
                 branch,
                 git_worktree,
-                created_at: Utc::now().to_rfc3339(),
+                created_at: hermes_core::time::now_rfc3339(),
                 status: "active".into(),
             };
             write_subagent_manifest(&manifest)?;
@@ -2014,7 +2013,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
             session: session.into(),
             language: "javascript".into(),
             snippets: Vec::new(),
-            updated_at: Utc::now().to_rfc3339()
+            updated_at: hermes_core::time::now_rfc3339()
         }))
         .to_string()),
         "run" => {
@@ -2035,7 +2034,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
                 session: session.into(),
                 language: language.into(),
                 snippets: Vec::new(),
-                updated_at: Utc::now().to_rfc3339(),
+                updated_at: hermes_core::time::now_rfc3339(),
             });
             if kernel.language != language {
                 return Err(ToolError::InvalidParams(format!(
@@ -2045,7 +2044,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
             }
             let output = run_kernel_code(state, &kernel, code, language, timeout).await?;
             kernel.snippets.push(code.to_string());
-            kernel.updated_at = Utc::now().to_rfc3339();
+            kernel.updated_at = hermes_core::time::now_rfc3339();
             write_kernel(&path, &kernel)?;
             Ok(json!({"session":session,"language":language,"output":output}).to_string())
         }

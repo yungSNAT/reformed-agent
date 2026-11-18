@@ -12,7 +12,6 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use base64::Engine;
-use chrono::Utc;
 use hmac::{Hmac, Mac};
 use jsonwebtoken::jwk::{AlgorithmParameters, Jwk, JwkSet};
 use jsonwebtoken::{decode, decode_header, Algorithm, DecodingKey, Validation};
@@ -260,7 +259,7 @@ pub fn verify_session_from_headers(
     let raw = cookie_value(headers, SESSION_COOKIE)
         .ok_or_else(|| "session cookie missing".to_string())?;
     let session: DashboardSessionClaims = verify_signed_json(raw, config.session_secret())?;
-    if session.exp <= Utc::now().timestamp() {
+    if session.exp <= jiff::Timestamp::now().as_second() {
         return Err("session expired".to_string());
     }
     Ok(session)
@@ -327,7 +326,7 @@ pub async fn oidc_login(Query(params): Query<OidcLoginParams>) -> Response {
         nonce: nonce.clone(),
         code_verifier: pkce.verifier,
         return_to,
-        exp: Utc::now().timestamp() + 10 * 60,
+        exp: jiff::Timestamp::now().as_second() + 10 * 60,
     };
     let login_cookie = match sign_cookie(
         LOGIN_COOKIE,
@@ -392,7 +391,7 @@ pub async fn oidc_callback(
         Ok(login) => login,
         Err(err) => return json_response(StatusCode::UNAUTHORIZED, json!({"error": err})),
     };
-    if login.exp <= Utc::now().timestamp() {
+    if login.exp <= jiff::Timestamp::now().as_second() {
         return json_response(
             StatusCode::UNAUTHORIZED,
             json!({"error": "OIDC login cookie expired"}),
@@ -438,7 +437,7 @@ pub async fn oidc_callback(
         email: claims.email,
         name: claims.name,
         iss: claims.iss,
-        exp: Utc::now().timestamp() + oidc.session_ttl_seconds,
+        exp: jiff::Timestamp::now().as_second() + oidc.session_ttl_seconds,
     };
     let session_cookie = match sign_cookie(
         SESSION_COOKIE,
@@ -823,7 +822,7 @@ mod tests {
             email: Some("user@example.com".to_string()),
             name: Some("User".to_string()),
             iss: cfg.issuer.clone(),
-            exp: Utc::now().timestamp() + 60,
+            exp: jiff::Timestamp::now().as_second() + 60,
         };
         let signed = sign_json(&session, cfg.session_secret()).expect("sign");
         let mut headers = HeaderMap::new();

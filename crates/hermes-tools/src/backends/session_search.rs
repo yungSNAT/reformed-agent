@@ -1,7 +1,9 @@
 //! Real session search backend using rusqlite with FTS5.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
+use jiff::civil::DateTime;
+use jiff::tz::TimeZone;
+use jiff::{Timestamp, Zoned};
 use rusqlite::Connection;
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -215,20 +217,20 @@ impl SqliteSessionSearchBackend {
             || source.map(str::trim) == Some("tool")
     }
 
-    fn parse_timestamp_utc(raw: Option<&str>) -> Option<DateTime<Utc>> {
+    fn parse_timestamp_utc(raw: Option<&str>) -> Option<Timestamp> {
         let raw = raw.map(str::trim).filter(|s| !s.is_empty())?;
         if let Ok(seconds) = raw.parse::<f64>() {
             let sec = seconds.trunc() as i64;
             let nanos = ((seconds.fract().abs()) * 1_000_000_000_f64).round() as u32;
-            if let Some(dt) = Utc.timestamp_opt(sec, nanos).single() {
+            if let Ok(dt) = Timestamp::new(sec, nanos as i32) {
                 return Some(dt);
             }
         }
-        if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-            return Some(dt.with_timezone(&Utc));
+        if let Some(dt) = hermes_core::time::parse_rfc3339(raw) {
+            return Some(dt);
         }
-        if let Ok(naive) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S") {
-            return Some(Utc.from_utc_datetime(&naive));
+        if let Ok(naive) = DateTime::strptime("%Y-%m-%d %H:%M:%S", raw) {
+            return naive.to_zoned(TimeZone::UTC).ok().map(|dt| dt.timestamp());
         }
         None
     }
@@ -762,22 +764,24 @@ impl SqliteSessionSearchBackend {
         };
 
         let format_human =
-            |dt: DateTime<Local>| -> String { dt.format("%B %d, %Y at %I:%M %p").to_string() };
+            |dt: Zoned| -> String { dt.strftime("%B %d, %Y at %I:%M %p").to_string() };
 
         if let Ok(seconds) = raw.parse::<f64>() {
             let sec = seconds.trunc() as i64;
             let nanos = ((seconds.fract().abs()) * 1_000_000_000_f64).round() as u32;
-            if let Some(dt_utc) = Utc.timestamp_opt(sec, nanos).single() {
-                return format_human(dt_utc.with_timezone(&Local));
+            if let Ok(dt_utc) = Timestamp::new(sec, nanos as i32) {
+                return format_human(dt_utc.to_zoned(TimeZone::system()));
             }
         }
 
-        if let Ok(dt) = DateTime::parse_from_rfc3339(raw) {
-            return format_human(dt.with_timezone(&Local));
+        if let Some(dt) = hermes_core::time::parse_rfc3339(raw) {
+            return format_human(dt.to_zoned(TimeZone::system()));
         }
 
-        if let Ok(naive) = NaiveDateTime::parse_from_str(raw, "%Y-%m-%d %H:%M:%S") {
-            if let Some(local) = Local.from_local_datetime(&naive).single() {
+        if let Ok(naive) = DateTime::strptime("%Y-%m-%d %H:%M:%S", raw) {
+            // A local time that a clock change skips or repeats has no
+            // single instant, so it is shown as written.
+            if let Ok(local) = TimeZone::system().to_ambiguous_zoned(naive).unambiguous() {
                 return format_human(local);
             }
         }

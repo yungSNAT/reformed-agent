@@ -28,7 +28,6 @@ use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use chrono::Utc;
 use futures::StreamExt;
 use hermes_agent::agent_loop::ToolRegistry as AgentToolRegistry;
 use hermes_agent::session_persistence::{persist_gateway_result, SessionPersistence};
@@ -426,7 +425,7 @@ pub async fn run_server(addr: SocketAddr, config: GatewayConfig) -> Result<(), A
 async fn health() -> impl IntoResponse {
     Json(HealthResponse {
         status: "ok",
-        timestamp: Utc::now().to_rfc3339(),
+        timestamp: hermes_core::time::now_rfc3339(),
     })
 }
 

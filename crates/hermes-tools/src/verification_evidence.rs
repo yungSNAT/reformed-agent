@@ -7,7 +7,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 const MAX_OUTPUT_PREVIEW_BYTES: usize = 4_000;
@@ -135,7 +134,7 @@ pub fn record_terminal_result(
             .map(str::to_string),
         exit_code,
         output_preview: output_preview(output),
-        recorded_at: Utc::now().to_rfc3339(),
+        recorded_at: hermes_core::time::now_rfc3339(),
         scope: command_scope(&canonical).to_string(),
     };
 
@@ -263,10 +262,20 @@ mod tests {
         );
     }
 
+    /// A temporary folder in no workspace: `TMPDIR` can sit inside a project
+    /// whose marker would make every folder below it one.
+    fn tempdir_outside_workspaces() -> tempfile::TempDir {
+        [std::env::temp_dir(), PathBuf::from("/tmp")]
+            .into_iter()
+            .find(|base| workspace_root_from(base).is_none())
+            .map(|base| tempfile::tempdir_in(base).unwrap())
+            .expect("no temporary folder outside a workspace")
+    }
+
     #[test]
     fn reports_not_applicable_outside_workspace() {
         let _guard = ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner());
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempdir_outside_workspaces();
         let home = tmp.path().join("home");
         let plain = tmp.path().join("plain");
         std::fs::create_dir_all(&plain).unwrap();

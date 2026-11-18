@@ -333,6 +333,9 @@ mod tests {
     #[test]
     fn test_load_workspace_context_none() {
         let tmp = tempfile::tempdir().unwrap();
+        // The search stops at the git root, so a context file above the
+        // temporary folder (TMPDIR inside a project) is not read.
+        std::fs::create_dir(tmp.path().join(".git")).unwrap();
         let result = load_workspace_context(tmp.path());
         assert!(result.is_none());
     }

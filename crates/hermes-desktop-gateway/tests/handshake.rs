@@ -340,6 +340,80 @@ async fn a_message_over_the_size_limit_closes_the_socket() {
 }
 
 #[tokio::test]
+async fn only_a_file_attach_request_may_exceed_the_size_limit() {
+    use hermes_desktop_gateway::MAX_MESSAGE_BYTES;
+    let attach = |id: u64, params: Value| {
+        json!({"jsonrpc": "2.0", "id": id, "method": "file.attach", "params": params}).to_string()
+    };
+    let data_url = format!(
+        "data:text/plain;base64,{}",
+        "A".repeat(MAX_MESSAGE_BYTES + 4)
+    );
+    let mut socket = connected().await;
+
+    // Past the transport, in one frame and in 2, to the session check.
+    let params = json!({"session_id": "no-such-session", "data_url": data_url});
+    socket
+        .send(Message::text(attach(7, params.clone())))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(
+        (reply["id"].clone(), reply["error"]["code"].clone()),
+        (json!(7), json!(4001))
+    );
+    send_in_2_frames(&mut socket, attach(8, params.clone()))
+        .await
+        .unwrap();
+    assert_eq!(next_json(&mut socket).await["error"]["code"], 4001);
+
+    // A null id is answered with it; a notification (no id) is not run or answered, as
+    // smaller requests are, and the connection stays open.
+    let request = json!({"jsonrpc": "2.0", "id": null, "method": "file.attach", "params": params});
+    socket
+        .send(Message::text(request.to_string()))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(
+        (reply["id"].clone(), reply["error"]["code"].clone()),
+        (Value::Null, json!(4001))
+    );
+    let notification = json!({"jsonrpc": "2.0", "method": "file.attach", "params": params});
+    socket
+        .send(Message::text(notification.to_string()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::text(request_of_len(100)))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(
+        reply["id"], 1,
+        "the next reply answers the small request: {reply}"
+    );
+
+    // A batch holding one, or one without its data_url, closes the socket as any other
+    // message over the limit does.
+    for oversized in [
+        format!("[{}]", attach(9, params.clone())),
+        attach(
+            10,
+            json!({"session_id": "no-such-session", "padding": data_url}),
+        ),
+    ] {
+        let mut socket = connected().await;
+        let _ = socket.send(Message::text(oversized)).await;
+        let next = tokio::time::timeout(std::time::Duration::from_secs(10), socket.next())
+            .await
+            .expect("the socket neither replied nor closed within 10 seconds");
+        let closed = matches!(next, None | Some(Err(_)) | Some(Ok(Message::Close(_))));
+        assert!(closed, "expected the socket to close");
+    }
+}
+
+#[tokio::test]
 async fn a_foreign_host_header_is_refused() {
     let addr = start().await;
     let client = reqwest::Client::new();

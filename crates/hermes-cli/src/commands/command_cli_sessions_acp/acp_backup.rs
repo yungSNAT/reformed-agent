@@ -760,7 +760,7 @@ pub async fn handle_cli_backup(output: Option<String>) -> Result<(), hermes_core
     let out = output.unwrap_or_else(|| {
         format!(
             "hermes-backup-{}.tar.gz",
-            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+            jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S")
         )
     });
     println!("Backing up {} -> {}", hermes_dir.display(), out);

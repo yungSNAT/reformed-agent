@@ -1,7 +1,8 @@
 //! Cron job definition and related types.
 
-use chrono::{DateTime, Utc};
-use cron::{Schedule, TimeUnitSpec};
+use jiff::tz::TimeZone;
+use jiff::Timestamp;
+use jiff_cron::{Schedule, TimeUnitSpec};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
@@ -136,13 +137,22 @@ pub struct CronJob {
     #[serde(default = "default_job_status")]
     pub status: JobStatus,
     /// When this job was created.
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
     /// When this job was last executed.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub last_run: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub last_run: Option<Timestamp>,
     /// When this job is next scheduled to run.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub next_run: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub next_run: Option<Timestamp>,
     /// Maximum number of times to repeat this job (None = unlimited).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeat: Option<u32>,
@@ -185,7 +195,7 @@ impl CronJob {
     /// Create a new CronJob with a generated UUID and the given schedule/prompt.
     pub fn new(schedule: impl Into<String>, prompt: impl Into<String>) -> Self {
         let schedule = schedule.into();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let next_run = Self::parse_next_run(&schedule, now);
         Self {
             id: uuid::Uuid::new_v4().to_string(),
@@ -222,7 +232,7 @@ impl CronJob {
         if self.schedule.trim().is_empty() {
             return Err("Schedule expression cannot be empty".to_string());
         }
-        if Self::parse_next_run(&self.schedule, Utc::now()).is_none() {
+        if Self::parse_next_run(&self.schedule, Timestamp::now()).is_none() {
             return Err(format!(
                 "Invalid cron schedule expression: '{}'",
                 self.schedule
@@ -256,23 +266,23 @@ impl CronJob {
     }
 
     /// Compute the next run time based on the cron schedule, starting from `after`.
-    pub fn compute_next_run(&self, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    pub fn compute_next_run(&self, after: Timestamp) -> Option<Timestamp> {
         Self::parse_next_run(&self.schedule, after)
     }
 
     /// Parse a cron expression and return the next fire time after `after`.
     ///
-    /// The `cron` crate requires 7-field format (sec min hour dom month dow year).
+    /// The `jiff-cron` crate requires 7-field format (sec min hour dom month dow year).
     /// If the user provides a 5-field expression (min hour dom month dow), we
     /// automatically prepend "0 " (run at second 0) and append " *" (any year).
     ///
-    /// The `cron` crate runs a day only when both day fields match. Standard
+    /// The `jiff-cron` crate runs a day only when both day fields match. Standard
     /// cron (POSIX crontab, Vixie cron, croniter as Hermes uses it) runs a day
     /// when either matches if both are restricted, so such a schedule is read
     /// as 2 schedules, one per day field, and the earlier run wins. A field is
     /// unrestricted when it is `*` or `?`, or, as croniter reads it, when it
     /// lists every value and the other day field's expression holds a `*`.
-    fn parse_next_run(schedule: &str, after: DateTime<Utc>) -> Option<DateTime<Utc>> {
+    fn parse_next_run(schedule: &str, after: Timestamp) -> Option<Timestamp> {
         let normalized = Self::normalize_cron_expr(schedule);
         let parse = |expression: &str| match expression.parse::<Schedule>() {
             Ok(sched) => Some(sched),
@@ -281,7 +291,13 @@ impl CronJob {
                 None
             }
         };
-        let next = |expression: &str| Some(parse(expression)?.after(&after).next());
+        let first_after = |sched: &Schedule| {
+            sched
+                .after(after.to_zoned(TimeZone::UTC))
+                .next()
+                .map(|at| at.timestamp())
+        };
+        let next = |expression: &str| Some(first_after(&parse(expression)?));
         let sched = parse(&normalized)?;
         // The day fields as written; 5-field weekdays are renamed when normalized.
         let written: Vec<&str> = schedule.split_whitespace().collect();
@@ -308,7 +324,7 @@ impl CronJob {
                 return by_day.into_iter().chain(by_weekday).min();
             }
         }
-        sched.after(&after).next()
+        first_after(&sched)
     }
 
     /// Normalize a cron expression to 7-field format.
@@ -332,7 +348,7 @@ impl CronJob {
     }
 
     /// Check whether this job is due to run at the given time.
-    pub fn is_due(&self, now: DateTime<Utc>) -> bool {
+    pub fn is_due(&self, now: Timestamp) -> bool {
         if self.status != JobStatus::Active {
             return false;
         }
@@ -344,7 +360,7 @@ impl CronJob {
 
     /// Mark the job as having just been run: increment run_count, set last_run,
     /// and compute next_run. Returns false if the job has reached its repeat limit.
-    pub fn mark_executed(&mut self, now: DateTime<Utc>) -> bool {
+    pub fn mark_executed(&mut self, now: Timestamp) -> bool {
         self.run_count += 1;
         self.last_run = Some(now);
 
@@ -369,7 +385,7 @@ impl CronJob {
 }
 
 /// A standard cron weekday field (`1-5`, `0,6`, `5-7`, `*/2`, `MON-FRI`) as
-/// the `cron` crate's comma list of day names, or `None` to pass it through:
+/// the `jiff-cron` crate's comma list of day names, or `None` to pass it through:
 /// `*` and `?`, and anything this does not read (`L`, `#`), which the crate
 /// then accepts or rejects itself.
 fn standard_weekdays(field: &str) -> Option<String> {
@@ -480,15 +496,20 @@ mod tests {
 
     #[test]
     fn restricted_day_of_month_and_day_of_week_fire_when_either_matches() {
-        use chrono::TimeZone;
         // Monday 16 November 2026; Friday 13 November has passed.
-        let after = Utc.with_ymd_and_hms(2026, 11, 16, 0, 0, 0).unwrap();
+        let after: Timestamp = "2026-11-16T00:00:00Z".parse().unwrap();
         let next = |schedule: &str| {
             CronJob::new(schedule, "x")
                 .compute_next_run(after)
                 .unwrap_or_else(|| panic!("{schedule} does not parse"))
         };
-        let day = |month, day| Utc.with_ymd_and_hms(2026, month, day, 9, 0, 0).unwrap();
+        let day = |month, day| {
+            jiff::civil::date(2026, month, day)
+                .at(9, 0, 0, 0)
+                .to_zoned(TimeZone::UTC)
+                .unwrap()
+                .timestamp()
+        };
         // Both restricted: the 13th or a Friday, whichever comes first.
         assert_eq!(next("0 9 13 * 5"), day(11, 20));
         assert_eq!(next("0 9 17 * 5"), day(11, 17));
@@ -508,35 +529,41 @@ mod tests {
 
     #[test]
     fn five_field_weekdays_are_numbered_as_in_standard_cron() {
-        use chrono::{Datelike, TimeZone, Weekday::*};
+        use jiff::civil::Weekday::*;
         // The weekdays of the next 7 runs after Sunday 15 November 2026.
         let days = |schedule: &str| {
             let job = CronJob::new(schedule, "x");
-            let mut at = Utc.with_ymd_and_hms(2026, 11, 15, 12, 0, 0).unwrap();
+            let mut at: Timestamp = "2026-11-15T12:00:00Z".parse().unwrap();
             let mut days = Vec::new();
             for _ in 0..7 {
                 at = job
                     .compute_next_run(at)
                     .unwrap_or_else(|| panic!("{schedule} does not parse"));
-                days.push(at.weekday());
+                days.push(at.to_zoned(TimeZone::UTC).weekday());
             }
-            days.sort_by_key(|day| day.num_days_from_sunday());
+            days.sort_by_key(|day| day.to_sunday_zero_offset());
             days.dedup();
             days
         };
-        assert_eq!(days("0 9 * * 1"), [Mon]);
-        assert_eq!(days("0 9 * * 0"), [Sun]);
-        assert_eq!(days("0 9 * * 7"), [Sun]);
-        assert_eq!(days("15 10 * * 1-5"), [Mon, Tue, Wed, Thu, Fri]);
-        assert_eq!(days("0 9 * * 0,6"), [Sun, Sat]);
-        assert_eq!(days("0 9 * * 5-7"), [Sun, Fri, Sat]);
-        assert_eq!(days("0 9 * * */2"), [Sun, Tue, Thu, Sat]);
-        assert_eq!(days("0 9 * * 1-5/2"), [Mon, Wed, Fri]);
-        assert_eq!(days("0 9 * * MON-FRI"), [Mon, Tue, Wed, Thu, Fri]);
-        assert_eq!(days("0 9 * * sun,Wed"), [Sun, Wed]);
+        assert_eq!(days("0 9 * * 1"), [Monday]);
+        assert_eq!(days("0 9 * * 0"), [Sunday]);
+        assert_eq!(days("0 9 * * 7"), [Sunday]);
+        assert_eq!(
+            days("15 10 * * 1-5"),
+            [Monday, Tuesday, Wednesday, Thursday, Friday]
+        );
+        assert_eq!(days("0 9 * * 0,6"), [Sunday, Saturday]);
+        assert_eq!(days("0 9 * * 5-7"), [Sunday, Friday, Saturday]);
+        assert_eq!(days("0 9 * * */2"), [Sunday, Tuesday, Thursday, Saturday]);
+        assert_eq!(days("0 9 * * 1-5/2"), [Monday, Wednesday, Friday]);
+        assert_eq!(
+            days("0 9 * * MON-FRI"),
+            [Monday, Tuesday, Wednesday, Thursday, Friday]
+        );
+        assert_eq!(days("0 9 * * sun,Wed"), [Sunday, Wednesday]);
         assert_eq!(days("0 9 * * *").len(), 7);
-        // Seconds-first forms are the cron crate's own and keep its numbers.
-        assert_eq!(days("0 0 9 * * 2"), [Mon]);
+        // Seconds-first forms are the `jiff-cron` crate's own and keep its numbers.
+        assert_eq!(days("0 0 9 * * 2"), [Monday]);
     }
 
     #[test]
@@ -584,11 +611,11 @@ mod tests {
         assert!(job.next_run.is_some());
         let next = job.next_run.unwrap();
         // next_run should be within the next 2 minutes
-        let diff = next - Utc::now();
+        let diff = next.duration_since(Timestamp::now());
         assert!(
-            diff.num_seconds() >= 0 && diff.num_seconds() <= 120,
+            diff.as_secs() >= 0 && diff.as_secs() <= 120,
             "next_run should be within the next 2 minutes, got {}s",
-            diff.num_seconds()
+            diff.as_secs()
         );
     }
 
@@ -596,13 +623,13 @@ mod tests {
     fn test_is_due_paused() {
         let mut job = CronJob::new("* * * * *", "Say hello");
         job.status = JobStatus::Paused;
-        assert!(!job.is_due(Utc::now()));
+        assert!(!job.is_due(Timestamp::now()));
     }
 
     #[test]
     fn test_mark_executed_increments() {
         let mut job = CronJob::new("* * * * *", "Say hello");
-        let now = Utc::now();
+        let now = Timestamp::now();
         let result = job.mark_executed(now);
         assert!(result);
         assert_eq!(job.run_count, 1);
@@ -614,7 +641,7 @@ mod tests {
     fn test_mark_executed_repeat_limit() {
         let mut job = CronJob::new("* * * * *", "Say hello");
         job.repeat = Some(1);
-        let now = Utc::now();
+        let now = Timestamp::now();
         let result = job.mark_executed(now);
         assert!(!result);
         assert_eq!(job.status, JobStatus::Completed);

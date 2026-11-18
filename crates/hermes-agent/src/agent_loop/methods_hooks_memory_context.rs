@@ -97,7 +97,7 @@ impl AgentLoop {
         let mut hasher = Sha256::new();
         hasher.update(text.as_bytes());
         let digest = hex::encode(hasher.finalize());
-        let stamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+        let stamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
         let path = dir.join(format!("hook_context_{}_{}.txt", stamp, &digest[..16]));
         if std::fs::write(&path, text).is_ok() {
             Some(path)
