@@ -278,8 +278,10 @@ fn test_anthropic_parse_response_counts_cached_prompt_tokens() {
     assert_eq!(usage.total_tokens, 1215);
 }
 
-#[tokio::test]
-async fn a_streamed_anthropic_message_ends_with_its_whole_usage() {
+/// The last usage a stream reports when `message_start` carries 10 input
+/// tokens, 1,000 read from the cache and 200 written to it, and
+/// `message_delta` carries `delta_usage`.
+async fn last_streamed_anthropic_usage(delta_usage: &'static str) -> UsageStats {
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -287,15 +289,18 @@ async fn a_streamed_anthropic_message_ends_with_its_whole_usage() {
         let (mut socket, _) = listener.accept().await.unwrap();
         let mut request = vec![0u8; 65536];
         let _ = socket.read(&mut request).await;
-        let body = concat!(
-            "event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":",
-            "{\"input_tokens\":10,\"cache_read_input_tokens\":1000,",
-            "\"cache_creation_input_tokens\":200,\"output_tokens\":1}}}\n\n",
-            "event: content_block_delta\ndata: {\"type\":\"content_block_delta\",\"index\":0,",
-            "\"delta\":{\"type\":\"text_delta\",\"text\":\"hi\"}}\n\n",
-            "event: message_delta\ndata: {\"type\":\"message_delta\",",
-            "\"delta\":{\"stop_reason\":\"end_turn\"},\"usage\":{\"output_tokens\":7}}\n\n",
-            "event: message_stop\ndata: {\"type\":\"message_stop\"}\n\n",
+        let body = format!(
+            concat!(
+                "event: message_start\ndata: {{\"type\":\"message_start\",\"message\":{{\"usage\":",
+                "{{\"input_tokens\":10,\"cache_read_input_tokens\":1000,",
+                "\"cache_creation_input_tokens\":200,\"output_tokens\":1}}}}}}\n\n",
+                "event: content_block_delta\ndata: {{\"type\":\"content_block_delta\",\"index\":0,",
+                "\"delta\":{{\"type\":\"text_delta\",\"text\":\"hi\"}}}}\n\n",
+                "event: message_delta\ndata: {{\"type\":\"message_delta\",",
+                "\"delta\":{{\"stop_reason\":\"end_turn\"}},\"usage\":{}}}\n\n",
+                "event: message_stop\ndata: {{\"type\":\"message_stop\"}}\n\n",
+            ),
+            delta_usage
         );
         let head = format!(
             "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncontent-length: {}\r\n\r\n",
@@ -315,10 +320,31 @@ async fn a_streamed_anthropic_message_ends_with_its_whole_usage() {
             last_usage = Some(usage);
         }
     }
-    let usage = last_usage.expect("a usage chunk");
+    last_usage.expect("a usage chunk")
+}
+
+#[tokio::test]
+async fn a_streamed_anthropic_message_ends_with_its_whole_usage() {
+    let usage = last_streamed_anthropic_usage("{\"output_tokens\":7}").await;
     assert_eq!(usage.prompt_tokens, 1210);
     assert_eq!(usage.cache_read_tokens, 1000);
     assert_eq!(usage.cache_write_tokens, 200);
     assert_eq!(usage.completion_tokens, 7);
     assert_eq!(usage.total_tokens, 1217);
+}
+
+#[tokio::test]
+async fn a_streamed_anthropic_message_delta_with_prompt_counts_wins() {
+    // The documented cumulative shape repeats the prompt counts; where they
+    // differ from `message_start`'s, the delta's are the final ones.
+    let usage = last_streamed_anthropic_usage(concat!(
+        "{\"input_tokens\":12,\"cache_read_input_tokens\":800,",
+        "\"cache_creation_input_tokens\":0,\"output_tokens\":7}"
+    ))
+    .await;
+    assert_eq!(usage.prompt_tokens, 812);
+    assert_eq!(usage.cache_read_tokens, 800);
+    assert_eq!(usage.cache_write_tokens, 0);
+    assert_eq!(usage.completion_tokens, 7);
+    assert_eq!(usage.total_tokens, 819);
 }
