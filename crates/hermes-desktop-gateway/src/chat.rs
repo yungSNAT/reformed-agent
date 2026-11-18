@@ -408,7 +408,7 @@ impl Chat {
                     "id": index + 1,
                     "session_id": id,
                     "role": role,
-                    "content": shown_content(message.content.as_deref().unwrap_or_default()),
+                    "content": message.content.as_deref().unwrap_or_default(),
                 }))
             })
             .collect();
@@ -416,17 +416,19 @@ impl Chat {
     }
 }
 
-/// The prompt `text` with `images`: one text part naming each staged file, as upstream's
-/// prompt does, then each image as a `data:` URL part.
-fn with_images(text: String, images: &[StagedImage]) -> Result<String, String> {
+/// The prompt `text` with `images`, as upstream's `build_native_content_parts`: its words (the
+/// text, then an `[Image attached at: <path>]` marker per staged file), which the session
+/// keeps, and the content the model gets, those words as a text part and then each image as a
+/// `data:` URL part.
+fn with_images(text: String, images: &[StagedImage]) -> Result<(String, String), String> {
     use base64::Engine as _;
-    let mut words = text;
-    let mut parts = Vec::with_capacity(images.len() + 1);
+    let markers: Vec<String> = images
+        .iter()
+        .map(|image| format!("[Image attached at: {}]", image.path.display()))
+        .collect();
+    let words = format!("{text}\n\n{}", markers.join("\n"));
+    let mut parts = vec![json!({"type": "text", "text": words})];
     for image in images {
-        words.push_str(&format!(
-            "\n\n[User attached image: {}]",
-            image.path.display()
-        ));
         let data = std::fs::read(&image.path)
             .map_err(|e| format!("cannot read the attached image: {e}"))?;
         let url = format!(
@@ -436,24 +438,29 @@ fn with_images(text: String, images: &[StagedImage]) -> Result<String, String> {
         );
         parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
     }
-    parts.insert(0, json!({"type": "text", "text": words}));
-    Ok(format!("{PARTS_PREFIX}{}", Value::Array(parts)))
+    let content = format!("{PARTS_PREFIX}{}", Value::Array(parts));
+    Ok((words, content))
 }
 
-/// What the desktop shows for a saved message: a message with image parts shows its text.
-fn shown_content(content: &str) -> String {
-    let parts = content
-        .trim()
-        .strip_prefix(PARTS_PREFIX)
-        .and_then(|json| serde_json::from_str::<Vec<Value>>(json).ok());
-    match parts {
-        Some(parts) => parts
-            .iter()
-            .filter(|part| part["type"] == "text")
-            .filter_map(|part| part["text"].as_str())
-            .collect::<Vec<_>>()
-            .join("\n"),
-        None => content.to_string(),
+/// Gives the newest user row in `rows` that holds image parts its text parts' text instead,
+/// so the session keeps the prompt's words and markers, not the image data, and later turns
+/// do not send the images again.
+fn keep_words(rows: &mut [Message]) {
+    for row in rows.iter_mut().rev().filter(|row| row.role == MessageRole::User) {
+        let parts = row
+            .content
+            .as_deref()
+            .and_then(|content| content.trim().strip_prefix(PARTS_PREFIX))
+            .and_then(|json| serde_json::from_str::<Vec<Value>>(json).ok());
+        if let Some(parts) = parts {
+            let text: Vec<&str> = parts
+                .iter()
+                .filter(|part| part["type"] == "text")
+                .filter_map(|part| part["text"].as_str())
+                .collect();
+            row.content = Some(text.join("\n"));
+            return;
+        }
     }
 }
 
@@ -536,12 +543,15 @@ impl Turn {
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
-        let text = if images.is_empty() {
-            text
+        // The model gets the images; the session keeps the prompt's words.
+        let (text, content) = if images.is_empty() {
+            (text, None)
         } else {
-            tokio::task::spawn_blocking(move || with_images(text, &images))
-                .await
-                .map_err(|e| e.to_string())??
+            let (words, content) =
+                tokio::task::spawn_blocking(move || with_images(text, &images))
+                    .await
+                    .map_err(|e| e.to_string())??;
+            (words, Some(content))
         };
         let id = self.id.clone();
         let mut transcript = self
@@ -554,9 +564,11 @@ impl Turn {
             .iter()
             .take_while(|m| m.role == MessageRole::System)
             .count();
+        let mut messages = transcript[prompt_rows..].to_vec();
+        let sent_images = content.is_some();
+        messages.push(Message::user(content.unwrap_or_else(|| text.clone())));
         transcript.push(Message::user(text));
-        let messages = transcript[prompt_rows..].to_vec();
-        let result = match self.answer(&model, messages, session, streamed).await {
+        let mut result = match self.answer(&model, messages, session, streamed).await {
             Ok(result) => result,
             Err(error) => {
                 // As upstream keeps the user's row once a prompt is admitted, a failed turn
@@ -586,6 +598,12 @@ impl Turn {
                 });
             }
         };
+        if sent_images {
+            keep_words(&mut result.messages);
+            for replaced in &mut result.compressed_transcripts {
+                keep_words(replaced);
+            }
+        }
         let reply = hermes_app_runtime::assistant_reply_from_result(&result);
         let id = self.id.clone();
         let warning = self
