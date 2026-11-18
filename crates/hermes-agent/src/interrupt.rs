@@ -272,7 +272,10 @@ mod tests {
     fn a_redirect_returns_the_pending_steer_and_keeps_one_restored_after_it() {
         let ctrl = InterruptController::new();
         ctrl.steer("use tabs");
-        assert_eq!(ctrl.redirect("new input".into()).as_deref(), Some("use tabs"));
+        assert_eq!(
+            ctrl.redirect("new input".into()).as_deref(),
+            Some("use tabs")
+        );
         assert!(ctrl.is_interrupted());
 
         // The loop had taken this steer and puts it back once interrupted.
