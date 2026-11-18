@@ -39,8 +39,9 @@ pub struct InterruptController {
     /// Steer text the model has not seen yet, several steers joined by
     /// newlines.
     pending_steer: Arc<Mutex<Option<String>>>,
-    /// Set by [`Self::take_leftover_steer`]; read and written under
-    /// `pending_steer`'s lock, so no steer lands after the leftover is taken.
+    /// Set by a stop and by [`Self::take_leftover_steer`], reset by
+    /// [`Self::clear_interrupt`]; read and written under `pending_steer`'s
+    /// lock, so no steer lands after either.
     steer_closed: Arc<AtomicBool>,
 }
 
@@ -65,7 +66,8 @@ impl InterruptController {
     /// `@diff`, `@git` and `@url:` references in it are not expanded, as
     /// upstream's `/steer` hands its text to the agent unchanged. A leftover
     /// runs as an ordinary turn, so its references are expanded. Returns
-    /// `false` for blank text, or once the leftover has been taken.
+    /// `false` for blank text, after a stop, or once the leftover has been
+    /// taken.
     pub fn steer(&self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {
@@ -87,6 +89,10 @@ impl InterruptController {
     /// steer, so a caller still holding a clone of this controller sees
     /// `false` and queues its text instead of leaving it here unread.
     pub fn take_leftover_steer(&self) -> Option<String> {
+        self.close_steers()
+    }
+
+    fn close_steers(&self) -> Option<String> {
         let mut guard = self.pending_steer.lock().ok()?;
         self.steer_closed.store(true, Ordering::Release);
         guard.take()
@@ -101,8 +107,12 @@ impl InterruptController {
     }
 
     /// Put back steer text taken but not delivered, ahead of any sent since.
+    /// After a stop it is dropped, as a steer pending at the stop is.
     pub(crate) fn restore_steer(&self, text: String) {
         if let Ok(mut guard) = self.pending_steer.lock() {
+            if self.steer_closed.load(Ordering::Acquire) {
+                return;
+            }
             *guard = Some(match guard.take() {
                 Some(later) => format!("{text}\n{later}"),
                 None => text,
@@ -115,16 +125,19 @@ impl InterruptController {
     /// Optionally provide a redirect message (e.g. new user input that
     /// should be processed instead of continuing the current tool chain).
     ///
-    /// A pending steer is dropped: it was meant for a turn that now stops.
+    /// A pending steer is dropped, as is one the loop puts back later, and
+    /// steers are refused until [`Self::clear_interrupt`]: they were meant
+    /// for a turn that now stops.
     pub fn interrupt(&self, message: Option<String>) {
-        self.take_steer();
+        self.close_steers();
         self.raise(message);
     }
 
     /// Interrupt for a message that redirects the turn rather than stopping
     /// it: the pending steer is returned instead of dropped, so the caller
     /// can send it ahead of the message. A steer the loop restores or a
-    /// caller sends after this stays for [`Self::take_steer`].
+    /// caller sends after this stays for [`Self::take_steer`]; steers are
+    /// not refused.
     pub fn redirect(&self, message: String) -> Option<String> {
         let steer = self.take_steer();
         self.raise(Some(message));
@@ -157,8 +170,11 @@ impl InterruptController {
         }
     }
 
-    /// Clear any pending interrupt request.
+    /// Clear any pending interrupt request, and accept steers again.
     pub fn clear_interrupt(&self) {
+        if let Ok(_guard) = self.pending_steer.lock() {
+            self.steer_closed.store(false, Ordering::Release);
+        }
         self.flag.store(false, Ordering::Release);
         if let Ok(mut guard) = self.redirect_message.lock() {
             *guard = None;
