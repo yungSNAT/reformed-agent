@@ -93,6 +93,8 @@ rusqlite = { version = "0.43", features = ["bundled"] }
 # Time
 chrono = { version = "0.4", features = ["serde"] }
 cron = "0.15"
+jiff = "0.2.46"
+jiff-cron = "0.3"
 
 # Utils
 regex = "1"

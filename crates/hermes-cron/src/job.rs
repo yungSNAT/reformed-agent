@@ -466,6 +466,10 @@ fn user_home_dir() -> PathBuf {
 }
 
 #[cfg(test)]
+#[path = "job_cron_equivalence.rs"]
+mod cron_equivalence;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 

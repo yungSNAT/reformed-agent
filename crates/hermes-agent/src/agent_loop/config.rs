@@ -753,3 +753,25 @@ impl Default for AgentConfig {
     }
 }
 
+#[cfg(test)]
+mod oauth_store_credential_tests {
+    use super::*;
+
+    #[test]
+    fn oauth_store_credential_keeps_its_timestamp_form() {
+        let credential: OAuthStoreCredential = serde_json::from_str(
+            r#"{"access_token":"a","expires_at":"2026-03-08T19:30:15.25+10:00"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_string(&credential).unwrap(),
+            r#"{"access_token":"a","expires_at":"2026-03-08T09:30:15.250Z"}"#
+        );
+        let credential: OAuthStoreCredential =
+            serde_json::from_str(r#"{"access_token":"a"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&credential).unwrap(),
+            r#"{"access_token":"a","expires_at":null}"#
+        );
+    }
+}

@@ -33,3 +33,5 @@ base64 = { workspace = true }
 [dev-dependencies]
 aws-lc-rs = "1"
 tempfile = "3"
+jiff = { workspace = true }
+jiff-cron = { workspace = true }

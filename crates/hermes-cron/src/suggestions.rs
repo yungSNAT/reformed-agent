@@ -407,6 +407,21 @@ fn secure_file(_path: &std::path::Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn suggestion_file_keeps_its_timestamp_form() {
+        let file: SuggestionFile =
+            serde_json::from_str(r#"{"updated_at":"2026-03-08T19:30:15.25+10:00"}"#).unwrap();
+        assert_eq!(
+            serde_json::to_string(&file).unwrap(),
+            r#"{"suggestions":[],"updated_at":"2026-03-08T09:30:15.250Z"}"#
+        );
+        let file: SuggestionFile = serde_json::from_str("{}").unwrap();
+        assert_eq!(
+            serde_json::to_string(&file).unwrap(),
+            r#"{"suggestions":[]}"#
+        );
+    }
+
     fn temp_store() -> (SuggestionStore, tempfile::TempDir) {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = SuggestionStore::with_path(dir.path().join("cron").join("suggestions.json"));
