@@ -2087,6 +2087,54 @@ enabled = false
 
     #[cfg(unix)]
     #[test]
+    fn files_and_links_among_the_entries_do_not_fail_the_import() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        let outside = root.path().join("outside");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/tidy")).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- Kept note.\n").unwrap();
+        std::fs::write(codex.join("skills/tidy/SKILL.md"), "Tidy up.\n").unwrap();
+        std::fs::write(codex.join("skills/README.md"), "Not a skill.\n").unwrap();
+        for folder in ["memories", "skills"] {
+            symlink(
+                root.path().join("missing"),
+                codex.join(folder).join("gone.md"),
+            )
+            .unwrap();
+            symlink(&outside, codex.join(folder).join("dir.md")).unwrap();
+        }
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(!report.failed, "{text}");
+        for expected in [
+            "skipped      memories/dir.md: it is a link, which this import does not follow",
+            "skipped      memories/gone.md: it is a link, which this import does not follow",
+            "skipped      skill dir.md: it is a link, which this import does not follow",
+            "skipped      skill gone.md: it is a link, which this import does not follow",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!text.contains("README.md"), "{text}");
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Kept note."
+        );
+        assert!(home.join("skills/codex-imports/tidy/SKILL.md").is_file());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn an_entry_that_cannot_be_looked_up_is_an_error_not_a_quiet_skip() {
         use std::os::unix::fs::PermissionsExt;
         let root = tempfile::tempdir().expect("temp root");
