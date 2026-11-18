@@ -604,9 +604,12 @@ impl AgentLoop {
                             rt.routing_reason,
                             e
                         );
+                        // As the stream path: the primary runtime gets its own model.
+                        let (fallback_provider_name, fallback_model_name) =
+                            self.extract_provider_and_model(self.config.model.as_str());
                         let fallback_wire_model_name = Self::runtime_wire_model_for_provider(
-                            active_provider.as_str(),
-                            &effective_model_name,
+                            fallback_provider_name.as_str(),
+                            fallback_model_name,
                         );
                         self.llm_provider
                             .chat_completion(
