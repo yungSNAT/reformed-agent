@@ -986,6 +986,55 @@ mod tests {
         assert_eq!(mode("run.sh"), 0o700);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_swapped_for_a_link_while_it_is_read_is_never_followed() {
+        use std::os::unix::fs::symlink;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let outside = tmp.path().join("outside.md");
+        std::fs::create_dir_all(source.join("skills/notes")).unwrap();
+        std::fs::write(source.join("skills/notes/SKILL.md"), "A skill.\n").unwrap();
+        std::fs::write(&outside, "OUTSIDE THE SOURCE\n").unwrap();
+        // Each entry keeps flipping between a file and a link out of the source.
+        let flipped = [source.join("SOUL.md"), source.join("skills/notes/data.md")];
+        let stop = Arc::new(AtomicBool::new(false));
+        let flipper = {
+            let (stop, outside) = (stop.clone(), outside.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    for path in &flipped {
+                        let _ = std::fs::remove_file(path);
+                        if let Ok(mut file) = std::fs::File::options()
+                            .write(true)
+                            .create_new(true)
+                            .open(path)
+                        {
+                            let _ = std::io::Write::write_all(&mut file, b"inside\n");
+                        }
+                        let _ = std::fs::remove_file(path);
+                        let _ = symlink(&outside, path);
+                    }
+                }
+            })
+        };
+
+        let mut followed = Vec::new();
+        for run in 0..300 {
+            let home = tmp.path().join(format!("home-{run}"));
+            std::fs::create_dir_all(&home).unwrap();
+            migrate_into(&source, &home);
+            if all_text(&home).contains("OUTSIDE") {
+                followed.push(run);
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        flipper.join().unwrap();
+        assert!(followed.is_empty(), "a link was followed in runs {followed:?}");
+    }
+
     #[test]
     fn test_migration_status_eq() {
         assert_eq!(MigrationStatus::Migrated, MigrationStatus::Migrated);
