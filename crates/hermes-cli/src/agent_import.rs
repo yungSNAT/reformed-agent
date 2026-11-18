@@ -2047,6 +2047,48 @@ enabled = false
         assert!(!text.contains("no skills folder"), "{text}");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_that_cannot_be_looked_up_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/shut")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- A note.\n").unwrap();
+        std::fs::write(codex.join("skills/shut/SKILL.md"), "shut\n").unwrap();
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        // Listable but not searchable: the names can be read, their files not looked up.
+        mode(&codex.join("memories"), 0o400);
+        mode(&codex.join("skills/shut"), 0o600);
+        let unreadable = std::fs::symlink_metadata(codex.join("memories/a.md")).is_err();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        mode(&codex.join("memories"), 0o755);
+        mode(&codex.join("skills/shut"), 0o755);
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        for expected in [
+            "error        memories: could not read it: ",
+            "error        skills: could not read it: ",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!text.contains("no folder with a SKILL.md"), "{text}");
+    }
+
     #[test]
     fn names_that_look_like_credentials_reach_neither_the_report_nor_the_home() {
         let root = tempfile::tempdir().expect("temp root");
