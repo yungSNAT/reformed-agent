@@ -638,6 +638,273 @@ async fn a_steer_during_a_streamed_tool_call_reaches_the_next_stream() {
     assert_eq!(interrupt.take_steer(), None);
 }
 
+fn rollback_registry() -> ToolRegistry {
+    use hermes_core::JsonSchema;
+    let mut registry = ToolRegistry::new();
+    registry.register(
+        "plain_tool",
+        ToolSchema::new("plain_tool", "Plain tool", JsonSchema::new("object")),
+        Arc::new(|_args| Ok("tool output".to_string())),
+    );
+    registry.register(
+        "failing_tool",
+        ToolSchema::new("failing_tool", "Failing tool", JsonSchema::new("object")),
+        Arc::new(|_args| Err(hermes_core::ToolError::ExecutionFailed("boom".to_string()))),
+    );
+    registry
+}
+
+/// Whether the steer survived an auto-rollback: delivered again after it, or
+/// still pending.
+fn steer_outlived_the_rollback(
+    calls: &[Vec<Message>],
+    result: &AgentResult,
+    interrupt: &InterruptController,
+) -> bool {
+    let marker = crate::steer::format_steer_marker("prefer the simpler fix");
+    let has_marker = |msgs: &[Message]| {
+        msgs.iter()
+            .any(|m| m.content.as_deref().is_some_and(|c| c.contains(&marker)))
+    };
+    assert!(calls.len() >= 3, "expected a call after the rollback");
+    assert!(has_marker(&calls[1]), "the steer reached call 2");
+    assert!(
+        calls[2].iter().any(|m| m.role == MessageRole::System
+            && m.content.as_deref().is_some_and(|c| c.contains("Auto-rollback"))),
+        "the rollback ran before call 3"
+    );
+    calls[2..].iter().any(|c| has_marker(c))
+        || has_marker(&result.messages)
+        || interrupt.take_steer().is_some()
+}
+
+// A steer delivered into a tool result, then an auto-rollback (defaults:
+// checkpoint every 3 turns, rollback at 3 failed calls in one batch) restores
+// a snapshot taken before delivery. From the fresh-context review.
+#[tokio::test]
+async fn a_steer_delivered_before_a_rollback_is_not_lost() {
+    use futures::stream::BoxStream;
+    use hermes_core::FunctionCall;
+
+    struct RollbackProvider {
+        interrupt: InterruptController,
+        calls: std::sync::Mutex<Vec<Vec<Message>>>,
+    }
+
+    fn call(id: &str, name: &str, args: &str) -> ToolCall {
+        ToolCall {
+            id: id.to_string(),
+            function: FunctionCall {
+                name: name.to_string(),
+                arguments: args.to_string(),
+            },
+            extra_content: None,
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RollbackProvider {
+        async fn chat_completion(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(messages.to_vec());
+            let message = match calls.len() {
+                1 => {
+                    self.interrupt.steer("prefer the simpler fix");
+                    Message::assistant_with_tool_calls(None, vec![call("c1", "plain_tool", "{}")])
+                }
+                2 => Message::assistant_with_tool_calls(
+                    None,
+                    vec![
+                        call("c2", "failing_tool", "{\"n\":1}"),
+                        call("c3", "failing_tool", "{\"n\":2}"),
+                        call("c4", "failing_tool", "{\"n\":3}"),
+                    ],
+                ),
+                _ => Message::assistant("Done: used the tool; src/main.rs is fixed"),
+            };
+            Ok(hermes_core::LlmResponse {
+                message,
+                usage: None,
+                model: "dummy".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    let interrupt = InterruptController::new();
+    let provider = Arc::new(RollbackProvider {
+        interrupt: interrupt.clone(),
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let config = AgentConfig {
+        skip_memory: true,
+        skip_context_files: true,
+        ..AgentConfig::default()
+    };
+    assert_eq!(config.checkpoint_interval_turns, 3);
+    assert_eq!(config.rollback_on_tool_error_threshold, 3);
+    let agent = AgentLoop::with_interrupt(
+        config,
+        Arc::new(rollback_registry()),
+        provider.clone(),
+        interrupt.clone(),
+    );
+
+    let result = agent
+        .run(vec![Message::user("use plain_tool to fix src/main.rs")], None)
+        .await
+        .expect("agent run");
+
+    let calls = provider.calls.lock().expect("calls lock").clone();
+    assert!(
+        steer_outlived_the_rollback(&calls, &result, &interrupt),
+        "the steer vanished: the rollback restored a snapshot taken before it was delivered"
+    );
+}
+
+#[tokio::test]
+async fn a_streamed_steer_delivered_before_a_rollback_is_not_lost() {
+    use futures::stream::BoxStream;
+    use hermes_core::{FunctionCallDelta, StreamDelta, ToolCallDelta};
+
+    struct RollbackStream {
+        interrupt: InterruptController,
+        calls: std::sync::Mutex<Vec<Vec<Message>>>,
+    }
+
+    fn call(index: u32, name: &str, args: &str) -> ToolCallDelta {
+        ToolCallDelta {
+            index,
+            id: Some(format!("c{index}")),
+            function: Some(FunctionCallDelta {
+                name: Some(name.to_string()),
+                arguments: Some(args.to_string()),
+            }),
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl LlmProvider for RollbackStream {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            Err(AgentError::LlmApi("this run streams".to_string()))
+        }
+
+        fn chat_completion_stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            let mut calls = self.calls.lock().expect("calls lock");
+            calls.push(messages.to_vec());
+            let (delta, finish) = match calls.len() {
+                1 => {
+                    self.interrupt.steer("prefer the simpler fix");
+                    (
+                        StreamDelta {
+                            content: None,
+                            tool_calls: Some(vec![call(0, "plain_tool", "{}")]),
+                            extra: None,
+                        },
+                        "tool_calls",
+                    )
+                }
+                2 => (
+                    StreamDelta {
+                        content: None,
+                        tool_calls: Some(vec![
+                            call(1, "failing_tool", "{\"n\":1}"),
+                            call(2, "failing_tool", "{\"n\":2}"),
+                            call(3, "failing_tool", "{\"n\":3}"),
+                        ]),
+                        extra: None,
+                    },
+                    "tool_calls",
+                ),
+                _ => (
+                    StreamDelta {
+                        content: Some("Done: used the tool; src/main.rs is fixed".to_string()),
+                        tool_calls: None,
+                        extra: None,
+                    },
+                    "stop",
+                ),
+            };
+            futures::stream::iter(vec![Ok(StreamChunk {
+                delta: Some(delta),
+                finish_reason: Some(finish.to_string()),
+                usage: None,
+            })])
+            .boxed()
+        }
+    }
+
+    let interrupt = InterruptController::new();
+    let provider = Arc::new(RollbackStream {
+        interrupt: interrupt.clone(),
+        calls: std::sync::Mutex::new(Vec::new()),
+    });
+    let config = AgentConfig {
+        skip_memory: true,
+        skip_context_files: true,
+        ..AgentConfig::default()
+    };
+    assert_eq!(config.checkpoint_interval_turns, 3);
+    assert_eq!(config.rollback_on_tool_error_threshold, 3);
+    let agent = AgentLoop::with_interrupt(
+        config,
+        Arc::new(rollback_registry()),
+        provider.clone(),
+        interrupt.clone(),
+    );
+
+    let result = agent
+        .run_stream(
+            vec![Message::user("use plain_tool to fix src/main.rs")],
+            None,
+            Some(Box::new(|_| {})),
+        )
+        .await
+        .expect("agent run");
+
+    let calls = provider.calls.lock().expect("calls lock").clone();
+    assert!(
+        steer_outlived_the_rollback(&calls, &result, &interrupt),
+        "the steer vanished: the rollback restored a snapshot taken before it was delivered"
+    );
+}
+
 #[test]
 fn test_smart_model_routing_cheap_route_for_simple_turn() {
     use futures::stream::BoxStream;
