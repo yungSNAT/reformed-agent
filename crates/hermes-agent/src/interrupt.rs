@@ -117,10 +117,24 @@ impl InterruptController {
     ///
     /// A pending steer is dropped: it was meant for a turn that now stops.
     pub fn interrupt(&self, message: Option<String>) {
+        self.take_steer();
+        self.raise(message);
+    }
+
+    /// Interrupt for a message that redirects the turn rather than stopping
+    /// it: the pending steer is returned instead of dropped, so the caller
+    /// can send it ahead of the message. A steer the loop restores or a
+    /// caller sends after this stays for [`Self::take_steer`].
+    pub fn redirect(&self, message: String) -> Option<String> {
+        let steer = self.take_steer();
+        self.raise(Some(message));
+        steer
+    }
+
+    fn raise(&self, message: Option<String>) {
         if let Ok(mut guard) = self.redirect_message.lock() {
             *guard = message;
         }
-        self.take_steer();
         // Set the flag AFTER storing the message so readers always see
         // a consistent (flag=true, message=Some) pair.
         self.flag.store(true, Ordering::Release);
@@ -252,6 +266,22 @@ mod tests {
         ctrl.steer("too late");
         ctrl.interrupt(None);
         assert_eq!(ctrl.take_steer(), None);
+    }
+
+    #[test]
+    fn a_redirect_returns_the_pending_steer_and_keeps_one_restored_after_it() {
+        let ctrl = InterruptController::new();
+        ctrl.steer("use tabs");
+        assert_eq!(ctrl.redirect("new input".into()).as_deref(), Some("use tabs"));
+        assert!(ctrl.is_interrupted());
+
+        // The loop had taken this steer and puts it back once interrupted.
+        let ctrl = InterruptController::new();
+        ctrl.steer("use tabs");
+        let held_by_loop = ctrl.take_steer().expect("pending steer");
+        assert_eq!(ctrl.redirect("new input".into()), None);
+        ctrl.restore_steer(held_by_loop);
+        assert_eq!(ctrl.take_steer().as_deref(), Some("use tabs"));
     }
 
     #[test]

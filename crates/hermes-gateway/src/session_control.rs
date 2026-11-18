@@ -181,11 +181,16 @@ pub struct AgentActivitySummary {
 
 pub trait ActiveSessionControl: Send + Sync {
     fn interrupt(&self, _message: &str) {}
+    /// Interrupt for a message that redirects the turn: returns the steer the turn accepted
+    /// but has not delivered, instead of dropping it as a stop does.
+    fn redirect(&self, message: &str) -> Option<String> {
+        self.interrupt(message);
+        None
+    }
     fn steer(&self, _message: &str) -> bool {
         false
     }
-    /// Steer text the turn accepted but has not delivered, taken when the turn ends or a
-    /// message interrupts it.
+    /// Steer text the turn accepted but never delivered, taken once the turn has ended.
     fn take_steer(&self) -> Option<String> {
         None
     }
@@ -406,10 +411,10 @@ impl BusySessionCoordinator {
             }
             BusyInputMode::Interrupt => {
                 if let Some(control) = active.control.as_ref() {
-                    // The interrupt drops a pending steer, but this message redirects the
-                    // turn rather than stopping it: the steer runs first, as upstream keeps it.
+                    // This message redirects the turn rather than stopping it: a steer the
+                    // turn has not delivered runs first, as upstream keeps it.
                     if let (Some(text), Some(mut steered)) =
-                        (control.take_steer(), active.steered.clone())
+                        (control.redirect(&event.text), active.steered.clone())
                     {
                         steered.text = text;
                         self.pending
@@ -417,7 +422,6 @@ impl BusySessionCoordinator {
                             .or_default()
                             .push_front(steered);
                     }
-                    control.interrupt(&event.text);
                     self.queue_event(session_key, event);
                     BusyMessageDecision {
                         handled: true,
@@ -594,6 +598,11 @@ mod tests {
             self.interrupts.lock().unwrap().push(message.to_string());
             // As `InterruptController::interrupt` does, an interrupt drops a pending steer.
             self.leftover_steer.lock().unwrap().take();
+        }
+
+        fn redirect(&self, message: &str) -> Option<String> {
+            self.interrupts.lock().unwrap().push(message.to_string());
+            self.leftover_steer.lock().unwrap().take()
         }
 
         fn steer(&self, _message: &str) -> bool {
