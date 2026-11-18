@@ -164,6 +164,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/autonomous-ai-agents",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/blockchain",
       "rationale": "Upstream optional-skills blockchain tree is Python-skill-store content; Hermes Ultra keeps Rust-first runtime parity and supports external skill registries via native loader paths.",
@@ -199,6 +206,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/mcp",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/migration",
       "rationale": "Optional migration skill content is curated locally for Hermes Agent Ultra migration workflows while runtime skill loading remains governed by native skill-loader contracts.",
@@ -226,6 +240,20 @@
       "ticket": 25
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/security",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/web-development",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
       "classification": "functional",
       "owner": "sheawinkler",
       "path": "packaging/homebrew",
@@ -247,11 +275,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/browser/browser_use/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -261,11 +289,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/browser/browserbase/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -275,11 +303,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/browser/firecrawl/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -296,11 +324,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/dashboard_auth/basic/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream reworked the dashboard basic-auth provider (session revocation list, token kind and expiry checks, non-interactive mixin). Rust does not run this Python plugin, and no Rust code implements a basic-auth dashboard provider. Deferred until the dashboard auth providers are ported or dropped.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -352,18 +382,22 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/README.md",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's README now says realtime mode is speak-only and installs with `hermes meet install`. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/SKILL.md",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's SKILL.md replaces the pip install steps with `hermes meet install`. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "policy_only",
@@ -394,11 +428,11 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/node/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring and the order of `__all__` changed, and `VALID_REQUEST_TYPES` is now exported. No behaviour changed."
     },
     {
       "classification": "policy_only",
@@ -408,18 +442,22 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/node/client.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: the node client now leaves byte decoding to protocol.decode. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/node/protocol.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's node protocol now imports hmac for the token check and decodes bytes itself. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -436,11 +474,11 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream renamed the manifest key `hooks` to `provides_hooks`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
     },
     {
       "classification": "intentional_divergence",
@@ -450,11 +488,11 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/google_meet/realtime/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring and a noqa comment changed."
     },
     {
       "classification": "policy_only",
@@ -499,11 +537,13 @@
       "ticket": 3524
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/hermes-achievements/dashboard/plugin_api.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream rewrote the achievements dashboard API (460 lines added, 627 removed). Rust does not run this Python plugin, and no Rust code implements the achievements dashboard. Deferred until that plugin is ported or dropped.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "policy_only",
@@ -527,11 +567,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/image_gen/fal/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name its nano-banana-2 and nano-banana-pro models. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text, and the Rust FAL backend was not changed to match it."
     },
     {
       "classification": "intentional_divergence",
@@ -541,11 +581,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/image_gen/openai-codex/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name its native Codex image endpoints and its cache/generated/images folder. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); keeping the earlier text describes nothing this tree was changed to do."
     },
     {
       "classification": "intentional_divergence",
@@ -555,11 +595,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/image_gen/openai/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name GPT Image 2.5 and its cache/generated/images folder. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -618,11 +658,11 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/memory/byterover/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream replaced the manifest's `hooks` list with `config_keys`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
     },
     {
       "classification": "intentional_divergence",
@@ -744,11 +784,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/memory/retaindb/README.md",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's README now says `requests` is a core dependency and points to `hermes pm repair`. This tree's RetainDB provider is Rust (crates/hermes-agent/src/memory_plugins/retaindb.rs) and needs no Python package; the README's install note has no runtime effect."
     },
     {
       "classification": "intentional_divergence",
@@ -758,11 +798,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/memory/retaindb/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream replaced `pip_dependencies` with `config_keys`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
     },
     {
       "classification": "intentional_divergence",
@@ -793,11 +833,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/ai-gateway/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared this tree's file with v0.23.2: upstream moved the reasoning passthrough into a profile subclass with the same three cases (no reasoning support: no extras; a config: passed through; none: enabled at medium effort). Behaviour is unchanged."
     },
     {
       "classification": "intentional_divergence",
@@ -807,11 +847,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/alibaba/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added the alibaba-cn, alibaba-token-plan and alibaba-token-plan-cn profiles, the aliyun alias and DashScope's preserve-thinking extras. The Rust provider tables (crates/hermes-agent/src/provider_profiles.rs, crates/hermes-core/src/providers.rs) have none of them. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -821,11 +863,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/arcee/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
       "classification": "intentional_divergence",
@@ -884,25 +926,29 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/gmi/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream builds GMI's User-Agent lazily and adds anthropic/claude-sonnet-5 to its fallback models. Rust's generic provider sends no User-Agent for gmi (crates/hermes-agent/src/provider/generic.rs sends one only for Kimi Code and Fireworks), a gap that predates b51fbc73. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/huggingface/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/kilocode/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed Kilo Code's default auxiliary model from google/gemini-3-flash-preview to google/gemini-3.6-flash. No Rust code sets a per-provider default auxiliary model for kilocode, and which model this tree uses there was not established. Deferred until checked.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -926,18 +972,20 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/novita/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/nvidia/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. No Rust code strips those fields for NVIDIA. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -947,11 +995,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/openai-codex/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
       "classification": "intentional_divergence",
@@ -975,18 +1023,20 @@
       "ticket": 3524
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/stepfun/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/xai/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -1059,11 +1109,13 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/platforms/discord/voice_mixer.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream refactored its Discord voice mixer (child names and the speech flag removed, the mixer now a discord.AudioSource, ffmpeg resolution added). This tree's Rust mixer (crates/hermes-gateway/src/voice_mixer.rs) ports the b51fbc73 design; whether the mixing behaviour changed was not established. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -1108,11 +1160,11 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/platforms/line/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description of the LINE webhook bind host, to its new dual-stack default. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -1157,18 +1209,20 @@
       "ticket": 304
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/platforms/teams/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs) and none of the others. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/plugin_utils.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream reimplemented lazy_singleton on SingletonSlot and trimmed docstrings. These helpers serve Python plugin authors; Rust runs no Python plugins, so nothing here uses them."
     },
     {
       "classification": "intentional_divergence",
@@ -1248,18 +1302,18 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: only a comment block changed."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/brave_free/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1269,11 +1323,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/ddgs/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1283,11 +1337,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/exa/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1297,18 +1351,18 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/firecrawl/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/firecrawl/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to mention keyless cloud use. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -1318,11 +1372,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/parallel/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1332,11 +1386,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/searxng/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1353,11 +1407,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/tavily/plugin.yaml",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to mention opt-in keyless use. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -1367,11 +1421,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/web/xai/__init__.py",
-      "rationale": "Upstream changed this Python plugin file after b51fbc73. This tree keeps its earlier copy; upstream's change is not merged and was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1389,13 +1443,6 @@
     },
     {
       "classification": "intentional_divergence",
-      "owner": "yungSNAT",
-      "path": "skills/apple/apple-notes/SKILL.md",
-      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
-      "ticket": 3524
-    },
-    {
-      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "skills/apple/apple-reminders/SKILL.md",
       "rationale": "Apple Reminders skill documentation is curated locally; skill catalog drift is tracked separately from the Rust runtime skill-loader contract.",
@@ -1405,8 +1452,8 @@
       "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "skills/apple/findmy/SKILL.md",
-      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream moved the skill's screenshots from /tmp to ~/.hermes/cache/scratch. This tree's home is ~/.hermes-agent-ultra, so upstream's path would point at the wrong home; the earlier text stays."
     },
     {
       "classification": "intentional_divergence",
@@ -1447,8 +1494,8 @@
       "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "skills/media/DESCRIPTION.md",
-      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's media category now names YouTube only, because upstream moved its other media skills. This folder still holds gif-search, heartmula, songsee and spotify, so the earlier description is the true one here."
     },
     {
       "classification": "intentional_divergence",
@@ -1463,13 +1510,6 @@
       "path": "skills/media/youtube-content/scripts/fetch_transcript.py",
       "rationale": "The transcript fetcher is an allowed skill helper script, not Hermes runtime; Ultra adopted upstream uv instructions without introducing Python runtime dispatch.",
       "ticket": 25
-    },
-    {
-      "classification": "intentional_divergence",
-      "owner": "yungSNAT",
-      "path": "skills/note-taking/obsidian/SKILL.md",
-      "rationale": "Skill catalogue content is curated locally. Upstream changed this file after b51fbc73; the change is not merged here.",
-      "ticket": 3524
     },
     {
       "classification": "intentional_divergence",
@@ -1906,11 +1946,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/cron/test_compute_next_run_last_run_at.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (6b81590c) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -1969,11 +2009,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/cron/test_rewrite_skill_refs.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 cases in its test purges (6b81590c, aedc6ccc) and gave one remaining job a prompt, because a job with a blank prompt and no skills is now refused at creation (350fb975). Rust already refuses a blank prompt without a script (crates/hermes-cron/src/job.rs CronJob::validate, test_validate_empty_prompt)."
     },
     {
       "classification": "intentional_divergence",
@@ -2011,11 +2051,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/_plugin_adapter_loader.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: only a comment changed."
     },
     {
       "classification": "intentional_divergence",
@@ -2088,11 +2128,11 @@
       "ticket": 303
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_api_server_multimodal.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 16 cases in its pruning (39975613) and in folding contract tests into their keepers (93a7267b), and added none. One removed name, test_non_image_data_url_rejected, now lives in tests/tools/test_image_source.py. No new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2207,11 +2247,13 @@
       "ticket": 302
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_complete_path_at_filter.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 7 path-completion cases (remote-backend completion, leading slash, fuzzy matching outside a git repository) and removed 10. No Rust test for these completion cases was found. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2263,11 +2305,11 @@
       "ticket": 302
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_destructive_slash_confirm.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 4 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
     },
     {
       "classification": "intentional_divergence",
@@ -2585,18 +2627,20 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_goal_max_turns_config.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_goal_command_slow_db_init_still_persists. Whether the Rust /goal command persists when the session database is slow to open was not established. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_goal_status_notice.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import; a feature added and reverted in between (#94266) left no net change."
     },
     {
       "classification": "intentional_divergence",
@@ -2613,11 +2657,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_home_target_env_var.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2753,11 +2797,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_notice_delivery.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining case's thread metadata gains a user_id, which the test calls additive."
     },
     {
       "classification": "intentional_divergence",
@@ -2788,11 +2832,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_pii_redaction.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 6 test cases in its suite-wide pruning of low-value tests (39975613 and 61fa0f47) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2837,11 +2881,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_pre_gateway_dispatch.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 13 cases on webhook and relay admission (the pre-dispatch hook fires once at ingress, resends and rewritten deliveries keep or refuse their admission) and removed 4. Rust has no equivalent admission records. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2872,11 +2918,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_reload_skills_command.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
     },
     {
       "classification": "intentional_divergence",
@@ -2977,11 +3023,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_running_agent_session_toggles.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_fresh_ancient_turn_remains_controllable and removed 3 cases. Not compared with the Rust session toggles. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2991,18 +3039,22 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_runtime_footer.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 8 runtime-footer cases (turn latency and an opt-in served-model field). No Rust footer renders latency. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_safe_adapter_disconnect.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_safe_disconnect_detaches_cancellation_swallowing_disconnect. Not compared with Rust adapter shutdown. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3075,11 +3127,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_session_list_allowed_sources.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -3089,11 +3141,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_session_model_reset.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 cases and now checks that /new clears the session's reasoning override while other sessions keep theirs. No Rust code names a per-session reasoning override. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3138,11 +3192,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_shared_group_sender_prefix.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream now includes the Slack author's mention in a shared thread's sender prefix. No Rust code adds it. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3152,11 +3208,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_shutdown_memory_provider_messages.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 6 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -3243,11 +3299,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_steer_command.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added cases where /steer reaches a long-running turn and where a steer with media queues the whole event. No Rust code queues a steer's media. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3299,11 +3357,11 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_teams_pipeline_runtime_wiring.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -3460,18 +3518,20 @@
       "ticket": 302
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_unavailable_skill_hint.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_unknown_command.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added cases for /egress status and for running a synchronous plugin command off the event loop, and removed 7 command-hook cases. /egress is not ported (slash allowlist). Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3502,11 +3562,11 @@
       "ticket": 302
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_vision_memory_leak.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -3558,11 +3618,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_webhook_signature_rate_limit.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream now answers a bad webhook signature with the same 404 an unknown route gets, so route names cannot be probed. Rust answered 403 (crates/hermes-gateway/src/platforms/webhook.rs). Deferred until the port lands.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3621,11 +3683,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/gateway/test_yolo_command.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 3 cases on /yolo persistence (it survives a gateway restart, dies at the session boundary, and a revocation outlives the next turn). Not compared with the Rust /yolo handling. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3817,11 +3881,13 @@
       "ticket": 25
     },
     {
-      "classification": "intentional_divergence",
+      "classification": "deferred",
       "owner": "yungSNAT",
       "path": "tests/providers/test_e2e_wiring.py",
-      "rationale": "Upstream changed this Python test after b51fbc73. This tree runs no Python tests; whether the Rust code has the behaviour the test now checks was not checked at the v0.23.2 re-pin.",
-      "ticket": 3524
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, the NVIDIA change in row 26. Deferred with it.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -5040,6 +5106,13 @@
       "path": "website/src",
       "rationale": "Website source differs for documentation/product presentation and does not change Rust runtime behavior.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "website/static",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `website` entry: Website top-level package, sidebar, localization, and static API files support documentation publishing and are not Rust runtime behavior unless covered by more specific functional classifications.",
+      "ticket": 3524
     }
   ],
   "schema_version": 1

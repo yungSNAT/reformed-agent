@@ -31,19 +31,17 @@
     {
       "path": "tests/hermes_cli/test_ai_gateway_models.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_ai_gateway_models",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'AI Gateway model list and pricing translation.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/tests/runtime_parity_ops.rs",
-          "name": "guard_provider_model_selection_soft_accepts_unlisted_codex_models"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'AI Gateway model list and pricing translation.'; it has 10 test functions (for example test_ai_gateway_pricing_translates_input_output_to_prompt_completion, test_ai_gateway_pricing_returns_empty_on_fetch_failure, test_ai_gateway_pricing_skips_entries_without_pricing_dict). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -136,36 +134,32 @@
     {
       "path": "tests/hermes_cli/test_anthropic_provider_persistence.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_anthropic_provider_persistence",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for Anthropic credential persistence helpers.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/provider/tests/anthropic_requests.rs",
-          "name": "anthropic_provider_request_timeout_survives_client_rebuilds"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for Anthropic credential persistence helpers.'; it has 2 test functions (for example test_save_anthropic_oauth_token_uses_token_slot_and_clears_api_key, test_use_anthropic_claude_code_credentials_clears_env_slots). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_apply_model_switch_result_context.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_apply_model_switch_result_context",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression test for the `/model` picker confirmation display.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-gateway/src/gateway/tests/runtime_controls.rs",
-          "name": "gateway_model_switch_session_scope_does_not_persist_and_warns_on_large_context"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression test for the `/model` picker confirmation display.'; it has 3 test functions (for example test_picker_path_uses_provider_aware_context_on_codex, test_picker_path_falls_back_to_model_info_when_resolver_empty, test_global_switch_clears_context_pin_owned_by_previous_route). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -232,19 +226,17 @@
     {
       "path": "tests/hermes_cli/test_at_context_completion_filter.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_at_context_completion_filter",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression test: `@folder:` completion must only surface directories and `@file:` must only surface regular files.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/kanban.rs",
-          "name": "attachments_copy_with_safe_unique_names_and_surface_in_worker_context"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression test: `@folder:` completion must only surface directories and `@file:` must only surface regular files.'; it has 2 test functions (for example test_at_folder_only_yields_directories, test_at_file_bare_without_colon_lists_files). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -508,19 +500,17 @@
     {
       "path": "tests/hermes_cli/test_auth_toctou_file_modes.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_auth_toctou_file_modes",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression tests for TOCTOU-safe credential file writers in ``hermes_cli.auth``.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/auth/tests.rs",
-          "name": "auth_store_write_respects_auth_file_override"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression tests for TOCTOU-safe credential file writers in ``hermes_cli.auth``.'; it has 3 test functions (for example test_save_auth_store_writes_0o600_with_0o700_parent, test_save_qwen_cli_tokens_writes_0o600_with_0o700_parent, test_shared_nous_store_writes_0o600_with_0o700_parent). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -693,19 +683,17 @@
     {
       "path": "tests/hermes_cli/test_chat_skills_flag.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_chat_skills_flag",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'test_chat_skills_flag'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-app-runtime/src/lib_tests.rs",
-          "name": "resolve_cli_chat_provider_model_uses_inference_model_env_when_no_flag_override"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: it has 2 test functions (for example test_top_level_skills_flag_defaults_to_chat, test_continue_worktree_and_skills_flags_work_together). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -990,19 +978,17 @@
     {
       "path": "tests/hermes_cli/test_config_env_refs.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_config_env_refs",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'test_config_env_refs'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-config/src/loader/tests.rs",
-          "name": "load_from_yaml_expands_env_refs_but_user_config_load_preserves_templates"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: it has 2 test functions (for example test_save_config_preserves_unresolved_env_refs, test_save_config_allows_intentional_secret_value_change). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1042,19 +1028,17 @@
     {
       "path": "tests/hermes_cli/test_container_aware_cli.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_container_aware_cli",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for container-aware CLI routing (NixOS container mode).'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/model_switch.rs",
-          "name": "bedrock_provider_models_include_region_aware_curated_fallback_and_aliases"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for container-aware CLI routing (NixOS container mode).'; it has 2 test functions (for example test_get_container_exec_info_returns_metadata, test_exec_in_container_calls_execvp). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1121,70 +1105,62 @@
     {
       "path": "tests/hermes_cli/test_curator_recent_run_notice.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_curator_recent_run_notice",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for `_print_curator_recent_run_notice`.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/app/tests.rs",
-          "name": "test_run_agent_quorum_arm_persists_artifact_even_on_voter_failures"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for `_print_curator_recent_run_notice`.'; it has 2 test functions (for example test_silent_when_summary_is_single_line, test_format_time_ago_buckets). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_curator_run.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_curator_run",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for `hermes curator run` CLI behavior.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/app/tests.rs",
-          "name": "test_run_agent_quorum_arm_persists_artifact_even_on_voter_failures"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for `hermes curator run` CLI behavior.'; it has 1 test functions (for example test_run_defaults_to_synchronous). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_curator_status.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_curator_status",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for `hermes curator status` output.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
-          "name": "test_looks_like_status_only_output_detects_defer_only_language"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for `hermes curator status` output.'; it has 1 test functions (for example test_list_unmanaged_itemizes_and_explains). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_custom_provider_context_length.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_custom_provider_context_length",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression tests for custom_providers per-model context_length resolution.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/tests/skill_model_policy.rs",
-          "name": "resolve_model_capabilities_uses_custom_provider_context_override"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression tests for custom_providers per-model context_length resolution.'; it has 9 test functions (for example test_trailing_slash_insensitive, test_empty_inputs_return_none, test_matches_exact_model_on_normalized_route). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1329,19 +1305,17 @@
     {
       "path": "tests/hermes_cli/test_destructive_slash_confirm_gate.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_destructive_slash_confirm_gate",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the approvals.destructive_slash_confirm config gate.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-parity-tools/src/slash_gate/tests.rs",
-          "name": "local_commands_come_from_the_slash_commands_block_only"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the approvals.destructive_slash_confirm config gate.'; it has 2 test functions (for example test_default_is_true, test_existing_user_config_without_key_gets_default). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1369,53 +1343,47 @@
     {
       "path": "tests/hermes_cli/test_determine_api_mode_hostname.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_determine_api_mode_hostname",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression tests for ``determine_api_mode`` hostname handling.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/memory_plugins/mem0.rs",
-          "name": "test_mem0_config_schema_marks_api_key_optional_in_oss_mode"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression tests for ``determine_api_mode`` hostname handling.'; it has 2 test functions (for example test_native_openai_url_is_codex_responses, test_anthropic_path_suffix_still_wins). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_dingtalk_auth.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_dingtalk_auth",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Unit tests for hermes_cli/dingtalk_auth.py (QR device-flow registration).'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/auth/tests.rs",
-          "name": "auth_store_write_is_atomic_owner_only_and_cleans_tmp"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Unit tests for hermes_cli/dingtalk_auth.py (QR device-flow registration).'; it has 11 test functions (for example test_raises_on_network_error, test_raises_on_nonzero_errcode, test_chains_init_then_begin). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_discord_skill_clamp_warning.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_discord_skill_clamp_warning",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for Discord /skill 32-char clamp collision warnings.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-gateway/src/platforms/discord/tests/commands_and_channels.rs",
-          "name": "discord_channel_skill_bindings_resolve_exact_parent_and_deduped_skills"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for Discord /skill 32-char clamp collision warnings.'; it has 2 test functions (for example test_clamp_collision_emits_warning_naming_both_skills, test_long_skill_name_preserves_cmd_key_through_by_category). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1495,36 +1463,32 @@
     {
       "path": "tests/hermes_cli/test_doctor_dedicated_provider_skip.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_doctor_dedicated_provider_skip",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression: hermes doctor must not run a generic Bearer-auth health check for providers that already have a dedicated check (Anthropic, OpenRouter, Bedrock).'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/provider/tests/codex_generic.rs",
-          "name": "generic_provider_attaches_kimi_code_user_agent_for_code_endpoint"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression: hermes doctor must not run a generic Bearer-auth health check for providers that already have a dedicated check (Anthropic, OpenRouter, Bedrock).'; it has 1 test functions (for example test_build_apikey_providers_list_skips_dedicated_check_providers). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_env_sanitize_on_load.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_env_sanitize_on_load",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for .env sanitization during load to prevent token duplication (#8908).'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-config/src/loader/tests/env_overrides.rs",
-          "name": "load_config_reads_the_env_file_of_the_home_it_is_given"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for .env sanitization during load to prevent token duplication (#8908).'; it has 2 test functions (for example test_load_env_preserves_concatenated_text_as_value_data, test_env_loader_does_not_split_concatenated_text). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1735,19 +1699,17 @@
     {
       "path": "tests/hermes_cli/test_gemini_free_tier_setup_block.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_gemini_free_tier_setup_block",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the Gemini free-tier block in the setup wizard.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/command_tests.rs",
-          "name": "memory_honcho_setup_config_stores_local_jwt_under_host_block"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the Gemini free-tier block in the setup wizard.'; it has 3 test functions (for example test_free_tier_key_is_blocked, test_paid_tier_key_proceeds, test_non_gemini_provider_skips_probe). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2101,19 +2063,17 @@
     {
       "path": "tests/hermes_cli/test_kanban_specify_db.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_kanban_specify_db",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for kb.specify_triage_task — the DB-layer atomic promotion from the triage column to todo. LLM-free by design.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/kanban.rs",
-          "name": "kanban_claim_completion_archive_is_idempotent_under_reclaim_like_replay"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for kb.specify_triage_task — the DB-layer atomic promotion from the triage column to todo. LLM-free by design.'; it has 3 test functions (for example test_specify_promotes_triage_to_todo, test_specify_rejects_blank_title, test_specify_records_audit_comment_only_when_author_given). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2294,19 +2254,17 @@
     {
       "path": "tests/hermes_cli/test_model_picker_viewport.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_model_picker_viewport",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the prompt_toolkit /model picker scroll viewport.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/tests/skill_model_policy.rs",
-          "name": "parse_model_switch_request_uses_provider_picker_for_provider_arg"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the prompt_toolkit /model picker scroll viewport.'; it has 3 test functions (for example test_short_list_no_scroll, test_offset_recovers_after_stage_switch, test_full_navigation_keeps_cursor_visible). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2420,36 +2378,32 @@
     {
       "path": "tests/hermes_cli/test_model_switch_opencode_anthropic.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_model_switch_opencode_anthropic",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression tests for OpenCode /v1 stripping during /model switch.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/tests/skill_model_policy.rs",
-          "name": "model_switch_command_emits_preflight_warning_for_large_transcript"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression tests for OpenCode /v1 stripping during /model switch.'; it has 4 test functions (for example test_switch_to_minimax_m27_strips_v1, test_switch_to_gpt_uses_codex_responses_keeps_v1, test_agent_switch_model_strips_v1_for_anthropic_messages). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_model_switch_variant_tags.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_model_switch_variant_tags",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for OpenRouter variant tag preservation in model switching.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/tests/skill_model_policy.rs",
-          "name": "model_switch_command_emits_preflight_warning_for_large_transcript"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for OpenRouter variant tag preservation in model switching.'; it has 4 test functions (for example test_slash_format_preserves_variant_tag, test_legacy_colon_format_converts_to_slash, test_known_provider_colon_matches_slash_form). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2536,19 +2490,17 @@
     {
       "path": "tests/hermes_cli/test_nous_hermes_non_agentic.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_nous_hermes_non_agentic",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the Nous-Hermes-3/4 non-agentic warning detector.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
-          "name": "setup_default_model_pick_index_falls_back_to_zero_for_non_nous"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the Nous-Hermes-3/4 non-agentic warning detector.'; it has 1 test functions (for example test_matches_real_nous_hermes_chat_models). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2679,36 +2631,32 @@
     {
       "path": "tests/hermes_cli/test_openai_codex_model_validation_fallback.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_openai_codex_model_validation_fallback",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression tests for OpenAI Codex model validation when the listing lags behind actually usable backend model IDs.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/agent_loop/tests/runtime_smart_routing.rs",
-          "name": "test_smart_model_routing_openai_codex_reads_auth_store_token"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression tests for OpenAI Codex model validation when the listing lags behind actually usable backend model IDs.'; it has 2 test functions (for example test_openai_codex_unknown_but_plausible_model_is_accepted_with_warning, test_switch_model_allows_openai_codex_model_missing_from_listing). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_opencode_go_flat_namespace.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_opencode_go_flat_namespace",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for opencode-go / opencode-zen flat-namespace model handling.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/model_normalize.rs",
-          "name": "opencode_zen_preserves_non_claude_dots_but_hyphenates_claude"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for opencode-go / opencode-zen flat-namespace model handling.'; it has 2 test functions (for example test_opencode_go_strips_deepseek_prefix, test_kimi_k2_6_stays_on_opencode_go). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2756,19 +2704,17 @@
     {
       "path": "tests/hermes_cli/test_opencode_go_validation_fallback.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_opencode_go_validation_fallback",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the static-catalog fallback in validate_requested_model.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
-          "name": "setup_default_model_pick_index_uses_nous_kimi_fallback_when_target_missing"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the static-catalog fallback in validate_requested_model.'; it has 2 test functions (for example test_opencode_go_known_model_accepted, test_opencode_go_totally_unknown_model_still_accepted). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2847,19 +2793,17 @@
     {
       "path": "tests/hermes_cli/test_pin_kanban_board_env.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_pin_kanban_board_env",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for `_pin_kanban_board_env` helper invoked by `cmd_chat`.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-config/src/loader/tests/env_overrides.rs",
-          "name": "apply_env_overrides_supports_kanban_dispatch_gate"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for `_pin_kanban_board_env` helper invoked by `cmd_chat`.'; it has 2 test functions (for example test_pin_writes_resolved_board_when_env_unset, test_pin_does_not_overwrite_existing_env). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2988,19 +2932,17 @@
     {
       "path": "tests/hermes_cli/test_post_setup_gating.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_post_setup_gating",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the post_setup install-state gate in `_toolset_needs_configuration_prompt`.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-source-parity-tests/tests/installer_contract.rs",
-          "name": "explicit_setup_runs_bounded_post_install_probes"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the post_setup install-state gate in `_toolset_needs_configuration_prompt`.'; it has 8 test functions (for example test_cua_driver_missing_forces_setup, test_incompatible_cua_driver_forces_setup, test_compatible_cua_driver_skips_setup). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3280,53 +3222,47 @@
     {
       "path": "tests/hermes_cli/test_redact_config_bridge.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_redact_config_bridge",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Regression test for config.yaml `security.redact_secrets: false` toggle.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-config/src/loader/tests/runtime_bridges.rs",
-          "name": "display_config_bridge_map_covers_busy_runtime_keys"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Regression test for config.yaml `security.redact_secrets: false` toggle.'; it has 3 test functions (for example test_redact_secrets_false_in_config_yaml_is_honored, test_redact_secrets_default_true_when_unset, test_dotenv_redact_secrets_beats_config_yaml). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_relaunch.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_relaunch",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for hermes_cli.relaunch — unified self-relaunch utility.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp/memory_setup.rs",
-          "name": "setup_mem0_accepts_self_hosted_host_without_cloud_api_key"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for hermes_cli.relaunch — unified self-relaunch utility.'; it has 15 test functions (for example test_prefers_absolute_argv0_when_executable, test_resolves_relative_argv0, test_falls_back_to_path_which). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/hermes_cli/test_resolve_last_session.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_resolve_last_session",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Verify `hermes -c` picks the session the user most recently used.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/session_persistence/tests.rs",
-          "name": "resolve_resume_session_id_excludes_branch_delegate_and_tool_children"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Verify `hermes -c` picks the session the user most recently used.'; it has 3 test functions (for example test_search_sessions_exposes_last_active_column, test_resolve_last_session_real_db_prefers_workspace, test_resolve_last_session_cli_continues_a_oneshot). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3424,19 +3360,17 @@
     {
       "path": "tests/hermes_cli/test_setup_agent_settings.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_setup_agent_settings",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for agent-settings copy in the interactive setup wizard.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp/memory_setup.rs",
-          "name": "mem0_setup_mode_accepts_upstream_selfhosted_spelling"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for agent-settings copy in the interactive setup wizard.'; it has 1 test functions (for example test_setup_agent_settings_prefers_config_over_stale_env). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3877,19 +3811,17 @@
     {
       "path": "tests/hermes_cli/test_startup_plugin_gating.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_startup_plugin_gating",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Guards for CLI startup performance regression.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
-          "name": "test_new_session_persists_startup_stub_snapshot"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Guards for CLI startup performance regression.'; it has 1 test functions (for example test_deferred_platform_loader_registers_cli_command_before_parser_table). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3969,19 +3901,17 @@
     {
       "path": "tests/hermes_cli/test_teams_pipeline_plugin_cli.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_teams_pipeline_plugin_cli",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for the teams_pipeline plugin CLI.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/teams_pipeline_cli.rs",
-          "name": "runtime_config_uses_existing_teams_platform_settings"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for the teams_pipeline plugin CLI.'; it has 2 test functions (for example test_show_prints_job_json, test_validate_accepts_msgraph_credentials_for_graph_delivery). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4405,19 +4335,17 @@
     {
       "path": "tests/hermes_cli/test_voice_wrapper.py",
       "classification_path": "tests/hermes_cli",
-      "status": "covered_by_rust_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "test_voice_wrapper",
         "repin_v0_23_2"
       ],
-      "rationale": "Not mapped at the v0.23.2 re-pin. Upstream's test: 'Tests for ``hermes_cli.voice`` — the TUI gateway's voice wrapper.'. The cited Rust test was picked by matching names only, because this manifest needs one; whether Rust covers the upstream cases was not checked.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-gateway/src/voice.rs",
-          "name": "gateway_whisper_prefers_voice_tools_key_and_reports_missing_keys"
-        }
-      ]
+      "rationale": "This tree's copy differs from upstream's v0.23.2 test: upstream describes it as 'Tests for ``hermes_cli.voice`` — the TUI gateway's voice wrapper.'; it has 20 test functions (for example test_non_string_falls_back_to_default, test_super_win_fall_back_to_default_in_cli, test_pt_key_to_sequence). No Rust test known to exercise these cases is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4580,9 +4508,10 @@
   "schema_version": 1,
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 147,
+    "covered_paths": 111,
     "guard_test": "crates/hermes-source-parity-tests/tests/hermes_cli_test_coverage_contract.rs",
     "provider_api_mode_bridge_added": true,
-    "required_backlog_classification_path": "tests/hermes_cli"
+    "required_backlog_classification_path": "tests/hermes_cli",
+    "deferred_paths": 36
   }
 }

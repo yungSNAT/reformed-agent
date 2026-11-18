@@ -21,7 +21,7 @@
   ],
   "reasons": {
     "/approvals": "Not ported at the v0.23.2 re-pin. Upstream: 'Show or set the persistent dangerous-command approval mode'.",
-    "/autoprune": "Not ported at the v0.23.2 re-pin. Upstream: 'Turn automatic pruning of old sessions on or off'.",
+    "/autoprune": "Not ported at the v0.23.2 re-pin. Upstream: 'Turn automatic pruning of old sessions on or off'. This tree prunes old sessions at start-up when `sessions.auto_prune` is set in config (crates/hermes-cli/src/app/app_impl/construction.rs).",
     "/battery": "Not ported at the v0.23.2 re-pin. Upstream: 'Toggle a color-coded battery indicator in the status bar'.",
     "/discard": "Not ported at the v0.23.2 re-pin. Upstream: 'Drop a turn lost when Hermes restarted so this chat's queue runs again'.",
     "/egress": "Not ported at the v0.23.2 re-pin. Upstream: 'Show Docker egress proxy status'.",
@@ -29,7 +29,7 @@
     "/focus": "Not ported at the v0.23.2 re-pin. Upstream: 'Toggle focus view — show only your prompt and the final response'.",
     "/heartbeat": "Not ported at the v0.23.2 re-pin. Upstream: 'Set a recurring prompt that re-enters this session when idle'.",
     "/import": "Not ported at the v0.23.2 re-pin. Upstream: 'Import a shared profile archive as a new profile'.",
-    "/login": "Not ported at the v0.23.2 re-pin. Upstream: 'Sign in with a Nous account (keeps your connectors)'.",
+    "/login": "Not ported at the v0.23.2 re-pin. Upstream: 'Sign in with a Nous account (keeps your connectors)'. This tree signs in with `hermes auth nous` and reopens the portal login when a Nous token expires (crates/hermes-cli/src/app/app_impl/auth_context.rs).",
     "/loop": "Not ported at the v0.23.2 re-pin. Upstream: 'Re-run a prompt on a recurring interval in this session'.",
     "/palette": "Not ported at the v0.23.2 re-pin. Upstream: 'Open the fuzzy command palette (also Ctrl+P)'.",
     "/pause": "Not ported at the v0.23.2 re-pin. Upstream: 'Pause new work globally (emergency stop); '/pause off' resumes'.",
