@@ -393,6 +393,40 @@ async fn prompt_submit_refuses_bad_requests() {
     assert_eq!(reply["result"]["status"], "streaming", "{reply}");
 }
 
+/// `file.attach` (staging is tested in the crate, as it writes under the working folder):
+/// each refusal comes before anything is written, and a host path is never read.
+#[tokio::test]
+async fn file_attach_refuses_bad_requests() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let data_url = "data:text/plain;base64,aGk=";
+    let cases = [
+        (json!({"data_url": data_url}), 4000),
+        (
+            json!({"session_id": "no-such-session", "data_url": data_url}),
+            4001,
+        ),
+        (json!({"session_id": session, "path": "Cargo.toml"}), 4015),
+        (json!({"session_id": session, "data_url": 5}), 4000),
+        (
+            json!({"session_id": session, "data_url": data_url, "name": 5}),
+            4000,
+        ),
+        // Not base64: refused before the attachments folder is made.
+        (
+            json!({"session_id": session, "data_url": "data:text/plain,hi"}),
+            5028,
+        ),
+    ];
+    for (n, (params, code)) in cases.into_iter().enumerate() {
+        let reply = client
+            .call(10 + n as u64, "file.attach", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+}
+
 #[tokio::test]
 async fn the_runtime_check_reports_the_configured_model() {
     let started = start(vec!["x"], Duration::ZERO).await;

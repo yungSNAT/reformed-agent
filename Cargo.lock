@@ -1820,6 +1820,7 @@ name = "hermes-desktop-gateway"
 version = "0.22.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "clap",
  "futures",
  "hermes-agent",
@@ -1829,6 +1830,7 @@ dependencies = [
  "hermes-provider-runtime",
  "reqwest",
  "rusqlite",
+ "serde",
  "serde_json",
  "subtle",
  "tempfile",
