@@ -8,7 +8,7 @@ description = "Parity gates and report generators run by CI; not part of the her
 publish = false
 
 [dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
 hermes-py = { workspace = true }

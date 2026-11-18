@@ -3,7 +3,7 @@
 
 use jiff::civil::DateTime;
 use jiff::tz::{Offset, TimeZone};
-use jiff::Timestamp;
+use jiff::{SignedDuration, Timestamp};
 
 /// The fractional digits chrono's `SecondsFormat::AutoSi` chose: none, 3, 6
 /// or 9, whichever shows every nonzero digit.
@@ -25,9 +25,32 @@ pub fn rfc3339(ts: Timestamp) -> String {
     )
 }
 
+/// `2026-11-17T19:51:55.123Z`: the form chrono's serde wrote, and
+/// [`serde_utc`] writes, for a JSON value built by hand.
+pub fn rfc3339_z(ts: Timestamp) -> String {
+    format!("{:.*}", auto_si_digits(ts), ts)
+}
+
 /// The current time as [`rfc3339`] writes it.
 pub fn now_rfc3339() -> String {
     rfc3339(Timestamp::now())
+}
+
+/// `ts` moved by `secs` seconds, clamped to the range of instants: an
+/// issuer's `expires_in` can be any integer.
+pub fn plus_secs(ts: Timestamp, secs: i64) -> Timestamp {
+    let edge = if secs < 0 {
+        Timestamp::MIN
+    } else {
+        Timestamp::MAX
+    };
+    ts.checked_add(SignedDuration::from_secs(secs))
+        .unwrap_or(edge)
+}
+
+/// [`plus_secs`] from now.
+pub fn now_plus_secs(secs: i64) -> Timestamp {
+    plus_secs(Timestamp::now(), secs)
 }
 
 /// Reads RFC 3339 as chrono's `DateTime::parse_from_rfc3339` did:
@@ -123,7 +146,7 @@ pub mod serde_utc {
     use serde::{de::Error as _, Deserialize, Deserializer, Serializer};
 
     pub fn serialize<S: Serializer>(ts: &Timestamp, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(&format_args!("{:.*}", super::auto_si_digits(*ts), ts))
+        serializer.serialize_str(&super::rfc3339_z(*ts))
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Timestamp, D::Error> {
@@ -162,7 +185,5 @@ pub fn utc_civil(ts: Timestamp) -> DateTime {
     TimeZone::UTC.to_datetime(ts)
 }
 
-#[cfg(test)]
-mod chrono_equivalence;
 #[cfg(test)]
 mod tests;

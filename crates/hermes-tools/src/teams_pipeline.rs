@@ -6,7 +6,7 @@
 //! here.
 
 use async_trait::async_trait;
-use chrono::{DateTime, Duration as ChronoDuration, SecondsFormat, Utc};
+use jiff::{SignedDuration, Timestamp};
 use reqwest::{Client, Method, StatusCode};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -89,7 +89,7 @@ fn skip_map(map: &Map<String, Value>) -> bool {
 }
 
 fn utc_now_iso() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    format!("{:.0}", jiff::Timestamp::now())
 }
 
 fn env_nonempty(key: &str) -> Option<String> {
@@ -137,14 +137,12 @@ fn object_field<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
     value.as_object().and_then(|object| object.get(key))
 }
 
-fn parse_datetime_utc(value: &str) -> Option<DateTime<Utc>> {
+fn parse_datetime_utc(value: &str) -> Option<Timestamp> {
     let text = value.trim();
     if text.is_empty() {
         return None;
     }
-    DateTime::parse_from_rfc3339(text)
-        .map(|dt| dt.with_timezone(&Utc))
-        .ok()
+    hermes_core::time::parse_rfc3339(text)
 }
 
 fn canonical_json(value: &Value) -> String {
@@ -1257,7 +1255,7 @@ struct MicrosoftGraphAuthConfig {
 #[derive(Debug, Clone)]
 struct CachedGraphToken {
     access_token: String,
-    expires_at: DateTime<Utc>,
+    expires_at: Timestamp,
 }
 
 include!("teams_pipeline/graph_backend.rs");

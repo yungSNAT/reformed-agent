@@ -114,10 +114,9 @@ fn strip_matches_python_whitespace() {
 
 #[test]
 fn isoformat_drops_zero_microseconds_as_python_does() {
-    use chrono::TimeZone;
-    let whole = chrono::Utc.with_ymd_and_hms(2026, 11, 17, 1, 2, 3).unwrap();
+    let whole: jiff::Timestamp = "2026-11-17T01:02:03Z".parse().unwrap();
     assert_eq!(isoformat(whole), "2026-11-17T01:02:03+00:00");
-    let fractional = whole + chrono::Duration::microseconds(450);
+    let fractional = whole + jiff::SignedDuration::from_micros(450);
     assert_eq!(isoformat(fractional), "2026-11-17T01:02:03.000450+00:00");
 }
 

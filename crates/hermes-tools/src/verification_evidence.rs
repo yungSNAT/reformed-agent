@@ -7,7 +7,6 @@ use std::fs::{self, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 
 const MAX_OUTPUT_PREVIEW_BYTES: usize = 4_000;
@@ -135,7 +134,7 @@ pub fn record_terminal_result(
             .map(str::to_string),
         exit_code,
         output_preview: output_preview(output),
-        recorded_at: Utc::now().to_rfc3339(),
+        recorded_at: hermes_core::time::now_rfc3339(),
         scope: command_scope(&canonical).to_string(),
     };
 

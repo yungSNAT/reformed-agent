@@ -1,6 +1,6 @@
 //! Run / task result records for evaluation runs.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::time::Duration;
 
@@ -58,8 +58,10 @@ pub struct AggregateMetrics {
 pub struct RunRecord {
     pub run_id: String,
     pub benchmark: BenchmarkMetadata,
-    pub started_at: DateTime<Utc>,
-    pub finished_at: Option<DateTime<Utc>>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub started_at: Timestamp,
+    #[serde(default, with = "hermes_core::time::serde_utc::option")]
+    pub finished_at: Option<Timestamp>,
     /// Seed used for any randomised subsampling, for reproducibility.
     pub seed: u64,
     /// Concurrency level used for the rollout.

@@ -83,8 +83,8 @@ struct OAuthStoreCredential {
     token_type: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     scope: Option<String>,
-    #[serde(default)]
-    expires_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "hermes_core::time::serde_utc::option")]
+    expires_at: Option<Timestamp>,
 }
 
 const MEMORY_GUIDANCE: &str = "You have persistent memory across sessions. Save durable facts using the memory tool: user preferences, environment details, tool quirks, and stable conventions. Memory is injected into every turn, so keep it compact and focused on facts that will still matter later. Prioritize what reduces future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to memory.";

@@ -304,7 +304,7 @@ impl MemoryProviderPlugin for RetainDbMemoryPlugin {
         if user_content.trim().is_empty() {
             return;
         }
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         let sid = if session_id.is_empty() {
             st.session_id.clone()
         } else {
@@ -584,7 +584,7 @@ fn enqueue_retaindb_turn(path: &Path, payload: &Value) -> Option<i64> {
             return None;
         }
     };
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     let payload_json = payload.to_string();
     match conn.execute(
         "INSERT INTO pending (payload_json, created_at) VALUES (?1, ?2)",

@@ -1,12 +1,10 @@
 #[cfg(test)]
 mod tests {
     use super::*;
-    use chrono::Duration;
+    use jiff::SignedDuration;
 
-    fn now() -> DateTime<Utc> {
-        DateTime::parse_from_rfc3339("2026-06-22T08:00:00Z")
-            .unwrap()
-            .with_timezone(&Utc)
+    fn now() -> Timestamp {
+        "2026-06-22T08:00:00Z".parse().unwrap()
     }
 
     fn dummy_openai_key() -> String {
@@ -56,7 +54,7 @@ mod tests {
             TrustLevel::Observed,
             "User preferred branch names from last quarter.",
             ContextSource::new("contextlattice", "memory://old")
-                .observed_at(t - Duration::days(90))
+                .observed_at(t - SignedDuration::from_hours(24 * 90))
                 .freshness_seconds(10),
         );
         let report = ContextFirewall::default().compile(&[old_memory], ContextUse::Evidence, t);
@@ -88,7 +86,7 @@ mod tests {
                 "stale",
                 EvidenceRelation::Supports,
                 TrustLevel::Observed,
-                ContextSource::new("git", "origin/main").observed_at(t - Duration::minutes(5)),
+                ContextSource::new("git", "origin/main").observed_at(t - SignedDuration::from_mins(5)),
                 "old fetch result",
             ),
         ];
@@ -229,7 +227,7 @@ mod tests {
             ResearchSourceKind::OfficialDocs,
             TrustLevel::Verified,
             ContextSource::new("web", "https://docs.example.com")
-                .observed_at(t - Duration::hours(2))
+                .observed_at(t - SignedDuration::from_hours(2))
                 .freshness_seconds(86_400),
             "Primary contract details.",
         )

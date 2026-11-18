@@ -678,7 +678,7 @@ pub async fn handle_cli_memory(
                 &disabled_marker,
                 format!(
                     "disabled_at={}\nreason=hermes memory off\n",
-                    chrono::Utc::now().to_rfc3339()
+                    hermes_core::time::now_rfc3339()
                 ),
             )
             .await

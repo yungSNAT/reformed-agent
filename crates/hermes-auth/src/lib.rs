@@ -7,8 +7,9 @@ use std::sync::Arc;
 use aes_gcm::aead::{Aead, KeyInit};
 use aes_gcm::{Aes256Gcm, Nonce};
 use base64::Engine;
-use chrono::{DateTime, Duration, Utc};
+use hermes_core::time::now_plus_secs;
 use hermes_core::AgentError;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
@@ -29,13 +30,14 @@ pub struct OAuthCredential {
     pub refresh_token: Option<String>,
     pub token_type: String,
     pub scope: Option<String>,
-    pub expires_at: Option<DateTime<Utc>>,
+    #[serde(default, with = "hermes_core::time::serde_utc::option")]
+    pub expires_at: Option<Timestamp>,
 }
 
 impl OAuthCredential {
     pub fn is_expired(&self, leeway_secs: i64) -> bool {
         match self.expires_at {
-            Some(exp) => Utc::now() + Duration::seconds(leeway_secs) >= exp,
+            Some(exp) => now_plus_secs(leeway_secs) >= exp,
             None => false,
         }
     }
@@ -490,7 +492,7 @@ pub async fn exchange_authorization_code(
         .json()
         .await
         .map_err(|e| AgentError::Io(e.to_string()))?;
-    let expires_at = body.expires_in.map(|s| Utc::now() + Duration::seconds(s));
+    let expires_at = body.expires_in.map(now_plus_secs);
     Ok(OAuthCredential {
         provider: provider_id.to_string(),
         access_token: body.access_token,
@@ -535,7 +537,7 @@ pub async fn exchange_refresh_token(
         .json()
         .await
         .map_err(|e| AgentError::Io(e.to_string()))?;
-    let expires_at = body.expires_in.map(|s| Utc::now() + Duration::seconds(s));
+    let expires_at = body.expires_in.map(now_plus_secs);
     Ok(OAuthCredential {
         provider: provider_id.to_string(),
         access_token: body.access_token,

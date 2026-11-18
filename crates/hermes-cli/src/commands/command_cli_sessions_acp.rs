@@ -728,8 +728,9 @@ fn message_timestamp(message: &serde_json::Map<String, serde_json::Value>) -> Op
 fn format_session_timestamp(value: &serde_json::Value) -> Option<String> {
     match value {
         serde_json::Value::Number(number) => number.as_f64().and_then(|secs| {
-            chrono::DateTime::<chrono::Utc>::from_timestamp(secs as i64, 0)
-                .map(|dt| dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true))
+            jiff::Timestamp::from_second(secs as i64)
+                .ok()
+                .map(|dt| format!("{dt:.0}"))
         }),
         serde_json::Value::String(text) => {
             let text = text.trim();

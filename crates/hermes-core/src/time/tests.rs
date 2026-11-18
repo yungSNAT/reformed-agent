@@ -113,6 +113,7 @@ fn serde_utc_writes_chrono_form() {
         (at(SECOND, 123_456_700), "2026-03-08T09:30:15.123456700Z"),
     ];
     for (ts, text) in cases {
+        assert_eq!(rfc3339_z(ts), text);
         let record = Record {
             at: ts,
             maybe: Some(ts),
@@ -210,6 +211,26 @@ fn workspace_strftime_patterns_keep_their_output() {
     for (ts, pattern, text) in cases {
         assert_eq!(ts.strftime(pattern).to_string(), text, "{pattern}");
     }
+}
+
+#[test]
+fn plus_secs_adds_and_clamps() {
+    assert_eq!(plus_secs(at(SECOND, 5), 60), at(SECOND + 60, 5));
+    assert_eq!(plus_secs(at(SECOND, 5), -60), at(SECOND - 60, 5));
+    assert_eq!(plus_secs(at(SECOND, 0), i64::MAX), Timestamp::MAX);
+    assert_eq!(plus_secs(at(SECOND, 0), i64::MIN), Timestamp::MIN);
+}
+
+#[test]
+fn now_plus_secs_adds_and_clamps() {
+    let before = Timestamp::now();
+    let later = now_plus_secs(3600);
+    let after = Timestamp::now();
+    assert!(before + SignedDuration::from_secs(3600) <= later);
+    assert!(later <= after + SignedDuration::from_secs(3600));
+    assert_eq!(now_plus_secs(i64::MAX), Timestamp::MAX);
+    assert_eq!(now_plus_secs(i64::MIN), Timestamp::MIN);
+    assert_eq!(now_plus_secs(400_000_000_000), Timestamp::MAX);
 }
 
 #[test]

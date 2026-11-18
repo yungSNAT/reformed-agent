@@ -20,7 +20,7 @@ async-trait = { workspace = true }
 futures = { workspace = true }
 thiserror = { workspace = true }
 regex = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 url = { workspace = true }
 reqwest = { workspace = true, features = ["blocking", "json", "multipart"] }
 which = "7"

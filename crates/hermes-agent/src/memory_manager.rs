@@ -808,7 +808,7 @@ fn append_memory_fusion_trace(query: &str, considered: usize, selected: &[serde_
         let _ = std::fs::create_dir_all(parent);
     }
     let row = serde_json::json!({
-        "ts": chrono::Utc::now().to_rfc3339(),
+        "ts": hermes_core::time::now_rfc3339(),
         "query": query,
         "considered": considered,
         "selected": selected,

@@ -226,11 +226,13 @@ fn summarize_gate_report(path: &Path, key: &str) -> Option<String> {
 }
 
 fn utc_compact_stamp() -> String {
-    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string()
 }
 
-fn system_time_rfc3339(time: SystemTime) -> String {
-    chrono::DateTime::<chrono::Utc>::from(time).to_rfc3339()
+fn system_time_rfc3339(time: SystemTime) -> Option<String> {
+    jiff::Timestamp::try_from(time)
+        .ok()
+        .map(hermes_core::time::rfc3339)
 }
 
 fn normalize_session_role(raw: Option<&str>) -> &'static str {
@@ -321,7 +323,7 @@ fn load_session_eval_stats(path: &Path, modified: SystemTime) -> Option<SessionE
         has_tool_activity,
         has_objective_activity,
         has_patch_evidence,
-        modified_at: system_time_rfc3339(modified),
+        modified_at: system_time_rfc3339(modified)?,
     })
 }
 
@@ -406,7 +408,7 @@ fn build_session_eval_report(
 
     serde_json::json!({
         "ok": ok,
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "sessions_dir": sessions_dir,
         "summary": {
             "sessions_analyzed": sessions.len(),
@@ -594,7 +596,7 @@ fn run_eval_trend_gate_native(
         || baseline_path.as_ref().is_none_or(|p| !p.exists());
     if missing_inputs {
         let report = serde_json::json!({
-            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "generated_at": hermes_core::time::now_rfc3339(),
             "ok": options.allow_missing_baseline,
             "reason": "missing_eval_inputs",
             "allow_missing_baseline": options.allow_missing_baseline,
@@ -649,7 +651,7 @@ fn run_eval_trend_gate_native(
         .iter()
         .all(|check| check.get("ok").and_then(|v| v.as_bool()).unwrap_or(false));
     let report = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "ok": gate_ok,
         "current_path": current_path,
         "baseline_path": baseline_path,

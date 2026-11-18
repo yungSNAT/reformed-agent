@@ -10,9 +10,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
-use chrono::{DateTime, Utc};
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
+use jiff::Timestamp;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -288,7 +288,7 @@ impl DiskCleanup {
         }
         tracked.push(TrackedItem {
             path: path_str.clone(),
-            timestamp: Utc::now().to_rfc3339(),
+            timestamp: hermes_core::time::now_rfc3339(),
             category: category.to_string(),
             size,
         });
@@ -315,7 +315,7 @@ impl DiskCleanup {
     }
 
     pub fn dry_run(&self) -> (Vec<TrackedItem>, Vec<TrackedItem>) {
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut auto = Vec::new();
         let mut prompt = Vec::new();
         for item in self.load_tracked() {
@@ -345,7 +345,7 @@ impl DiskCleanup {
 
     pub fn quick(&self) -> CleanupSummary {
         let tracked = self.load_tracked();
-        let now = Utc::now();
+        let now = Timestamp::now();
         let mut deleted = 0usize;
         let mut freed = 0u64;
         let mut new_tracked = Vec::new();
@@ -512,7 +512,7 @@ impl DiskCleanup {
                 return;
             }
         }
-        let timestamp = Utc::now().format("%Y-%m-%d %H:%M:%S");
+        let timestamp = jiff::Timestamp::now().strftime("%Y-%m-%d %H:%M:%S");
         if let Ok(mut file) = fs::OpenOptions::new()
             .create(true)
             .append(true)
@@ -934,10 +934,8 @@ fn is_tmp_hermes_path(path: &Path) -> bool {
     }
 }
 
-fn age_days(timestamp: &str, now: DateTime<Utc>) -> Option<i64> {
-    DateTime::parse_from_rfc3339(timestamp)
-        .ok()
-        .map(|dt| now.signed_duration_since(dt.with_timezone(&Utc)).num_days())
+fn age_days(timestamp: &str, now: Timestamp) -> Option<i64> {
+    hermes_core::time::parse_rfc3339(timestamp).map(|dt| now.duration_since(dt).as_secs() / 86_400)
 }
 
 fn remove_path(path: &Path) -> io::Result<()> {
@@ -1013,7 +1011,9 @@ mod tests {
     fn stale_item(path: &Path, category: &str, size: u64) -> TrackedItem {
         TrackedItem {
             path: path.to_string_lossy().to_string(),
-            timestamp: (Utc::now() - chrono::Duration::days(20)).to_rfc3339(),
+            timestamp: hermes_core::time::rfc3339(
+                Timestamp::now() - jiff::SignedDuration::from_hours(24 * 20),
+            ),
             category: category.to_string(),
             size,
         }

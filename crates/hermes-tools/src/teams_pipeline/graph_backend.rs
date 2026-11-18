@@ -48,7 +48,7 @@ impl MicrosoftGraphTokenProvider {
         }
         if !force_refresh {
             if let Some(cached) = self.cache.lock().await.clone() {
-                if cached.expires_at > Utc::now() + ChronoDuration::seconds(60) {
+                if cached.expires_at > Timestamp::now() + SignedDuration::from_secs(60) {
                     return Ok(cached.access_token);
                 }
             }
@@ -100,7 +100,7 @@ impl MicrosoftGraphTokenProvider {
             .max(120);
         let cached = CachedGraphToken {
             access_token: access_token.clone(),
-            expires_at: Utc::now() + ChronoDuration::seconds(expires_in - 60),
+            expires_at: hermes_core::time::now_plus_secs(expires_in - 60),
         };
         *self.cache.lock().await = Some(cached);
         Ok(access_token)

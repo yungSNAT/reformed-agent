@@ -6,9 +6,9 @@ use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
-use chrono::{DateTime, Utc};
 use futures::{stream::BoxStream, StreamExt};
 use hmac::{Hmac, Mac};
+use jiff::Timestamp;
 use reqwest::Client;
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -179,7 +179,7 @@ impl LlmProvider for BedrockProvider {
                 service: "bedrock",
                 body: &body_bytes,
                 anthropic_beta: anthropic_beta.as_deref(),
-                now: Utc::now(),
+                now: Timestamp::now(),
             },
             &auth,
         )? {
@@ -264,7 +264,7 @@ impl LlmProvider for BedrockProvider {
                     service: "bedrock",
                     body: &body_bytes,
                     anthropic_beta: anthropic_beta.as_deref(),
-                    now: Utc::now(),
+                    now: Timestamp::now(),
                 },
                 &auth,
             ) {
@@ -462,7 +462,7 @@ async fn fetch_bedrock_catalog_endpoint(
             service: "bedrock",
             body: b"",
             anthropic_beta: None,
-            now: Utc::now(),
+            now: Timestamp::now(),
         },
         auth,
     ) {

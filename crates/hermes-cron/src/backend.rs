@@ -11,6 +11,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{json, Value};
 
+use hermes_core::time::rfc3339_z;
 use hermes_core::ToolError;
 use hermes_tools::tools::cronjob::CronjobBackend;
 
@@ -249,8 +250,8 @@ impl CronjobBackend for ScheduledCronjobBackend {
                     "schedule": j.schedule,
                     "prompt": j.prompt,
                     "status": j.status.to_string(),
-                    "next_run": j.next_run,
-                    "last_run": j.last_run,
+                    "next_run": j.next_run.map(rfc3339_z),
+                    "last_run": j.last_run.map(rfc3339_z),
                     "run_count": j.run_count,
                     "workdir": j.workdir,
                     "context_from": j.context_from,
@@ -319,7 +320,7 @@ impl CronjobBackend for ScheduledCronjobBackend {
                 JobStatus::Paused
             };
             if matches!(job.status, JobStatus::Active) {
-                job.next_run = job.compute_next_run(chrono::Utc::now());
+                job.next_run = job.compute_next_run(jiff::Timestamp::now());
             }
         }
 

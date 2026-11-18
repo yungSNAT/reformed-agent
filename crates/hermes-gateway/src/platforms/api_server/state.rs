@@ -168,7 +168,7 @@ impl RunRecord {
             },
             last_event: None,
             events: Vec::new(),
-            created_at: chrono::Utc::now().timestamp(),
+            created_at: jiff::Timestamp::now().as_second(),
             completed_at: None,
         };
         record.push_event("run.queued", None);
@@ -189,7 +189,7 @@ impl RunRecord {
             "type": event_type,
             "run_id": self.run_id,
             "status": self.status,
-            "created_at": chrono::Utc::now().timestamp(),
+            "created_at": jiff::Timestamp::now().as_second(),
         });
         if let Some(extra) = extra {
             if let (Some(target), Some(source)) = (event.as_object_mut(), extra.as_object()) {

@@ -113,7 +113,7 @@ pub async fn login_anthropic_oauth(
         .get("expires_in")
         .and_then(value_as_i64)
         .filter(|v| *v > 0)
-        .map(|secs| Utc::now().timestamp_millis() + secs * 1000);
+        .map(|secs| jiff::Timestamp::now().as_millisecond() + secs * 1000);
     Ok(AnthropicOAuthState {
         access_token,
         refresh_token,
@@ -451,9 +451,9 @@ pub async fn login_nous_device_code(
         .ok_or_else(|| AgentError::AuthFailed("token response missing access_token".into()))?
         .to_string();
     let access_expires_in = token_payload.expires_in.filter(|v| *v > 0);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let access_expires_at = access_expires_in.map(|secs| {
-        (now + chrono::Duration::seconds(secs)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        format!("{:.0}", hermes_core::time::plus_secs(now, secs))
     });
 
     let resolved_inference_url = token_payload
@@ -476,7 +476,7 @@ pub async fn login_nous_device_code(
             .unwrap_or_else(|| "Bearer".to_string()),
         access_token,
         refresh_token: token_payload.refresh_token,
-        obtained_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        obtained_at: format!("{now:.0}"),
         expires_at: access_expires_at,
         expires_in: access_expires_in,
         agent_key: None,
@@ -670,7 +670,7 @@ pub async fn login_openai_codex_device_code(
             expires_in: token_payload.expires_in,
         },
         base_url,
-        last_refresh: Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        last_refresh: format!("{:.0}", jiff::Timestamp::now()),
         auth_mode: Some("chatgpt".to_string()),
         source: Some("device_code".to_string()),
     })

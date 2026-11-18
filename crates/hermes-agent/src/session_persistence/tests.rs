@@ -1,10 +1,12 @@
 use super::*;
+use hermes_core::time::rfc3339;
 use hermes_core::Message;
+use jiff::{SignedDuration, Timestamp};
 use rusqlite::params;
 
 fn mark_session_old(sp: &SessionPersistence, session_id: &str, days_old: i64) {
     let conn = rusqlite::Connection::open(&sp.db_path).expect("open db");
-    let ts = (Utc::now() - ChronoDuration::days(days_old)).to_rfc3339();
+    let ts = rfc3339(Timestamp::now() - SignedDuration::from_hours(24 * days_old));
     conn.execute(
         "UPDATE sessions SET updated_at = ?1 WHERE id = ?2",
         params![ts, session_id],
@@ -814,10 +816,10 @@ fn resolve_resume_session_id_follows_compression_tip_with_nonempty_parent() {
         None,
     )
     .unwrap();
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let root_ended = (base + ChronoDuration::seconds(10)).to_rfc3339();
-    let cont_created = (base + ChronoDuration::seconds(20)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let root_ended = rfc3339(base + SignedDuration::from_secs(10));
+    let cont_created = rfc3339(base + SignedDuration::from_secs(20));
     set_session_lineage(
         &sp,
         "root",
@@ -853,9 +855,9 @@ fn resolve_resume_session_id_ignores_non_compression_branch_child() {
         None,
     )
     .unwrap();
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let branch_created = (base + ChronoDuration::seconds(20)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let branch_created = rfc3339(base + SignedDuration::from_secs(20));
     set_session_lineage(&sp, "root", None, None, &root_created, None);
     set_session_lineage(&sp, "branch", Some("root"), None, &branch_created, None);
 
@@ -884,10 +886,10 @@ fn resolve_resume_session_id_follows_child_created_before_parent_end() {
         None,
     )
     .unwrap();
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let root_ended = (base + ChronoDuration::seconds(30)).to_rfc3339();
-    let early_created = (base + ChronoDuration::seconds(10)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let root_ended = rfc3339(base + SignedDuration::from_secs(30));
+    let early_created = rfc3339(base + SignedDuration::from_secs(10));
     set_session_lineage(
         &sp,
         "root",
@@ -920,14 +922,14 @@ fn resolve_resume_session_id_prefers_live_race_continuation_over_closed_stale_si
         )
         .unwrap();
     }
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let real_created = (base + ChronoDuration::seconds(10)).to_rfc3339();
-    let root_ended = (base + ChronoDuration::seconds(30)).to_rfc3339();
-    let stale_created = (base + ChronoDuration::seconds(40)).to_rfc3339();
-    let stale_ended = (base + ChronoDuration::seconds(50)).to_rfc3339();
-    let real_message_at = (base + ChronoDuration::seconds(60)).to_rfc3339();
-    let stale_message_at = (base + ChronoDuration::seconds(70)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let real_created = rfc3339(base + SignedDuration::from_secs(10));
+    let root_ended = rfc3339(base + SignedDuration::from_secs(30));
+    let stale_created = rfc3339(base + SignedDuration::from_secs(40));
+    let stale_ended = rfc3339(base + SignedDuration::from_secs(50));
+    let real_message_at = rfc3339(base + SignedDuration::from_secs(60));
+    let stale_message_at = rfc3339(base + SignedDuration::from_secs(70));
     set_session_lineage(
         &sp,
         "root",
@@ -966,9 +968,9 @@ fn resolve_resume_session_id_excludes_branch_delegate_and_tool_children() {
         )
         .unwrap();
     }
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let root_ended = (base + ChronoDuration::seconds(10)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let root_ended = rfc3339(base + SignedDuration::from_secs(10));
     set_session_lineage(
         &sp,
         "root",
@@ -978,9 +980,9 @@ fn resolve_resume_session_id_excludes_branch_delegate_and_tool_children() {
         Some(&root_ended),
     );
     for (offset, id) in [(20, "cont"), (30, "branch"), (40, "delegate"), (50, "tool")] {
-        let created = (base + ChronoDuration::seconds(offset)).to_rfc3339();
+        let created = rfc3339(base + SignedDuration::from_secs(offset));
         set_session_lineage(&sp, id, Some("root"), None, &created, None);
-        let msg_created = (base + ChronoDuration::seconds(offset + 100)).to_rfc3339();
+        let msg_created = rfc3339(base + SignedDuration::from_secs(offset + 100));
         set_message_created_at(&sp, id, &msg_created);
     }
     set_session_model_config(&sp, "branch", r#"{"_branched_from":"root"}"#);
@@ -1005,12 +1007,12 @@ fn resolve_resume_session_id_walks_compression_chain_to_latest_tip() {
         )
         .unwrap();
     }
-    let base = Utc::now() - ChronoDuration::hours(1);
-    let root_created = base.to_rfc3339();
-    let root_ended = (base + ChronoDuration::seconds(10)).to_rfc3339();
-    let mid_created = (base + ChronoDuration::seconds(20)).to_rfc3339();
-    let mid_ended = (base + ChronoDuration::seconds(30)).to_rfc3339();
-    let tip_created = (base + ChronoDuration::seconds(40)).to_rfc3339();
+    let base = Timestamp::now() - SignedDuration::from_hours(1);
+    let root_created = rfc3339(base);
+    let root_ended = rfc3339(base + SignedDuration::from_secs(10));
+    let mid_created = rfc3339(base + SignedDuration::from_secs(20));
+    let mid_ended = rfc3339(base + SignedDuration::from_secs(30));
+    let tip_created = rfc3339(base + SignedDuration::from_secs(40));
     set_session_lineage(
         &sp,
         "root",
@@ -1046,7 +1048,7 @@ fn delete_session_removes_rows_search_entries_and_transcript() {
         "branch",
         Some("gone"),
         None,
-        &Utc::now().to_rfc3339(),
+        &hermes_core::time::now_rfc3339(),
         None,
     );
     std::fs::create_dir_all(tmp.path().join("sessions")).unwrap();
@@ -1101,7 +1103,7 @@ fn delete_session_changes_nothing_when_the_store_lacks_the_session() {
         "child",
         Some("ghost"),
         None,
-        &Utc::now().to_rfc3339(),
+        &hermes_core::time::now_rfc3339(),
         None,
     );
 
@@ -1163,7 +1165,7 @@ fn delete_session_if_empty_preserves_sessions_with_messages_title_or_children() 
     sp.persist_session("parent", &[], None, Some("cli"), None, None)
         .unwrap();
     let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
-    let now = Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     conn.execute(
         "INSERT INTO sessions (id, model, platform, created_at, updated_at, parent_session_id)
          VALUES ('child', 'gpt-4o', 'cli', ?1, ?1, 'parent')",

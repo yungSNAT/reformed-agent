@@ -8,7 +8,7 @@ description = "Python behaviour the parity tools and the CLI's /review reproduce
 publish = false
 
 [dependencies]
-chrono = { workspace = true }
+jiff = { workspace = true }
 
 [dev-dependencies]
 tempfile = "3"

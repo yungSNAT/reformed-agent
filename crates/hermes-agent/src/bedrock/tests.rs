@@ -704,9 +704,7 @@ fn sigv4_headers_include_required_bedrock_fields() {
             service: "bedrock",
             body: br#"{"messages":[]}"#,
             anthropic_beta: Some(CONTEXT_1M_BETA),
-            now: DateTime::parse_from_rfc3339("2026-05-30T00:00:00Z")
-                .unwrap()
-                .with_timezone(&Utc),
+            now: "2026-05-30T00:00:00Z".parse().unwrap(),
         },
         &auth,
     )

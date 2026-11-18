@@ -22,7 +22,7 @@ async fn run_autopilot_probe_command_with_timeout(
     max_tail: usize,
     timeout: Duration,
 ) -> serde_json::Value {
-    let started = chrono::Utc::now();
+    let started = jiff::Timestamp::now();
     let mut child = tokio::process::Command::new("bash");
     child
         .arg("-lc")
@@ -34,15 +34,15 @@ async fn run_autopilot_probe_command_with_timeout(
         .suppress_windows_console()
         .kill_on_drop(true);
     let output = tokio::time::timeout(timeout, child.output()).await;
-    let finished = chrono::Utc::now();
+    let finished = jiff::Timestamp::now();
     match output {
         Ok(Ok(output)) => serde_json::json!({
             "command": command,
             "exit_code": output.status.code().unwrap_or(-1),
             "ok": output.status.success(),
-            "started_at": started.to_rfc3339(),
-            "finished_at": finished.to_rfc3339(),
-            "duration_ms": (finished - started).num_milliseconds().max(0),
+            "started_at": hermes_core::time::rfc3339(started),
+            "finished_at": hermes_core::time::rfc3339(finished),
+            "duration_ms": finished.duration_since(started).as_millis().max(0),
             "stdout_tail": tail_chars(&String::from_utf8_lossy(&output.stdout), max_tail),
             "stderr_tail": tail_chars(&String::from_utf8_lossy(&output.stderr), max_tail),
         }),
@@ -50,9 +50,9 @@ async fn run_autopilot_probe_command_with_timeout(
             "command": command,
             "exit_code": -1,
             "ok": false,
-            "started_at": started.to_rfc3339(),
-            "finished_at": finished.to_rfc3339(),
-            "duration_ms": (finished - started).num_milliseconds().max(0),
+            "started_at": hermes_core::time::rfc3339(started),
+            "finished_at": hermes_core::time::rfc3339(finished),
+            "duration_ms": finished.duration_since(started).as_millis().max(0),
             "stdout_tail": "",
             "stderr_tail": format!("spawn failed: {err}"),
         }),
@@ -60,9 +60,9 @@ async fn run_autopilot_probe_command_with_timeout(
             "command": command,
             "exit_code": -1,
             "ok": false,
-            "started_at": started.to_rfc3339(),
-            "finished_at": finished.to_rfc3339(),
-            "duration_ms": (finished - started).num_milliseconds().max(0),
+            "started_at": hermes_core::time::rfc3339(started),
+            "finished_at": hermes_core::time::rfc3339(finished),
+            "duration_ms": finished.duration_since(started).as_millis().max(0),
             "stdout_tail": "",
             "stderr_tail": format!("timed out after {}ms", timeout.as_millis()),
         }),
@@ -98,7 +98,7 @@ fn contextlattice_orchestrator_url() -> String {
 }
 
 async fn contextlattice_preflight_section() -> serde_json::Value {
-    let started = chrono::Utc::now();
+    let started = jiff::Timestamp::now();
     let base = contextlattice_orchestrator_url();
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
@@ -106,14 +106,14 @@ async fn contextlattice_preflight_section() -> serde_json::Value {
     {
         Ok(client) => client,
         Err(err) => {
-            let finished = chrono::Utc::now();
+            let finished = jiff::Timestamp::now();
             return serde_json::json!({
                 "command": format!("GET {base}/health + POST {base}/memory/search"),
                 "exit_code": -1,
                 "ok": false,
-                "started_at": started.to_rfc3339(),
-                "finished_at": finished.to_rfc3339(),
-                "duration_ms": (finished - started).num_milliseconds().max(0),
+                "started_at": hermes_core::time::rfc3339(started),
+                "finished_at": hermes_core::time::rfc3339(finished),
+                "duration_ms": finished.duration_since(started).as_millis().max(0),
                 "stdout_tail": "",
                 "stderr_tail": format!("ContextLattice HTTP client build failed: {err}"),
             });
@@ -197,14 +197,14 @@ async fn contextlattice_preflight_section() -> serde_json::Value {
     });
     let stdout_tail =
         serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string());
-    let finished = chrono::Utc::now();
+    let finished = jiff::Timestamp::now();
     serde_json::json!({
         "command": format!("GET {base}/health + POST {base}/memory/search"),
         "exit_code": if health_ok && !degraded { 0 } else { 1 },
         "ok": health_ok && !degraded,
-        "started_at": started.to_rfc3339(),
-        "finished_at": finished.to_rfc3339(),
-        "duration_ms": (finished - started).num_milliseconds().max(0),
+        "started_at": hermes_core::time::rfc3339(started),
+        "finished_at": hermes_core::time::rfc3339(finished),
+        "duration_ms": finished.duration_since(started).as_millis().max(0),
         "stdout_tail": tail_chars(&stdout_tail, 240000),
         "stderr_tail": "",
     })
@@ -742,7 +742,7 @@ async fn run_performance_autopilot_native(
         &recommendations,
     );
     let mut report = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "repo_root": repo_root,
         "ok": ok,
         "sections": {
