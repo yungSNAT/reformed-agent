@@ -36,8 +36,11 @@ jobs:
           python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
           python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
           python3 scripts/generate-global-parity-proof.py
-          # Gate the proof's local metrics; only the 4 upstream drift metrics are reported.
-          jq -e '[.ci_gate.checks[] | select(.metric | IN("max_commits_behind", "max_upstream_patch_missing", "max_files_only_upstream", "max_queue_pending_commits") | not) | select(.status == "fail" or .status == "missing")] == []' docs/parity/global-parity-proof.json > /dev/null
+          # Gate the proof's local metrics; the 4 upstream drift metrics are only reported.
+          # The coverage ratio counts deferred rows as uncovered, so it is reported too;
+          # max_test_coverage_unaccounted_rows fails on any row neither covered nor deferred,
+          # and global_parity_governance ratchets the deferred count.
+          jq -e '[.ci_gate.checks[] | select(.metric | IN("max_commits_behind", "max_upstream_patch_missing", "max_files_only_upstream", "max_queue_pending_commits", "min_test_coverage_tracked_behavior_ratio") | not) | select(.status == "fail" or .status == "missing")] == []' docs/parity/global-parity-proof.json > /dev/null
       - name: Generate public release readiness summary
         run: |
           python3 scripts/generate-release-readiness-summary.py --repo-root .
