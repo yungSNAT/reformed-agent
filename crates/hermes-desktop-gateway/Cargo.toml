@@ -29,5 +29,6 @@ uuid = { workspace = true }
 [dev-dependencies]
 futures = { workspace = true }
 reqwest = { workspace = true }
+rusqlite = { workspace = true }
 tempfile = "3"
 tokio-tungstenite = { workspace = true }

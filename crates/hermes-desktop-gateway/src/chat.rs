@@ -288,6 +288,18 @@ impl Chat {
         Ok(json!({"status": "streaming"}))
     }
 
+    /// Runs `work` on the sessions database on the blocking pool. A turn's store calls block,
+    /// and on the turn's thread they would hold its queued events past their write deadline.
+    async fn with_store<T: Send + 'static>(
+        &self,
+        work: impl FnOnce(SessionPersistence) -> T + Send + 'static,
+    ) -> Result<T, String> {
+        let home = self.home.clone();
+        tokio::task::spawn_blocking(move || work(SessionPersistence::new(home)))
+            .await
+            .map_err(|e| e.to_string())
+    }
+
     fn lock_sessions(&self) -> std::sync::MutexGuard<'_, HashMap<String, Arc<LiveSession>>> {
         // A panic while the map is held cannot leave it half-updated (single inserts and
         // reads), so a poisoned lock is still safe to use.
@@ -403,8 +415,12 @@ impl Turn {
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
-        let store = SessionPersistence::new(&self.chat.home);
-        let mut transcript = store.load_session(&self.id).map_err(|e| e.to_string())?;
+        let id = self.id.clone();
+        let mut transcript = self
+            .chat
+            .with_store(move |store| store.load_session(&id))
+            .await?
+            .map_err(|e| e.to_string())?;
         // The leading system rows hold the stored system prompt, which the agent adds itself.
         let prompt_rows = transcript
             .iter()
@@ -421,14 +437,21 @@ impl Turn {
                 if !partial.is_empty() {
                     transcript.push(Message::assistant(partial));
                 }
-                let saved = store.persist_session(
-                    &self.id,
-                    &transcript,
-                    Some(&model),
-                    Some("desktop"),
-                    None,
-                    None,
-                );
+                let (id, model) = (self.id.clone(), model.clone());
+                let saved = self
+                    .chat
+                    .with_store(move |store| {
+                        store.persist_session(
+                            &id,
+                            &transcript,
+                            Some(&model),
+                            Some("desktop"),
+                            None,
+                            None,
+                        )
+                    })
+                    .await
+                    .and_then(|saved| saved.map_err(|e| e.to_string()));
                 return Err(match saved {
                     Ok(()) => error,
                     Err(e) => format!("{error} (the prompt was not saved: {e})"),
@@ -436,8 +459,16 @@ impl Turn {
             }
         };
         let reply = hermes_app_runtime::assistant_reply_from_result(&result);
-        let warning = store
-            .persist_agent_result(&self.id, &result, Some(&model), Some("desktop"))
+        let id = self.id.clone();
+        let warning = self
+            .chat
+            .with_store(move |store| {
+                store
+                    .persist_agent_result(&id, &result, Some(&model), Some("desktop"))
+                    .map_err(|e| e.to_string())
+            })
+            .await
+            .and_then(|saved| saved)
             .err()
             .map(|e| format!("The reply was not saved: {e}"));
         Ok((reply, warning))
@@ -454,8 +485,14 @@ impl Turn {
         let chat = &self.chat;
         let mut agent_config = hermes_app_runtime::build_agent_config(&chat.config, model);
         agent_config.session_id = Some(self.id.clone());
-        AgentLoop::hydrate_stored_system_prompt_from_hermes_home(&mut agent_config, &chat.home)
-            .map_err(|e| e.to_string())?;
+        let home = chat.home.clone();
+        let agent_config = tokio::task::spawn_blocking(move || {
+            AgentLoop::hydrate_stored_system_prompt_from_hermes_home(&mut agent_config, &home)
+                .map(|()| agent_config)
+        })
+        .await
+        .map_err(|e| e.to_string())?
+        .map_err(|e| e.to_string())?;
         let provider = hermes_provider_runtime::build_provider(&chat.config, model);
         let agent = AgentLoop::new(agent_config, Arc::new(ToolRegistry::new()), provider);
 
