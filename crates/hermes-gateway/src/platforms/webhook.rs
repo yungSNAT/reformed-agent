@@ -153,12 +153,24 @@ impl WebhookAdapter {
         &self.config
     }
 
+    /// Checks the global secret and each route's effective secret before the server starts.
     fn validate_auth_safety(config: &WebhookConfig) -> Result<(), GatewayError> {
-        if config.secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
-            return Err(GatewayError::Auth(
-                "webhook secret INSECURE_NO_AUTH is refused on non-loopback binds; unauthenticated webhook routes are only safe on loopback test binds"
-                    .to_string(),
-            ));
+        let routes = config.routes.iter().map(|(name, route)| {
+            let secret = route.secret.as_deref().unwrap_or(&config.secret);
+            (format!("route '{name}'"), secret)
+        });
+        let secrets = std::iter::once(("global".to_string(), config.secret.as_str())).chain(routes);
+        for (owner, secret) in secrets {
+            if secret.trim().is_empty() {
+                return Err(GatewayError::Auth(format!(
+                    "webhook {owner} secret is blank; set a secret, or INSECURE_NO_AUTH for a loopback test bind"
+                )));
+            }
+            if secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
+                return Err(GatewayError::Auth(format!(
+                    "webhook {owner} secret INSECURE_NO_AUTH is refused on non-loopback binds; unauthenticated webhook routes are only safe on loopback test binds"
+                )));
+            }
         }
         Ok(())
     }
@@ -520,6 +532,11 @@ async fn handle_webhook_request(
             None => write_empty_response(&mut writer, 404).await?,
         }
     } else if method == "GET" && path == format!("{}/outbound", config.path).as_str() {
+        // A poll drains the queue, so it needs the global secret as a POST does.
+        if !WebhookAdapter::validate_signature(&headers, body_bytes, &config.secret) {
+            write_json_response(&mut writer, 403, r#"{"error":"bad signature"}"#).await?;
+            return Ok(());
+        }
         let messages = outbound_queue.write().await.drain(..).collect::<Vec<_>>();
         let body = serde_json::to_string(&messages)?;
         write_json_response(&mut writer, 200, &body).await?;
