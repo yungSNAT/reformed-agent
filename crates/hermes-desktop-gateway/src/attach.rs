@@ -305,8 +305,9 @@ mod tests {
         let outside = tempfile::tempdir().unwrap();
         for linked in [".hermes", ".hermes/attachments"] {
             let work = tempfile::tempdir().unwrap();
-            fs::create_dir_all(work.path().join(".hermes")).unwrap();
-            symlink(outside.path(), work.path().join(linked)).unwrap();
+            let link = work.path().join(linked);
+            fs::create_dir_all(link.parent().unwrap()).unwrap();
+            symlink(outside.path(), &link).unwrap();
             let refused = stage(work.path(), "x.txt", "aGk=").err().unwrap();
             assert!(refused.contains("is not a folder"), "{linked}: {refused}");
             assert!(files(outside.path()).is_empty());
