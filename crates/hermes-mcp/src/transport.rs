@@ -1468,12 +1468,16 @@ mod tests {
     }
 
     /// Reads one HTTP request from `listener` and answers `reply`; returns
-    /// the request's head, lower-cased.
+    /// the request's head, lower-cased. The reply says `Connection: close`,
+    /// as the connection is dropped after it: a client that pooled it could
+    /// send its next request there and fail, leaving the next `answer_once`
+    /// waiting for a connection that never comes.
     async fn answer_once(listener: &tokio::net::TcpListener, reply: String) -> String {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
         let (mut stream, _) = listener.accept().await.expect("accept");
         let mut buf = vec![0; 8192];
         let n = stream.read(&mut buf).await.expect("read request");
+        let reply = reply.replacen("\r\n", "\r\nConnection: close\r\n", 1);
         stream
             .write_all(reply.as_bytes())
             .await
