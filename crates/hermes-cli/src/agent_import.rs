@@ -275,15 +275,25 @@ impl Importer<'_> {
     /// Every `*.md` in `folder`, in name order, as memory entries; a linked
     /// file is skipped.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
-        let Ok(entries) = std::fs::read_dir(folder) else {
-            self.record(Status::Skip, item, "no memories folder".to_string());
-            return;
+        let listed = std::fs::read_dir(folder).and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<PathBuf>>>()
+        });
+        let mut files: Vec<PathBuf> = match listed {
+            Ok(paths) => paths
+                .into_iter()
+                .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+                .collect(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.record(Status::Skip, item, "no memories folder".to_string());
+                return;
+            }
+            Err(err) => {
+                self.record(Status::Error, item, format!("could not read it: {err}"));
+                return;
+            }
         };
-        let mut files: Vec<PathBuf> = entries
-            .flatten()
-            .map(|entry| entry.path())
-            .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
-            .collect();
         files.sort();
         let mut incoming = Vec::new();
         for file in files {
@@ -699,13 +709,25 @@ impl Importer<'_> {
                 self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
                 continue;
             }
-            if holds_secret(&skill) {
-                self.record(
-                    Status::Skip,
-                    &item,
-                    "a file in it looks like it holds a credential; add it yourself".to_string(),
-                );
-                continue;
+            match holds_secret(&skill) {
+                Ok(false) => {}
+                Ok(true) => {
+                    self.record(
+                        Status::Skip,
+                        &item,
+                        "a file in it looks like it holds a credential; add it yourself"
+                            .to_string(),
+                    );
+                    continue;
+                }
+                Err(err) => {
+                    self.record(
+                        Status::Error,
+                        &item,
+                        format!("could not check it for credentials: {err}"),
+                    );
+                    continue;
+                }
             }
             let destination = destination_root.join(name);
             if let Err(err) = check_destination(self.request.home, &destination) {
@@ -787,22 +809,24 @@ fn looks_secret(text: &str) -> bool {
     redact_sensitive_text(&*text) != text
 }
 
-/// Whether a text file under `dir`, reached without following a link, holds what looks like a
-/// credential.
-fn holds_secret(dir: &Path) -> bool {
-    let Ok(entries) = std::fs::read_dir(dir) else {
-        return false;
-    };
-    entries.flatten().any(|entry| {
-        let path = entry.path();
-        if is_link(&path) {
+/// Whether a file under `dir`, reached without following a link, holds what looks like a
+/// credential. A file that is not UTF-8 is read lossily; anything unreadable is an error, so
+/// the caller never copies what it could not check.
+fn holds_secret(dir: &Path) -> std::io::Result<bool> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let found = if is_link(&path) {
             false
         } else if path.is_dir() {
-            holds_secret(&path)
+            holds_secret(&path)?
         } else {
-            std::fs::read_to_string(&path).is_ok_and(|text| looks_secret(&text))
+            looks_secret(&String::from_utf8_lossy(&std::fs::read(&path)?))
+        };
+        if found {
+            return Ok(true);
         }
-    })
+    }
+    Ok(false)
 }
 
 /// Whether `arg` is an option named like a credential, such as `--token` or
@@ -1652,9 +1676,7 @@ enabled = false
         });
         let text = report.lines.join("\n");
         assert!(
-            text.contains(
-                "skipped      skill blob: a file in it looks like it holds a credential"
-            ),
+            text.contains("skipped      skill blob: a file in it looks like it holds a credential"),
             "{text}"
         );
         assert!(!all_text(&home).contains("ghp_fixtureBinary04"));
