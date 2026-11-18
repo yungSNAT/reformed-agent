@@ -1,4 +1,30 @@
 #[test]
+fn memory_sync_keeps_the_words_of_an_acp_image_prompt() {
+    let parts = json!([
+        {"type": "text", "text": "What does this chart show?"},
+        {"type": "image_url", "image_url": {"url": "data:image/png;base64,aGVsbG8="}},
+        {"type": "text", "text": "Answer briefly."}
+    ]);
+    // As the ACP adapter sends a prompt with an image: its parts as JSON.
+    let messages = vec![
+        Message::user(format!("__hermes_acp_parts_json__:{parts}")),
+        Message::assistant("A rising line."),
+    ];
+    assert_eq!(
+        extract_last_user_assistant(&messages),
+        (
+            "What does this chart show?\nAnswer briefly.".to_string(),
+            "A rising line.".to_string()
+        )
+    );
+    let plain = vec![Message::user("Plain words."), Message::assistant("Reply.")];
+    assert_eq!(
+        extract_last_user_assistant(&plain),
+        ("Plain words.".to_string(), "Reply.".to_string())
+    );
+}
+
+#[test]
 fn test_governor_reduces_budget_under_high_pressure() {
     let mut ctx = ContextManager::default_budget();
     let payload = "x".repeat(((ctx.max_context_chars() as f64) * 0.9) as usize);

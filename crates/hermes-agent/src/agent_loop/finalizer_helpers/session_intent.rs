@@ -1,10 +1,7 @@
 /// Extract the last user and assistant content from a message slice for memory sync.
 fn extract_last_user_assistant(messages: &[Message]) -> (String, String) {
-    let user = messages
-        .iter()
-        .rev()
-        .find(|m| matches!(m.role, hermes_core::MessageRole::User))
-        .and_then(|m| m.content.clone())
+    let user = latest_user_content(messages)
+        .map(std::borrow::Cow::into_owned)
         .unwrap_or_default();
     let assistant = messages
         .iter()
