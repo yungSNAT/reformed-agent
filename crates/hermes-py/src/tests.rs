@@ -31,6 +31,20 @@ fn strings_escape_as_python_ensure_ascii_does() {
 }
 
 #[test]
+fn strings_repr_escapes_what_python_cannot_print() {
+    // repr("a\xa0b\u200bc\u2028d\U000e0001e\ue000f\x85g\xadh\u0378i \u00e9\U0001F600\u3000j")
+    // in Python 3.15 (Unicode 17).
+    assert_eq!(
+        repr(&Py::from(
+            "a\u{a0}b\u{200b}c\u{2028}d\u{e0001}e\u{e000}f\u{85}g\u{ad}h\u{378}i \u{e9}\u{1F600}\u{3000}j"
+        )),
+        r"'a\xa0b\u200bc\u2028d\U000e0001e\ue000f\x85g\xadh\u0378i é😀\u3000j'"
+    );
+    // ASCII controls, as before.
+    assert_eq!(repr(&Py::from("\u{1}\u{7f}\t")), r"'\x01\x7f\t'");
+}
+
+#[test]
 fn floats_print_as_python_repr() {
     let cases = [
         (1.0, "1.0"),
@@ -114,10 +128,9 @@ fn strip_matches_python_whitespace() {
 
 #[test]
 fn isoformat_drops_zero_microseconds_as_python_does() {
-    use chrono::TimeZone;
-    let whole = chrono::Utc.with_ymd_and_hms(2026, 11, 17, 1, 2, 3).unwrap();
+    let whole: jiff::Timestamp = "2026-11-17T01:02:03Z".parse().unwrap();
     assert_eq!(isoformat(whole), "2026-11-17T01:02:03+00:00");
-    let fractional = whole + chrono::Duration::microseconds(450);
+    let fractional = whole + jiff::SignedDuration::from_micros(450);
     assert_eq!(isoformat(fractional), "2026-11-17T01:02:03.000450+00:00");
 }
 

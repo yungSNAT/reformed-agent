@@ -127,7 +127,7 @@ fn sign_cache_payload(bytes: &[u8]) -> Option<ProviderCatalogCacheSignature> {
         key_id: cache_key_id(&key),
         payload_sha256: payload_sha,
         signature_hex,
-        signed_at: Utc::now().to_rfc3339(),
+        signed_at: hermes_core::time::now_rfc3339(),
     })
 }
 
@@ -151,10 +151,9 @@ fn provider_catalog_cache_status(provider: &str) -> Option<CatalogCacheStatus> {
     let sig_raw = std::fs::read_to_string(sig_path).ok()?;
     let signature: ProviderCatalogCacheSignature = serde_json::from_str(&sig_raw).ok()?;
     let verified = verify_cache_payload(&payload_bytes, &signature).unwrap_or(false);
-    let age_secs = DateTime::parse_from_rfc3339(&payload.generated_at)
-        .ok()
-        .map(|ts| Utc::now().signed_duration_since(ts.with_timezone(&Utc)))
-        .and_then(|delta| u64::try_from(delta.num_seconds().max(0)).ok());
+    let age_secs = hermes_core::time::parse_rfc3339(&payload.generated_at)
+        .map(|ts| Timestamp::now().duration_since(ts))
+        .and_then(|delta| u64::try_from(delta.as_secs().max(0)).ok());
     Some(CatalogCacheStatus { verified, age_secs })
 }
 
@@ -220,7 +219,7 @@ fn persist_provider_catalog_cache(provider: &str, models: &[String]) {
     let record = ProviderCatalogCacheRecord {
         version: PROVIDER_CATALOG_CACHE_VERSION,
         provider: provider.trim().to_ascii_lowercase(),
-        generated_at: Utc::now().to_rfc3339(),
+        generated_at: hermes_core::time::now_rfc3339(),
         models: models.to_vec(),
     };
     let Ok(payload_bytes) = serde_json::to_vec_pretty(&record) else {

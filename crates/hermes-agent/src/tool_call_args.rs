@@ -38,8 +38,11 @@ pub fn repair_tool_call_arguments(raw: &str) -> (String, ToolArgumentRepair) {
         return ("{}".to_string(), ToolArgumentRepair::EmptyInput);
     }
 
-    if let Some(canonical) = parse_canonical_json(trimmed) {
-        return (canonical, ToolArgumentRepair::Unchanged);
+    // Valid arguments are kept as the model wrote them, as upstream does:
+    // re-serialising would sort their keys and turn integers past 64 bits
+    // into floats.
+    if serde_json::from_str::<serde::de::IgnoredAny>(trimmed).is_ok() {
+        return (raw.to_string(), ToolArgumentRepair::Unchanged);
     }
 
     let control_escaped = escape_control_chars_in_strings(trimmed);
@@ -292,6 +295,15 @@ mod tests {
         assert_eq!(
             parsed(r#"{"path": "/tmp/foo", "content": "hello"}"#),
             json!({"path": "/tmp/foo", "content": "hello"})
+        );
+    }
+
+    #[test]
+    fn valid_json_keeps_its_key_order_and_large_integers() {
+        let raw = r#"{"zeta": 1, "alpha": 123456789012345678901234567890}"#;
+        assert_eq!(
+            repair_tool_call_arguments(raw),
+            (raw.to_string(), ToolArgumentRepair::Unchanged)
         );
     }
 

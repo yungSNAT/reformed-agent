@@ -2,7 +2,6 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
 use hermes_agent::bedrock::{
     curated_bedrock_models_for_region, discover_bedrock_model_ids, has_aws_credentials,
     resolve_bedrock_region,
@@ -11,6 +10,7 @@ use hermes_config::{GatewayConfig, LlmProviderConfig, StaleAuxiliaryAssignment};
 use hermes_core::AgentError;
 use hermes_intelligence::models_dev::{default_client, ModelsDevClient};
 use hmac::{Hmac, Mac};
+use jiff::Timestamp;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 

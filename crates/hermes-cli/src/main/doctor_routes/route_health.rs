@@ -68,7 +68,7 @@ fn load_route_learning_state_for_cli(path: &Path) -> Result<RouteLearningStateRe
     if !path.exists() {
         return Ok(RouteLearningStateRecord {
             schema_version: 1,
-            saved_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+            saved_at_unix_ms: jiff::Timestamp::now().as_millisecond(),
             entries: std::collections::HashMap::new(),
         });
     }
@@ -116,7 +116,7 @@ fn run_route_learning(cli: Cli, action: Option<String>, json: bool) -> Result<()
     }
 
     let state = load_route_learning_state_for_cli(&path)?;
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     let mut rows: Vec<(String, RouteLearningStatsRecord, f64)> = state
         .entries
         .iter()
@@ -353,7 +353,7 @@ fn build_route_autotune_plan(
     );
 
     RouteAutotunePlan {
-        generated_at: chrono::Utc::now().to_rfc3339(),
+        generated_at: hermes_core::time::now_rfc3339(),
         learning_path: learning_path.display().to_string(),
         health_report_path: report_path.display().to_string(),
         env_path: route_autotune_env_path_for_cli(cli).display().to_string(),
@@ -438,7 +438,7 @@ fn run_route_health(cli: Cli, action: Option<String>, json: bool) -> Result<(), 
 
     let learning_path = route_learning_state_path_for_cli(&cli);
     let state = load_route_learning_state_for_cli(&learning_path)?;
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     let mut entries: Vec<RouteHealthEntry> = state
         .entries
         .into_iter()
@@ -485,7 +485,7 @@ fn run_route_health(cli: Cli, action: Option<String>, json: bool) -> Result<(), 
     };
 
     let payload = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "path": report_path.display().to_string(),
         "learning_path": learning_path.display().to_string(),
         "summary": {
@@ -626,7 +626,7 @@ fn run_route_autotune(
 
     let learning_path = route_learning_state_path_for_cli(&cli);
     let state = load_route_learning_state_for_cli(&learning_path)?;
-    let now_ms = chrono::Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     let mut entries: Vec<RouteHealthEntry> = state
         .entries
         .into_iter()
@@ -797,7 +797,7 @@ fn run_incident_pack(
         path
     } else {
         let payload = serde_json::json!({
-            "generated_at": chrono::Utc::now().to_rfc3339(),
+            "generated_at": hermes_core::time::now_rfc3339(),
             "mode": "incident_pack_snapshot",
             "state_root": hermes_state_root(&cli).display().to_string(),
             "elite": build_elite_doctor_diagnostics(&cli),
@@ -865,7 +865,7 @@ fn run_rotate_provenance_key(cli: Cli, json: bool) -> Result<(), AgentError> {
     let archived_path = if path.exists() {
         let archived = path.with_file_name(format!(
             "provenance.key.{}.bak",
-            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
         ));
         std::fs::rename(&path, &archived)
             .map_err(|e| AgentError::Io(format!("archive {}: {}", path.display(), e)))?;

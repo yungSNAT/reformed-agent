@@ -6,8 +6,8 @@
 #[cfg(unix)]
 mod unix {
     use assert_cmd::cargo::cargo_bin;
-    use chrono::{Duration, Utc};
     use hermes_cron::CronJob;
+    use jiff::{SignedDuration, Timestamp};
     use serde_json::json;
     use std::fs;
     use std::path::Path;
@@ -84,7 +84,7 @@ mod unix {
 
         let mut job = CronJob::new("0 * * * *", "e2e cron webhook probe");
         job.id = "e2e-gateway-webhook-job".to_string();
-        job.next_run = Some(Utc::now() - Duration::minutes(5));
+        job.next_run = Some(Timestamp::now() - SignedDuration::from_mins(5));
         job.repeat = Some(1);
         job.no_agent = true;
         job.script = Some("printf 'forced cron failure for webhook e2e' >&2; exit 7".to_string());

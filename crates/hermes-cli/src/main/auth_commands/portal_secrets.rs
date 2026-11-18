@@ -129,7 +129,7 @@ async fn run_auth(
                             .tokens
                             .expires_in
                             .filter(|secs| *secs > 0)
-                            .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                            .map(hermes_core::time::now_plus_secs);
                         manager
                             .save_credential(OAuthCredential {
                                 provider: "openai-codex".to_string(),
@@ -180,7 +180,7 @@ async fn run_auth(
                             .tokens
                             .expires_in
                             .filter(|secs| *secs > 0)
-                            .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                            .map(hermes_core::time::now_plus_secs);
                         manager
                             .save_credential(OAuthCredential {
                                 provider: "openai".to_string(),
@@ -727,7 +727,7 @@ async fn run_auth(
                     .tokens
                     .expires_in
                     .filter(|secs| *secs > 0)
-                    .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                    .map(hermes_core::time::now_plus_secs);
                 manager
                     .save_credential(OAuthCredential {
                         provider: "openai-codex".to_string(),
@@ -758,7 +758,7 @@ async fn run_auth(
                     .tokens
                     .expires_in
                     .filter(|secs| *secs > 0)
-                    .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                    .map(hermes_core::time::now_plus_secs);
                 manager
                     .save_credential(OAuthCredential {
                         provider: "openai".to_string(),

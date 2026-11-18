@@ -182,7 +182,7 @@ fn resolve_model(args: &Args, config: &GatewayConfig) -> String {
 }
 
 fn default_output_path(benchmark: &Path) -> PathBuf {
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S");
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S");
     let stem = benchmark
         .file_stem()
         .and_then(|s| s.to_str())

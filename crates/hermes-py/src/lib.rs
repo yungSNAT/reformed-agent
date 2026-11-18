@@ -3,13 +3,13 @@
 //! `ensure_ascii`, `sort_keys`), `str()` of a parsed JSON value,
 //! `str.strip()`, `datetime.isoformat()` and `pathlib.Path.resolve()`.
 //!
-//! Known limit: `repr` of a string escapes ASCII control characters only.
-//! Python escapes every character `str.isprintable()` rejects (Unicode
-//! categories Cc, Cf, Cs, Co, Cn, Zl, Zp and Zs other than the space), so
-//! U+00A0 and U+200B print here as they are, where Python writes `\xa0`
-//! or `\u200b`.
+//! `repr` of a string escapes each character `str.isprintable()` rejects,
+//! by the Unicode 17 categories Python 3.15 uses; a Python on older Unicode
+//! data also escapes the characters assigned since.
 
 use std::fmt::Write as _;
+
+use finl_unicode::categories::CharacterCategories as _;
 use std::path::{Path, PathBuf};
 
 mod loads;
@@ -283,8 +283,12 @@ fn str_repr(s: &str) -> String {
                 out.push('\\');
                 out.push(c);
             }
-            c if (c as u32) < 0x20 || c as u32 == 0x7f => {
-                let _ = write!(out, "\\x{:02x}", c as u32);
+            c if !is_printable(c) => {
+                let _ = match c as u32 {
+                    n @ ..=0xff => write!(out, "\\x{n:02x}"),
+                    n @ ..=0xffff => write!(out, "\\u{n:04x}"),
+                    n => write!(out, "\\U{n:08x}"),
+                };
             }
             c => out.push(c),
         }
@@ -293,22 +297,28 @@ fn str_repr(s: &str) -> String {
     out
 }
 
-/// `datetime.now(timezone.utc).isoformat()`.
-pub fn utc_isoformat() -> String {
-    isoformat(chrono::Utc::now())
+/// Python's `str.isprintable()` for one character: letters, marks, numbers,
+/// punctuation, symbols and the space.
+fn is_printable(c: char) -> bool {
+    c == ' ' || c.is_letter() || c.is_mark() || c.is_number() || c.is_punctuation() || c.is_symbol()
 }
 
-pub fn isoformat(now: chrono::DateTime<chrono::Utc>) -> String {
-    if now.timestamp_subsec_micros() == 0 {
-        now.format("%Y-%m-%dT%H:%M:%S+00:00").to_string()
+/// `datetime.now(timezone.utc).isoformat()`.
+pub fn utc_isoformat() -> String {
+    isoformat(jiff::Timestamp::now())
+}
+
+pub fn isoformat(now: jiff::Timestamp) -> String {
+    if now.subsec_microsecond() == 0 {
+        now.strftime("%Y-%m-%dT%H:%M:%S+00:00").to_string()
     } else {
-        now.format("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
+        now.strftime("%Y-%m-%dT%H:%M:%S%.6f+00:00").to_string()
     }
 }
 
 /// `datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")`.
 pub fn utc_stamp() -> String {
-    chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string()
+    jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string()
 }
 
 /// `pathlib.Path(raw).expanduser()`: `~` and `~user` become a home

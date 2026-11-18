@@ -823,11 +823,47 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Not ported: upstream drops non-string enums and unknown keys from tool schemas sent to native Gemini. The Rust native Gemini path cleans OpenAI-only request fields (cited test) but sends tool schemas unchanged; ledger follow-up under R3524.",
+      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "strips_unknown_top_level_keys"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "keeps_string_enums"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "drops_integer_number_and_boolean_enums"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "keeps_an_enum_of_numbers_written_as_strings"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "drops_nested_integer_enums_in_properties_and_items"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "non_object_input_is_empty"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "required_keeps_only_names_its_node_defines"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "required_is_pruned_inside_items_and_any_of"
+        },
+        {
+          "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
+          "name": "empty_tool_parameters_become_an_empty_object_schema"
+        },
+        {
           "file": "crates/hermes-agent/src/provider/tests/profile_sanitization.rs",
-          "name": "test_native_gemini_request_body_strips_openai_extra_body_fields"
+          "name": "native_gemini_tool_schemas_keep_to_the_gemini_subset"
         }
       ]
     },

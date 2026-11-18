@@ -68,7 +68,7 @@ fn default_objective_behavior_directives() -> Vec<String> {
 }
 
 pub fn objective_now_unix_ms() -> i64 {
-    Utc::now().timestamp_millis()
+    jiff::Timestamp::now().as_millisecond()
 }
 
 fn clear_objective_wait_fields(contract: &mut ObjectiveContract) {

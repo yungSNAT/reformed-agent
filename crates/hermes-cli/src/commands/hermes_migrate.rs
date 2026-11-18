@@ -533,7 +533,7 @@ impl<'a> Run<'a> {
             self.line("cron/jobs.json: skipped, cron in the Reformed home is not a folder".into());
             return Ok(());
         }
-        let now = chrono::Utc::now();
+        let now = jiff::Timestamp::now();
         let scripts = self.from.join("scripts");
         let mut ids = std::collections::HashSet::new();
         let (mut written, mut skipped) = (0, 0);

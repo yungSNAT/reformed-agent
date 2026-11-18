@@ -1,9 +1,4 @@
 # Exceptions for `cargo audit --deny warnings` (.github/workflows/audit.yml).
 # Each needs more than a compatible update; the comment says what removes it.
 [advisories]
-ignore = [
-    # chrono is unmaintained (RUSTSEC-2026-0543, read 18 November 2026); 14
-    # crates and the `cron` crate depend on it. Branch
-    # ryan/drop-chrono-2026-11-18 replaces both with jiff and removes this entry.
-    "RUSTSEC-2026-0543",
-]
+ignore = []

@@ -172,10 +172,7 @@ fn image_block_to_parts(block: &serde_json::Map<String, Value>) -> Vec<Value> {
         } else {
             format!("data:{image_mime};base64,{data}")
         };
-        return vec![
-            json_text_part(format!("[Attached image: {image_mime}]")),
-            json_image_part(url),
-        ];
+        return vec![json_image_part(url)];
     }
 
     let url = block
@@ -193,10 +190,7 @@ fn image_block_to_parts(block: &serde_json::Map<String, Value>) -> Vec<Value> {
     if url.is_empty() {
         Vec::new()
     } else {
-        vec![
-            json_text_part(format!("[Attached image]\nURL: {url}")),
-            json_image_part(url),
-        ]
+        vec![json_image_part(url)]
     }
 }
 

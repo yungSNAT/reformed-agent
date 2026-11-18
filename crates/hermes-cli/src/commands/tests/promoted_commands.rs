@@ -551,7 +551,7 @@
                 device_id: "device-01".to_string(),
                 name: Some("Test device".to_string()),
                 status: PairingStatus::Pending,
-                created_at: chrono::Utc::now().to_rfc3339(),
+                created_at: hermes_core::time::now_rfc3339(),
                 last_seen: None,
                 shared_secret: None,
             }])

@@ -102,7 +102,7 @@ async fn run_fresh_openai_oneshot_login(cli: &Cli, provider: &str) -> Result<(),
                 .tokens
                 .expires_in
                 .filter(|secs| *secs > 0)
-                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                .map(hermes_core::time::now_plus_secs);
             manager
                 .save_credential(OAuthCredential {
                     provider,
@@ -124,7 +124,7 @@ async fn run_fresh_openai_oneshot_login(cli: &Cli, provider: &str) -> Result<(),
                 .tokens
                 .expires_in
                 .filter(|secs| *secs > 0)
-                .map(|secs| chrono::Utc::now() + chrono::Duration::seconds(secs));
+                .map(hermes_core::time::now_plus_secs);
             manager
                 .save_credential(OAuthCredential {
                     provider,

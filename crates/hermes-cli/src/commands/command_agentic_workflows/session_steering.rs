@@ -84,7 +84,7 @@ struct SubgoalChecklist {
 
 impl SubgoalChecklist {
     fn for_session(session_id: &str, objective: Option<&str>) -> Self {
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
         Self {
             session_id: session_id.to_string(),
             objective: objective
@@ -504,7 +504,7 @@ fn handle_handoff_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
         "session_id": app.session_id,
         "platform": platform,
         "home_channel": home_channel,
-        "requested_at": chrono::Utc::now().to_rfc3339(),
+        "requested_at": hermes_core::time::now_rfc3339(),
         "requested_by": "cli",
         "state": "pending",
     });
@@ -544,7 +544,7 @@ fn handle_subgoal_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
             "show" | "status" | "list"
         )
     {
-        checklist.updated_at = chrono::Utc::now().to_rfc3339();
+        checklist.updated_at = hermes_core::time::now_rfc3339();
         let _ = save_subgoal_checklist(&checklist)?;
         emit_command_output(app, render_subgoal_checklist(&checklist));
         return Ok(CommandResult::Handled);
@@ -553,7 +553,7 @@ fn handle_subgoal_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
     let action = args[0].to_ascii_lowercase();
     if action == "clear" {
         checklist.items.clear();
-        checklist.updated_at = chrono::Utc::now().to_rfc3339();
+        checklist.updated_at = hermes_core::time::now_rfc3339();
         let path = save_subgoal_checklist(&checklist)?;
         emit_command_output(
             app,
@@ -596,7 +596,7 @@ fn handle_subgoal_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
             return Ok(CommandResult::Handled);
         }
         let idx = idx_one_based - 1;
-        let now = chrono::Utc::now().to_rfc3339();
+        let now = hermes_core::time::now_rfc3339();
 
         if action == "remove" {
             let removed = checklist.items.remove(idx);
@@ -640,7 +640,7 @@ fn handle_subgoal_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
         emit_command_output(app, "Usage: /subgoal <text>");
         return Ok(CommandResult::Handled);
     }
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     checklist.items.push(SubgoalItem {
         text,
         status: "pending".to_string(),
@@ -697,7 +697,7 @@ fn handle_sethome_command(app: &mut App, args: &[&str]) -> Result<CommandResult,
     let value = serde_json::json!({
         "session_id": app.session_id,
         "home": args.join(" ").trim(),
-        "updated_at": chrono::Utc::now().to_rfc3339(),
+        "updated_at": hermes_core::time::now_rfc3339(),
     });
     std::fs::write(
         &marker_path,

@@ -786,7 +786,7 @@ fn export_rows(source: &Path, output_path: &Path, limit: usize) -> Result<usize,
         })?;
     }
     let payload = json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "source_replay": source.display().to_string(),
         "rows": rows,
     });

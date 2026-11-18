@@ -4,8 +4,8 @@
 use std::collections::BTreeSet;
 use std::path::Path;
 
-use chrono::{Datelike as _, NaiveDate, Weekday};
 use clap::Args;
+use jiff::civil::{Date, ISOWeekDate, Weekday};
 
 use crate::git::{git, git_checked};
 use crate::py::{self, Py};
@@ -62,7 +62,7 @@ pub struct DivergenceArgs {
 /// `parse_isoformat_date`): a string of 7, 8 or 10 bytes holding `YYYY-MM-DD`,
 /// `YYYYMMDD` or an ISO week date (`YYYY-Www-D`, `YYYYWwwD`, the day optional).
 /// Like CPython, it ignores bytes after the date in a 10-byte string.
-pub fn parse_iso_date(value: &str) -> Option<NaiveDate> {
+pub fn parse_iso_date(value: &str) -> Option<Date> {
     let b = value.as_bytes();
     if ![7, 8, 10].contains(&b.len()) {
         return None;
@@ -91,19 +91,20 @@ pub fn parse_iso_date(value: &str) -> Option<NaiveDate> {
             day = digits(pos, 1)?;
         }
         let weekday = match day {
-            1 => Weekday::Mon,
-            2 => Weekday::Tue,
-            3 => Weekday::Wed,
-            4 => Weekday::Thu,
-            5 => Weekday::Fri,
-            6 => Weekday::Sat,
-            7 => Weekday::Sun,
+            1 => Weekday::Monday,
+            2 => Weekday::Tuesday,
+            3 => Weekday::Wednesday,
+            4 => Weekday::Thursday,
+            5 => Weekday::Friday,
+            6 => Weekday::Saturday,
+            7 => Weekday::Sunday,
             _ => return None,
         };
         if !(1..=9999).contains(&year) {
             return None;
         }
-        let date = NaiveDate::from_isoywd_opt(year as i32, week, weekday)?;
+        let week = i8::try_from(week).ok()?;
+        let date = ISOWeekDate::new(year as i16, week, weekday).ok()?.date();
         return (1..=9999).contains(&date.year()).then_some(date);
     }
     let month = digits(pos, 2)?;
@@ -118,7 +119,12 @@ pub fn parse_iso_date(value: &str) -> Option<NaiveDate> {
     if !(1..=9999).contains(&year) {
         return None;
     }
-    NaiveDate::from_ymd_opt(year as i32, month, day)
+    Date::new(
+        year as i16,
+        i8::try_from(month).ok()?,
+        i8::try_from(day).ok()?,
+    )
+    .ok()
 }
 
 fn str_field(item: &Py, key: &str) -> String {
@@ -135,7 +141,7 @@ fn ticket_is_valid(ticket: Option<&Py>) -> bool {
     }
 }
 
-pub fn validate_item(item: &Py, all_paths: &BTreeSet<String>, now: NaiveDate) -> Py {
+pub fn validate_item(item: &Py, all_paths: &BTreeSet<String>, now: Date) -> Py {
     let mut errors: Vec<String> = Vec::new();
     let mut warnings: Vec<String> = Vec::new();
 
@@ -295,7 +301,7 @@ pub fn run(args: DivergenceArgs) -> Result<i32, String> {
     let repo_root = py::resolve(Path::new(&args.repo_root));
     let div_path = py::resolve(&py::join(&repo_root, &args.divergence_file));
     let out_json = py::resolve(&py::join(&repo_root, &args.output_json));
-    let now = chrono::Local::now().date_naive();
+    let now = jiff::Zoned::now().date();
 
     ensure_remote(&repo_root, &args.upstream_remote, &args.upstream_url)?;
     if !args.no_fetch {

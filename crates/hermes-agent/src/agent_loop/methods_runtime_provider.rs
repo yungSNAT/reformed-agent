@@ -253,7 +253,7 @@ impl AgentLoop {
         }
         if cred
             .expires_at
-            .map(|exp| exp <= Utc::now())
+            .map(|exp| exp <= Timestamp::now())
             .unwrap_or(false)
         {
             return None;
@@ -294,7 +294,7 @@ impl AgentLoop {
         let Some(expires_at) = current.expires_at else {
             return;
         };
-        if expires_at > Utc::now() {
+        if expires_at > Timestamp::now() {
             return;
         }
         let Some(refresh_token) = current.refresh_token.clone() else {
@@ -505,13 +505,13 @@ impl AgentLoop {
                 .ok()
                 .and_then(|raw| serde_json::from_str::<serde_json::Value>(&raw).ok())
                 .unwrap_or_else(
-                    || serde_json::json!({"updated_at": Utc::now().to_rfc3339(), "samples": []}),
+                    || serde_json::json!({"updated_at": hermes_core::time::now_rfc3339(), "samples": []}),
                 )
         } else {
-            serde_json::json!({"updated_at": Utc::now().to_rfc3339(), "samples": []})
+            serde_json::json!({"updated_at": hermes_core::time::now_rfc3339(), "samples": []})
         };
         let Some(samples) = root.get_mut("samples").and_then(|v| v.as_array_mut()) else {
-            root = serde_json::json!({"updated_at": Utc::now().to_rfc3339(), "samples": []});
+            root = serde_json::json!({"updated_at": hermes_core::time::now_rfc3339(), "samples": []});
             let samples = root
                 .get_mut("samples")
                 .and_then(|v| v.as_array_mut())
@@ -519,20 +519,20 @@ impl AgentLoop {
                     AgentError::Config("objective_eval_trend samples field missing".to_string())
                 })?;
             samples.push(serde_json::json!({
-                "recorded_at": Utc::now().to_rfc3339(),
+                "recorded_at": hermes_core::time::now_rfc3339(),
                 "objective_id": objective_id,
                 "objective_state": objective_state,
                 "score": objective_eval_score(objective_state),
                 "note": note,
             }));
-            root["updated_at"] = serde_json::json!(Utc::now().to_rfc3339());
+            root["updated_at"] = serde_json::json!(hermes_core::time::now_rfc3339());
             let payload = serde_json::to_string_pretty(&root).unwrap_or_else(|_| "{}".to_string());
             std::fs::write(&path, payload)
                 .map_err(|e| AgentError::Io(format!("write {} failed: {}", path.display(), e)))?;
             return Ok(());
         };
         samples.push(serde_json::json!({
-            "recorded_at": Utc::now().to_rfc3339(),
+            "recorded_at": hermes_core::time::now_rfc3339(),
             "objective_id": objective_id,
             "objective_state": objective_state,
             "score": objective_eval_score(objective_state),
@@ -542,7 +542,7 @@ impl AgentLoop {
             let drain = samples.len().saturating_sub(512);
             samples.drain(0..drain);
         }
-        root["updated_at"] = serde_json::json!(Utc::now().to_rfc3339());
+        root["updated_at"] = serde_json::json!(hermes_core::time::now_rfc3339());
         let payload = serde_json::to_string_pretty(&root).unwrap_or_else(|_| "{}".to_string());
         std::fs::write(&path, payload)
             .map_err(|e| AgentError::Io(format!("write {} failed: {}", path.display(), e)))?;
@@ -578,7 +578,7 @@ impl AgentLoop {
             "monitor"
         };
         let entry = serde_json::json!({
-            "recorded_at": Utc::now().to_rfc3339(),
+            "recorded_at": hermes_core::time::now_rfc3339(),
             "objective_id": format!("obj-{}", objective_id),
             "objective_state": objective_state,
             "decision": decision,

@@ -18,7 +18,7 @@
 
 use std::path::PathBuf;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde_json::Value;
 
 /// Skew applied to `expires_at` checks. Tokens whose remaining lifetime is
@@ -84,7 +84,7 @@ pub fn read_nous_provider_state() -> NousProviderState {
 
 /// Parse an ISO-8601 timestamp like Python's `datetime.fromisoformat`.
 /// Accepts a trailing `Z` (UTC) and naive timestamps (interpreted as UTC).
-fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
+fn parse_timestamp(value: &str) -> Option<Timestamp> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
         return None;
@@ -94,13 +94,13 @@ fn parse_timestamp(value: &str) -> Option<DateTime<Utc>> {
     } else {
         trimmed.to_string()
     };
-    if let Ok(dt) = DateTime::parse_from_rfc3339(&normalised) {
-        return Some(dt.with_timezone(&Utc));
+    if let Some(at) = hermes_core::time::parse_rfc3339(&normalised) {
+        return Some(at);
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Some(DateTime::<Utc>::from_naive_utc_and_offset(naive, Utc));
-    }
-    None
+    jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", trimmed)
+        .and_then(|naive| naive.to_zoned(jiff::tz::TimeZone::UTC))
+        .map(|at| at.timestamp())
+        .ok()
 }
 
 /// Returns true when the cached token expires within `skew_seconds` (or
@@ -114,7 +114,7 @@ fn access_token_is_expiring(expires_at: Option<&str>, skew_seconds: i64) -> bool
         Some(dt) => dt,
         None => return true,
     };
-    let remaining = (parsed - Utc::now()).num_seconds();
+    let remaining = parsed.duration_since(Timestamp::now()).as_secs();
     remaining <= skew_seconds.max(0)
 }
 
@@ -242,8 +242,7 @@ mod tests {
     }
 
     fn iso_seconds_from_now(secs: i64) -> String {
-        (Utc::now() + chrono::Duration::seconds(secs))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        format!("{:.0}", hermes_core::time::now_plus_secs(secs))
     }
 
     #[test]
@@ -258,7 +257,7 @@ mod tests {
     #[test]
     fn parse_timestamp_naive_assumed_utc() {
         let dt = parse_timestamp("2024-01-01T12:00:00").unwrap();
-        assert_eq!(dt.to_rfc3339(), "2024-01-01T12:00:00+00:00");
+        assert_eq!(hermes_core::time::rfc3339(dt), "2024-01-01T12:00:00+00:00");
     }
 
     #[test]

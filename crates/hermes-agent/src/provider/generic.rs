@@ -633,7 +633,26 @@ fn format_tools_for_openai_api_with_model(
     {
         sanitize_moonshot_tools_value(&mut formatted);
     }
+    if provider_profiles::is_native_gemini_base_url(base_url) {
+        sanitize_gemini_tools_value(&mut formatted);
+    }
     formatted
+}
+
+fn sanitize_gemini_tools_value(tools: &mut Value) {
+    let Some(items) = tools.as_array_mut() else {
+        return;
+    };
+    for tool in items {
+        let Some(function) = tool.get_mut("function").and_then(Value::as_object_mut) else {
+            continue;
+        };
+        let params = function.remove("parameters").unwrap_or(Value::Null);
+        function.insert(
+            "parameters".to_string(),
+            crate::gemini_schema::sanitize_gemini_tool_parameters(&params),
+        );
+    }
 }
 
 fn sanitize_moonshot_tools_value(tools: &mut Value) {

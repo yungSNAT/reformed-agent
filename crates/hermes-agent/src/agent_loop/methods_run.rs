@@ -1,4 +1,24 @@
 impl AgentLoop {
+    /// Expands `@file:`, `@folder:`, `@diff` and `@git` references in user messages, confined
+    /// to the working folder, for `run` and `run_stream` alike.
+    async fn expand_context_references(&self, messages: &mut [Message]) {
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        let context_length = get_model_context_length(&self.config.model);
+        for msg in messages.iter_mut() {
+            if msg.role != MessageRole::User {
+                continue;
+            }
+            let Some(content) = msg.content.clone() else {
+                continue;
+            };
+            let result =
+                preprocess_context_references_async(&content, &cwd, context_length, None).await;
+            if result.expanded && result.message != content {
+                msg.content = Some(result.message);
+            }
+        }
+    }
+
     /// Run the agent loop (non-streaming).
     ///
     /// Sends the initial messages to the LLM, then iteratively:
@@ -20,21 +40,7 @@ impl AgentLoop {
             }
         }
         strip_budget_warnings_from_messages(&mut messages);
-        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-        let context_length = get_model_context_length(&self.config.model);
-        for msg in messages.iter_mut() {
-            if msg.role != MessageRole::User {
-                continue;
-            }
-            let Some(content) = msg.content.clone() else {
-                continue;
-            };
-            let result =
-                preprocess_context_references_async(&content, &cwd, context_length, None).await;
-            if result.expanded && result.message != content {
-                msg.content = Some(result.message);
-            }
-        }
+        self.expand_context_references(&mut messages).await;
 
         let task_hint = messages
             .iter()

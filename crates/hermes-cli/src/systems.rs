@@ -6,7 +6,6 @@ use std::net::{TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use chrono::{SecondsFormat, Utc};
 use hermes_core::AgentError;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -138,7 +137,7 @@ pub struct SystemsCliOptions {
 }
 
 fn now_rfc3339() -> String {
-    Utc::now().to_rfc3339_opts(SecondsFormat::Secs, true)
+    format!("{:.0}", jiff::Timestamp::now())
 }
 
 fn state_root(config_dir: Option<&str>) -> PathBuf {

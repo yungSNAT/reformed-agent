@@ -47,7 +47,7 @@ async fn run_self_evolution_loop_native(
     let ok = total == 0 || passed == total;
     let recommendations = build_self_evolution_recommendations_native(objective, &sections);
     let report = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "repo_root": repo_root,
         "objective": objective.trim(),
         "ok": ok,

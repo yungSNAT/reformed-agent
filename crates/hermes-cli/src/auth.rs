@@ -10,8 +10,8 @@ use base64::engine::general_purpose::{
     URL_SAFE as BASE64_URL_SAFE, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
 };
 use base64::Engine as _;
-use chrono::Utc;
 use hermes_core::AgentError;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -119,7 +119,7 @@ pub fn save_provider_auth_state(provider: &str, state: Value) -> Result<PathBuf,
     let mut store = load_auth_store(&path)?;
     store.providers.insert(provider.clone(), state);
     store.active_provider = Some(provider);
-    store.updated_at = Some(Utc::now().to_rfc3339());
+    store.updated_at = Some(hermes_core::time::now_rfc3339());
     save_auth_store(&path, &store)?;
     Ok(path)
 }
@@ -155,7 +155,7 @@ pub fn clear_provider_auth_state(provider: &str) -> Result<bool, AgentError> {
         store.active_provider = None;
     }
     if removed {
-        store.updated_at = Some(Utc::now().to_rfc3339());
+        store.updated_at = Some(hermes_core::time::now_rfc3339());
         save_auth_store(&path, &store)?;
     }
     Ok(removed)
@@ -250,7 +250,7 @@ fn load_openai_oauth_import_from_path(path: &Path, base_url: &str) -> Option<Ope
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let now_secs = Utc::now().timestamp();
+    let now_secs = jiff::Timestamp::now().as_second();
     let expires_in = tokens
         .id_token
         .as_deref()
@@ -270,7 +270,7 @@ fn load_openai_oauth_import_from_path(path: &Path, base_url: &str) -> Option<Ope
             .map(str::trim)
             .filter(|s| !s.is_empty())
             .map(str::to_string)
-            .unwrap_or_else(|| Utc::now().to_rfc3339()),
+            .unwrap_or_else(hermes_core::time::now_rfc3339),
         auth_mode: parsed.auth_mode.or_else(|| Some("chatgpt".to_string())),
         source: Some("discovered_external".to_string()),
     };
@@ -309,7 +309,7 @@ fn load_codex_oauth_import_from_store(path: &Path) -> Option<OpenAiOAuthImport> 
         state.base_url = DEFAULT_CODEX_BASE_URL.to_string();
     }
     if state.last_refresh.trim().is_empty() {
-        state.last_refresh = Utc::now().to_rfc3339();
+        state.last_refresh = hermes_core::time::now_rfc3339();
     }
     if state
         .auth_mode
@@ -672,7 +672,7 @@ pub fn discover_existing_nous_oauth() -> Result<Option<NousOAuthImport>, AgentEr
     Ok(None)
 }
 
-fn parse_iso_timestamp_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
+fn parse_iso_timestamp_utc(raw: &str) -> Option<Timestamp> {
     let trimmed = raw.trim();
     if trimmed.is_empty() {
         return None;
@@ -682,15 +682,13 @@ fn parse_iso_timestamp_utc(raw: &str) -> Option<chrono::DateTime<Utc>> {
     } else {
         trimmed.to_string()
     };
-    if let Ok(dt) = chrono::DateTime::parse_from_rfc3339(&normalized) {
-        return Some(dt.with_timezone(&Utc));
+    if let Some(dt) = hermes_core::time::parse_rfc3339(&normalized) {
+        return Some(dt);
     }
-    if let Ok(naive) = chrono::NaiveDateTime::parse_from_str(trimmed, "%Y-%m-%dT%H:%M:%S") {
-        return Some(chrono::DateTime::<Utc>::from_naive_utc_and_offset(
-            naive, Utc,
-        ));
-    }
-    None
+    jiff::civil::DateTime::strptime("%Y-%m-%dT%H:%M:%S", trimmed)
+        .and_then(|naive| naive.to_zoned(jiff::tz::TimeZone::UTC))
+        .map(|dt| dt.timestamp())
+        .ok()
 }
 
 fn timestamp_is_expiring(expires_at: Option<&str>, skew_seconds: i64) -> bool {
@@ -700,8 +698,18 @@ fn timestamp_is_expiring(expires_at: Option<&str>, skew_seconds: i64) -> bool {
     let Some(parsed) = parse_iso_timestamp_utc(raw) else {
         return true;
     };
-    let remaining = (parsed - Utc::now()).num_seconds();
+    let remaining = parsed.duration_since(Timestamp::now()).as_secs();
     remaining <= skew_seconds.max(0)
+}
+
+/// A Nous access token's stored expiry, issued at `now`. A lifetime that ends
+/// past year 9999 is refused: kept, it would read as never expiring.
+fn nous_access_expires_at(now: Timestamp, expires_in: i64) -> Result<String, AgentError> {
+    hermes_core::time::checked_plus_secs(now, expires_in)
+        .map(|at| format!("{at:.0}"))
+        .ok_or_else(|| {
+            AgentError::AuthFailed(format!("Nous expires_in {expires_in} is out of range"))
+        })
 }
 
 fn decode_jwt_claims(token: &str) -> Option<Value> {
@@ -757,7 +765,7 @@ fn nous_invoke_jwt_status(
 
     let skew = min_ttl_seconds.max(0);
     if let Some(exp) = claims.get("exp").and_then(Value::as_f64) {
-        if exp <= (Utc::now().timestamp() + skew) as f64 {
+        if exp <= (jiff::Timestamp::now().as_second() + skew) as f64 {
             return Some("invoke_jwt_expiring");
         }
         return None;
@@ -784,8 +792,8 @@ fn nous_invoke_jwt_is_usable(
 fn nous_jwt_expires_at(token: &str, fallback_expires_at: Option<&str>) -> Option<String> {
     if let Some(claims) = decode_jwt_claims(token) {
         if let Some(exp) = claims.get("exp").and_then(Value::as_i64) {
-            if let Some(dt) = chrono::DateTime::<Utc>::from_timestamp(exp, 0) {
-                return Some(dt.to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+            if let Ok(dt) = Timestamp::from_second(exp) {
+                return Some(format!("{dt:.0}"));
             }
         }
     }
@@ -810,13 +818,13 @@ fn set_nous_agent_key_from_invoke_jwt(state: &mut NousAuthState) {
     } else {
         None
     }
-    .unwrap_or_else(|| Utc::now().to_rfc3339_opts(chrono::SecondsFormat::Secs, true));
+    .unwrap_or_else(|| format!("{:.0}", jiff::Timestamp::now()));
 
     let expires_at = nous_jwt_expires_at(&access_token, state.expires_at.as_deref());
     let expires_in = expires_at
         .as_deref()
         .and_then(parse_iso_timestamp_utc)
-        .map(|dt| (dt - Utc::now()).num_seconds().max(0))
+        .map(|dt| dt.duration_since(Timestamp::now()).as_secs().max(0))
         .or(state.expires_in);
 
     if let Some(value) = expires_at.clone() {
@@ -845,7 +853,7 @@ pub fn nous_auth_state_from_runtime_token(
         .filter(|value| !value.is_empty())
         .map(str::to_string)
         .unwrap_or_else(|| DEFAULT_NOUS_SCOPE.to_string());
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut state = NousAuthState {
         portal_base_url: env_or_default("NOUS_PORTAL_BASE_URL", DEFAULT_NOUS_PORTAL_URL)
             .trim_end_matches('/')
@@ -862,7 +870,7 @@ pub fn nous_auth_state_from_runtime_token(
             .to_string(),
         access_token,
         refresh_token,
-        obtained_at: now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true),
+        obtained_at: format!("{now:.0}"),
         expires_at,
         expires_in: None,
         agent_key: None,
@@ -959,17 +967,17 @@ async fn refresh_nous_access_token(
         })?
         .to_string();
 
-    let now = Utc::now();
+    let now = Timestamp::now();
     let access_expires_in = payload.expires_in.filter(|v| *v > 0);
-    let access_expires_at = access_expires_in.map(|secs| {
-        (now + chrono::Duration::seconds(secs)).to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
-    });
+    let access_expires_at = access_expires_in
+        .map(|secs| nous_access_expires_at(now, secs))
+        .transpose()?;
 
     state.access_token = access_token;
     state.refresh_token = payload.refresh_token.or(Some(refresh_token));
     state.token_type = payload.token_type.unwrap_or_else(|| "Bearer".to_string());
     state.scope = payload.scope.or_else(|| state.scope.clone());
-    state.obtained_at = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    state.obtained_at = format!("{now:.0}");
     state.expires_in = access_expires_in;
     state.expires_at = access_expires_at;
     if let Some(inference_url) = payload
@@ -1069,7 +1077,7 @@ pub async fn resolve_nous_runtime_credentials(
     let expires_in = expires_at
         .as_deref()
         .and_then(parse_iso_timestamp_utc)
-        .map(|dt| (dt - Utc::now()).num_seconds().max(0))
+        .map(|dt| dt.duration_since(Timestamp::now()).as_secs().max(0))
         .or(state.agent_key_expires_in)
         .or(state.expires_in);
 
