@@ -475,7 +475,7 @@ async fn run_doctor(
     }));
 
     let snapshot_payload = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "deep": deep,
         "self_heal": self_heal,
         "self_heal_actions": self_heal_actions,
@@ -686,7 +686,7 @@ fn write_doctor_snapshot(
     } else {
         hermes_state_root(cli).join("snapshots").join(format!(
             "doctor-{}.json",
-            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
         ))
     };
     if let Some(parent) = path.parent() {
@@ -841,7 +841,7 @@ fn sign_artifact_bytes(
     mac.update(artifact_sha256.as_bytes());
     let signature_hex = hex::encode(mac.finalize().into_bytes());
     Ok(ProvenanceSignature {
-        generated_at: chrono::Utc::now().to_rfc3339(),
+        generated_at: hermes_core::time::now_rfc3339(),
         algorithm: "hmac-sha256".to_string(),
         key_id,
         artifact_sha256,
@@ -1075,7 +1075,7 @@ fn replay_manifest_json(summaries: &[ReplayIntegritySummary]) -> serde_json::Val
     {
         "1970-01-01T00:00:00Z".to_string()
     } else {
-        chrono::Utc::now().to_rfc3339()
+        hermes_core::time::now_rfc3339()
     };
     serde_json::json!({
         "generated_at": generated_at,
@@ -1121,7 +1121,7 @@ fn build_doctor_support_bundle_with_options(
     let bundle_path = output_path.map(PathBuf::from).unwrap_or_else(|| {
         reports_dir.join(format!(
             "support-bundle-{}.tar.gz",
-            chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+            jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
         ))
     });
     if let Some(parent) = bundle_path.parent() {

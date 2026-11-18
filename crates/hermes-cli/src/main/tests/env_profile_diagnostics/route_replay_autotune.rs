@@ -144,7 +144,7 @@ fn build_route_autotune_plan_raises_bias_for_critical_health() {
             success_rate: 0.4,
             avg_latency_ms: 5200.0,
             consecutive_failures: 7,
-            updated_at_unix_ms: chrono::Utc::now().timestamp_millis(),
+            updated_at_unix_ms: jiff::Timestamp::now().as_millisecond(),
         },
     };
     let summary = serde_json::json!({

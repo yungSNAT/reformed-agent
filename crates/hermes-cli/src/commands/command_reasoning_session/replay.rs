@@ -266,7 +266,7 @@ fn export_replay_trace_json(
         .collect();
 
     let payload = serde_json::json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "source_replay": replay_path.display().to_string(),
         "rows": rows,
     });

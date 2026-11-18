@@ -176,7 +176,7 @@ fn handle_platform_command(app: &mut App, args: &[&str]) -> Result<CommandResult
 }
 
 fn integrations_snapshot_path(session_id: &str) -> PathBuf {
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string();
     hermes_config::hermes_home().join("logs").join(format!(
         "integrations-snapshot-{}-{}.json",
         session_id, stamp
@@ -307,7 +307,7 @@ async fn handle_integrations_command(
             })?;
         }
         let payload = serde_json::json!({
-            "captured_at": chrono::Utc::now().to_rfc3339(),
+            "captured_at": hermes_core::time::now_rfc3339(),
             "session_id": app.session_id,
             "provider": provider,
             "model": app.current_model,
@@ -451,7 +451,7 @@ fn handle_log_command(app: &mut App) -> Result<CommandResult, AgentError> {
 }
 
 fn handle_debug_dump_command(app: &mut App, _args: &[&str]) -> Result<CommandResult, AgentError> {
-    let stamp = chrono::Utc::now().format("%Y%m%d-%H%M%S").to_string();
+    let stamp = jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S").to_string();
     let prefix = app.session_id.chars().take(8).collect::<String>();
     let stem = format!("debug-{}-{}", prefix, stamp);
     let snapshot_path = app.persist_session_snapshot(Some(&stem))?;
@@ -572,7 +572,7 @@ fn handle_feedback_command(app: &mut App, args: &[&str]) -> Result<CommandResult
             .map_err(|e| AgentError::Io(format!("Failed to create {}: {}", parent.display(), e)))?;
     }
     let record = serde_json::json!({
-        "at": chrono::Utc::now().to_rfc3339(),
+        "at": hermes_core::time::now_rfc3339(),
         "session_id": app.session_id,
         "model": app.current_model,
         "note": note,
@@ -655,7 +655,7 @@ fn handle_paste_command(app: &mut App, args: &[&str]) -> Result<CommandResult, A
     let pastes_dir = hermes_config::hermes_home().join("pastes");
     std::fs::create_dir_all(&pastes_dir)
         .map_err(|e| AgentError::Io(format!("Failed to create {}: {}", pastes_dir.display(), e)))?;
-    let file_name = format!("paste-{}.txt", chrono::Utc::now().format("%Y%m%d-%H%M%S"));
+    let file_name = format!("paste-{}.txt", jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S"));
     let path = pastes_dir.join(file_name);
     std::fs::write(&path, trimmed)
         .map_err(|e| AgentError::Io(format!("Failed to write {}: {}", path.display(), e)))?;
@@ -730,8 +730,9 @@ async fn handle_gquota_command(app: &mut App, _args: &[&str]) -> Result<CommandR
         }
     );
     if let Some(ms) = expires_at {
-        let ts = chrono::DateTime::<chrono::Utc>::from_timestamp_millis(ms)
-            .map(|d| d.to_rfc3339())
+        let ts = jiff::Timestamp::from_millisecond(ms)
+            .ok()
+            .map(hermes_core::time::rfc3339)
             .unwrap_or_else(|| "invalid".to_string());
         let _ = writeln!(out, "  - token expiry: {}", ts);
     }

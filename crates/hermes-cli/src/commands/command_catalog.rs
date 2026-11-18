@@ -1124,7 +1124,7 @@ fn default_trust_level_for_source(source: &str) -> &'static str {
 }
 
 fn now_rfc3339() -> String {
-    chrono::Utc::now().to_rfc3339()
+    hermes_core::time::now_rfc3339()
 }
 
 fn skills_hub_state_dir(skills_dir: &Path) -> PathBuf {

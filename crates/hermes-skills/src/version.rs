@@ -2,7 +2,7 @@
 
 use std::cmp::Ordering;
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
@@ -16,9 +16,11 @@ pub struct SkillVersion {
     /// Semantic or hash-based version string (e.g. "0.1.0" or "sha256:a1b2c3...").
     pub version: String,
     /// When this version was first created.
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
     /// When this version was last updated.
-    pub updated_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub updated_at: Timestamp,
     /// Optional changelog entry describing the change.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub changelog: Option<String>,
@@ -107,7 +109,8 @@ pub struct SkillChange {
     /// Version after the change.
     pub to_version: String,
     /// When the change happened.
-    pub timestamp: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub timestamp: Timestamp,
     /// Optional description of what changed.
     pub description: Option<String>,
 }
@@ -123,7 +126,7 @@ pub fn track_change(
         skill_name: skill_name.to_string(),
         from_version: compute_version(old_content),
         to_version: compute_version(new_content),
-        timestamp: Utc::now(),
+        timestamp: Timestamp::now(),
         description: description.map(String::from),
     }
 }

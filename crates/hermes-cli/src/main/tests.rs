@@ -46,7 +46,7 @@ mod tests {
 
         let header = serde_json::json!({ "alg": "none", "typ": "JWT" });
         let claims = serde_json::json!({
-            "exp": chrono::Utc::now().timestamp() + seconds,
+            "exp": jiff::Timestamp::now().as_second() + seconds,
             "scope": "inference:invoke",
         });
         format!(
@@ -310,7 +310,7 @@ mod tests {
                 refresh_token: Some("refresh-token-without-handler".to_string()),
                 token_type: "bearer".to_string(),
                 scope: None,
-                expires_at: Some(chrono::Utc::now() - chrono::Duration::minutes(5)),
+                expires_at: Some(jiff::Timestamp::now() - jiff::SignedDuration::from_mins(5)),
             })
             .await
             .expect("save expired credential");

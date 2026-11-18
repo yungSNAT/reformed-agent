@@ -22,7 +22,7 @@ reqwest = { workspace = true, features = ["json", "multipart", "stream"] }
 rusqlite = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true }
 indexmap = { workspace = true }
 thiserror = { workspace = true }

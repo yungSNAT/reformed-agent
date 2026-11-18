@@ -706,7 +706,7 @@ pub async fn handle_cli_skills(
             }
             subscriptions.push(serde_json::json!({
                 "source": normalized,
-                "added_at": chrono::Utc::now().to_rfc3339(),
+                "added_at": hermes_core::time::now_rfc3339(),
                 "options": extra.as_deref().unwrap_or(""),
             }));
             tokio::fs::write(

@@ -147,14 +147,14 @@ fn write_queue_events(events: &[LoopQueueEvent]) -> Result<(), AgentError> {
 
 pub fn recover_orphan_loop_events(max_age_secs: i64) -> Result<usize, AgentError> {
     let mut events = load_queue_events()?;
-    let now = Utc::now();
+    let now = Timestamp::now();
     let mut updated = 0usize;
     for ev in &mut events {
         if ev.status != "running" {
             continue;
         }
-        if let Ok(ts) = DateTime::parse_from_rfc3339(&ev.created_at) {
-            if (now - ts.with_timezone(&Utc)).num_seconds() > max_age_secs {
+        if let Some(ts) = hermes_core::time::parse_rfc3339(&ev.created_at) {
+            if now.duration_since(ts).as_secs() > max_age_secs {
                 ev.status = "orphaned".to_string();
                 updated = updated.saturating_add(1);
             }
@@ -352,9 +352,9 @@ pub fn oauth_session_sentinel() -> Vec<OAuthTokenStatus> {
     };
 
     let mut push_status = |provider: String, expires_at: String| {
-        let status = DateTime::parse_from_rfc3339(&expires_at)
+        let status = hermes_core::time::parse_rfc3339(&expires_at)
             .map(|ts| {
-                let secs = (ts.with_timezone(&Utc) - Utc::now()).num_seconds();
+                let secs = ts.duration_since(Timestamp::now()).as_secs();
                 if secs < 0 {
                     "expired"
                 } else if secs < 3600 {

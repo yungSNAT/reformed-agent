@@ -387,7 +387,7 @@ impl Gateway {
         let stat = usage.entry(session_key.to_string()).or_default();
         stat.user_messages += 1;
         stat.input_chars += chars as u64;
-        stat.last_updated_at = Some(Utc::now());
+        stat.last_updated_at = Some(Timestamp::now());
     }
 
     async fn bump_output_usage(&self, session_key: &str, chars: usize) {
@@ -395,7 +395,7 @@ impl Gateway {
         let stat = usage.entry(session_key.to_string()).or_default();
         stat.assistant_messages += 1;
         stat.output_chars += chars as u64;
-        stat.last_updated_at = Some(Utc::now());
+        stat.last_updated_at = Some(Timestamp::now());
     }
 
     async fn build_usage_text(&self, session_key: &str) -> String {
@@ -766,7 +766,7 @@ impl Gateway {
 
     /// Python: `f"{kind}_{%H%M%S}_{os.urandom(3).hex()}"` style task ids (`bg_…`, `btw_…`).
     fn python_async_task_id(kind: &str) -> String {
-        let ts = chrono::Utc::now().format("%H%M%S");
+        let ts = jiff::Timestamp::now().strftime("%H%M%S");
         let salt = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| (d.subsec_nanos() as u64) ^ d.as_secs().wrapping_mul(0x9e37_79b9_85f0_a7b5))

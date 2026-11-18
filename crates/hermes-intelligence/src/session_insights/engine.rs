@@ -7,7 +7,8 @@
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
+use jiff::civil::Date;
+use jiff::Timestamp;
 
 use crate::usage_pricing::{calculate_cost, has_known_pricing, CanonicalUsage, CostStatus};
 
@@ -30,7 +31,7 @@ impl<'a, D: SessionDataSource + ?Sized> SessionInsightsEngine<'a, D> {
     /// Generate a complete report covering the last `days` days.
     ///
     /// `now` is provided explicitly for deterministic testing; production
-    /// callers should pass [`Utc::now`].timestamp() as a `f64`.
+    /// callers should pass [`Timestamp::now`]`.as_second()` as a `f64`.
     pub fn generate(&self, days: u32, source: Option<&str>, now: f64) -> InsightsReport {
         let cutoff = now - (days as f64) * SECONDS_PER_DAY;
 
@@ -358,13 +359,14 @@ pub(crate) fn compute_activity_patterns(sessions: &[SessionRow]) -> ActivityPatt
 
     for s in sessions {
         let Some(ts) = s.started_at else { continue };
-        let Some(dt) = DateTime::<Utc>::from_timestamp(ts as i64, 0) else {
+        let Ok(at) = Timestamp::from_second(ts as i64) else {
             continue;
         };
-        let weekday = dt.weekday().num_days_from_monday() as u8;
+        let dt = hermes_core::time::utc_civil(at);
+        let weekday = dt.weekday().to_monday_zero_offset() as u8;
         *day_counts.entry(weekday).or_insert(0) += 1;
         *hour_counts.entry(dt.hour() as u8).or_insert(0) += 1;
-        let date_key = dt.format("%Y-%m-%d").to_string();
+        let date_key = dt.strftime("%Y-%m-%d").to_string();
         *daily_counts.entry(date_key).or_insert(0) += 1;
     }
 
@@ -392,13 +394,13 @@ pub(crate) fn compute_activity_patterns(sessions: &[SessionRow]) -> ActivityPatt
     let mut max_streak: u64 = 0;
     if !daily_counts.is_empty() {
         max_streak = 1;
-        let dates: Vec<chrono::NaiveDate> = daily_counts
+        let dates: Vec<Date> = daily_counts
             .keys()
-            .filter_map(|s| chrono::NaiveDate::parse_from_str(s, "%Y-%m-%d").ok())
+            .filter_map(|s| Date::strptime("%Y-%m-%d", s).ok())
             .collect();
         let mut current = 1u64;
         for win in dates.windows(2) {
-            let diff = (win[1] - win[0]).num_days();
+            let diff = (win[1] - win[0]).get_days();
             if diff == 1 {
                 current += 1;
                 if current > max_streak {
@@ -511,9 +513,9 @@ fn short_id(id: &str) -> String {
 }
 
 fn format_short_date(ts: f64) -> String {
-    DateTime::<Utc>::from_timestamp(ts as i64, 0)
-        .map(|dt| dt.format("%b %d").to_string())
-        .unwrap_or_else(|| "?".into())
+    Timestamp::from_second(ts as i64)
+        .map(|at| at.strftime("%b %d").to_string())
+        .unwrap_or_else(|_| "?".into())
 }
 
 /// Format an integer with comma separators (e.g. `1,234,567`).

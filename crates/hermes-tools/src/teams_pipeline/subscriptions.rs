@@ -27,7 +27,7 @@ pub fn sync_graph_subscription_record(
     if normalized.status.is_none() {
         normalized.status = Some(
             if let Some(expiration) = parse_datetime_utc(&normalized.expiration_datetime) {
-                if expiration <= Utc::now() {
+                if expiration <= Timestamp::now() {
                     "expired".into()
                 } else {
                     status.unwrap_or("active").into()
@@ -61,7 +61,7 @@ pub async fn maintain_graph_subscriptions(
     let threshold_hours = renew_within_hours.max(1);
     let extend_hours = extend_hours.max(1);
     let managed_client_state = expected_client_state(client_state);
-    let now = Utc::now();
+    let now = Timestamp::now();
     let remote_subscriptions = client.collect_paginated("/subscriptions").await?;
     let mut remote_ids = HashSet::new();
     let mut synced = 0usize;
@@ -107,19 +107,19 @@ pub async fn maintain_graph_subscriptions(
                 .push(json!({"subscription_id": subscription_id, "reason": "invalid_expiration"}));
             continue;
         };
-        let seconds_until_expiry = (expiration - now).num_seconds();
+        let seconds_until_expiry = expiration.duration_since(now).as_secs();
         if seconds_until_expiry < 0 {
             store.upsert_subscription(
                 &subscription_id,
                 json!({
                     "status": "expired",
-                    "expiration_datetime": expiration.to_rfc3339_opts(SecondsFormat::Secs, true)
+                    "expiration_datetime": format!("{expiration:.0}")
                 }),
             )?;
             skipped.push(json!({
                 "subscription_id": subscription_id,
                 "reason": "already_expired",
-                "expiration_datetime": expiration.to_rfc3339_opts(SecondsFormat::Secs, true)
+                "expiration_datetime": format!("{expiration:.0}")
             }));
             continue;
         }
@@ -131,9 +131,15 @@ pub async fn maintain_graph_subscriptions(
             }));
             continue;
         }
-        let new_expiration = (std::cmp::max(now, expiration)
-            + ChronoDuration::hours(i64::from(extend_hours)))
-        .to_rfc3339_opts(SecondsFormat::Secs, true);
+        let Ok(new_expiration) = std::cmp::max(now, expiration)
+            .checked_add(SignedDuration::from_hours(i64::from(extend_hours)))
+        else {
+            skipped.push(
+                json!({"subscription_id": subscription_id, "reason": "expiration_out_of_range"}),
+            );
+            continue;
+        };
+        let new_expiration = format!("{new_expiration:.0}");
         let candidate = json!({
             "subscription_id": subscription_id,
             "resource": raw.get("resource").cloned().unwrap_or(Value::Null),

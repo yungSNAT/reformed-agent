@@ -17,6 +17,7 @@ pub mod context_files;
 pub mod context_references;
 pub mod credential_pool;
 pub mod fallback;
+pub mod gemini_schema;
 pub mod honcho_provider;
 pub mod interrupt;
 pub mod local_backends;

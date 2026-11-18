@@ -109,11 +109,12 @@ fn epoch_time(seconds: f64) -> Option<SystemTime> {
 
 fn epoch_text(seconds: f64) -> Option<String> {
     let elapsed = epoch(seconds)?;
-    chrono::DateTime::from_timestamp(
+    jiff::Timestamp::new(
         i64::try_from(elapsed.as_secs()).ok()?,
-        elapsed.subsec_nanos(),
+        i32::try_from(elapsed.subsec_nanos()).ok()?,
     )
-    .map(|time| time.to_rfc3339())
+    .ok()
+    .map(hermes_core::time::rfc3339)
 }
 
 fn convert_message(mut row: Value) -> Result<Option<Message>, &'static str> {

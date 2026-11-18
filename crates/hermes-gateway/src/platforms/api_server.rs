@@ -446,7 +446,7 @@ impl ApiServerAdapter {
         ChatCompletionResponse {
             id: request_id.to_string(),
             object: "chat.completion".to_string(),
-            created: chrono::Utc::now().timestamp(),
+            created: jiff::Timestamp::now().as_second(),
             model: model.to_string(),
             choices: vec![ChatChoice {
                 index: 0,
@@ -473,7 +473,7 @@ impl ApiServerAdapter {
         StreamChunkResponse {
             id: request_id.to_string(),
             object: "chat.completion.chunk".to_string(),
-            created: chrono::Utc::now().timestamp(),
+            created: jiff::Timestamp::now().as_second(),
             model: model.to_string(),
             choices: vec![StreamChoice {
                 index: 0,
@@ -800,7 +800,7 @@ fn make_responses_api_body(
     serde_json::json!({
         "id": response_id,
         "object": "response",
-        "created_at": chrono::Utc::now().timestamp(),
+        "created_at": jiff::Timestamp::now().as_second(),
         "model": model,
         "previous_response_id": previous_response_id,
         "output": [
@@ -930,7 +930,7 @@ async fn run_background_request(
         .update(&run_id, |record| {
             if record.status == "stopping" {
                 record.status = "cancelled".to_string();
-                record.completed_at = Some(chrono::Utc::now().timestamp());
+                record.completed_at = Some(jiff::Timestamp::now().as_second());
                 record.push_event(
                     "run.failed",
                     Some(serde_json::json!({"error": "Run stopped before dispatch"})),
@@ -955,7 +955,7 @@ async fn run_background_request(
                 record.status = "completed".to_string();
                 record.output = Some(reply.clone());
                 record.usage = usage;
-                record.completed_at = Some(chrono::Utc::now().timestamp());
+                record.completed_at = Some(jiff::Timestamp::now().as_second());
                 record.push_event(
                     "run.completed",
                     Some(serde_json::json!({
@@ -977,7 +977,7 @@ async fn run_background_request(
                 } else {
                     "failed".to_string()
                 };
-                record.completed_at = Some(chrono::Utc::now().timestamp());
+                record.completed_at = Some(jiff::Timestamp::now().as_second());
                 record.push_event(
                     "run.failed",
                     Some(serde_json::json!({
@@ -1216,13 +1216,13 @@ async fn api_cron_fire_response(
         .map(str::trim)
         .filter(|v| !v.is_empty())
     {
-        Some(raw) => match chrono::DateTime::parse_from_rfc3339(raw) {
-            Ok(dt) => Some(dt.with_timezone(&chrono::Utc)),
-            Err(err) => {
+        Some(raw) => match hermes_core::time::parse_rfc3339(raw) {
+            Some(at) => Some(at),
+            None => {
                 return (
                     HTTP_BAD_REQUEST,
                     api_error(
-                        format!("fire_at must be RFC3339: {err}"),
+                        "fire_at must be RFC3339".to_string(),
                         "invalid_request_error",
                         400,
                     ),

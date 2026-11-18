@@ -75,7 +75,6 @@ serde_yaml = { package = "yaml_serde", version = "0.10" }
 # HTTP / networking
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 tokio-tungstenite = "0.29"
-eventsource-stream = "0.2"
 
 # Error handling & logging
 thiserror = "2"
@@ -91,8 +90,8 @@ crossterm = "0.29"
 rusqlite = { version = "0.43", features = ["bundled"] }
 
 # Time
-chrono = { version = "0.4", features = ["serde"] }
-cron = "0.15"
+jiff = "0.2.46"
+jiff-cron = "0.3"
 
 # Utils
 regex = "1"

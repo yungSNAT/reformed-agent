@@ -2,7 +2,6 @@
 fn managed_scope_dir_ignores_missing_override() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let dir = tempdir().unwrap();
@@ -17,7 +16,6 @@ fn managed_scope_dir_ignores_missing_override() {
 fn load_config_applies_managed_overlay_after_env_and_preserves_siblings() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     clear_web_env_bridge_vars();
@@ -72,7 +70,6 @@ web:
 
 #[test]
 fn managed_vertex_config_overrides_only_declared_keys() {
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempfile::tempdir().unwrap();
@@ -103,7 +100,6 @@ fn managed_vertex_config_overrides_only_declared_keys() {
 fn load_dotenv_managed_env_overrides_user_dotenv_and_shell() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();
@@ -126,7 +122,6 @@ fn load_dotenv_managed_env_overrides_user_dotenv_and_shell() {
 fn load_config_managed_overlay_normalizes_root_model_string() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();
@@ -152,7 +147,6 @@ fn load_config_managed_overlay_normalizes_root_model_string() {
 fn load_config_managed_overlay_is_fail_open_on_malformed_yaml() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();
@@ -173,7 +167,6 @@ fn load_config_managed_overlay_is_fail_open_on_malformed_yaml() {
 fn load_config_managed_overlay_is_fail_open_on_invalid_values() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();
@@ -196,7 +189,6 @@ fn load_config_managed_overlay_is_fail_open_on_invalid_values() {
 fn load_config_managed_overlay_naming_a_backend_it_cannot_apply_stops_loading() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     for (text, name) in [
         ("terminal:\n  backend: vercel_sandbox\n", "vercel_sandbox"),
@@ -226,7 +218,6 @@ fn load_config_managed_overlay_naming_a_backend_it_cannot_apply_stops_loading() 
 fn load_config_ignore_user_config_still_honors_managed_scope() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();
@@ -248,7 +239,6 @@ fn load_config_ignore_user_config_still_honors_managed_scope() {
 fn load_effective_config_yaml_value_applies_managed_raw_overlay() {
     use tempfile::tempdir;
 
-    let _global_guard = crate::managed_gateway::test_lock::lock();
     let _guard = ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     clear_managed_scope_test_env();
     let home = tempdir().unwrap();

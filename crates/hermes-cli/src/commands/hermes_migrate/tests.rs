@@ -4,8 +4,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::{DateTime, Utc};
 use hermes_cron::{CronJob, DeliverTarget, JobStatus};
+use jiff::Timestamp;
 use rusqlite::{params, Connection};
 use serde_json::{json, Value};
 
@@ -624,10 +624,8 @@ fn a_failed_apply_removes_what_it_created() {
     assert!(!to.exists(), "{:?}", tree(&to));
 }
 
-fn now() -> DateTime<Utc> {
-    DateTime::parse_from_rfc3339("2026-11-15T12:00:00Z")
-        .unwrap()
-        .with_timezone(&Utc)
+fn now() -> Timestamp {
+    "2026-11-15T12:00:00Z".parse().unwrap()
 }
 
 fn convert(job: Value) -> Result<CronJob, String> {

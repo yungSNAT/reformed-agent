@@ -1,6 +1,6 @@
 //! Deterministic planning and verification primitives for agent behavior.
 
-use chrono::{DateTime, Utc};
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -64,8 +64,12 @@ pub enum ContextUse {
 pub struct ContextSource {
     pub kind: String,
     pub locator: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub observed_at: Option<DateTime<Utc>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        with = "hermes_core::time::serde_utc::option"
+    )]
+    pub observed_at: Option<Timestamp>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub freshness_seconds: Option<i64>,
 }
@@ -80,7 +84,7 @@ impl ContextSource {
         }
     }
 
-    pub fn observed_at(mut self, observed_at: DateTime<Utc>) -> Self {
+    pub fn observed_at(mut self, observed_at: Timestamp) -> Self {
         self.observed_at = Some(observed_at);
         self
     }
@@ -128,7 +132,7 @@ impl ContextItem {
         self.allowed_uses.contains(&target)
     }
 
-    fn is_stale(&self, now: DateTime<Utc>, default_stale_after_secs: i64) -> bool {
+    fn is_stale(&self, now: Timestamp, default_stale_after_secs: i64) -> bool {
         let Some(observed_at) = self.source.observed_at else {
             return false;
         };
@@ -137,7 +141,7 @@ impl ContextItem {
             .freshness_seconds
             .unwrap_or(default_stale_after_secs)
             .max(0);
-        now.signed_duration_since(observed_at).num_seconds() > max_age
+        now.duration_since(observed_at).as_secs() > max_age
     }
 }
 
@@ -249,7 +253,7 @@ impl ContextFirewall {
         &self,
         items: &[ContextItem],
         target_use: ContextUse,
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> ContextFirewallReport {
         let mut admitted = Vec::new();
         let mut blocked = Vec::new();
@@ -484,7 +488,7 @@ impl EvidenceCompiler {
         &self,
         claims: &[Claim],
         evidence: &[Evidence],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> EvidenceReport {
         let verdicts = claims
             .iter()
@@ -497,7 +501,7 @@ impl EvidenceCompiler {
         &self,
         claim: &Claim,
         evidence: &[Evidence],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> ClaimVerdict {
         let related: Vec<&Evidence> = evidence
             .iter()
@@ -581,7 +585,7 @@ impl EvidenceCompiler {
     }
 }
 
-fn evidence_is_stale(evidence: &Evidence, claim: &Claim, now: DateTime<Utc>) -> bool {
+fn evidence_is_stale(evidence: &Evidence, claim: &Claim, now: Timestamp) -> bool {
     let max_age = claim
         .max_age_seconds
         .or(evidence.source.freshness_seconds)
@@ -590,7 +594,7 @@ fn evidence_is_stale(evidence: &Evidence, claim: &Claim, now: DateTime<Utc>) -> 
     let Some(observed_at) = evidence.source.observed_at else {
         return false;
     };
-    now.signed_duration_since(observed_at).num_seconds() > max_age
+    now.duration_since(observed_at).as_secs() > max_age
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
@@ -708,7 +712,7 @@ impl ResearchSynthesisEngine {
     pub fn rank_sources(
         &self,
         sources: &[ResearchSource],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> Vec<RankedResearchSource> {
         let mut ranked = sources
             .iter()
@@ -735,7 +739,7 @@ impl ResearchSynthesisEngine {
     pub fn plan_synthesis(
         &self,
         sources: &[ResearchSource],
-        now: DateTime<Utc>,
+        now: Timestamp,
     ) -> ResearchSynthesisPlan {
         let ranked_sources = self.rank_sources(sources, now);
         let source_by_id: BTreeMap<&str, &ResearchSource> = sources
@@ -816,7 +820,7 @@ impl ResearchSynthesisEngine {
     }
 }
 
-fn research_source_score(source: &ResearchSource, now: DateTime<Utc>) -> f64 {
+fn research_source_score(source: &ResearchSource, now: Timestamp) -> f64 {
     let trust = source.trust.rank() as f64 / 5.0;
     let recency = source_recency_score(&source.source, now);
     let corroboration = (source.corroborates.len().min(4) as f64) * 0.04;
@@ -826,7 +830,7 @@ fn research_source_score(source: &ResearchSource, now: DateTime<Utc>) -> f64 {
         .clamp(0.0, 1.0)
 }
 
-fn source_recency_score(source: &ContextSource, now: DateTime<Utc>) -> f64 {
+fn source_recency_score(source: &ContextSource, now: Timestamp) -> f64 {
     let Some(observed_at) = source.observed_at else {
         return 0.55;
     };
@@ -834,7 +838,7 @@ fn source_recency_score(source: &ContextSource, now: DateTime<Utc>) -> f64 {
         .freshness_seconds
         .unwrap_or(DEFAULT_MEMORY_STALE_AFTER_SECS)
         .max(1) as f64;
-    let age = now.signed_duration_since(observed_at).num_seconds().max(0) as f64;
+    let age = now.duration_since(observed_at).as_secs().max(0) as f64;
     (1.0 - (age / max_age)).clamp(0.0, 1.0)
 }
 
@@ -850,7 +854,7 @@ fn source_quality_tier(score: f64) -> SourceQualityTier {
     }
 }
 
-fn source_ranking_rationale(source: &ResearchSource, score: f64, now: DateTime<Utc>) -> String {
+fn source_ranking_rationale(source: &ResearchSource, score: f64, now: Timestamp) -> String {
     let recency = source_recency_score(&source.source, now);
     format!(
         "kind={:?} trust={:?} recency={:.2} corroborates={} conflicts={} score={:.3}",

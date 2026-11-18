@@ -4,7 +4,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -356,7 +355,7 @@ fn replace_dir_atomic(src: &Path, dst: &Path) -> Result<(), SkillError> {
         let backup = parent.join(format!(
             ".{}.backup-{}",
             dst.file_name().and_then(|v| v.to_str()).unwrap_or("skill"),
-            Utc::now().timestamp_nanos_opt().unwrap_or_default()
+            i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or_default()
         ));
         fs::rename(dst, &backup)?;
         match fs::rename(&staging, dst) {
@@ -623,7 +622,7 @@ fn record_official_lock(
 ) -> Result<(), SkillError> {
     let mut lock = read_hub_lock(&config.skills_dir);
     let install_path = rel_dest.to_string_lossy().replace('\\', "/");
-    let now = Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     lock.installed.retain(|entry| entry.name != name);
     lock.installed.push(SkillHubInstalledEntry {
         name: name.to_string(),
@@ -794,7 +793,7 @@ pub fn restore_official_optional_skill(
             .join(".archive")
             .join(format!(
                 "official-restore-{}",
-                Utc::now().format("%Y%m%d%H%M%S")
+                jiff::Timestamp::now().strftime("%Y%m%d%H%M%S")
             ))
             .to_string_lossy()
             .to_string(),
