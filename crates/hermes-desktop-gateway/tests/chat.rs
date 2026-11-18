@@ -764,3 +764,49 @@ async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
     assert_eq!(kind, "message.complete");
     assert_eq!(payload["text"], "slow reply", "{payload}");
 }
+
+/// A turn reads and saves its session while its first event waits to be written; that store
+/// work must not hold the event, or a reader that keeps up is closed for a slow disk. A long
+/// saved session makes the read take well over the write timeout.
+#[tokio::test]
+async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
+    let timeout = Duration::from_millis(100);
+    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let filler = "x".repeat(1024);
+    let rows: Vec<hermes_core::Message> = (0..100_000)
+        .map(|n| {
+            if n % 2 == 0 {
+                hermes_core::Message::user(filler.clone())
+            } else {
+                hermes_core::Message::assistant(filler.clone())
+            }
+        })
+        .collect();
+    let store = hermes_agent::SessionPersistence::new(started.home.path());
+    store
+        .persist_session(
+            &session,
+            &rows,
+            Some("mock-model"),
+            Some("desktop"),
+            None,
+            None,
+        )
+        .unwrap();
+    let read = std::time::Instant::now();
+    assert_eq!(store.load_session(&session).unwrap().len(), rows.len());
+    assert!(
+        read.elapsed() > timeout * 2,
+        "read took {:?}",
+        read.elapsed()
+    );
+
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    // The turn may fail on the long history; it must still reach this reader.
+    let events = client.turn_events(&session).await;
+    assert_eq!(events.first().unwrap().0, "message.start");
+    assert_eq!(events.last().unwrap().0, "message.complete");
+}
