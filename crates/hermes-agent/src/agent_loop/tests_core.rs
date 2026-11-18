@@ -2187,50 +2187,65 @@
                 .is_some_and(|c| c.contains("repo_map_marker_fn"))));
     }
 
+    /// Records the messages each model call is given and answers "read it".
+    #[derive(Default)]
+    struct RecordingProvider {
+        seen: Mutex<Vec<Vec<Message>>>,
+    }
+    #[async_trait::async_trait]
+    impl LlmProvider for RecordingProvider {
+        async fn chat_completion(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            self.seen.lock().expect("seen lock").push(messages.to_vec());
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant("read it"),
+                usage: None,
+                model: "dummy".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            self.seen.lock().expect("seen lock").push(messages.to_vec());
+            futures::stream::iter(vec![
+                Ok(stream_chunk_content("read it")),
+                Ok(stream_chunk_finish("stop")),
+            ])
+            .boxed()
+        }
+    }
+
     #[test]
     fn streamed_and_plain_runs_both_expand_file_references() {
-        #[derive(Default)]
-        struct CapturingProvider {
-            seen: Mutex<Vec<Vec<Message>>>,
+        let sent = user_messages_sent(vec![Message::user("what is this package? @file:Cargo.toml")]);
+        for (users, run) in sent.iter().zip(["run", "run_stream"]) {
+            assert!(
+                users
+                    .last()
+                    .is_some_and(|asked| asked.contains("name = \"hermes-agent\"")),
+                "{run} sends the file's text to the model"
+            );
         }
-        #[async_trait::async_trait]
-        impl LlmProvider for CapturingProvider {
-            async fn chat_completion(
-                &self,
-                messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> Result<hermes_core::LlmResponse, AgentError> {
-                self.seen.lock().expect("seen lock").push(messages.to_vec());
-                Ok(hermes_core::LlmResponse {
-                    message: Message::assistant("read it"),
-                    usage: None,
-                    model: "dummy".into(),
-                    finish_reason: Some("stop".into()),
-                })
-            }
+    }
 
-            fn chat_completion_stream(
-                &self,
-                messages: &[Message],
-                _tools: &[ToolSchema],
-                _max_tokens: Option<u32>,
-                _temperature: Option<f64>,
-                _model: Option<&str>,
-                _extra_body: Option<&serde_json::Value>,
-            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-                self.seen.lock().expect("seen lock").push(messages.to_vec());
-                futures::stream::iter(vec![
-                    Ok(stream_chunk_content("read it")),
-                    Ok(stream_chunk_finish("stop")),
-                ])
-                .boxed()
-            }
-        }
-
+    /// Runs `messages` through `run` and then `run_stream` and returns the user messages each
+    /// sent to the model, in order.
+    fn user_messages_sent(messages: Vec<Message>) -> Vec<Vec<String>> {
         // Tests run in the crate's folder, which holds this Cargo.toml.
         let _lock = env_test_lock();
         let mut config = AgentConfig {
@@ -2239,31 +2254,70 @@
             ..AgentConfig::default()
         };
         let _home = isolate_route_learning_home(&mut config);
-        let provider = Arc::new(CapturingProvider::default());
+        let provider = Arc::new(RecordingProvider::default());
         let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
-        let ask = || vec![Message::user("what is this package? @file:Cargo.toml")];
-
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .expect("runtime");
-        rt.block_on(agent.run(ask(), None)).expect("run");
-        rt.block_on(agent.run_stream(ask(), None, Some(Box::new(|_| {}))))
+        rt.block_on(agent.run(messages.clone(), None)).expect("run");
+        rt.block_on(agent.run_stream(messages, None, Some(Box::new(|_| {}))))
             .expect("streamed run");
-
         let seen = provider.seen.lock().expect("seen lock");
         assert_eq!(seen.len(), 2, "one model call per run");
-        for (sent, run) in seen.iter().zip(["run", "run_stream"]) {
-            let asked = sent
-                .iter()
-                .rev()
-                .find(|m| m.role == MessageRole::User)
-                .and_then(|m| m.content.as_deref())
-                .unwrap_or_default();
+        seen.iter()
+            .map(|sent| {
+                sent.iter()
+                    .filter(|m| m.role == MessageRole::User)
+                    .map(|m| m.content.clone().unwrap_or_default())
+                    .collect()
+            })
+            .collect()
+    }
+
+    #[test]
+    fn only_the_turns_own_message_has_its_references_expanded() {
+        // An earlier turn's message as an expansion left it: the attached text names a file.
+        let earlier =
+            "what is in my notes?\n\n--- Attached Context ---\n\nnotes.md: see @file:Cargo.toml";
+        let sent = user_messages_sent(vec![
+            Message::user(earlier),
+            Message::assistant("They point at the manifest."),
+            Message::user("and this? @file:Cargo.toml"),
+        ]);
+        for (users, run) in sent.iter().zip(["run", "run_stream"]) {
+            assert_eq!(users[0], earlier, "{run} expanded an earlier turn's text");
             assert!(
-                asked.contains("name = \"hermes-agent\""),
-                "{run} sends the file's text to the model"
+                users[1].contains("name = \"hermes-agent\""),
+                "{run} did not expand the turn's own message"
             );
+        }
+    }
+
+    #[test]
+    fn a_reference_in_an_acp_image_prompt_keeps_its_parts() {
+        let image = json!({
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,iVBORw0KGgo="},
+        });
+        let parts = json!([
+            {"type": "text", "text": "what is this package? @file:Cargo.toml"},
+            image.clone(),
+        ]);
+        let prompt = format!("__hermes_acp_parts_json__:{parts}");
+        let sent = user_messages_sent(vec![Message::user(prompt)]);
+        for (users, run) in sent.iter().zip(["run", "run_stream"]) {
+            let parts = crate::provider::parse_acp_multimodal_parts(&users[0])
+                .unwrap_or_else(|| panic!("{run} broke the parts: {}", users[0]));
+            assert_eq!(parts.len(), 2, "{run}");
+            assert!(
+                parts[0]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.contains("name = \"hermes-agent\"")),
+                "{run} did not expand the text part: {}",
+                parts[0]
+            );
+            assert_eq!(parts[1], image, "{run}");
         }
     }
 
