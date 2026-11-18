@@ -52,10 +52,10 @@ pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
 /// Largest inbound WebSocket message (and frame) at all, as upstream allows
 /// (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py), because
 /// `file.attach` sends a whole base64 file in one message. Over [`MAX_MESSAGE_BYTES`], only a
-/// single `file.attach` or `image.attach_bytes` request with a string or number id is read,
-/// into fixed fields, so its
-/// parse costs about its size; anything else closes the connection.
-// shortcut: such a message is held twice while parsed (the text and its data_url), up to
+/// single `file.attach` or `image.attach_bytes` request with a string or number id and its
+/// method's data is read, into fixed fields, so its parse costs about its size; anything else
+/// closes the connection.
+// shortcut: such a message is held twice while parsed (the text and its data), up to
 // 768 MiB a connection, and connections are not limited. Upgrade path: a streaming reader
 // that decodes the data_url as it arrives.
 pub const ATTACH_MAX_MESSAGE_BYTES: usize = 384 << 20;
@@ -359,9 +359,9 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
 }
 
 /// A message over [`MAX_MESSAGE_BYTES`] as a request [`reply_to_one`] can check, if it is a
-/// single `file.attach` or `image.attach_bytes` request or notification with a string, number or
-/// null id and string params. Every other member is skipped unparsed, so no part of the message is built into a
-/// tree.
+/// single `file.attach` or `image.attach_bytes` request or notification with a string, number
+/// or null id and string params that hold its method's data. Every other member is skipped
+/// unparsed, so no part of the message is built into a tree.
 fn attach_request(text: &str) -> Option<Value> {
     #[derive(serde::Deserialize)]
     struct Request {
@@ -376,7 +376,7 @@ fn attach_request(text: &str) -> Option<Value> {
         serde::Deserialize::deserialize(from).map(Some)
     }
     /// `file.attach`'s `data_url` and `name`, or `image.attach_bytes`'s `content_base64` (or
-    /// its `data` alias); the method's handler refuses a missing one.
+    /// its `data` alias).
     #[derive(serde::Deserialize)]
     struct Params {
         session_id: String,
@@ -426,8 +426,10 @@ fn attach_request(text: &str) -> Option<Value> {
         data,
     } = request.params;
     let fields = match request.method.as_str() {
-        "file.attach" => [("data_url", data_url), ("name", name)],
-        "image.attach_bytes" => [("content_base64", content_base64), ("data", data)],
+        "file.attach" if data_url.is_some() => [("data_url", data_url), ("name", name)],
+        "image.attach_bytes" if content_base64.is_some() || data.is_some() => {
+            [("content_base64", content_base64), ("data", data)]
+        }
         _ => return None,
     };
     let mut params = serde_json::Map::new();
