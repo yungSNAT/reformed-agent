@@ -340,6 +340,15 @@ impl Importer<'_> {
         };
         let mut added = Vec::new();
         for (name, server) in servers {
+            // A name is copied into both files and the report, so it cannot hold a credential.
+            if looks_secret(name) {
+                self.record(
+                    Status::Skip,
+                    "an MCP server",
+                    "its name looks like a credential; add it yourself".to_string(),
+                );
+                continue;
+            }
             let item = format!("MCP server {name}");
             let taken = config.mcp_servers.iter().any(|entry| &entry.name == name)
                 || record_names(&records).contains(name.as_str());
@@ -850,8 +859,8 @@ fn write_file(path: &Path, content: &[u8]) -> Result<(), String> {
 }
 
 /// Writes `mcp_servers.json`, then `config.yaml`, each after a backup. If
-/// `config.yaml` cannot be saved, `mcp_servers.json` is put back as it was,
-/// so the 2 files never disagree.
+/// `config.yaml` cannot be saved, both files are put back as they were,
+/// however far the save got, so the 2 files never disagree.
 fn write_servers(
     records_path: &Path,
     records_text: &str,
@@ -859,25 +868,40 @@ fn write_servers(
     config: &hermes_config::GatewayConfig,
     save_config: SaveConfig,
 ) -> Result<(), String> {
-    let original = match std::fs::read(records_path) {
-        Ok(bytes) => Some(bytes),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
-        Err(err) => return Err(format!("could not read mcp_servers.json: {err}")),
-    };
+    let original_records = read_original(records_path, "mcp_servers.json")?;
+    let original_config = read_original(config_path, "config.yaml")?;
     back_up(records_path)?;
     back_up(config_path)?;
     write_file(records_path, records_text.as_bytes())?;
     let Err(err) = save_config(config_path, config) else {
         return Ok(());
     };
-    let restored = match original {
-        Some(bytes) => write_file(records_path, &bytes),
-        None => std::fs::remove_file(records_path).map_err(|err| err.to_string()),
-    };
+    let restored = restore(config_path, original_config)
+        .and_then(|()| restore(records_path, original_records));
     Err(match restored {
-        Ok(()) => format!("{err}; mcp_servers.json is restored"),
-        Err(again) => format!("{err}; mcp_servers.json could not be restored: {again}"),
+        Ok(()) => format!("{err}; mcp_servers.json and config.yaml are restored"),
+        Err(again) => format!("{err}; the files could not be restored: {again}"),
     })
+}
+
+/// The bytes of `path`, or `None` when it does not exist.
+fn read_original(path: &Path, label: &str) -> Result<Option<Vec<u8>>, String> {
+    match std::fs::read(path) {
+        Ok(bytes) => Ok(Some(bytes)),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(err) => Err(format!("could not read {label}: {err}")),
+    }
+}
+
+/// Puts `path` back to `original`: its bytes, or no file.
+fn restore(path: &Path, original: Option<Vec<u8>>) -> Result<(), String> {
+    match original {
+        Some(bytes) => write_file(path, &bytes),
+        None => match std::fs::remove_file(path) {
+            Err(err) if err.kind() != std::io::ErrorKind::NotFound => Err(err.to_string()),
+            _ => Ok(()),
+        },
+    }
 }
 
 /// `mcp_servers.json` as a JSON value: an object of servers, or the
@@ -1294,7 +1318,7 @@ mod tests {
         let text = report.lines.join("\n");
         assert!(
             text.contains(
-                "error        MCP servers: could not write them: disk full; mcp_servers.json is restored"
+                "error        MCP servers: could not write them: disk full; mcp_servers.json and config.yaml are restored"
             ),
             "{text}"
         );
