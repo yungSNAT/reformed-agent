@@ -1868,6 +1868,7 @@ dependencies = [
  "hermes-core",
  "hermes-provider-runtime",
  "reqwest",
+ "serde",
  "serde_json",
  "subtle",
  "tempfile",

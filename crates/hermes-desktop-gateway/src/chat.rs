@@ -3,10 +3,9 @@
 //! the sessions database the CLI uses.
 //!
 //! Turns run the configured model with no tools, so no request can run a command, and the only
-//! file one writes is an attachment under `<working folder>/.hermes/attachments`. Turns stream,
-//! and the agent's streaming run does not expand `@` context references (only its
-//! non-streaming run does), so a prompt's `@file:` reference reaches the model as text. Tool
-//! calls and their approval prompts come with a later change.
+//! file one writes is an attachment under `<working folder>/.hermes/attachments`. The agent
+//! expands a prompt's `@file:` references, confined to the working folder, so the model reads
+//! an attachment's text. Tool calls and their approval prompts come with a later change.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -223,8 +222,14 @@ impl Chat {
         // The agent resolves `@file:` against the process's working folder.
         let workspace = std::env::current_dir()
             .map_err(|e| (ATTACH_FAILED, format!("no working folder: {e}")))?;
-        let staged =
-            crate::attach::stage(&workspace, name, data_url).map_err(|e| (ATTACH_FAILED, e))?;
+        // Writing up to 256 MiB blocks; on the multi-threaded runtime `hermes serve` uses, the
+        // other tasks on this thread, other connections' writes among them, move meanwhile.
+        let stage = || crate::attach::stage(&workspace, name, data_url);
+        let staged = match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(stage),
+            _ => stage(),
+        }
+        .map_err(|e| (ATTACH_FAILED, e))?;
         Ok(json!({
             "attached": true,
             "name": staged.name,

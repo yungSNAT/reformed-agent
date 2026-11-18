@@ -13,6 +13,10 @@ use base64::Engine as _;
 /// The attachments folder, from the working folder down.
 const FOLDERS: [&str; 2] = [".hermes", "attachments"];
 
+/// Largest file `file.attach` writes, as upstream (`_ATTACHMENT_MAX_BYTES` in
+/// tui_gateway/prompt_attachments.py).
+pub(crate) const MAX_ATTACHMENT_BYTES: usize = 256 << 20;
+
 /// Base64 characters decoded at a time: a multiple of 4.
 const CHUNK: usize = 64 << 10;
 
@@ -35,7 +39,20 @@ pub(crate) struct Staged {
 /// `name`. The payload's form is checked before anything is written; a payload that fails to
 /// decode leaves no file.
 pub(crate) fn stage(workspace: &Path, name: &str, data_url: &str) -> Result<Staged, String> {
+    stage_within(workspace, name, data_url, MAX_ATTACHMENT_BYTES)
+}
+
+/// `stage`, refusing a payload that decodes to more than `limit` bytes before anything is made.
+fn stage_within(
+    workspace: &Path,
+    name: &str,
+    data_url: &str,
+    limit: usize,
+) -> Result<Staged, String> {
     let payload = base64_payload(data_url).ok_or(INVALID)?;
+    if decoded_len(payload) > limit {
+        return Err(format!("attachment larger than {limit} bytes"));
+    }
     let dir = attachments_folder(workspace)?;
     let (path, file) = create_new(&dir, &file_name(name))?;
     if let Err(e) = decode_into(payload, file) {
@@ -67,6 +84,16 @@ fn base64_payload(data_url: &str) -> Option<&str> {
         .get(marker..)
         .filter(|m| m.eq_ignore_ascii_case(";base64"))
         .map(|_| data)
+}
+
+/// The bytes a valid `payload` decodes to; an invalid one fails to decode later.
+fn decoded_len(payload: &str) -> usize {
+    let (mut chars, mut padding) = (0usize, 0usize);
+    for byte in payload.bytes().filter(|b| !b.is_ascii_whitespace()) {
+        chars += 1;
+        padding = if byte == b'=' { padding + 1 } else { 0 };
+    }
+    (chars / 4 * 3).saturating_sub(padding.min(2))
 }
 
 /// Strictly decodes `payload` (standard alphabet and padding; whitespace ignored, as upstream)
@@ -264,6 +291,27 @@ mod tests {
         let work = tempfile::tempdir().unwrap();
         assert!(stage(work.path(), "x.txt", "data:text/plain,hi").is_err());
         assert!(files(work.path()).is_empty());
+    }
+
+    #[test]
+    fn a_payload_over_the_decoded_limit_is_refused_before_anything_is_written() {
+        // "hello!" is 6 bytes, with and without line breaks; "hello" with padding is 5.
+        let work = tempfile::tempdir().unwrap();
+        let at = stage_within(work.path(), "a.txt", "aGVs\nbG8h", 6).unwrap();
+        assert_eq!(fs::read(at.path).unwrap(), b"hello!");
+        let at = stage_within(work.path(), "b.txt", "aGVsbG8=", 5).unwrap();
+        assert_eq!(fs::read(at.path).unwrap(), b"hello");
+
+        let work = tempfile::tempdir().unwrap();
+        for (payload, limit) in [("aGVs\nbG8h", 5), ("aGVsbG8=", 4)] {
+            let refused = stage_within(work.path(), "c.txt", payload, limit);
+            assert_eq!(
+                refused.err(),
+                Some(format!("attachment larger than {limit} bytes"))
+            );
+        }
+        assert!(files(work.path()).is_empty(), "no folder was made");
+        assert_eq!(MAX_ATTACHMENT_BYTES, 256 << 20);
     }
 
     #[test]
