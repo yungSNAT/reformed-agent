@@ -706,6 +706,47 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_fifo_in_the_source_is_an_error_not_a_hang() {
+        use crate::agent_import::fifo_fixture::{make_fifo, run_unblocking};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(source.join("skills/piped")).unwrap();
+        std::fs::create_dir_all(source.join("sessions")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("skills/piped/SKILL.md"), "piped\n").unwrap();
+        let fifos = [
+            "SOUL.md",
+            ".env",
+            "config.yaml",
+            "sessions/s1.jsonl",
+            "skills/piped/pipe",
+        ]
+        .map(|name| source.join(name));
+        for fifo in &fifos {
+            make_fifo(fifo);
+        }
+
+        let (from, to) = (source.clone(), home.clone());
+        let result = run_unblocking(fifos.to_vec(), move || migrate_into(&from, &to)).unwrap();
+        let report = items(&result);
+        assert!(result.migrated.is_empty(), "{report}");
+        for kind in [
+            "personality:SOUL.md",
+            "api-keys",
+            "config:config.yaml",
+            "session:s1.jsonl",
+            "skill:piped",
+        ] {
+            assert!(
+                result.errors.iter().any(|item| item.kind == kind),
+                "no error for {kind}: {report}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn api_keys_are_written_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();

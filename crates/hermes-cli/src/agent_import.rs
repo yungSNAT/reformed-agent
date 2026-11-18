@@ -2099,6 +2099,47 @@ enabled = false
 
     #[cfg(unix)]
     #[test]
+    fn a_fifo_in_the_source_is_an_error_not_a_hang() {
+        use super::fifo_fixture::{make_fifo, run_unblocking};
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("skills/piped")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("skills/piped/SKILL.md"), "piped\n").unwrap();
+        let fifos = vec![
+            codex.join("config.toml"),
+            codex.join("AGENTS.md"),
+            codex.join("skills/piped/pipe"),
+        ];
+        for fifo in &fifos {
+            make_fifo(fifo);
+        }
+
+        let (source, target) = (codex.clone(), home.clone());
+        let report = run_unblocking(fifos, move || {
+            import_agent(&AgentImportRequest {
+                agent: SourceAgent::Codex,
+                source: &source,
+                home: &target,
+                apply: true,
+            })
+        })
+        .unwrap();
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        for expected in [
+            "error        config.toml: ",
+            "error        AGENTS.md: ",
+            "error        skill piped: ",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!home.join("skills/codex-imports/piped").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn files_and_links_among_the_entries_do_not_fail_the_import() {
         use std::os::unix::fs::symlink;
         let root = tempfile::tempdir().expect("temp root");
@@ -2261,5 +2302,52 @@ env_http_headers = { ghp_fixtureKey09 = "REGION", X-Team = "ghp_fixtureKey11" }
         let records = crate::mcp_config::load_mcp_config(&home.join("mcp_servers.json")).unwrap();
         let local = records.get("local").expect("local record");
         assert_eq!(local.env.keys().collect::<Vec<_>>(), vec!["MODE"]);
+    }
+}
+
+/// Runs a command whose source holds FIFOs, for tests: when it has not
+/// finished within 10 s, it is blocked on one, so each FIFO is opened for
+/// writing and closed until it ends, and that is reported as an error.
+#[cfg(all(test, unix))]
+pub(crate) mod fifo_fixture {
+    use std::os::unix::ffi::OsStrExt;
+    use std::path::{Path, PathBuf};
+    use std::time::Duration;
+
+    pub(crate) fn make_fifo(path: &Path) {
+        let name = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
+        // SAFETY: `name` is a valid NUL-terminated path for the call's duration.
+        assert_eq!(unsafe { libc::mkfifo(name.as_ptr(), 0o600) }, 0, "mkfifo");
+    }
+
+    pub(crate) fn run_unblocking<T: Send + 'static>(
+        fifos: Vec<PathBuf>,
+        run: impl FnOnce() -> T + Send + 'static,
+    ) -> Result<T, String> {
+        use std::os::unix::fs::OpenOptionsExt;
+        let (done, finished) = std::sync::mpsc::channel();
+        let worker = std::thread::spawn(move || {
+            let value = run();
+            let _ = done.send(());
+            value
+        });
+        let mut blocked = false;
+        while let Err(std::sync::mpsc::RecvTimeoutError::Timeout) =
+            finished.recv_timeout(Duration::from_secs(10))
+        {
+            blocked = true;
+            for fifo in &fifos {
+                let _ = std::fs::OpenOptions::new()
+                    .write(true)
+                    .custom_flags(libc::O_NONBLOCK)
+                    .open(fifo);
+            }
+        }
+        let value = worker.join().unwrap();
+        if blocked {
+            Err("it blocked reading a FIFO".to_string())
+        } else {
+            Ok(value)
+        }
     }
 }
