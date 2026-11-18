@@ -71,6 +71,95 @@ fn stage_within(
     })
 }
 
+/// Largest image `image.attach_bytes` takes, decoded, as upstream (`_ATTACH_BYTES_MAX_BYTES`
+/// in tui_gateway/prompt_attachments.py).
+pub(crate) const MAX_IMAGE_BYTES: usize = 25 << 20;
+
+/// Why an image was not staged, with upstream's error code for each.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ImageError {
+    /// 4017: not valid base64, or empty.
+    Invalid(String),
+    /// 4018: larger than [`MAX_IMAGE_BYTES`].
+    TooLarge,
+    /// 4016: not a PNG, JPEG, GIF, WebP or BMP image.
+    Unsupported,
+    /// 5027: the file could not be written.
+    Write(String),
+}
+
+/// A staged image: where it is, its media type and size.
+pub(crate) struct StagedImage {
+    pub(crate) path: PathBuf,
+    pub(crate) mime: &'static str,
+    pub(crate) bytes: usize,
+}
+
+/// Writes the image `payload` (base64, bare or as a `data:` URL) holds to a new file in
+/// `images`, made owner-only if absent. The bytes decide the type and the name's extension;
+/// the client's name and hints are not used, so it cannot choose where or as what the file
+/// lands. Nothing is written for a payload that is refused.
+pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, ImageError> {
+    let payload = base64_payload(payload).ok_or_else(|| ImageError::Invalid(INVALID.into()))?;
+    if decoded_len(payload) > MAX_IMAGE_BYTES {
+        return Err(ImageError::TooLarge);
+    }
+    let compact: Vec<u8> = payload.bytes().filter(|b| !b.is_ascii_whitespace()).collect();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(compact)
+        .map_err(|_| ImageError::Invalid("data is not valid base64".into()))?;
+    if data.is_empty() {
+        return Err(ImageError::Invalid("image is empty".into()));
+    }
+    let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
+    private_folder(images).map_err(ImageError::Write)?;
+    let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
+    let (path, mut file) = create_new(images, &name).map_err(ImageError::Write)?;
+    if let Err(e) = file.write_all(&data) {
+        let _ = fs::remove_file(&path);
+        return Err(ImageError::Write(format!("cannot write the image: {e}")));
+    }
+    Ok(StagedImage {
+        path,
+        mime,
+        bytes: data.len(),
+    })
+}
+
+/// Extension and media type from an image's first bytes.
+fn image_kind(data: &[u8]) -> Option<(&'static str, &'static str)> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some(("png", "image/png"))
+    } else if data.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some(("jpg", "image/jpeg"))
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Some(("gif", "image/gif"))
+    } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP".as_slice()) {
+        Some(("webp", "image/webp"))
+    } else if data.starts_with(b"BM") {
+        Some(("bmp", "image/bmp"))
+    } else {
+        None
+    }
+}
+
+/// Creates `dir` and its parents, `dir` itself owner-only on Unix, and refuses it when it is a
+/// link or a file.
+fn private_folder(dir: &Path) -> Result<(), String> {
+    let mut builder = fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+    builder
+        .create(dir)
+        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // `symlink_metadata` describes a link (a Windows junction included), not its target.
+    if !fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    Ok(())
+}
+
 /// The base64 text of a `data:<type>[;<param>=<value>]...;base64,<data>` URL, or of bare base64
 /// as upstream also accepts. `None` for any other `data:` URL.
 fn base64_payload(data_url: &str) -> Option<&str> {
@@ -374,6 +463,58 @@ mod tests {
         symlink(outside.path().join("planted"), dir.join("x.txt")).unwrap();
         let staged = stage(work.path(), "x.txt", "aGk=").unwrap();
         assert_eq!(staged.name, "x-2.txt");
+        assert!(files(outside.path()).is_empty());
+    }
+
+    #[test]
+    fn each_image_kind_is_named_by_its_bytes() {
+        use base64::Engine as _;
+        let images = tempfile::tempdir().unwrap();
+        let mut webp = b"RIFF0000WEBPVP8 ".to_vec();
+        webp.push(1);
+        let cases: [(&[u8], &str, &str); 5] = [
+            (&[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 1], "png", "image/png"),
+            (&[0xff, 0xd8, 0xff, 0xe0, 1], "jpg", "image/jpeg"),
+            (b"GIF89a1", "gif", "image/gif"),
+            (&webp, "webp", "image/webp"),
+            (b"BM1234", "bmp", "image/bmp"),
+        ];
+        for (bytes, ext, mime) in cases {
+            let payload = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let staged = stage_image(images.path(), &payload).unwrap();
+            assert_eq!(staged.path.extension().unwrap(), ext);
+            assert_eq!(staged.mime, mime);
+            assert_eq!(fs::read(&staged.path).unwrap(), bytes);
+        }
+        // A data URL's type is ignored too: the bytes decide.
+        let staged = stage_image(images.path(), "data:image/png;base64,R0lGODlhMQ==").unwrap();
+        assert_eq!(staged.mime, "image/gif");
+    }
+
+    #[test]
+    fn a_refused_image_leaves_no_file() {
+        use base64::Engine as _;
+        let images = tempfile::tempdir().unwrap();
+        let dir = images.path().join("images");
+        let text = base64::engine::general_purpose::STANDARD.encode("hello");
+        assert_eq!(stage_image(&dir, &text).err(), Some(ImageError::Unsupported));
+        assert!(matches!(stage_image(&dir, "!!"), Err(ImageError::Invalid(_))));
+        assert!(matches!(stage_image(&dir, "data:image/png,x"), Err(ImageError::Invalid(_))));
+        // Over the limit by its length alone, so nothing is decoded or made.
+        let large = "A".repeat((MAX_IMAGE_BYTES / 3 + 1) * 4);
+        assert_eq!(stage_image(&dir, &large).err(), Some(ImageError::TooLarge));
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_images_folder_is_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let link = home.path().join("images");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let png = "iVBORw0KGgoB";
+        assert!(matches!(stage_image(&link, png), Err(ImageError::Write(_))));
         assert!(files(outside.path()).is_empty());
     }
 }

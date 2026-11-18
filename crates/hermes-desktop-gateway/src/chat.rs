@@ -3,7 +3,8 @@
 //! the sessions database the CLI uses.
 //!
 //! Turns run the configured model with no tools, so no request can run a command, and the only
-//! file one writes is an attachment under `<working folder>/.hermes/attachments`. The agent
+//! files one writes are an attachment under `<working folder>/.hermes/attachments` and an image
+//! (`image.attach_bytes`) under `<home>/images`, which the next prompt sends the model. The agent
 //! expands a prompt's `@file:` references, confined to the working folder, so the model reads
 //! an attachment's text. Tool calls and their approval prompts come with a later change.
 
@@ -21,6 +22,12 @@ use serde_json::{json, Map, Value};
 use tokio::sync::mpsc::UnboundedSender;
 use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use tokio::time::Instant;
+
+use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
+
+/// Marks a message whose content is a JSON array of text and image parts, which the agent's
+/// providers send as such (`ACP_MULTIMODAL_PREFIX` in hermes-agent).
+const PARTS_PREFIX: &str = "__hermes_acp_parts_json__:";
 
 /// Frames for one connection's socket.
 pub(crate) type Outbox = UnboundedSender<Outgoing>;
@@ -58,6 +65,11 @@ const NO_TURN_SLOT: i64 = 4090;
 // 4015 no attachment given, 5028 the attachment could not be staged.
 const ATTACHMENT_REQUIRED: i64 = 4015;
 const ATTACH_FAILED: i64 = 5028;
+// `image.attach_bytes` refusals, as upstream numbers them.
+const IMAGE_UNSUPPORTED: i64 = 4016;
+const IMAGE_INVALID: i64 = 4017;
+const IMAGE_TOO_LARGE: i64 = 4018;
+const IMAGE_WRITE_FAILED: i64 = 5027;
 
 /// Most turns running or with events not yet written, across the gateway; it bounds the
 /// replies held in memory, as a turn keeps its slot until its last event is written.
@@ -94,6 +106,15 @@ struct LiveSession {
     /// Last event number sent for this session; the desktop orders and deduplicates by it.
     seq: AtomicU64,
     busy: AtomicBool,
+    /// Images staged by `image.attach_bytes` for the next prompt.
+    images: Mutex<Vec<StagedImage>>,
+}
+
+impl LiveSession {
+    fn images(&self) -> std::sync::MutexGuard<'_, Vec<StagedImage>> {
+        // Pushes and takes only, so a poisoned lock is still whole.
+        self.images.lock().unwrap_or_else(|e| e.into_inner())
+    }
 }
 
 /// Clears a session's busy flag when its turn ends, panics included.
@@ -159,6 +180,7 @@ impl Chat {
             "setup.runtime_check" => named.map(|_| self.runtime_check()),
             "session.create" => named.map(|_| self.create()),
             "file.attach" => self.attach(named?),
+            "image.attach_bytes" => self.attach_image(named?),
             "prompt.submit" => self.submit(named?, outbox),
             _ => Err((METHOD_NOT_FOUND, format!("method not found: {method}"))),
         }
@@ -240,6 +262,60 @@ impl Chat {
         }))
     }
 
+    /// Stages an image the desktop sends as base64 (`content_base64`, or upstream's `data`
+    /// alias) under `<home>/images` for the session's next prompt. The bytes decide the type;
+    /// `filename` and `ext` are ignored, so no client name reaches the disk.
+    fn attach_image(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
+        let Some(Value::String(id)) = params.get("session_id") else {
+            return Err((INVALID_PARAMS, "session_id must be a string".into()));
+        };
+        let payload = match params.get("content_base64").or_else(|| params.get("data")) {
+            Some(Value::String(payload)) if !payload.trim().is_empty() => payload,
+            None | Some(Value::String(_)) => {
+                return Err((ATTACHMENT_REQUIRED, "content_base64 required".into()));
+            }
+            Some(_) => return Err((INVALID_PARAMS, "content_base64 must be a string".into())),
+        };
+        let Some(session) = self.lock_sessions().get(id).cloned() else {
+            return Err((SESSION_NOT_FOUND, "session not found".into()));
+        };
+        let images = self.home.join("images");
+        let stage = || crate::attach::stage_image(&images, payload);
+        let staged = match tokio::runtime::Handle::current().runtime_flavor() {
+            tokio::runtime::RuntimeFlavor::MultiThread => tokio::task::block_in_place(stage),
+            _ => stage(),
+        }
+        .map_err(|e| match e {
+            ImageError::Invalid(message) => (IMAGE_INVALID, message),
+            ImageError::TooLarge => (
+                IMAGE_TOO_LARGE,
+                format!("image larger than {MAX_IMAGE_BYTES} bytes"),
+            ),
+            ImageError::Unsupported => (
+                IMAGE_UNSUPPORTED,
+                "unsupported image: send PNG, JPEG, GIF, WebP or BMP".into(),
+            ),
+            ImageError::Write(message) => (IMAGE_WRITE_FAILED, message),
+        })?;
+        let name = staged
+            .path
+            .file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_default();
+        let mut reply = json!({
+            "attached": true,
+            "name": name,
+            "path": staged.path.display().to_string(),
+            "bytes": staged.bytes,
+            "remainder": "",
+            "text": format!("[User attached image: {name}]"),
+        });
+        let mut queued = session.images();
+        queued.push(staged);
+        reply["count"] = queued.len().into();
+        Ok(reply)
+    }
+
     fn submit(
         self: &Arc<Self>,
         params: &Map<String, Value>,
@@ -274,6 +350,9 @@ impl Chat {
         if session.busy.swap(true, Ordering::AcqRel) {
             return Err((SESSION_BUSY, "session busy".into()));
         }
+        // The prompt takes every image staged so far; one staged during its turn waits for the
+        // next prompt.
+        let images = std::mem::take(&mut *session.images());
         let guard = TurnGuard(session);
         let turn = Turn {
             chat: Arc::clone(self),
@@ -283,7 +362,7 @@ impl Chat {
             slot: Some(slot),
         };
         tokio::spawn(async move {
-            turn.run(text, &guard.0).await;
+            turn.run(text, images, &guard.0).await;
         });
         Ok(json!({"status": "streaming"}))
     }
@@ -329,11 +408,52 @@ impl Chat {
                     "id": index + 1,
                     "session_id": id,
                     "role": role,
-                    "content": message.content.as_deref().unwrap_or_default(),
+                    "content": shown_content(message.content.as_deref().unwrap_or_default()),
                 }))
             })
             .collect();
         Some(Ok(messages))
+    }
+}
+
+/// The prompt `text` with `images`: one text part naming each staged file, as upstream's
+/// prompt does, then each image as a `data:` URL part.
+fn with_images(text: String, images: &[StagedImage]) -> Result<String, String> {
+    use base64::Engine as _;
+    let mut words = text;
+    let mut parts = Vec::with_capacity(images.len() + 1);
+    for image in images {
+        words.push_str(&format!(
+            "\n\n[User attached image: {}]",
+            image.path.display()
+        ));
+        let data = std::fs::read(&image.path)
+            .map_err(|e| format!("cannot read the attached image: {e}"))?;
+        let url = format!(
+            "data:{};base64,{}",
+            image.mime,
+            base64::engine::general_purpose::STANDARD.encode(data)
+        );
+        parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
+    }
+    parts.insert(0, json!({"type": "text", "text": words}));
+    Ok(format!("{PARTS_PREFIX}{}", Value::Array(parts)))
+}
+
+/// What the desktop shows for a saved message: a message with image parts shows its text.
+fn shown_content(content: &str) -> String {
+    let parts = content
+        .trim()
+        .strip_prefix(PARTS_PREFIX)
+        .and_then(|json| serde_json::from_str::<Vec<Value>>(json).ok());
+    match parts {
+        Some(parts) => parts
+            .iter()
+            .filter(|part| part["type"] == "text")
+            .filter_map(|part| part["text"].as_str())
+            .collect::<Vec<_>>()
+            .join("\n"),
+        None => content.to_string(),
     }
 }
 
@@ -376,7 +496,7 @@ impl Turn {
         });
     }
 
-    async fn run(mut self, text: String, session: &Arc<LiveSession>) {
+    async fn run(mut self, text: String, images: Vec<StagedImage>, session: &Arc<LiveSession>) {
         self.emit(
             session,
             "message.start",
@@ -384,7 +504,7 @@ impl Turn {
             None,
         );
         let streamed = Arc::new(Mutex::new(Streamed::default()));
-        let payload = match self.ask(text, session, &streamed).await {
+        let payload = match self.ask(text, images, session, &streamed).await {
             Ok((reply, None)) => json!({"text": reply, "status": "complete"}),
             Ok((reply, Some(warning))) => {
                 json!({"text": reply, "status": "complete", "warning": warning})
@@ -407,6 +527,7 @@ impl Turn {
     async fn ask(
         &self,
         text: String,
+        images: Vec<StagedImage>,
         session: &Arc<LiveSession>,
         streamed: &Arc<Mutex<Streamed>>,
     ) -> Result<(String, Option<String>), String> {
@@ -415,6 +536,13 @@ impl Turn {
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
+        let text = if images.is_empty() {
+            text
+        } else {
+            tokio::task::spawn_blocking(move || with_images(text, &images))
+                .await
+                .map_err(|e| e.to_string())??
+        };
         let id = self.id.clone();
         let mut transcript = self
             .chat

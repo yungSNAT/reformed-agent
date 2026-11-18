@@ -41,7 +41,7 @@ pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
 /// Shortest token accepted from the environment.
 pub const MIN_TOKEN_LEN: usize = 32;
 
-/// Largest inbound WebSocket message other than a `file.attach` request; a larger one closes
+/// Largest inbound WebSocket message other than an attach request; a larger one closes
 /// the connection. This is the only memory bound on such a message: it is parsed whole before
 /// anything else is checked.
 // shortcut: 16 MiB, uvicorn's default. Parsing a message can cost about 100 times its size
@@ -52,7 +52,8 @@ pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
 /// Largest inbound WebSocket message (and frame) at all, as upstream allows
 /// (`_DESKTOP_ATTACHMENT_WS_MAX_BYTES` in hermes_cli/web_server_boundary.py), because
 /// `file.attach` sends a whole base64 file in one message. Over [`MAX_MESSAGE_BYTES`], only a
-/// single `file.attach` request with a string or number id is read, into fixed fields, so its
+/// single `file.attach` or `image.attach_bytes` request with a string or number id is read,
+/// into fixed fields, so its
 /// parse costs about its size; anything else closes the connection.
 // shortcut: such a message is held twice while parsed (the text and its data_url), up to
 // 768 MiB a connection, and connections are not limited. Upgrade path: a streaming reader
@@ -358,8 +359,8 @@ fn reply_to(text: &str, call: &Call<'_>) -> Option<Value> {
 }
 
 /// A message over [`MAX_MESSAGE_BYTES`] as a request [`reply_to_one`] can check, if it is a
-/// single `file.attach` request or notification with a string, number or null id and string
-/// params. Every other member is skipped unparsed, so no part of the message is built into a
+/// single `file.attach` or `image.attach_bytes` request or notification with a string, number or
+/// null id and string params. Every other member is skipped unparsed, so no part of the message is built into a
 /// tree.
 fn attach_request(text: &str) -> Option<Value> {
     #[derive(serde::Deserialize)]
@@ -374,11 +375,15 @@ fn attach_request(text: &str) -> Option<Value> {
     fn present<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<Id>, D::Error> {
         serde::Deserialize::deserialize(from).map(Some)
     }
+    /// `file.attach`'s `data_url` and `name`, or `image.attach_bytes`'s `content_base64` (or
+    /// its `data` alias); the method's handler refuses a missing one.
     #[derive(serde::Deserialize)]
     struct Params {
         session_id: String,
-        data_url: String,
+        data_url: Option<String>,
         name: Option<String>,
+        content_base64: Option<String>,
+        data: Option<String>,
     }
     /// A string, number or null id. Not an untagged enum, which would buffer an array or
     /// object id whole before refusing it.
@@ -413,17 +418,24 @@ fn attach_request(text: &str) -> Option<Value> {
         }
     }
     let request: Request = serde_json::from_str(text).ok()?;
-    if request.method != "file.attach" {
-        return None;
-    }
+    let Params {
+        session_id,
+        data_url,
+        name,
+        content_base64,
+        data,
+    } = request.params;
+    let fields = match request.method.as_str() {
+        "file.attach" => [("data_url", data_url), ("name", name)],
+        "image.attach_bytes" => [("content_base64", content_base64), ("data", data)],
+        _ => return None,
+    };
     let mut params = serde_json::Map::new();
-    params.insert(
-        "session_id".into(),
-        Value::String(request.params.session_id),
-    );
-    params.insert("data_url".into(), Value::String(request.params.data_url));
-    if let Some(name) = request.params.name {
-        params.insert("name".into(), Value::String(name));
+    params.insert("session_id".into(), Value::String(session_id));
+    for (key, value) in fields {
+        if let Some(value) = value {
+            params.insert(key.into(), Value::String(value));
+        }
     }
     let mut frame = serde_json::Map::new();
     frame.insert("jsonrpc".into(), Value::String(request.jsonrpc));
