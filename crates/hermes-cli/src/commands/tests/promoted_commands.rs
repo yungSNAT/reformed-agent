@@ -782,6 +782,23 @@
         assert_eq!(acp_usage.cached_read_tokens, None);
     }
 
+    #[test]
+    fn acp_usage_carries_the_prompt_cache_reads() {
+        let usage = hermes_core::UsageStats {
+            prompt_tokens: 1_000,
+            completion_tokens: 10,
+            total_tokens: 1_010,
+            cache_read_tokens: 800,
+            cache_write_tokens: 150,
+            ..Default::default()
+        };
+
+        let acp_usage = acp_usage_from_agent_usage(&usage);
+
+        assert_eq!(acp_usage.input_tokens, 1_000);
+        assert_eq!(acp_usage.cached_read_tokens, Some(800));
+    }
+
     #[tokio::test]
     async fn usage_command_reports_actual_session_usage_without_estimated_cost() {
         let _guard = test_env_lock::lock_async().await;

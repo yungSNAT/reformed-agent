@@ -17,6 +17,7 @@ if _SCRIPTS_DIR not in sys.path:
 
 from _hermes_home import get_hermes_home
 from _program_path import find_program
+from _secure_storage import write_private_json
 
 
 def get_token_path() -> Path:
@@ -69,9 +70,7 @@ def refresh_token(token_data: dict) -> dict:
         tz=timezone.utc,
     ).isoformat()
 
-    get_token_path().write_text(
-        json.dumps(_normalize_authorized_user_payload(token_data), indent=2)
-    )
+    write_private_json(get_token_path(), _normalize_authorized_user_payload(token_data))
     return token_data
 
 

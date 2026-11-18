@@ -207,7 +207,7 @@ fn acp_usage_from_agent_usage(usage: &hermes_core::UsageStats) -> hermes_acp::Us
         output_tokens: usage.completion_tokens,
         total_tokens: usage.total_tokens,
         thought_tokens: None,
-        cached_read_tokens: None,
+        cached_read_tokens: (usage.cache_read_tokens > 0).then_some(usage.cache_read_tokens),
     }
 }
 
