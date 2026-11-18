@@ -69,6 +69,13 @@ jobs:
           python3 -m py_compile scripts/release_secret_scan.py
       - name: Skill scripts never start programs from the working folder
         run: python3 -m unittest tests/skills/test_skill_program_lookup.py
+      # The cloud tests skip without COMFY_CLOUD_API_KEY.
+      - name: ComfyUI skill tests
+        run: |
+          python3 -m venv "${RUNNER_TEMP:?}/comfyui"
+          "${RUNNER_TEMP}/comfyui/bin/pip" install --quiet --disable-pip-version-check pytest==9.2.0 requests==2.34.2
+          cd skills/creative/comfyui
+          "${RUNNER_TEMP}/comfyui/bin/python" -m pytest tests -c tests/pytest.ini -q
 
   ui-tui:
     runs-on: ubuntu-latest
