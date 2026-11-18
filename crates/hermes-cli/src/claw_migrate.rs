@@ -706,6 +706,54 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
+    fn a_source_that_cannot_be_looked_up_is_an_error_not_missing() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().unwrap();
+        let locked = tmp.path().join("locked");
+        std::fs::create_dir_all(locked.join(".openclaw")).unwrap();
+        // Readable but not searchable: nothing in it can be looked up.
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let unreadable = std::fs::metadata(locked.join(".openclaw")).is_err();
+
+        let named = run_migration(&MigrateOptions {
+            source: Some(locked.join(".openclaw")),
+            dry_run: true,
+            ..Default::default()
+        });
+        let searched = {
+            let _lock = crate::test_env_lock::lock();
+            let saved = std::env::var_os("HOME");
+            std::env::set_var("HOME", &locked);
+            let result = run_migration(&MigrateOptions {
+                dry_run: true,
+                ..Default::default()
+            });
+            match saved {
+                Some(value) => std::env::set_var("HOME", value),
+                None => std::env::remove_var("HOME"),
+            }
+            result
+        };
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o755)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop lookups
+        }
+        for result in [named, searched] {
+            let report = items(&result);
+            assert!(!report.contains("not found"), "{report}");
+            assert!(
+                result.errors.iter().any(|item| item.kind == "source"
+                    && item
+                        .reason
+                        .as_deref()
+                        .is_some_and(|reason| reason.contains("could not look up"))),
+                "{report}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
     fn api_keys_are_written_owner_only() {
         use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().unwrap();
