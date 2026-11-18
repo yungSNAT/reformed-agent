@@ -54,8 +54,9 @@ impl InterruptController {
 
     /// Queue guidance for the model without stopping the turn. The agent
     /// loop delivers it with the turn's latest tool result before its next
-    /// model call; one still pending when a run ends waits for the next run
-    /// (or [`Self::take_steer`]). Returns `false` for blank text.
+    /// model call. One still pending when a run ends stays here for
+    /// [`Self::take_steer`]; the ACP server and the gateway make a controller
+    /// per turn, so today they drop it. Returns `false` for blank text.
     pub fn steer(&self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {

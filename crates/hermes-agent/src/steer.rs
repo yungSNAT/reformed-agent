@@ -33,11 +33,6 @@ pub fn format_steer_marker(steer_text: &str) -> String {
     format!("\n\n{STEER_MARKER_OPEN}\n{steer_text}\n{STEER_MARKER_CLOSE}")
 }
 
-pub fn is_formatted_steer_marker(text: &str) -> bool {
-    let trimmed = text.trim_start();
-    trimmed.starts_with(STEER_MARKER_OPEN) && trimmed.trim_end().ends_with(STEER_MARKER_CLOSE)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -51,7 +46,8 @@ mod tests {
         assert!(marker.contains("stop after next step"));
         assert!(marker.contains(STEER_MARKER_CLOSE));
         assert!(!marker.contains("User guidance:"));
-        assert!(is_formatted_steer_marker(&marker));
+        assert!(marker.trim_start().starts_with(STEER_MARKER_OPEN));
+        assert!(marker.ends_with(STEER_MARKER_CLOSE));
     }
 
     #[test]
@@ -59,14 +55,5 @@ mod tests {
         assert!(STEER_CHANNEL_NOTE.contains(STEER_MARKER_OPEN));
         assert!(STEER_CHANNEL_NOTE.contains(STEER_MARKER_CLOSE));
         assert!(!STEER_CHANNEL_NOTE.contains("User guidance:"));
-    }
-
-    #[test]
-    fn only_bounded_steer_markers_are_recognized() {
-        assert!(!is_formatted_steer_marker("parent cancelled"));
-        assert!(!is_formatted_steer_marker("User guidance: stop"));
-        assert!(!is_formatted_steer_marker(&format!(
-            "[OUT-OF-BAND USER MESSAGE]\nmissing exact open\n{STEER_MARKER_CLOSE}"
-        )));
     }
 }

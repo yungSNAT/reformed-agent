@@ -108,19 +108,28 @@ impl AgentLoop {
         }
     }
 
-    /// Before a model call, deliver the steer text sent since the last one,
-    /// as upstream does: appended to the turn's latest tool result, the one
-    /// slot that keeps roles alternating. Before the turn's first tool
-    /// result it stays pending.
-    fn deliver_pending_steer(&self, ctx: &mut ContextManager) {
+    /// Before a main model call, deliver the steer text sent since the last
+    /// one, as upstream does: appended to the turn's latest tool result, the
+    /// one slot that keeps roles alternating. Before the turn's first tool
+    /// result it stays pending. `turn_user` is the user message that opened
+    /// the turn; user messages the loop adds itself, such as a finaliser's
+    /// request to re-issue the answer, do not hide the tool results before
+    /// them. The end-of-turn summary calls do not deliver.
+    fn deliver_pending_steer(&self, ctx: &mut ContextManager, turn_user: Option<&Message>) {
         let Some(text) = self.interrupt.take_steer() else {
             return;
         };
-        let tool_result = ctx
-            .get_messages_mut()
+        let messages = ctx.get_messages_mut();
+        // shortcut: found by value, as in `messages_for_persisted_result`;
+        // if compression summarised the opening message away, the whole
+        // history is searched. Tracking its index through each compression
+        // would remove that.
+        let turn_start = turn_user
+            .and_then(|user| messages.iter().rposition(|message| message == user))
+            .map_or(0, |at| at + 1);
+        let tool_result = messages[turn_start..]
             .iter_mut()
             .rev()
-            .take_while(|message| message.role != MessageRole::User)
             .find(|message| message.role == MessageRole::Tool);
         match tool_result {
             Some(message) => message

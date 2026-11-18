@@ -110,6 +110,11 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
+        let turn_user = ctx
+            .get_messages()
+            .iter()
+            .rfind(|m| m.role == MessageRole::User)
+            .cloned();
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
                 .iter()
@@ -375,7 +380,7 @@ impl AgentLoop {
                         prefill_range.clone(),
                     ));
                 }
-                self.deliver_pending_steer(&mut ctx);
+                self.deliver_pending_steer(&mut ctx, turn_user.as_ref());
                 let r = match self
                     .call_llm_with_retry(
                         &ctx,

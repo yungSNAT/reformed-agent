@@ -90,10 +90,7 @@ pub use reasoning::parse_reasoning;
 
 // Re-export interrupt controller
 pub use interrupt::InterruptController;
-pub use steer::{
-    format_steer_marker, is_formatted_steer_marker, STEER_CHANNEL_NOTE, STEER_MARKER_CLOSE,
-    STEER_MARKER_OPEN,
-};
+pub use steer::{format_steer_marker, STEER_CHANNEL_NOTE, STEER_MARKER_CLOSE, STEER_MARKER_OPEN};
 
 // Re-export memory manager
 pub use memory_manager::{
