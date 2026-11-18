@@ -75,7 +75,6 @@ serde_yaml = { package = "yaml_serde", version = "0.10" }
 # HTTP / networking
 reqwest = { version = "0.12", default-features = false, features = ["stream", "json", "rustls-tls"] }
 tokio-tungstenite = "0.29"
-eventsource-stream = "0.2"
 
 # Error handling & logging
 thiserror = "2"
