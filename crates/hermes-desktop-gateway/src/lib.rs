@@ -408,7 +408,10 @@ fn attach_request(text: &str) -> Option<Value> {
         return None;
     }
     let mut params = serde_json::Map::new();
-    params.insert("session_id".into(), Value::String(request.params.session_id));
+    params.insert(
+        "session_id".into(),
+        Value::String(request.params.session_id),
+    );
     params.insert("data_url".into(), Value::String(request.params.data_url));
     if let Some(name) = request.params.name {
         params.insert("name".into(), Value::String(name));

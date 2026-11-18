@@ -358,7 +358,10 @@ async fn only_a_file_attach_request_may_exceed_the_size_limit() {
         .await
         .unwrap();
     let reply = next_json(&mut socket).await;
-    assert_eq!((reply["id"].clone(), reply["error"]["code"].clone()), (json!(7), json!(4001)));
+    assert_eq!(
+        (reply["id"].clone(), reply["error"]["code"].clone()),
+        (json!(7), json!(4001))
+    );
     send_in_2_frames(&mut socket, attach(8, params.clone()))
         .await
         .unwrap();
