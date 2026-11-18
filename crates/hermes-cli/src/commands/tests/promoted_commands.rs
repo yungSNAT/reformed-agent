@@ -154,6 +154,27 @@
         assert_eq!(controller.take_steer(), None);
     }
 
+    #[test]
+    fn acp_cancel_leaves_no_steer_to_queue() {
+        let sessions = hermes_acp::SessionManager::new();
+        let session = sessions.create_session(".");
+        let controller = hermes_agent::InterruptController::new();
+        assert!(controller.steer("prefer the simpler fix"));
+
+        controller.interrupt(None);
+        assert!(
+            !controller.steer("sent after the cancel"),
+            "a steer after the cancel was kept for the stopped turn"
+        );
+        requeue_leftover_steer(&controller, &sessions, &session.session_id);
+
+        assert!(sessions
+            .get_session(&session.session_id)
+            .unwrap()
+            .queued_prompts
+            .is_empty());
+    }
+
     struct CliNoopTool {
         schema: hermes_core::ToolSchema,
     }

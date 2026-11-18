@@ -269,6 +269,26 @@ mod tests {
     }
 
     #[test]
+    fn a_stop_drops_a_steer_the_loop_puts_back_after_it() {
+        let ctrl = InterruptController::new();
+        ctrl.steer("too late");
+        let held_by_loop = ctrl.take_steer().expect("pending steer");
+        ctrl.interrupt(None);
+        ctrl.restore_steer(held_by_loop);
+        assert_eq!(ctrl.take_steer(), None);
+    }
+
+    #[test]
+    fn a_stop_refuses_steers_until_the_interrupt_is_cleared() {
+        let ctrl = InterruptController::new();
+        ctrl.interrupt(None);
+        assert!(!ctrl.steer("after the stop"));
+        ctrl.clear_interrupt();
+        assert!(ctrl.steer("next turn"));
+        assert_eq!(ctrl.take_steer().as_deref(), Some("next turn"));
+    }
+
+    #[test]
     fn a_redirect_returns_the_pending_steer_and_keeps_one_restored_after_it() {
         let ctrl = InterruptController::new();
         ctrl.steer("use tabs");

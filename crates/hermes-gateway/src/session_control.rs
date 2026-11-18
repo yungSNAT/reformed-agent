@@ -673,6 +673,34 @@ mod tests {
     }
 
     #[test]
+    fn a_steer_after_an_interrupting_message_is_also_sent_once() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control.clone()));
+        coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        *control.leftover_steer.lock().unwrap() = Some("use tabs".to_string());
+        coord.handle_busy_message(
+            &key,
+            event("also check the docs", "10"),
+            BusyInputMode::Interrupt,
+        );
+        // Accepted whilst the interrupted turn winds down, and never delivered.
+        coord.handle_busy_message(&key, event("keep it short", "10"), BusyInputMode::Steer);
+        *control.leftover_steer.lock().unwrap() = Some("keep it short".to_string());
+
+        let mut sent = vec![coord.finish(&key, ProcessingOutcome::Success).unwrap().text];
+        while let Some(next) = coord.pop_pending(&key) {
+            sent.push(next.text);
+        }
+        sent.sort();
+        assert_eq!(sent, ["also check the docs", "keep it short", "use tabs"]);
+    }
+
+    #[test]
     fn a_delivered_steer_is_not_sent_again() {
         let mut coord = BusySessionCoordinator::default();
         let key = build_session_key(&source("10"));
