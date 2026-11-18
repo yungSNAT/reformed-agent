@@ -9,6 +9,7 @@ publish = false
 
 [dependencies]
 jiff = { workspace = true }
+finl_unicode = { version = "1.4", default-features = false, features = ["categories"] }
 
 [dev-dependencies]
 tempfile = "3"

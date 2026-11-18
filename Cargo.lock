@@ -2051,6 +2051,7 @@ dependencies = [
 name = "hermes-py"
 version = "0.22.0"
 dependencies = [
+ "finl_unicode",
  "jiff",
  "tempfile",
 ]

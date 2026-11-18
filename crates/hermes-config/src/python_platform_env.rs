@@ -533,13 +533,7 @@ pub fn apply_python_named_platform_env(config: &mut GatewayConfig) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Mutex, MutexGuard};
-
-    static ENV_LOCK: Mutex<()> = Mutex::new(());
-
-    fn env_lock() -> MutexGuard<'static, ()> {
-        ENV_LOCK.lock().unwrap_or_else(|err| err.into_inner())
-    }
+    use crate::managed_gateway::test_lock::lock as env_lock;
 
     #[test]
     fn weixin_env_sets_platform_extra_and_token() {
