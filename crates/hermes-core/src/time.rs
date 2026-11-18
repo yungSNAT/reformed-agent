@@ -60,6 +60,14 @@ pub fn now_plus_secs(secs: i64) -> Timestamp {
 /// below 24 hours (`-` or U+2212 for west). Anything else is `None`. A leap
 /// second (`:60`) reads as second 59.
 pub fn parse_rfc3339(text: &str) -> Option<Timestamp> {
+    let (civil, offset) = parse_rfc3339_parts(text)?;
+    offset.to_timestamp(civil).ok()
+}
+
+/// The civil time and offset [`parse_rfc3339`] reads, before it joins them
+/// into an instant. Joining fails only for a time past [`Timestamp::MAX`],
+/// so a caller can tell a time that is too late from text that is no time.
+pub fn parse_rfc3339_parts(text: &str) -> Option<(DateTime, Offset)> {
     let bytes = text.as_bytes();
     if bytes.len() < 19 {
         return None;
@@ -136,8 +144,7 @@ pub fn parse_rfc3339(text: &str) -> Option<Timestamp> {
         nanosecond,
     )
     .ok()?;
-    let offset = Offset::from_seconds(offset_seconds).ok()?;
-    offset.to_timestamp(civil).ok()
+    Some((civil, Offset::from_seconds(offset_seconds).ok()?))
 }
 
 /// Serde for a [`Timestamp`] in chrono's form: `Z`, with 0, 3, 6 or 9
