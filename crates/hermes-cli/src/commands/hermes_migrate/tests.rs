@@ -794,6 +794,21 @@ fn cron_fields_map_and_unsupported_jobs_are_skipped_with_a_reason() {
             ),
             "its one-off time is after the latest time Reformed can schedule",
         ),
+        (
+            // A well-formed time past the latest instant there is.
+            with(
+                "schedule",
+                json!({"kind": "once", "run_at": "9999-12-31T00:00:00+00:00"}),
+            ),
+            "its one-off time is after the latest time Reformed can schedule",
+        ),
+        (
+            with(
+                "schedule",
+                json!({"kind": "once", "run_at": "2099-12-01T09:30:05"}),
+            ),
+            "its one-off time is not a time with a zone",
+        ),
     ] {
         let error = convert(job.clone()).unwrap_err();
         assert!(error.contains(reason), "{job}: {error}");
