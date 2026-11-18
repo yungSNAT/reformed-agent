@@ -1226,17 +1226,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "eventsource-stream"
-version = "0.2.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "74fef4569247a5f429d9156b9d0a2599914385dd189c539334c625d8099d90ab"
-dependencies = [
- "futures-core",
- "nom",
- "pin-project-lite",
-]
-
-[[package]]
 name = "eyeball"
 version = "0.8.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1661,7 +1650,6 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "dirs",
- "eventsource-stream",
  "futures",
  "hermes-auth",
  "hermes-core",
@@ -1682,7 +1670,6 @@ dependencies = [
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
- "tokio-stream",
  "tracing",
  "tracing-subscriber",
  "url",
@@ -1874,9 +1861,15 @@ dependencies = [
  "axum",
  "clap",
  "futures",
+ "hermes-agent",
+ "hermes-app-runtime",
+ "hermes-config",
+ "hermes-core",
+ "hermes-provider-runtime",
  "reqwest",
  "serde_json",
  "subtle",
+ "tempfile",
  "tokio",
  "tokio-tungstenite",
  "uuid",
