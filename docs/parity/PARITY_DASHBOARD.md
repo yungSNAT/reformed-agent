@@ -1,35 +1,35 @@
 # Parity Dashboard
 
-_Generated from source artifacts: `2026-06-26T22:43:38.142287+00:00`_
+_Generated from source artifacts: `2026-11-18T23:21:12.923955+00:00`_
 
 ## Snapshot
 
-- Upstream target: `upstream/main` @ `9b2af36d5aea3118ac6cfb15a2802f92fe0b5eda`
-- Workstream snapshot generated: `2026-06-26T15:22:04-06:00`
-- Parity matrix generated: `2026-06-12T11:29:13.798398+00:00`
-- Queue snapshot generated: `2026-06-26T22:43:37.997068+00:00`
-- Proof snapshot generated: `2026-06-26T22:43:38.142287+00:00`
+- Upstream target: `upstream/parity-reference` @ `ae2a81ccc00e9b7c06301523e5bb09608397149c`
+- Workstream snapshot generated: `2026-11-19T10:20:08+11:00`
+- Parity matrix generated: `2026-11-18T23:21:09.081305+00:00`
+- Queue snapshot generated: `2026-11-18T23:21:12.758417+00:00`
+- Proof snapshot generated: `2026-11-18T23:21:12.923955+00:00`
 
 ## Gate Status
 
-- Release gate: **PASS**
-- CI/tree-drift gate: **PASS**
+- Release gate: **FAIL**
+- CI/tree-drift gate: **FAIL**
 - Test coverage audit: **PASS**
 - SOTA harness matrix: **PASS**
 - Behavioral similarity diff: **PASS**
 - Deep problem-solving diff: **PASS**
-- Release gate failures: none
-- CI gate failures: none
-- CI gate warnings: max_commits_behind (actual=5880.0, limit=5500); max_upstream_patch_missing (actual=5657.0, limit=5000)
+- Release gate failures: min_test_coverage_tracked_behavior_ratio (actual=0.728, limit=1.0)
+- CI gate failures: max_files_only_upstream (actual=24117.0, limit=2600); min_test_coverage_tracked_behavior_ratio (actual=0.728, limit=1.0)
+- CI gate warnings: none
 
 ## Test Coverage Audit
 
 | Metric | Value |
 | --- | ---: |
-| Tracked behavior rows | 419 |
-| Covered behavior rows | 419 |
-| Tracked behavior coverage ratio | 1.0000 |
-| Rust test functions | 3749 |
+| Tracked behavior rows | 511 |
+| Covered behavior rows | 372 |
+| Tracked behavior coverage ratio | 0.7280 |
+| Rust test functions | 8782 |
 | Missing Rust test refs | 0 |
 | Critical gaps | 0 |
 
@@ -74,40 +74,41 @@ _Generated from source artifacts: `2026-06-26T22:43:38.142287+00:00`_
 
 | Metric | Value |
 | --- | ---: |
-| Total commits in queue | 7177 |
+| Total commits in queue | 1 |
 | Pending | 0 |
-| Ported | 495 |
-| Superseded | 6606 |
+| Ported | 0 |
+| Superseded | 1 |
 
 ## Tree/Patch Drift
 
 | Metric | Value |
 | --- | ---: |
-| commits_behind | 5880 |
-| commits_ahead | 1102 |
-| upstream_patch_missing | 5657 |
-| upstream_patch_represented | 2 |
-| local_patch_unique | 895 |
-| files_only_upstream | 2309 |
-| files_only_local | 730 |
-| files_shared_identical | 1623 |
-| files_shared_different | 1108 |
+| commits_behind | 1 |
+| commits_ahead | 1614 |
+| upstream_patch_missing | 1 |
+| upstream_patch_represented | 0 |
+| local_patch_unique | 1344 |
+| files_only_upstream | 24117 |
+| files_only_local | 2021 |
+| files_shared_identical | 565 |
+| files_shared_different | 1508 |
 
 ## Workstream States
 
 | State | Count |
 | --- | ---: |
-| complete | 7 |
+| complete | 2 |
+| in_progress | 5 |
 
 ## Workstream Detail
 
 | WS | Title | State |
 | --- | --- | --- |
-| WS2 | Core runtime parity | complete |
-| WS3 | Tools/adapters parity | complete |
-| WS4 | Skills parity | complete |
-| WS5 | UX parity | complete |
-| WS6 | Tests and CI parity | complete |
+| WS2 | Core runtime parity | in_progress |
+| WS3 | Tools/adapters parity | in_progress |
+| WS4 | Skills parity | in_progress |
+| WS5 | UX parity | in_progress |
+| WS6 | Tests and CI parity | in_progress |
 | WS7 | Security/secrets/store/webhook parity | complete |
 | WS8 | Compatibility and divergence policy | complete |
 
