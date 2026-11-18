@@ -1,10 +1,12 @@
-//! Chat for Hermes Desktop: `session.create`, `prompt.submit` and the reply streamed back as
-//! `message.start`, `message.delta` and `message.complete` events, saved to the sessions
-//! database the CLI uses.
+//! Chat for Hermes Desktop: `session.create`, `file.attach`, `prompt.submit` and the reply
+//! streamed back as `message.start`, `message.delta` and `message.complete` events, saved to
+//! the sessions database the CLI uses.
 //!
-//! Turns run the configured model with no tools, so no request can run a command or touch a
-//! file beyond what a CLI turn reads from its working directory (context references, which
-//! stay confined to it). Tool calls and their approval prompts come with a later change.
+//! Turns run the configured model with no tools, so no request can run a command, and the only
+//! file one writes is an attachment under `<working folder>/.hermes/attachments`. Turns stream,
+//! and the agent's streaming run does not expand `@` context references (only its
+//! non-streaming run does), so a prompt's `@file:` reference reaches the model as text. Tool
+//! calls and their approval prompts come with a later change.
 
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -54,6 +56,9 @@ const SESSION_NOT_FOUND: i64 = 4001;
 const SESSION_BUSY: i64 = 4009;
 const TEXT_REQUIRED: i64 = 4012;
 const NO_TURN_SLOT: i64 = 4090;
+// 4015 no attachment given, 5028 the attachment could not be staged.
+const ATTACHMENT_REQUIRED: i64 = 4015;
+const ATTACH_FAILED: i64 = 5028;
 
 /// Most turns running or with events not yet written, across the gateway; it bounds the
 /// replies held in memory, as a turn keeps its slot until its last event is written.
@@ -154,6 +159,7 @@ impl Chat {
         match method {
             "setup.runtime_check" => named.map(|_| self.runtime_check()),
             "session.create" => named.map(|_| self.create()),
+            "file.attach" => self.attach(named?),
             "prompt.submit" => self.submit(named?, outbox),
             _ => Err((METHOD_NOT_FOUND, format!("method not found: {method}"))),
         }
@@ -191,6 +197,42 @@ impl Chat {
             "messages": [],
             "info": {"model": self.model().unwrap_or_default(), "tools": {}, "skills": {}, "cwd": cwd},
         })
+    }
+
+    /// Stages a file the desktop sends as a `data_url` (upstream's reply shape). A `path`
+    /// alone is refused: this backend reads no host path a client names.
+    fn attach(&self, params: &Map<String, Value>) -> Result<Value, RpcError> {
+        let Some(Value::String(id)) = params.get("session_id") else {
+            return Err((INVALID_PARAMS, "session_id must be a string".into()));
+        };
+        let data_url = match params.get("data_url") {
+            Some(Value::String(data_url)) if !data_url.trim().is_empty() => data_url,
+            None | Some(Value::String(_)) => {
+                return Err((ATTACHMENT_REQUIRED, "data_url required".into()));
+            }
+            Some(_) => return Err((INVALID_PARAMS, "data_url must be a string".into())),
+        };
+        let name = match params.get("name") {
+            Some(Value::String(name)) => name.as_str(),
+            None => "",
+            Some(_) => return Err((INVALID_PARAMS, "name must be a string".into())),
+        };
+        if !self.lock_sessions().contains_key(id) {
+            return Err((SESSION_NOT_FOUND, "session not found".into()));
+        }
+        // The agent resolves `@file:` against the process's working folder.
+        let workspace = std::env::current_dir()
+            .map_err(|e| (ATTACH_FAILED, format!("no working folder: {e}")))?;
+        let staged =
+            crate::attach::stage(&workspace, name, data_url).map_err(|e| (ATTACH_FAILED, e))?;
+        Ok(json!({
+            "attached": true,
+            "name": staged.name,
+            "path": staged.path.display().to_string(),
+            "ref_path": staged.ref_path,
+            "ref_text": format!("@file:{}", staged.ref_path),
+            "uploaded": true,
+        }))
     }
 
     fn submit(

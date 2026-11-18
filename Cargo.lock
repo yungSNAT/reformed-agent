@@ -1872,6 +1872,7 @@ name = "hermes-desktop-gateway"
 version = "0.22.0"
 dependencies = [
  "axum",
+ "base64 0.22.1",
  "clap",
  "futures",
  "hermes-agent",

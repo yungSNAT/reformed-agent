@@ -29,6 +29,7 @@ use serde_json::{json, Value};
 use subtle::ConstantTimeEq;
 use tokio::sync::mpsc;
 
+mod attach;
 pub mod chat;
 
 pub use chat::Chat;
