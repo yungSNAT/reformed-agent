@@ -111,24 +111,24 @@ impl AgentLoop {
     /// Before a main model call, deliver the steer text sent since the last
     /// one, as upstream does: appended to the turn's latest tool result, the
     /// one slot that keeps roles alternating. Before the turn's first tool
-    /// result it stays pending. `turn_user` is the user message that opened
-    /// the turn; user messages the loop adds itself, such as a finaliser's
-    /// request to re-issue the answer, do not hide the tool results before
-    /// them. The end-of-turn summary calls do not deliver. Returns the text
-    /// delivered, which an auto-rollback to an earlier checkpoint must
-    /// restore.
-    fn deliver_pending_steer(
-        &self,
-        ctx: &mut ContextManager,
-        turn_user: Option<&Message>,
-    ) -> Option<String> {
-        let text = self.interrupt.take_steer()?;
+    /// result it stays pending. `steers.turn_user` is the user message that
+    /// opened the turn; user messages the loop adds itself, such as a
+    /// finaliser's request to re-issue the answer, do not hide the tool
+    /// results before them. The end-of-turn summary calls do not deliver. The
+    /// text delivered is recorded in `steers`, as an auto-rollback to an
+    /// earlier checkpoint must restore it.
+    fn deliver_pending_steer(&self, ctx: &mut ContextManager, steers: &mut TurnSteers) {
+        let Some(text) = self.interrupt.take_steer() else {
+            return;
+        };
         let messages = ctx.get_messages_mut();
         // shortcut: found by value, as in `messages_for_persisted_result`;
         // if compression summarised the opening message away, the whole
         // history is searched. Tracking its index through each compression
         // would remove that.
-        let turn_start = turn_user
+        let turn_start = steers
+            .turn_user
+            .as_ref()
             .and_then(|user| messages.iter().rposition(|message| message == user))
             .map_or(0, |at| at + 1);
         let tool_result = messages[turn_start..]
@@ -141,12 +141,9 @@ impl AgentLoop {
                     .content
                     .get_or_insert_with(String::new)
                     .push_str(&format_steer_marker(&text));
-                Some(text)
+                steers.delivered(text);
             }
-            None => {
-                self.interrupt.restore_steer(text);
-                None
-            }
+            None => self.interrupt.restore_steer(text),
         }
     }
 

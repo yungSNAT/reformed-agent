@@ -65,7 +65,7 @@ use crate::smart_model_routing::{
     ResolvedCheapRuntime, TurnRouteSignature,
 };
 pub use crate::smart_model_routing::{ApiMode, CheapModelRouteConfig, SmartModelRoutingConfig};
-use crate::steer::{format_steer_marker, STEER_CHANNEL_NOTE};
+use crate::steer::{format_steer_marker, TurnSteers, STEER_CHANNEL_NOTE};
 use crate::tool_call_args::{repair_tool_call_arguments, ToolArgumentRepair};
 
 // Keep these includes in original item order. This split preserves the public

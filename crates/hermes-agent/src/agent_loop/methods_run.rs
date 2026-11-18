@@ -116,14 +116,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
-        let turn_user = ctx
-            .get_messages()
-            .iter()
-            .rfind(|m| m.role == MessageRole::User)
-            .cloned();
-        // Steer text delivered since the last checkpoint; a rollback to it
-        // must deliver that text again.
-        let mut steer_since_checkpoint: Vec<String> = Vec::new();
+        let mut steers = TurnSteers::new(ctx.get_messages());
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
                 .iter()
@@ -279,7 +272,7 @@ impl AgentLoop {
                 && (total_turns - 1).is_multiple_of(self.config.checkpoint_interval_turns)
             {
                 last_checkpoint_messages = Some(ctx.get_messages().to_vec());
-                steer_since_checkpoint.clear();
+                steers.checkpoint();
             }
 
             // Notify memory + plugins of new turn
@@ -390,9 +383,7 @@ impl AgentLoop {
                         prefill_range.clone(),
                     ));
                 }
-                if let Some(text) = self.deliver_pending_steer(&mut ctx, turn_user.as_ref()) {
-                    steer_since_checkpoint.push(text);
-                }
+                self.deliver_pending_steer(&mut ctx, &mut steers);
                 let r = match self
                     .call_llm_with_retry(
                         &ctx,
@@ -1166,11 +1157,7 @@ impl AgentLoop {
             {
                 if let Some(snapshot) = last_checkpoint_messages.clone() {
                     *ctx.get_messages_mut() = snapshot;
-                    // The snapshot predates these steers' delivery.
-                    if !steer_since_checkpoint.is_empty() {
-                        self.interrupt.restore_steer(steer_since_checkpoint.join("\n"));
-                        steer_since_checkpoint.clear();
-                    }
+                    steers.rolled_back(&self.interrupt);
                     ctx.add_message(Message::system(format!(
                         "Auto-rollback: {} tool call(s) failed in one turn. Restored latest checkpoint and continuing.",
                         turn_tool_error_count
