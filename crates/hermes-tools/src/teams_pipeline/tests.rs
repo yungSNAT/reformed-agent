@@ -526,7 +526,14 @@ async fn renewal_skips_a_subscription_whose_new_expiry_is_out_of_range() {
     wiremock::Mock::given(wiremock::matchers::method("GET"))
         .and(wiremock::matchers::path("/subscriptions"))
         .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
-            "value": [{"id": "sub-1", "clientState": "state-1", "expirationDateTime": expiration}]
+            "value": [{
+                "id": "sub-1",
+                "resource": "communications/onlineMeetings/getAllTranscripts",
+                "changeType": "created",
+                "notificationUrl": "https://hooks.example/teams",
+                "clientState": "state-1",
+                "expirationDateTime": expiration
+            }]
         })))
         .mount(&server)
         .await;
