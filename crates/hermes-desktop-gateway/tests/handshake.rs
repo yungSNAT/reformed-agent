@@ -367,6 +367,27 @@ async fn only_a_file_attach_request_may_exceed_the_size_limit() {
         .unwrap();
     assert_eq!(next_json(&mut socket).await["error"]["code"], 4001);
 
+    // A null id is answered with it; a notification (no id) is not run or answered, as
+    // smaller requests are, and the connection stays open.
+    let request = json!({"jsonrpc": "2.0", "id": null, "method": "file.attach", "params": params});
+    socket.send(Message::text(request.to_string())).await.unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(
+        (reply["id"].clone(), reply["error"]["code"].clone()),
+        (Value::Null, json!(4001))
+    );
+    let notification = json!({"jsonrpc": "2.0", "method": "file.attach", "params": params});
+    socket
+        .send(Message::text(notification.to_string()))
+        .await
+        .unwrap();
+    socket
+        .send(Message::text(request_of_len(100)))
+        .await
+        .unwrap();
+    let reply = next_json(&mut socket).await;
+    assert_eq!(reply["id"], 1, "the next reply answers the small request: {reply}");
+
     // A batch holding one, or one without its data_url, closes the socket as any other
     // message over the limit does.
     for oversized in [
