@@ -804,7 +804,7 @@ fn is_env_name(name: &str) -> bool {
 
 /// The paths in `dir`, in name order. An entry that cannot be read fails the
 /// whole listing, so a shorter listing is never taken for the folder.
-fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
+pub(crate) fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
     sorted_paths(std::fs::read_dir(dir)?.map(|entry| entry.map(|entry| entry.path())))
 }
 
@@ -833,7 +833,7 @@ static SECRET_NAME: LazyLock<Regex> = LazyLock::new(|| {
 });
 
 /// Stands in for a left-out name that itself looks like a credential.
-const HIDDEN_NAME: &str = "<a name that looks like a credential>";
+pub(crate) const HIDDEN_NAME: &str = "<a name that looks like a credential>";
 
 /// Whether an environment variable or header name looks like a credential.
 fn is_secret_name(name: &str) -> bool {
@@ -847,7 +847,7 @@ static IPV4: LazyLock<Regex> =
 /// prefixes, credentials in URL queries and user info, and the like. The
 /// filter also hides IPv4 addresses, which local servers need and which are
 /// not secret, so those do not count.
-fn looks_secret(text: &str) -> bool {
+pub(crate) fn looks_secret(text: &str) -> bool {
     let text = IPV4.replace_all(text, "address");
     redact_sensitive_text(&*text) != text
 }
@@ -855,7 +855,7 @@ fn looks_secret(text: &str) -> bool {
 /// Whether a file or folder under `dir`, reached without following a link, holds or is named
 /// like a credential. A file that is not UTF-8 is read lossily; anything unreadable is an
 /// error, so the caller never copies what it could not check.
-fn holds_secret(dir: &Path) -> std::io::Result<bool> {
+pub(crate) fn holds_secret(dir: &Path) -> std::io::Result<bool> {
     for entry in std::fs::read_dir(dir)? {
         let path = entry?.path();
         let found = if is_link(&path) {
@@ -900,13 +900,13 @@ fn url_origin(url: &str) -> &str {
     &url[..end]
 }
 
-fn is_link(path: &Path) -> bool {
+pub(crate) fn is_link(path: &Path) -> bool {
     std::fs::symlink_metadata(path).is_ok_and(|meta| meta.file_type().is_symlink())
 }
 
 /// Refuses `path` when it, or a folder between `home` and it, is a link:
 /// writing there would land outside the home or replace the link.
-fn check_destination(home: &Path, path: &Path) -> Result<(), String> {
+pub(crate) fn check_destination(home: &Path, path: &Path) -> Result<(), String> {
     let relative = path
         .strip_prefix(home)
         .map_err(|_| format!("{} is outside this home", path.display()))?;
@@ -1083,7 +1083,7 @@ fn back_up(path: &Path) -> Result<(), String> {
 }
 
 /// Writes through a temporary file in the same folder, owner-only on Unix.
-fn write_file(path: &Path, content: &[u8]) -> Result<(), String> {
+pub(crate) fn write_file(path: &Path, content: &[u8]) -> Result<(), String> {
     let parent = path.parent().unwrap_or_else(|| Path::new("."));
     std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     let mut temp = tempfile::NamedTempFile::new_in(parent).map_err(|err| err.to_string())?;
@@ -1180,7 +1180,11 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
 
 /// Copies `source` into a new folder `destination`, creating every folder and
 /// file afresh so nothing already there, a link included, is written through.
-fn copy_tree(source: &Path, destination: &Path, links: &mut usize) -> std::io::Result<()> {
+pub(crate) fn copy_tree(
+    source: &Path,
+    destination: &Path,
+    links: &mut usize,
+) -> std::io::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;

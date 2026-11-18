@@ -2,8 +2,18 @@
 //!
 //! Ported from Python `hermes_cli/claw.py`.
 //! Detects `~/.openclaw` directory and imports settings to `~/.hermes/`.
+//!
+//! A link in the source is never followed and nothing is written through a
+//! link in the home. A file, skill or name that looks like it holds a
+//! credential is left out and reported; the API keys in `.env` are the
+//! exception, merged into this home's own `.env`, written owner-only.
 
 use std::path::{Path, PathBuf};
+
+use crate::agent_import::{
+    check_destination, copy_tree, holds_secret, is_link, list_dir, looks_secret, write_file,
+    HIDDEN_NAME,
+};
 
 /// Known OpenClaw directory names (current + legacy).
 const OPENCLAW_DIR_NAMES: &[&str] = &[".openclaw", ".clawdbot", ".moldbot"];
@@ -127,228 +137,224 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
         let _ = std::fs::create_dir_all(&hermes_home);
     }
 
-    // Migrate personality files (SOUL.md, MEMORY.md, USER.md)
+    // Personality files (SOUL.md, MEMORY.md, USER.md)
     for &filename in PERSONALITY_FILES {
         let src = source_dir.join(filename);
-        let dst = hermes_home.join(filename);
-
-        if !src.exists() {
-            result.skipped.push(MigrationItem {
-                kind: format!("personality:{}", filename),
-                source: Some(src),
-                destination: Some(dst),
-                status: MigrationStatus::Skipped,
-                reason: Some("Source file not found".to_string()),
-            });
+        let kind = format!("personality:{}", filename);
+        if !is_link(&src) && !src.exists() {
+            let dst = hermes_home.join(filename);
+            let missing = (
+                MigrationStatus::Skipped,
+                "Source file not found".to_string(),
+            );
+            record(&mut result, kind, Some(src), Some(dst), Err(missing));
             continue;
         }
-
-        if dst.exists() && !options.overwrite {
-            result.skipped.push(MigrationItem {
-                kind: format!("personality:{}", filename),
-                source: Some(src),
-                destination: Some(dst),
-                status: MigrationStatus::Conflict,
-                reason: Some("Already exists (use --overwrite)".to_string()),
-            });
-            continue;
-        }
-
-        if !options.dry_run {
-            match std::fs::copy(&src, &dst) {
-                Ok(_) => {
-                    result.migrated.push(MigrationItem {
-                        kind: format!("personality:{}", filename),
-                        source: Some(src),
-                        destination: Some(dst),
-                        status: MigrationStatus::Migrated,
-                        reason: None,
-                    });
-                }
-                Err(e) => {
-                    result.errors.push(MigrationItem {
-                        kind: format!("personality:{}", filename),
-                        source: Some(src),
-                        destination: Some(dst),
-                        status: MigrationStatus::Error,
-                        reason: Some(e.to_string()),
-                    });
-                }
-            }
-        } else {
-            result.migrated.push(MigrationItem {
-                kind: format!("personality:{}", filename),
-                source: Some(src),
-                destination: Some(dst),
-                status: MigrationStatus::Migrated,
-                reason: Some("(dry run)".to_string()),
-            });
-        }
+        migrate_file(
+            kind,
+            src,
+            &hermes_home,
+            Path::new(filename),
+            options,
+            &mut result,
+        );
     }
 
-    // Migrate skills directory
+    // Skills, each to skills/openclaw-imports/
     let src_skills = source_dir.join("skills");
-    let dst_skills = hermes_home.join("skills").join("openclaw-imports");
-
-    if src_skills.is_dir() {
-        if !options.dry_run {
-            let _ = std::fs::create_dir_all(&dst_skills);
-        }
-        migrate_skills_dir(&src_skills, &dst_skills, options, &mut result);
+    if is_link(&src_skills) {
+        let link = (MigrationStatus::Skipped, LINK_REASON.to_string());
+        record(
+            &mut result,
+            "skills".to_string(),
+            Some(src_skills),
+            None,
+            Err(link),
+        );
+    } else if src_skills.exists() {
+        migrate_skills(&src_skills, &hermes_home, options, &mut result);
     }
 
-    // Migrate .env file (API keys)
+    // .env file (API keys): this home keeps its keys in its own .env.
     let src_env = source_dir.join(".env");
-    let dst_env = hermes_home.join(".env");
-
-    if src_env.exists() {
-        if dst_env.exists() && !options.overwrite {
-            result.skipped.push(MigrationItem {
-                kind: "api-keys".to_string(),
-                source: Some(src_env),
-                destination: Some(dst_env),
-                status: MigrationStatus::Conflict,
-                reason: Some("Already exists (use --overwrite)".to_string()),
-            });
-        } else if !options.dry_run {
-            match merge_env_files(&src_env, &dst_env) {
-                Ok(count) => {
-                    result.migrated.push(MigrationItem {
-                        kind: "api-keys".to_string(),
-                        source: Some(src_env),
-                        destination: Some(dst_env),
-                        status: MigrationStatus::Migrated,
-                        reason: Some(format!("{} keys imported", count)),
-                    });
-                }
-                Err(e) => {
-                    result.errors.push(MigrationItem {
-                        kind: "api-keys".to_string(),
-                        source: Some(src_env),
-                        destination: Some(dst_env),
-                        status: MigrationStatus::Error,
-                        reason: Some(e),
-                    });
-                }
-            }
+    if is_link(&src_env) || src_env.exists() {
+        let dst_env = hermes_home.join(".env");
+        let outcome = if is_link(&src_env) {
+            Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
+        } else if let Err(err) = check_destination(&hermes_home, &dst_env) {
+            Err((MigrationStatus::Error, err))
+        } else if dst_env.exists() && !options.overwrite {
+            Err((
+                MigrationStatus::Conflict,
+                "Already exists (use --overwrite)".to_string(),
+            ))
+        } else if options.dry_run {
+            Ok(Some("(dry run)".to_string()))
         } else {
-            result.migrated.push(MigrationItem {
-                kind: "api-keys".to_string(),
-                source: Some(src_env),
-                destination: Some(dst_env),
-                status: MigrationStatus::Migrated,
-                reason: Some("(dry run)".to_string()),
-            });
-        }
+            merge_env_files(&src_env, &dst_env)
+                .map(|count| Some(format!("{} keys imported", count)))
+                .map_err(|err| (MigrationStatus::Error, err))
+        };
+        let kind = "api-keys".to_string();
+        record(&mut result, kind, Some(src_env), Some(dst_env), outcome);
     }
 
-    // Migrate platform configs (config.yaml / gateway.json)
-    for config_name in &["config.yaml", "gateway.json"] {
+    // Platform configs (config.yaml / gateway.json)
+    for config_name in ["config.yaml", "gateway.json"] {
         let src_cfg = source_dir.join(config_name);
-        let dst_cfg = hermes_home.join(config_name);
-
-        if src_cfg.exists() {
-            if dst_cfg.exists() && !options.overwrite {
-                result.skipped.push(MigrationItem {
-                    kind: format!("config:{}", config_name),
-                    source: Some(src_cfg),
-                    destination: Some(dst_cfg),
-                    status: MigrationStatus::Conflict,
-                    reason: Some("Already exists".to_string()),
-                });
-            } else if !options.dry_run {
-                match std::fs::copy(&src_cfg, &dst_cfg) {
-                    Ok(_) => {
-                        result.migrated.push(MigrationItem {
-                            kind: format!("config:{}", config_name),
-                            source: Some(src_cfg),
-                            destination: Some(dst_cfg),
-                            status: MigrationStatus::Migrated,
-                            reason: None,
-                        });
-                    }
-                    Err(e) => {
-                        result.errors.push(MigrationItem {
-                            kind: format!("config:{}", config_name),
-                            source: Some(src_cfg),
-                            destination: Some(dst_cfg),
-                            status: MigrationStatus::Error,
-                            reason: Some(e.to_string()),
-                        });
-                    }
-                }
-            }
+        if is_link(&src_cfg) || src_cfg.exists() {
+            let kind = format!("config:{}", config_name);
+            let relative = Path::new(config_name);
+            migrate_file(kind, src_cfg, &hermes_home, relative, options, &mut result);
         }
     }
 
     result
 }
 
-/// Recursively migrate skills from source to destination directory.
-fn migrate_skills_dir(
-    src: &Path,
-    dst: &Path,
+/// Why a link is skipped.
+const LINK_REASON: &str = "it is a link, which this migration does not follow";
+/// Why a file or folder holding what looks like a credential is skipped.
+const SECRET_REASON: &str = "it looks like it holds a credential; add it yourself";
+
+/// What became of one item: migrated (with an optional note), or a status
+/// and the reason.
+type Outcome = Result<Option<String>, (MigrationStatus, String)>;
+
+/// Files `outcome` under migrated, errors or skipped (skips and conflicts).
+fn record(
+    result: &mut MigrationResult,
+    kind: String,
+    source: Option<PathBuf>,
+    destination: Option<PathBuf>,
+    outcome: Outcome,
+) {
+    let (list, status, reason) = match outcome {
+        Ok(note) => (&mut result.migrated, MigrationStatus::Migrated, note),
+        Err((MigrationStatus::Error, reason)) => {
+            (&mut result.errors, MigrationStatus::Error, Some(reason))
+        }
+        Err((status, reason)) => (&mut result.skipped, status, Some(reason)),
+    };
+    list.push(MigrationItem {
+        kind,
+        source,
+        destination,
+        status,
+        reason,
+    });
+}
+
+/// Copies the file `src` to `home/relative`, owner-only. A link, a file that
+/// looks like it holds a credential and a destination reached through a link
+/// are refused.
+fn migrate_file(
+    kind: String,
+    src: PathBuf,
+    home: &Path,
+    relative: &Path,
     options: &MigrateOptions,
     result: &mut MigrationResult,
 ) {
-    let entries = match std::fs::read_dir(src) {
-        Ok(e) => e,
-        Err(_) => return,
-    };
-
-    for entry in entries.flatten() {
-        let src_path = entry.path();
-        let name = entry.file_name();
-        let dst_path = dst.join(&name);
-
-        if src_path.is_dir() {
-            if !options.dry_run {
-                let _ = std::fs::create_dir_all(&dst_path);
-            }
-            migrate_skills_dir(&src_path, &dst_path, options, result);
-        } else if src_path.is_file() {
-            if dst_path.exists() && !options.overwrite {
-                result.skipped.push(MigrationItem {
-                    kind: format!("skill:{}", name.to_string_lossy()),
-                    source: Some(src_path),
-                    destination: Some(dst_path),
-                    status: MigrationStatus::Conflict,
-                    reason: Some("Already exists".to_string()),
-                });
-            } else if !options.dry_run {
-                match std::fs::copy(&src_path, &dst_path) {
-                    Ok(_) => {
-                        result.migrated.push(MigrationItem {
-                            kind: format!("skill:{}", name.to_string_lossy()),
-                            source: Some(src_path),
-                            destination: Some(dst_path),
-                            status: MigrationStatus::Migrated,
-                            reason: None,
-                        });
-                    }
-                    Err(e) => {
-                        result.errors.push(MigrationItem {
-                            kind: format!("skill:{}", name.to_string_lossy()),
-                            source: Some(src_path),
-                            destination: Some(dst_path),
-                            status: MigrationStatus::Error,
-                            reason: Some(e.to_string()),
-                        });
-                    }
+    let dst = home.join(relative);
+    let outcome = if is_link(&src) {
+        Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
+    } else {
+        std::fs::read(&src)
+            .map_err(|e| (MigrationStatus::Error, e.to_string()))
+            .and_then(|content| {
+                if looks_secret(&String::from_utf8_lossy(&content)) {
+                    return Err((MigrationStatus::Skipped, SECRET_REASON.to_string()));
                 }
-            }
+                check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err))?;
+                if dst.exists() && !options.overwrite {
+                    return Err((MigrationStatus::Conflict, "Already exists".to_string()));
+                }
+                if options.dry_run {
+                    return Ok(Some("(dry run)".to_string()));
+                }
+                write_file(&dst, &content)
+                    .map(|()| None)
+                    .map_err(|err| (MigrationStatus::Error, err))
+            })
+    };
+    record(result, kind, Some(src), Some(dst), outcome);
+}
+
+/// Copies each folder in `src` to `home/skills/openclaw-imports/<name>/`
+/// (links inside it are not copied) and each file to that folder. A link, a
+/// name that looks like a credential, a folder holding what looks like one
+/// and an existing folder are skipped: a folder is never replaced.
+fn migrate_skills(src: &Path, home: &Path, options: &MigrateOptions, result: &mut MigrationResult) {
+    let entries = match list_dir(src) {
+        Ok(entries) => entries,
+        Err(e) => {
+            let failed = (MigrationStatus::Error, format!("could not read it: {e}"));
+            record(
+                result,
+                "skills".to_string(),
+                Some(src.to_path_buf()),
+                None,
+                Err(failed),
+            );
+            return;
         }
+    };
+    for path in entries {
+        let name = path.file_name().unwrap_or_default();
+        if looks_secret(&name.to_string_lossy()) {
+            let reason = "its name looks like a credential; add it yourself".to_string();
+            let kind = format!("skill:{HIDDEN_NAME}");
+            record(
+                result,
+                kind,
+                None,
+                None,
+                Err((MigrationStatus::Skipped, reason)),
+            );
+            continue;
+        }
+        let kind = format!("skill:{}", name.to_string_lossy());
+        let relative = Path::new("skills").join("openclaw-imports").join(name);
+        if is_link(&path) || !path.is_dir() {
+            migrate_file(kind, path, home, &relative, options, result);
+            continue;
+        }
+        let dst = home.join(&relative);
+        let outcome = match holds_secret(&path) {
+            Ok(true) => Err((MigrationStatus::Skipped, SECRET_REASON.to_string())),
+            Ok(false) => check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err)),
+            Err(e) => Err((
+                MigrationStatus::Error,
+                format!("could not check it for credentials: {e}"),
+            )),
+        }
+        .and_then(|()| {
+            if dst.exists() {
+                return Err((MigrationStatus::Conflict, "Already exists".to_string()));
+            }
+            if options.dry_run {
+                return Ok(Some("(dry run)".to_string()));
+            }
+            let mut links = 0;
+            dst.parent()
+                .map_or(Ok(()), std::fs::create_dir_all)
+                .and_then(|()| copy_tree(&path, &dst, &mut links))
+                .map_err(|e| (MigrationStatus::Error, format!("could not copy it: {e}")))?;
+            Ok((links > 0).then(|| format!("{links} links inside it are not copied")))
+        });
+        record(result, kind, Some(path), Some(dst), outcome);
     }
 }
 
-/// Merge environment variables from source .env into destination .env.
-/// Returns the number of keys imported.
+/// Merge environment variables from source .env into destination .env,
+/// written owner-only. Returns the number of keys imported.
 fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
     let src_content =
         std::fs::read_to_string(src).map_err(|e| format!("Failed to read source .env: {}", e))?;
 
     let existing = if dst.exists() {
-        std::fs::read_to_string(dst).unwrap_or_default()
+        std::fs::read_to_string(dst).map_err(|e| format!("Failed to read .env: {}", e))?
     } else {
         String::new()
     };
@@ -384,7 +390,7 @@ fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
         content.push_str(&new_lines.join("\n"));
         content.push('\n');
 
-        std::fs::write(dst, content).map_err(|e| format!("Failed to write .env: {}", e))?;
+        write_file(dst, content.as_bytes()).map_err(|e| format!("Failed to write .env: {}", e))?;
     }
 
     Ok(count)
