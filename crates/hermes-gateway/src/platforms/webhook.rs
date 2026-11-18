@@ -1093,8 +1093,8 @@ mod tests {
         assert!(seen.read().await.contains_key(&key));
     }
 
-    /// What `handle_route_payload` writes for `route_name` with an unsigned body.
-    async fn unsigned_route_reply(config: &WebhookConfig, route_name: &str) -> String {
+    /// What `handle_route_payload` writes for `route_name` and a `{}` body with `signature`.
+    async fn route_reply(config: &WebhookConfig, route_name: &str, signature: &str) -> String {
         use tokio::io::AsyncReadExt;
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
@@ -1110,7 +1110,7 @@ mod tests {
             rate_windows: Arc::new(RwLock::new(HashMap::new())),
         };
         let mut headers = HashMap::new();
-        headers.insert("x-hub-signature-256".into(), "sha256=00".into());
+        headers.insert("x-hub-signature-256".into(), signature.into());
         handle_route_payload(&mut writer, route_name, &headers, b"{}", ctx)
             .await
             .unwrap();
@@ -1121,7 +1121,8 @@ mod tests {
     }
 
     /// A bad signature on a configured route gets the reply an unknown route gets, so route
-    /// names cannot be found by probing (upstream's webhook signature fix).
+    /// names cannot be found by probing (upstream's webhook signature fix). Routes configured
+    /// with INSECURE_NO_AUTH take any request by design and are outside this property.
     #[tokio::test]
     async fn a_bad_signature_reads_as_an_unknown_route() {
         let mut routes = BTreeMap::new();
@@ -1132,6 +1133,8 @@ mod tests {
                 ..WebhookRouteConfig::default()
             },
         );
+        // Signed with the global secret it falls back to.
+        routes.insert("alerts".into(), WebhookRouteConfig::default());
         let config = WebhookConfig {
             host: "127.0.0.1".into(),
             port: 0,
@@ -1141,9 +1144,19 @@ mod tests {
             max_body_bytes: default_webhook_max_body_bytes(),
             routes,
         };
-        let unknown = unsigned_route_reply(&config, "no-such-route").await;
+        let bad = "sha256=00";
+        let unknown = route_reply(&config, "no-such-route", bad).await;
         assert!(unknown.starts_with("HTTP/1.1 404"), "{unknown}");
-        assert_eq!(unsigned_route_reply(&config, "deploys").await, unknown);
+        for route in ["deploys", "alerts"] {
+            assert_eq!(route_reply(&config, route, bad).await, unknown, "{route}");
+        }
+
+        // A valid signature still gets past the check.
+        for (route, secret) in [("deploys", "route-secret"), ("alerts", "global-secret")] {
+            let signature = format!("sha256={}", sign(secret, b"{}"));
+            let reply = route_reply(&config, route, &signature).await;
+            assert!(reply.starts_with("HTTP/1.1 2"), "{route}: {reply}");
+        }
     }
 
     #[test]
