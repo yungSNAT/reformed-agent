@@ -120,6 +120,7 @@ shlex = "1.3.0"
 arboard = "3.4"
 unicode-width = "0.1"
 tempfile = "3"
+toml = "0.8"
 rusqlite = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]

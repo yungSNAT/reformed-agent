@@ -68,12 +68,14 @@
             completion_tokens: 5,
             total_tokens: 15,
             estimated_cost: Some(0.0015),
+            ..Default::default()
         };
         let second = hermes_core::UsageStats {
             prompt_tokens: 7,
             completion_tokens: 3,
             total_tokens: 10,
             estimated_cost: None,
+            ..Default::default()
         };
 
         app.apply_agent_result(hermes_core::AgentResult {

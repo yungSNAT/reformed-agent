@@ -5,6 +5,7 @@ use serde_json::json;
 use std::process::Stdio;
 use tokio::process::Command as TokioCommand;
 
+use crate::ansi_strip::strip_ansi;
 use crate::tools::code_execution::CodeExecutionBackend;
 use hermes_core::{subprocess::CommandNoWindowExt, ToolError};
 
@@ -143,8 +144,8 @@ impl CodeExecutionBackend for LocalCodeExecutionBackend {
 
         match result {
             Ok(Ok((exit_code, stdout, stderr))) => {
-                let stdout_str = String::from_utf8_lossy(&stdout).to_string();
-                let stderr_str = String::from_utf8_lossy(&stderr).to_string();
+                let stdout_str = strip_ansi(&String::from_utf8_lossy(&stdout)).into_owned();
+                let stderr_str = strip_ansi(&String::from_utf8_lossy(&stderr)).into_owned();
                 Ok(json!({
                     "exit_code": exit_code,
                     "stdout": stdout_str,

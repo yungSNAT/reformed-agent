@@ -2,6 +2,40 @@
 // AnthropicProvider
 // ---------------------------------------------------------------------------
 
+/// Usage from an Anthropic `usage` object. Its `input_tokens` leaves out the
+/// prompt tokens read from or written to the cache, so the prompt is the sum
+/// of the 3 counts.
+fn anthropic_usage(u: &Value) -> UsageStats {
+    let count = |key: &str| u.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let cache_read_tokens = count("cache_read_input_tokens");
+    let cache_write_tokens = count("cache_creation_input_tokens");
+    let prompt_tokens = count("input_tokens") + cache_read_tokens + cache_write_tokens;
+    let completion_tokens = count("output_tokens");
+    UsageStats {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: prompt_tokens + completion_tokens,
+        estimated_cost: None,
+        cache_read_tokens,
+        cache_write_tokens,
+    }
+}
+
+/// The usage of a whole streamed message from its `message_delta` usage,
+/// which may carry the output count alone, and the prompt's counts from
+/// `message_start`. The agent keeps a stream's last usage, so this one must
+/// be complete.
+fn anthropic_final_usage(start: &UsageStats, delta: &Value) -> UsageStats {
+    let mut usage = anthropic_usage(delta);
+    if usage.prompt_tokens == 0 {
+        usage.prompt_tokens = start.prompt_tokens;
+        usage.cache_read_tokens = start.cache_read_tokens;
+        usage.cache_write_tokens = start.cache_write_tokens;
+    }
+    usage.total_tokens = usage.prompt_tokens + usage.completion_tokens;
+    usage
+}
+
 /// Anthropic API provider with native Messages API support.
 ///
 /// Uses Anthropic's own message format rather than OpenAI-compatible format:
@@ -486,16 +520,7 @@ impl AnthropicProvider {
             }
         }
 
-        let usage = json.get("usage").map(|u| {
-            let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-            UsageStats {
-                prompt_tokens: input,
-                completion_tokens: output,
-                total_tokens: input + output,
-                estimated_cost: None,
-            }
-        });
+        let usage = json.get("usage").map(anthropic_usage);
 
         let stop_reason = json
             .get("stop_reason")
@@ -683,6 +708,8 @@ impl LlmProvider for AnthropicProvider {
             };
             // Track current tool_use block index for delta accumulation
             let mut current_tool_index: u32 = 0;
+            // The prompt's counts, which `message_start` carries.
+            let mut start_usage = UsageStats::default();
 
             while let Some(event_block) = events.next().await {
                 let event_block = match event_block {
@@ -805,15 +832,9 @@ impl LlmProvider for AnthropicProvider {
                                 "tool_use" => "tool_calls".to_string(),
                                 other => other.to_string(),
                             });
-                        let usage = json.get("usage").map(|u| {
-                            let output = u.get("output_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            UsageStats {
-                                prompt_tokens: 0,
-                                completion_tokens: output,
-                                total_tokens: output,
-                                estimated_cost: None,
-                            }
-                        });
+                        let usage = json
+                            .get("usage")
+                            .map(|u| anthropic_final_usage(&start_usage, u));
                         yield Ok(StreamChunk {
                             delta: None,
                             finish_reason: stop_reason,
@@ -822,16 +843,12 @@ impl LlmProvider for AnthropicProvider {
                     }
                     "message_start" => {
                         // Extract usage from the initial message
-                        let usage = json.get("message").and_then(|m| m.get("usage")).map(|u| {
-                            let input = u.get("input_tokens").and_then(|v| v.as_u64()).unwrap_or(0);
-                            UsageStats {
-                                prompt_tokens: input,
-                                completion_tokens: 0,
-                                total_tokens: input,
-                                estimated_cost: None,
-                            }
-                        });
+                        let usage = json
+                            .get("message")
+                            .and_then(|m| m.get("usage"))
+                            .map(anthropic_usage);
                         if let Some(u) = usage {
+                            start_usage = u.clone();
                             yield Ok(StreamChunk {
                                 delta: None,
                                 finish_reason: None,

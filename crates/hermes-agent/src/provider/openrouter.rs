@@ -450,6 +450,7 @@ fn parse_sse_chunk(json: &Value) -> Option<StreamChunk> {
             .unwrap_or(0),
         total_tokens: u.get("total_tokens").and_then(|v| v.as_u64()).unwrap_or(0),
         estimated_cost: None,
+        ..Default::default()
     });
 
     if delta_obj.is_none() && finish_reason.is_none() && usage.is_none() {
@@ -525,6 +526,7 @@ fn parse_openai_response(json: &Value) -> Result<LlmResponse, AgentError> {
             completion_tokens: u.get("completion_tokens")?.as_u64()?,
             total_tokens: u.get("total_tokens")?.as_u64()?,
             estimated_cost: None,
+            ..Default::default()
         })
     });
 

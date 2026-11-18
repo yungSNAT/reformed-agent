@@ -25,18 +25,22 @@ use serde_json::{Map, Value};
 pub enum SourceAgent {
     /// Claude Code: `~/.claude`, with MCP servers also read from `~/.claude.json`.
     ClaudeCode,
+    /// Codex CLI: `~/.codex`.
+    Codex,
 }
 
 impl SourceAgent {
     fn default_folder(self) -> &'static str {
         match self {
             Self::ClaudeCode => ".claude",
+            Self::Codex => ".codex",
         }
     }
 
     fn skill_folder(self) -> &'static str {
         match self {
             Self::ClaudeCode => "claude-code-imports",
+            Self::Codex => "codex-imports",
         }
     }
 }
@@ -101,6 +105,7 @@ fn import_with(request: &AgentImportRequest<'_>, save_config: SaveConfig) -> Age
     } else {
         match request.agent {
             SourceAgent::ClaudeCode => import.claude_code(),
+            SourceAgent::Codex => import.codex(),
         }
     }
     if !import.left_out.is_empty() {
@@ -180,6 +185,52 @@ impl Importer<'_> {
         }
     }
 
+    fn codex(&mut self) {
+        let source = self.request.source;
+        let config = self.toml_table("config.toml", &source.join("config.toml"));
+        self.memory_entries("AGENTS.md", &source.join("AGENTS.md"));
+        self.memory_folder("memories", &source.join("memories"));
+        let servers = match config.get("mcp_servers") {
+            Some(Value::Object(servers)) => servers.clone(),
+            _ => Map::new(),
+        };
+        self.mcp_servers(&servers);
+        self.skills(&source.join("skills"));
+    }
+
+    /// A TOML table as JSON, or an empty one when the file is missing or
+    /// unreadable. A parse error names only the line: the text around it
+    /// could hold a secret.
+    fn toml_table(&mut self, item: &str, path: &Path) -> Map<String, Value> {
+        let text = match std::fs::read_to_string(path) {
+            Ok(text) => text,
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.record(Status::Skip, item, "not found".to_string());
+                return Map::new();
+            }
+            Err(err) => {
+                self.record(Status::Error, item, format!("could not read it: {err}"));
+                return Map::new();
+            }
+        };
+        let text = text.trim_start_matches('\u{feff}');
+        match toml::from_str::<toml::Table>(text) {
+            Ok(table) => match serde_json::to_value(table) {
+                Ok(Value::Object(object)) => object,
+                _ => Map::new(),
+            },
+            Err(err) => {
+                let line = err.span().map(|span| {
+                    let before = text.get(..span.start).unwrap_or(text);
+                    before.matches('\n').count() + 1
+                });
+                let at = line.map_or(String::new(), |line| format!(" at line {line}"));
+                self.record(Status::Error, item, format!("could not parse it{at}"));
+                Map::new()
+            }
+        }
+    }
+
     /// A JSON object from `path`, or an empty one when the file is missing,
     /// unreadable or not an object (the last 2 are recorded as errors).
     fn json_object(&mut self, item: &str, path: &Path) -> Map<String, Value> {
@@ -218,11 +269,68 @@ impl Importer<'_> {
                 return;
             }
         };
-        let incoming = markdown_entries(text.trim_start_matches('\u{feff}'));
-        if incoming.is_empty() {
+        self.merge_memory(item, &markdown_entries(text.trim_start_matches('\u{feff}')));
+    }
+
+    /// Every `*.md` in `folder`, in name order, as memory entries; a linked
+    /// file is skipped.
+    fn memory_folder(&mut self, item: &str, folder: &Path) {
+        let listed = std::fs::read_dir(folder).and_then(|entries| {
+            entries
+                .map(|entry| entry.map(|entry| entry.path()))
+                .collect::<std::io::Result<Vec<PathBuf>>>()
+        });
+        let mut files: Vec<PathBuf> = match listed {
+            Ok(paths) => paths
+                .into_iter()
+                .filter(|path| path.is_file() && path.extension().is_some_and(|ext| ext == "md"))
+                .collect(),
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+                self.record(Status::Skip, item, "no memories folder".to_string());
+                return;
+            }
+            Err(err) => {
+                self.record(Status::Error, item, format!("could not read it: {err}"));
+                return;
+            }
+        };
+        files.sort();
+        let mut incoming = Vec::new();
+        for file in files {
+            if is_link(&file) {
+                let name = file.file_name().unwrap_or_default().to_string_lossy();
+                self.record(
+                    Status::Skip,
+                    &format!("{item}/{name}"),
+                    "it is a link, which this import does not follow".to_string(),
+                );
+                continue;
+            }
+            match std::fs::read_to_string(&file) {
+                Ok(text) => incoming.extend(markdown_entries(text.trim_start_matches('\u{feff}'))),
+                Err(err) => self.record(
+                    Status::Error,
+                    item,
+                    format!("could not read {}: {err}", file.display()),
+                ),
+            }
+        }
+        self.merge_memory(item, &incoming);
+    }
+
+    fn merge_memory(&mut self, item: &str, found: &[String]) {
+        if found.is_empty() {
             self.record(Status::Skip, item, "no entries found".to_string());
             return;
         }
+        // Memory reaches every prompt, so an entry holding what looks like a credential is
+        // left out; the report gives only the count.
+        let incoming: Vec<String> = found
+            .iter()
+            .filter(|entry| !looks_secret(entry))
+            .cloned()
+            .collect();
+        let credentials = found.len() - incoming.len();
         let destination = self.request.home.join("memories").join("MEMORY.md");
         if let Err(err) = check_destination(self.request.home, &destination) {
             self.record(Status::Error, item, err);
@@ -246,15 +354,26 @@ impl Importer<'_> {
             }
         };
         let merge = merge_entries(&existing, &incoming, MEMORY_CHAR_LIMIT);
-        let detail = format!(
-            "{} of {} entries to memories/MEMORY.md ({} already there, {} over its {}-character limit, {} refused by the memory scan)",
+        let mut detail = format!(
+            "{} of {} entries to memories/MEMORY.md ({} already there, {} over its {}-character limit, {} refused by the memory scan",
             merge.added,
-            incoming.len(),
+            found.len(),
             merge.duplicates,
             merge.over_limit,
             MEMORY_CHAR_LIMIT,
             merge.refused
         );
+        if credentials > 0 {
+            let looks = if credentials == 1 {
+                "it looks"
+            } else {
+                "they look"
+            };
+            detail.push_str(&format!(
+                ", {credentials} left out as {looks} like a credential"
+            ));
+        }
+        detail.push(')');
         if merge.added == 0 {
             self.record(Status::Skip, item, detail);
             return;
@@ -425,6 +544,9 @@ impl Importer<'_> {
         let Some(server) = server.as_object() else {
             return Err("the entry is not an object".to_string());
         };
+        if server.get("enabled") == Some(&Value::Bool(false)) {
+            return Err("it is disabled there".to_string());
+        }
         let text = |key: &str| {
             server
                 .get(key)
@@ -443,19 +565,34 @@ impl Importer<'_> {
                 return Err("its URL carries a credential; add it yourself".to_string());
             }
             let mut headers = std::collections::BTreeMap::new();
-            if let Some(Value::Object(found)) = server.get("headers") {
-                for (key, value) in found {
-                    let value = value.as_str();
-                    if is_secret_name(key)
-                        || key.to_ascii_lowercase().contains("authorization")
-                        || value.is_some_and(looks_secret)
-                    {
-                        self.left_out
-                            .push(format!("mcp_servers.{name}.headers.{key}"));
-                    } else if let Some(value) = value {
-                        headers.insert(key.clone(), value.to_string());
+            // Claude Code writes `headers`, Codex `http_headers`.
+            for field in ["headers", "http_headers"] {
+                if let Some(Value::Object(found)) = server.get(field) {
+                    for (key, value) in found {
+                        let value = value.as_str();
+                        if is_secret_name(key)
+                            || key.to_ascii_lowercase().contains("authorization")
+                            || value.is_some_and(looks_secret)
+                        {
+                            self.left_out
+                                .push(format!("mcp_servers.{name}.{field}.{key}"));
+                        } else if let Some(value) = value {
+                            headers.insert(key.clone(), value.to_string());
+                        }
                     }
                 }
+            }
+            // Codex can name environment variables instead of values; they
+            // become `${VAR}` references, which config.yaml expands on load.
+            if let Some(Value::Object(found)) = server.get("env_http_headers") {
+                for (key, var) in found {
+                    if let Some(var) = var.as_str().filter(|var| is_env_name(var)) {
+                        headers.insert(key.clone(), format!("${{{var}}}"));
+                    }
+                }
+            }
+            if let Some(var) = text("bearer_token_env_var").filter(|var| is_env_name(var)) {
+                headers.insert("Authorization".to_string(), format!("Bearer ${{{var}}}"));
             }
             return Ok((
                 hermes_config::McpServerEntry {
@@ -572,6 +709,26 @@ impl Importer<'_> {
                 self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
                 continue;
             }
+            match holds_secret(&skill) {
+                Ok(false) => {}
+                Ok(true) => {
+                    self.record(
+                        Status::Skip,
+                        &item,
+                        "a file in it looks like it holds a credential; add it yourself"
+                            .to_string(),
+                    );
+                    continue;
+                }
+                Err(err) => {
+                    self.record(
+                        Status::Error,
+                        &item,
+                        format!("could not check it for credentials: {err}"),
+                    );
+                    continue;
+                }
+            }
             let destination = destination_root.join(name);
             if let Err(err) = check_destination(self.request.home, &destination) {
                 self.record(Status::Error, &item, err);
@@ -610,6 +767,15 @@ impl Importer<'_> {
     }
 }
 
+/// A plain environment variable name, safe inside `${...}`.
+fn is_env_name(name: &str) -> bool {
+    let mut chars = name.chars();
+    chars
+        .next()
+        .is_some_and(|first| first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|c| c == '_' || c.is_ascii_alphanumeric())
+}
+
 fn markdown_files(dir: &Path) -> usize {
     std::fs::read_dir(dir).map_or(0, |entries| {
         entries
@@ -641,6 +807,26 @@ static IPV4: LazyLock<Regex> =
 fn looks_secret(text: &str) -> bool {
     let text = IPV4.replace_all(text, "address");
     redact_sensitive_text(&*text) != text
+}
+
+/// Whether a file under `dir`, reached without following a link, holds what looks like a
+/// credential. A file that is not UTF-8 is read lossily; anything unreadable is an error, so
+/// the caller never copies what it could not check.
+fn holds_secret(dir: &Path) -> std::io::Result<bool> {
+    for entry in std::fs::read_dir(dir)? {
+        let path = entry?.path();
+        let found = if is_link(&path) {
+            false
+        } else if path.is_dir() {
+            holds_secret(&path)?
+        } else {
+            looks_secret(&String::from_utf8_lossy(&std::fs::read(&path)?))
+        };
+        if found {
+            return Ok(true);
+        }
+    }
+    Ok(false)
 }
 
 /// Whether `arg` is an option named like a credential, such as `--token` or
@@ -1209,6 +1395,291 @@ mod tests {
             "mcp_servers: [unclosed\n"
         );
         assert!(!home.join("mcp_servers.json").exists());
+    }
+
+    #[test]
+    fn codex_imports_agents_md_memories_servers_and_skills() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/fmt")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("AGENTS.md"), "# Agents\n- Run tests first.\n").unwrap();
+        std::fs::write(codex.join("memories/b.md"), "- Second note.\n").unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- First note.\n").unwrap();
+        std::fs::write(codex.join("skills/fmt/SKILL.md"), "fmt\n").unwrap();
+        std::fs::write(
+            codex.join("config.toml"),
+            r#"model = "gpt-5"
+
+[mcp_servers.docs]
+command = "docs-server"
+args = ["--stdio"]
+env = { DOCS_ROOT = "/docs", DOCS_API_KEY = "nope" }
+
+[mcp_servers.remote]
+url = "https://remote.example/mcp"
+http_headers = { "x-region" = "eu", "x-api-key" = "nope" }
+env_http_headers = { "x-team" = "TEAM_ID" }
+bearer_token_env_var = "REMOTE_TOKEN"
+
+[mcp_servers.off]
+command = "off-server"
+enabled = false
+"#,
+        )
+        .unwrap();
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        assert!(!report.failed, "{:#?}", report.lines);
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains("imported     MCP server docs: docs-server (1 argument)"),
+            "{text}"
+        );
+        assert!(
+            text.contains("skipped      MCP server off: it is disabled there"),
+            "{text}"
+        );
+        assert!(text.contains("imported     skill fmt"), "{text}");
+        assert!(
+            text.contains(
+                "mcp_servers.docs.env.DOCS_API_KEY, mcp_servers.remote.http_headers.x-api-key"
+            ),
+            "{text}"
+        );
+        assert!(!text.contains("nope"), "{text}");
+
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Agents: Run tests first.\n§\nFirst note.\n§\nSecond note."
+        );
+        assert!(home.join("skills/codex-imports/fmt/SKILL.md").is_file());
+        // Loading config.yaml with both variables unset keeps each reference as written: the
+        // server gets the literal text, never an invented or empty value.
+        for unset in ["REMOTE_TOKEN", "TEAM_ID"] {
+            assert!(std::env::var_os(unset).is_none(), "{unset} is set");
+        }
+        let config = hermes_config::load_user_config_file(&home.join("config.yaml")).unwrap();
+        let remote = config
+            .mcp_servers
+            .iter()
+            .find(|server| server.name == "remote")
+            .expect("remote server");
+        let headers: Vec<(&str, &str)> = remote
+            .headers
+            .iter()
+            .map(|(key, value)| (key.as_str(), value.as_str()))
+            .collect();
+        assert_eq!(
+            headers,
+            vec![
+                ("Authorization", "Bearer ${REMOTE_TOKEN}"),
+                ("x-region", "eu"),
+                ("x-team", "${TEAM_ID}"),
+            ]
+        );
+        let records = crate::mcp_config::load_mcp_config(&home.join("mcp_servers.json")).unwrap();
+        let docs = records.get("docs").expect("docs record");
+        assert_eq!(docs.args, vec!["--stdio"]);
+        assert_eq!(docs.env.keys().collect::<Vec<_>>(), vec!["DOCS_ROOT"]);
+        assert!(records.get("off").is_none());
+    }
+
+    #[test]
+    fn credentials_in_instructions_memories_and_skills_reach_neither_the_report_nor_the_home() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/leaky/notes")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/fmt")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            codex.join("AGENTS.md"),
+            "- CI uses ghp_fixtureAgents01.\n- Run tests first.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            codex.join("memories/a.md"),
+            "- Deploy with ghp_fixtureMemory02.\n- First note.\n",
+        )
+        .unwrap();
+        std::fs::write(codex.join("skills/leaky/SKILL.md"), "leaky\n").unwrap();
+        std::fs::write(
+            codex.join("skills/leaky/notes/setup.md"),
+            "export GH_TOKEN=ghp_fixtureSkill03\n",
+        )
+        .unwrap();
+        std::fs::write(codex.join("skills/fmt/SKILL.md"), "fmt\n").unwrap();
+        let request = |apply| AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply,
+        };
+
+        let plan = import_agent(&request(false));
+        let applied = import_agent(&request(true));
+        assert!(!applied.failed, "{:#?}", applied.lines);
+        let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
+        let files = all_text(&home);
+        for secret in [
+            "ghp_fixtureAgents01",
+            "ghp_fixtureMemory02",
+            "ghp_fixtureSkill03",
+        ] {
+            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
+            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+        }
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Run tests first.\n§\nFirst note."
+        );
+        for expected in [
+            "1 left out as it looks like a credential",
+            "skipped      skill leaky: a file in it looks like it holds a credential",
+            "imported     skill fmt",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!home.join("skills/codex-imports/leaky").exists());
+    }
+
+    #[test]
+    fn a_bad_codex_config_names_the_line_but_not_its_text() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(&codex).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(
+            codex.join("config.toml"),
+            "model = \"x\"\napi_key = \"sk-live-123\n",
+        )
+        .unwrap();
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: false,
+        });
+        assert!(report.failed);
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains("error        config.toml: could not parse it at line "),
+            "{text}"
+        );
+        assert!(!text.contains("sk-live"), "{text}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn codex_memory_files_that_are_links_are_skipped() {
+        use std::os::unix::fs::symlink;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- Kept note.\n").unwrap();
+        let outside = root.path().join("outside.md");
+        std::fs::write(&outside, "- Outside note.\n").unwrap();
+        symlink(&outside, codex.join("memories/b.md")).unwrap();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains(
+                "skipped      memories/b.md: it is a link, which this import does not follow"
+            ),
+            "{text}"
+        );
+        assert_eq!(
+            std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
+            "Kept note."
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_memories_folder_or_skill_file_is_an_error_not_a_quiet_skip() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/locked")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("memories/a.md"), "- A note.\n").unwrap();
+        std::fs::write(codex.join("skills/locked/SKILL.md"), "locked\n").unwrap();
+        std::fs::write(codex.join("skills/locked/notes.md"), "notes\n").unwrap();
+        let mode = |path: &Path, mode| {
+            std::fs::set_permissions(path, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        mode(&codex.join("memories"), 0o000);
+        mode(&codex.join("skills/locked/notes.md"), 0o000);
+        let unreadable = std::fs::read_dir(codex.join("memories")).is_err();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        mode(&codex.join("memories"), 0o755);
+        mode(&codex.join("skills/locked/notes.md"), 0o644);
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        for expected in [
+            "error        memories: could not read it: ",
+            "error        skill locked: could not check it for credentials: ",
+        ] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+        assert!(!text.contains("no memories folder"), "{text}");
+        assert!(!home.join("skills/codex-imports/locked").exists());
+    }
+
+    #[test]
+    fn a_credential_in_a_skill_file_that_is_not_utf8_still_keeps_the_skill_out() {
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("skills/blob")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(codex.join("skills/blob/SKILL.md"), "blob\n").unwrap();
+        std::fs::write(
+            codex.join("skills/blob/data.bin"),
+            b"\xff\xfe\nexport GH_TOKEN=ghp_fixtureBinary04\n",
+        )
+        .unwrap();
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(
+            text.contains("skipped      skill blob: a file in it looks like it holds a credential"),
+            "{text}"
+        );
+        assert!(!all_text(&home).contains("ghp_fixtureBinary04"));
     }
 
     fn claude_request<'a>(source: &'a Path, home: &'a Path, apply: bool) -> AgentImportRequest<'a> {
