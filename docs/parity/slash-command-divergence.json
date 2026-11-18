@@ -1,10 +1,42 @@
 {
   "allowed_missing_upstream_commands": [
+    "/approvals",
+    "/autoprune",
+    "/battery",
+    "/discard",
+    "/egress",
+    "/export",
+    "/focus",
+    "/heartbeat",
+    "/import",
+    "/login",
+    "/loop",
+    "/palette",
+    "/pause",
+    "/refine",
     "/subscription",
-    "/topup"
+    "/topup",
+    "/wake",
+    "/worktree"
   ],
   "reasons": {
+    "/approvals": "Not ported at the v0.23.2 re-pin. Upstream: 'Show or set the persistent dangerous-command approval mode'.",
+    "/autoprune": "Not ported at the v0.23.2 re-pin. Upstream: 'Turn automatic pruning of old sessions on or off'.",
+    "/battery": "Not ported at the v0.23.2 re-pin. Upstream: 'Toggle a color-coded battery indicator in the status bar'.",
+    "/discard": "Not ported at the v0.23.2 re-pin. Upstream: 'Drop a turn lost when Hermes restarted so this chat's queue runs again'.",
+    "/egress": "Not ported at the v0.23.2 re-pin. Upstream: 'Show Docker egress proxy status'.",
+    "/export": "Not ported at the v0.23.2 re-pin. Upstream: 'Export a profile (config, skills, theme) to a shareable archive'.",
+    "/focus": "Not ported at the v0.23.2 re-pin. Upstream: 'Toggle focus view — show only your prompt and the final response'.",
+    "/heartbeat": "Not ported at the v0.23.2 re-pin. Upstream: 'Set a recurring prompt that re-enters this session when idle'.",
+    "/import": "Not ported at the v0.23.2 re-pin. Upstream: 'Import a shared profile archive as a new profile'.",
+    "/login": "Not ported at the v0.23.2 re-pin. Upstream: 'Sign in with a Nous account (keeps your connectors)'.",
+    "/loop": "Not ported at the v0.23.2 re-pin. Upstream: 'Re-run a prompt on a recurring interval in this session'.",
+    "/palette": "Not ported at the v0.23.2 re-pin. Upstream: 'Open the fuzzy command palette (also Ctrl+P)'.",
+    "/pause": "Not ported at the v0.23.2 re-pin. Upstream: 'Pause new work globally (emergency stop); '/pause off' resumes'.",
+    "/refine": "Not ported at the v0.23.2 re-pin. Upstream: 'Review this conversation now and save lessons to memory/skills'.",
     "/subscription": "Changes a Nous Portal subscription plan through Nous's billing service; this port ships no Nous billing client and takes no payments.",
-    "/topup": "Buys Nous Portal credit through Nous's billing service; this port ships no Nous billing client and takes no payments."
+    "/topup": "Buys Nous Portal credit through Nous's billing service; this port ships no Nous billing client and takes no payments.",
+    "/wake": "Not ported at the v0.23.2 re-pin. Upstream: 'Toggle the 'Hey Hermes' wake word listener'.",
+    "/worktree": "Not ported at the v0.23.2 re-pin. Upstream: 'Show, list, create, or prune isolated git worktrees'."
   }
 }
