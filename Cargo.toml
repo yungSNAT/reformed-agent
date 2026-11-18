@@ -64,7 +64,6 @@ hermes-protocol-parity-tests = { path = "crates/hermes-protocol-parity-tests" }
 
 # Async runtime
 tokio = { version = "1", features = ["full"] }
-tokio-stream = "0.1"
 futures = "0.3"
 
 # Serialization
