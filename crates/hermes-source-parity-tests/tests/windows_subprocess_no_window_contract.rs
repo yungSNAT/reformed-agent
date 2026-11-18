@@ -84,9 +84,10 @@ fn backend_helper_subprocesses_opt_into_windows_no_window_launch() {
             "crates/hermes-agent/src/coding_context.rs",
             ".suppress_windows_console()",
         ),
+        // Its git runs through coding_context's read_only_git, above.
         (
             "crates/hermes-agent/src/context_references.rs",
-            ".suppress_windows_console()",
+            "read_only_git(",
         ),
         (
             "crates/hermes-agent/src/memory_plugins/byterover.rs",
