@@ -98,7 +98,7 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
 async-trait = { workspace = true }
-chrono = { workspace = true }
+jiff = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
 dirs = "6"
@@ -137,7 +137,7 @@ windows-sys = { version = "0.61", features = [
 [dev-dependencies]
 assert_cmd = "2"
 wiremock = "0.6"
-chrono = { workspace = true }
+jiff = { workspace = true }
 hermes-core = { workspace = true }
 hermes-cron = { workspace = true }
 

@@ -45,7 +45,7 @@ impl MatrixAdapter {
 
     fn next_txn_id(&self) -> String {
         let n = self.txn_counter.fetch_add(1, Ordering::SeqCst);
-        format!("hermes-{}-{}", chrono::Utc::now().timestamp_millis(), n)
+        format!("hermes-{}-{}", jiff::Timestamp::now().as_millisecond(), n)
     }
 
     fn auth_header(&self) -> String {

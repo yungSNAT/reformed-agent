@@ -11,7 +11,6 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, RwLock};
 
 use async_trait::async_trait;
-use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use tracing::{debug, warn};
@@ -140,7 +139,7 @@ pub fn write_directory_atomic(
     let tmp_path = path.with_extension(format!(
         "json.tmp.{}.{}",
         std::process::id(),
-        Utc::now().timestamp_nanos_opt().unwrap_or_default()
+        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or_default()
     ));
 
     match std::fs::write(&tmp_path, bytes).and_then(|_| std::fs::rename(&tmp_path, path)) {
@@ -163,7 +162,7 @@ pub fn build_channel_directory_at(
     platforms: BTreeMap<String, Vec<ChannelEntry>>,
 ) -> ChannelDirectorySnapshot {
     let mut snapshot = ChannelDirectorySnapshot {
-        updated_at: Some(Utc::now().to_rfc3339()),
+        updated_at: Some(hermes_core::time::now_rfc3339()),
         platforms,
     };
     normalize_snapshot(&mut snapshot);

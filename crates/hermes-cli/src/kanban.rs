@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use chrono::Utc;
 use hermes_core::AgentError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -759,7 +758,7 @@ fn backup_corrupt_store(path: &Path) -> Option<PathBuf> {
     let resolved = path.canonicalize().ok()?;
     let parent = resolved.parent()?.to_path_buf();
     let base_name = resolved.file_name()?.to_string_lossy();
-    let timestamp = Utc::now().format("%Y%m%dT%H%M%SZ");
+    let timestamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ");
     let base_backup_name = format!("{base_name}.corrupt.{timestamp}");
     for idx in 0..100 {
         let backup_name = if idx == 0 {
@@ -942,7 +941,7 @@ fn normalize_optional(value: Option<String>) -> Option<String> {
 }
 
 fn now_rfc3339() -> String {
-    Utc::now().to_rfc3339()
+    hermes_core::time::now_rfc3339()
 }
 
 fn kanban_contextlattice_sync_enabled() -> bool {

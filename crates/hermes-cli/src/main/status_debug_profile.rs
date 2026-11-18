@@ -396,7 +396,7 @@ fn capture_debug_log_snapshot(
 }
 
 fn collect_debug_report(cli: &Cli, lines: u32) -> Result<String, AgentError> {
-    let now = chrono::Utc::now().to_rfc3339();
+    let now = hermes_core::time::now_rfc3339();
     let root = hermes_state_root(cli);
     let cfg_path = root.join("config.yaml");
     let log_file = root.join("logs").join("hermes.log");
@@ -541,7 +541,7 @@ async fn run_debug(
     tokio::fs::create_dir_all(&reports_dir)
         .await
         .map_err(|e| AgentError::Io(format!("mkdir {}: {}", reports_dir.display(), e)))?;
-    let now_unix = chrono::Utc::now().timestamp();
+    let now_unix = jiff::Timestamp::now().as_second();
     let pending_removed = best_effort_sweep_expired_pending_pastes(&reports_dir, now_unix);
     if pending_removed > 0 {
         println!(
@@ -562,7 +562,7 @@ async fn run_debug(
             let report = collect_debug_report(&cli, lines)?;
             let filename = format!(
                 "{}-debug-report.md",
-                chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+                jiff::Timestamp::now().strftime("%Y%m%dT%H%M%SZ")
             );
             let path = reports_dir.join(filename);
             tokio::fs::write(&path, &report)
@@ -588,7 +588,7 @@ async fn run_debug(
                         &reports_dir,
                         body.trim(),
                         expire,
-                        chrono::Utc::now().timestamp(),
+                        jiff::Timestamp::now().as_second(),
                     );
                 }
                 Ok(resp) => {

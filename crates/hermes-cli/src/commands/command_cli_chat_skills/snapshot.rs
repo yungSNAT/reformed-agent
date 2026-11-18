@@ -5,7 +5,7 @@
                     let output = extra.unwrap_or_else(|| {
                         format!(
                             "skills-snapshot-{}.tar.gz",
-                            chrono::Utc::now().format("%Y%m%d-%H%M%S")
+                            jiff::Timestamp::now().strftime("%Y%m%d-%H%M%S")
                         )
                     });
                     println!("Exporting skills snapshot to: {}", output);

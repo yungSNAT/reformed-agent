@@ -12,7 +12,6 @@ use std::collections::{HashMap, HashSet};
 use std::io::{Stdout, Write};
 use std::time::{Duration, Instant};
 
-use chrono::Local;
 use crossterm::cursor::Show;
 use crossterm::event::{
     DisableBracketedPaste, DisableMouseCapture, EnableBracketedPaste, EnableMouseCapture,

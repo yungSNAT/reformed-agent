@@ -4,7 +4,7 @@ use crate::test_env_lock;
 fn nous_test_jwt(seconds: i64, scope: Value) -> String {
     let header = serde_json::json!({ "alg": "none", "typ": "JWT" });
     let claims = serde_json::json!({
-        "exp": Utc::now().timestamp() + seconds,
+        "exp": jiff::Timestamp::now().as_second() + seconds,
         "scope": scope,
     });
     format!(
@@ -23,7 +23,7 @@ fn nous_test_state(access_token: String) -> NousAuthState {
         token_type: "Bearer".to_string(),
         access_token,
         refresh_token: Some("refresh".to_string()),
-        obtained_at: Utc::now().to_rfc3339(),
+        obtained_at: hermes_core::time::now_rfc3339(),
         expires_at: None,
         expires_in: None,
         agent_key: None,
@@ -45,7 +45,7 @@ fn nous_runtime_api_key_prefers_agent_key() {
         token_type: "Bearer".to_string(),
         access_token: "portal-access".to_string(),
         refresh_token: Some("refresh".to_string()),
-        obtained_at: Utc::now().to_rfc3339(),
+        obtained_at: hermes_core::time::now_rfc3339(),
         expires_at: None,
         expires_in: None,
         agent_key: Some("agent-key".to_string()),
@@ -63,6 +63,18 @@ fn nous_timestamp_is_expiring_treats_missing_as_expiring() {
     assert!(timestamp_is_expiring(None, 120));
     assert!(timestamp_is_expiring(Some(""), 120));
     assert!(timestamp_is_expiring(Some("not-a-date"), 120));
+}
+
+#[test]
+fn nous_access_expires_at_refuses_an_expiry_past_year_9999() {
+    let now = jiff::Timestamp::from_second(1_772_962_215).unwrap();
+    assert_eq!(
+        nous_access_expires_at(now, 3600).unwrap(),
+        "2026-03-08T10:30:15Z"
+    );
+    // Kept, 9999-12-30T22:00:00Z would read back as a token still valid.
+    assert!(nous_access_expires_at(now, 300_000_000_000).is_err());
+    assert!(nous_access_expires_at(now, i64::MAX).is_err());
 }
 
 #[test]
@@ -114,7 +126,7 @@ fn nous_invoke_jwt_selection_mirrors_access_token_to_agent_key_fields() {
         .as_deref()
         .and_then(parse_iso_timestamp_utc)
         .expect("jwt expiry mirrored");
-    assert!(mirrored_expiry > Utc::now() + chrono::Duration::seconds(600));
+    assert!(mirrored_expiry > Timestamp::now() + jiff::SignedDuration::from_secs(600));
     assert_eq!(state.expires_at, state.agent_key_expires_at);
 }
 
@@ -248,7 +260,7 @@ fn discover_existing_openai_oauth_reads_env_path() {
     let _guard = test_env_lock::lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("codex-auth.json");
-    let exp = Utc::now().timestamp() + 3600;
+    let exp = jiff::Timestamp::now().as_second() + 3600;
     let payload = serde_json::json!({ "exp": exp });
     let payload_b64 =
         BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload json"));
@@ -295,7 +307,7 @@ fn discover_existing_openai_codex_oauth_reads_env_path() {
     let _guard = test_env_lock::lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("codex-auth.json");
-    let exp = Utc::now().timestamp() + 3600;
+    let exp = jiff::Timestamp::now().as_second() + 3600;
     let payload = serde_json::json!({ "exp": exp });
     let payload_b64 =
         BASE64_URL_SAFE_NO_PAD.encode(serde_json::to_vec(&payload).expect("payload json"));
@@ -338,7 +350,7 @@ fn discover_existing_anthropic_oauth_reads_claude_credentials_file() {
     let _guard = test_env_lock::lock();
     let tmp = tempfile::tempdir().expect("tempdir");
     let cred_path = tmp.path().join(".credentials.json");
-    let expires_at = Utc::now().timestamp_millis() + 3_600_000;
+    let expires_at = jiff::Timestamp::now().as_millisecond() + 3_600_000;
     let raw = serde_json::json!({
         "claudeAiOauth": {
             "accessToken": "ant-access",
@@ -902,7 +914,7 @@ fn auth_store_write_is_atomic_owner_only_and_cleans_tmp() {
 
 #[test]
 fn qwen_access_token_is_expiring_honors_skew() {
-    let now_ms = Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     assert!(qwen_access_token_is_expiring(None, 120));
     assert!(qwen_access_token_is_expiring(Some(now_ms + 30_000), 120));
     assert!(!qwen_access_token_is_expiring(Some(now_ms + 300_000), 120));
@@ -921,7 +933,7 @@ fn gemini_packed_refresh_roundtrip() {
 
 #[test]
 fn gemini_access_token_is_expiring_honors_skew() {
-    let now_ms = Utc::now().timestamp_millis();
+    let now_ms = jiff::Timestamp::now().as_millisecond();
     assert!(gemini_access_token_is_expiring(None, 60));
     assert!(gemini_access_token_is_expiring(Some(now_ms + 1_000), 60));
     assert!(!gemini_access_token_is_expiring(Some(now_ms + 120_000), 60));
@@ -939,7 +951,7 @@ fn gemini_state_read_write_roundtrip() {
     let state = GeminiOAuthFileState {
         refresh: Some("refresh-token|proj-1|managed-1".to_string()),
         access: Some("access-token".to_string()),
-        expires: Some(Utc::now().timestamp_millis() + 5 * 60 * 1000),
+        expires: Some(jiff::Timestamp::now().as_millisecond() + 5 * 60 * 1000),
         email: Some("dev@example.com".to_string()),
         project_id: Some("proj-1".to_string()),
         managed_project_id: Some("managed-1".to_string()),
@@ -963,7 +975,7 @@ async fn resolve_qwen_runtime_credentials_reads_qwen_cli_auth_file() {
     let _guard = test_env_lock::lock_async().await;
     let tmp = tempfile::tempdir().expect("tempdir");
     let auth_path = tmp.path().join("oauth_creds.json");
-    let expiry_date = Utc::now().timestamp_millis() + 5 * 60 * 1000;
+    let expiry_date = jiff::Timestamp::now().as_millisecond() + 5 * 60 * 1000;
     let payload = serde_json::json!({
         "access_token": "qwen-access-token",
         "refresh_token": "qwen-refresh-token",

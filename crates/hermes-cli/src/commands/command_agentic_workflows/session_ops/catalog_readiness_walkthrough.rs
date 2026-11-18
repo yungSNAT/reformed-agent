@@ -522,7 +522,7 @@ fn append_walkthrough_event(
             .map_err(|e| AgentError::Io(format!("Failed to create {}: {}", parent.display(), e)))?;
     }
     let event = WalkthroughEvent {
-        at: chrono::Utc::now().to_rfc3339(),
+        at: hermes_core::time::now_rfc3339(),
         session_id: session_id.to_string(),
         action: action.to_string(),
         mode: if state.mode.trim().is_empty() {
@@ -711,7 +711,7 @@ fn handle_walkthrough_command(app: &mut App, args: &[&str]) -> Result<CommandRes
                 mode: selected.to_string(),
                 current_step: 0,
                 completed_steps: Vec::new(),
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: hermes_core::time::now_rfc3339(),
             };
             save_walkthrough_state(&state)?;
             let _ = append_walkthrough_event(&app.session_id, "start", &state, None);
@@ -793,7 +793,7 @@ fn handle_walkthrough_command(app: &mut App, args: &[&str]) -> Result<CommandRes
                         .any(|id| id.eq_ignore_ascii_case(step.id))
                 })
                 .unwrap_or(steps.len());
-            state.updated_at = chrono::Utc::now().to_rfc3339();
+            state.updated_at = hermes_core::time::now_rfc3339();
             save_walkthrough_state(&state)?;
             let _ = append_walkthrough_event(&app.session_id, "done", &state, Some(step_id));
             emit_command_output(app, render_walkthrough_status(&state));

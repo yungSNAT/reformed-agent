@@ -9,7 +9,6 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use chrono::Utc;
 use hermes_core::providers::{known_providers, provider_capability_for};
 use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
@@ -90,7 +89,7 @@ impl ToolHandler for IntegrationsSnapshotHandler {
                 json!({
                     "status": "ok",
                     "action": action,
-                    "captured_at": Utc::now().to_rfc3339(),
+                    "captured_at": hermes_core::time::now_rfc3339(),
                     "auth": auth,
                     "mutable": false,
                 })
@@ -98,21 +97,21 @@ impl ToolHandler for IntegrationsSnapshotHandler {
             "providers" => json!({
                 "status": "ok",
                 "action": action,
-                "captured_at": Utc::now().to_rfc3339(),
+                "captured_at": hermes_core::time::now_rfc3339(),
                 "providers": providers_panel(),
                 "mutable": false,
             }),
             "gateway" => json!({
                 "status": "ok",
                 "action": action,
-                "captured_at": Utc::now().to_rfc3339(),
+                "captured_at": hermes_core::time::now_rfc3339(),
                 "gateway": gateway_panel(&registry, include_plugins),
                 "mutable": false,
             }),
             "memory" => json!({
                 "status": "ok",
                 "action": action,
-                "captured_at": Utc::now().to_rfc3339(),
+                "captured_at": hermes_core::time::now_rfc3339(),
                 "memory": memory_panel(&memory_url, timeout_ms, probe_memory).await,
                 "mutable": false,
             }),
@@ -122,7 +121,7 @@ impl ToolHandler for IntegrationsSnapshotHandler {
                 json!({
                     "status": "ok",
                     "action": action,
-                    "captured_at": Utc::now().to_rfc3339(),
+                    "captured_at": hermes_core::time::now_rfc3339(),
                     "repair": repair_plan(&auth, &memory),
                     "mutable": false,
                 })
@@ -252,7 +251,7 @@ async fn integration_snapshot_from_request(request: IntegrationSnapshotRequest<'
     json!({
         "status": "ok",
         "action": "status",
-        "captured_at": Utc::now().to_rfc3339(),
+        "captured_at": hermes_core::time::now_rfc3339(),
         "auth": auth,
         "providers": providers_panel(),
         "gateway": gateway_panel_with_config_path(

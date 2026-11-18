@@ -481,3 +481,90 @@ fn resource_meeting_id_extraction_and_change_type_defaults() {
         "updated"
     );
 }
+
+#[tokio::test]
+async fn graph_token_refuses_an_expiry_past_year_9999() {
+    // About 9,500 years, then the largest integer: neither may be cached as
+    // a token that never expires.
+    for expires_in in [300_000_000_000_i64, i64::MAX] {
+        let server = wiremock::MockServer::start().await;
+        wiremock::Mock::given(wiremock::matchers::method("POST"))
+            .and(wiremock::matchers::path("/tenant-1/oauth2/v2.0/token"))
+            .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "graph-forever",
+                "expires_in": expires_in
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let provider = MicrosoftGraphTokenProvider {
+            client: Client::new(),
+            config: MicrosoftGraphAuthConfig {
+                direct_access_token: None,
+                tenant_id: Some("tenant-1".into()),
+                client_id: Some("client-1".into()),
+                client_secret: Some("secret-1".into()),
+                scope: "https://graph.microsoft.com/.default".into(),
+                authority_url: server.uri(),
+            },
+            cache: Arc::default(),
+        };
+
+        let token = provider.get_access_token(false).await;
+
+        assert!(token.is_err(), "{expires_in}: {token:?}");
+        assert!(provider.cache.lock().await.is_none(), "{expires_in}");
+    }
+}
+
+#[tokio::test]
+async fn renewal_skips_a_subscription_whose_new_expiry_is_out_of_range() {
+    let tmp = tempfile::tempdir().unwrap();
+    let store = TeamsPipelineStore::new(tmp.path().join("store.json")).unwrap();
+    let server = wiremock::MockServer::start().await;
+    let expiration = format!("{:.0}", Timestamp::now() + SignedDuration::from_hours(1));
+    wiremock::Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/subscriptions"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({
+            "value": [{
+                "id": "sub-1",
+                "resource": "communications/onlineMeetings/getAllTranscripts",
+                "changeType": "created",
+                "notificationUrl": "https://hooks.example/teams",
+                "clientState": "state-1",
+                "expirationDateTime": expiration
+            }]
+        })))
+        .mount(&server)
+        .await;
+    wiremock::Mock::given(wiremock::matchers::method("PATCH"))
+        .respond_with(wiremock::ResponseTemplate::new(200).set_body_json(json!({})))
+        .expect(0)
+        .mount(&server)
+        .await;
+    let provider = MicrosoftGraphTokenProvider {
+        client: Client::new(),
+        config: MicrosoftGraphAuthConfig {
+            direct_access_token: Some("token-1".into()),
+            tenant_id: None,
+            client_id: None,
+            client_secret: None,
+            scope: String::new(),
+            authority_url: String::new(),
+        },
+        cache: Arc::default(),
+    };
+    let client = MicrosoftGraphClient::new(provider, server.uri());
+
+    // u32::MAX hours is about 490,000 years.
+    let result =
+        maintain_graph_subscriptions(&client, &store, 24, u32::MAX, false, Some("state-1"))
+            .await
+            .unwrap();
+
+    assert_eq!(result["renewed_count"], 0);
+    assert_eq!(
+        result["skipped"],
+        json!([{"subscription_id": "sub-1", "reason": "expiration_out_of_range"}])
+    );
+}

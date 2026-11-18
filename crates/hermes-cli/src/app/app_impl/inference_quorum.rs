@@ -142,7 +142,7 @@ impl App {
                 .map(|model| (*model).to_string())
                 .collect(),
             mode: format!("{}-{}", preset.mode, preset.name),
-            updated_at: chrono::Utc::now().to_rfc3339(),
+            updated_at: hermes_core::time::now_rfc3339(),
         })
     }
 
@@ -651,12 +651,12 @@ impl App {
                 e
             ))
         })?;
-        let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S%.3fZ").to_string();
+        let timestamp = jiff::Timestamp::now().strftime("%Y%m%dT%H%M%S%.3fZ").to_string();
         let file_name = format!("{}-{}.json", self.session_id, timestamp);
         let path = dir.join(file_name);
         let payload = serde_json::json!({
             "session_id": self.session_id,
-            "saved_at": chrono::Utc::now().to_rfc3339(),
+            "saved_at": hermes_core::time::now_rfc3339(),
             "policy": policy,
             "model_at_start": self.current_model,
             "voters": voter_outcomes,
@@ -692,7 +692,7 @@ impl App {
             ))
         })?;
         payload["synthesis"] = serde_json::Value::String(synthesis.trim().to_string());
-        payload["synthesis_saved_at"] = serde_json::Value::String(chrono::Utc::now().to_rfc3339());
+        payload["synthesis_saved_at"] = serde_json::Value::String(hermes_core::time::now_rfc3339());
         let updated = serde_json::to_string_pretty(&payload).map_err(|e| {
             AgentError::Config(format!(
                 "Failed to serialize quorum synthesis artifact {}: {}",

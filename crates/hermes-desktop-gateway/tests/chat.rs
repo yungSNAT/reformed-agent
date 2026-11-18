@@ -645,7 +645,9 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     // of 1 MiB because Windows takes a whole send while less than its send buffer (64 KiB) is
     // queued, so 2 large frames would both be taken and the slot freed.
     let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
-    let timeout = Duration::from_secs(10);
+    // The timeout runs from when each frame is queued, so all 8 stalled turns and the check
+    // below must fit inside it: 10 seconds was too short on a loaded runner.
+    let timeout = Duration::from_secs(30);
     let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout)).await;
     let mut stalled = Vec::new();
     for _ in 0..8 {
@@ -680,4 +682,126 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
         reply = client.submit(id, &session, "hi").await;
     }
     drop(stalled);
+}
+
+/// A reader that pauses 4 seconds, takes one frame and pauses 4 more never makes a single
+/// write wait the 6 second write timeout, yet the turn's last event, which carries its slot,
+/// waits 8 seconds. A frame not written within the timeout of being queued closes the
+/// connection, so that event is never delivered.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
+    // 8 MiB streamed as 8 frames of 1 MiB, and the same again in message.complete: more than
+    // a loopback socket's buffers hold, so later frames wait for the reader.
+    let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
+    let timeout = Duration::from_secs(6);
+    let pause = Duration::from_secs(4);
+    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    // Every frame of the turn is queued once its reply is saved.
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
+    while history(started.addr, &session).await.len() < 2 {
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "the turn did not finish"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+
+    tokio::time::sleep(pause).await;
+    while client.next_json().await["params"]["type"] != "message.delta" {}
+    tokio::time::sleep(pause).await;
+    loop {
+        let frame = tokio::time::timeout(Duration::from_secs(20), client.socket.next())
+            .await
+            .expect("no frame and no close within 20 seconds");
+        match frame {
+            Some(Ok(Message::Text(text))) => {
+                let frame: Value = serde_json::from_str(&text).unwrap();
+                assert_ne!(
+                    frame["params"]["type"], "message.complete",
+                    "the turn's last event reached a reader that paused twice for {pause:?}"
+                );
+            }
+            Some(Ok(Message::Close(_)) | Err(_)) | None => break,
+            Some(Ok(_)) => {}
+        }
+    }
+}
+
+/// A frame already past its deadline closes the connection even when the socket could take it
+/// at once: with no time allowed, not even `gateway.ready` is written.
+#[tokio::test]
+async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
+    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO)).await;
+    let request = format!("ws://{}/api/ws?token={TOKEN}", started.addr)
+        .into_client_request()
+        .unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(request).await.unwrap();
+    let frame = tokio::time::timeout(Duration::from_secs(20), socket.next())
+        .await
+        .expect("no frame and no close within 20 seconds");
+    assert!(
+        !matches!(frame, Some(Ok(Message::Text(_)))),
+        "a frame past its deadline was written: {frame:?}"
+    );
+}
+
+/// The deadline is per frame, not per turn: a turn that runs longer than the write timeout
+/// still reaches a client that keeps reading.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
+    let timeout = Duration::from_secs(1);
+    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let events = client.turn_events(&session).await;
+    let (kind, payload, _) = events.last().unwrap();
+    assert_eq!(kind, "message.complete");
+    assert_eq!(payload["text"], "slow reply", "{payload}");
+}
+
+/// A turn reads its session while its first event waits to be written; that store work must
+/// not hold the event, or a reader that keeps up is closed for a slow disk. Another connection
+/// holds the sessions database for a second, so the turn's read waits in SQLite's busy handler.
+#[tokio::test]
+async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
+    let timeout = Duration::from_millis(200);
+    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout)).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let store = hermes_agent::SessionPersistence::new(started.home.path());
+    store.load_session(&session).unwrap();
+    let db = store.db_path().to_path_buf();
+    let (locked, wait_for_lock) = std::sync::mpsc::channel();
+    let holder = std::thread::spawn(move || {
+        let conn = rusqlite::Connection::open(db).unwrap();
+        conn.execute_batch("BEGIN EXCLUSIVE").unwrap();
+        locked.send(()).unwrap();
+        std::thread::sleep(Duration::from_secs(1));
+        conn.execute_batch("COMMIT").unwrap();
+    });
+    wait_for_lock.recv().unwrap();
+    let probe = rusqlite::Connection::open(store.db_path()).unwrap();
+    probe.busy_timeout(Duration::ZERO).unwrap();
+    assert!(
+        probe
+            .query_row("SELECT count(*) FROM sqlite_master", [], |row| row
+                .get::<_, i64>(0))
+            .is_err(),
+        "the database is not locked against readers"
+    );
+
+    let reply = client.submit(2, &session, "hi").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let events = client.turn_events(&session).await;
+    assert_eq!(events.first().unwrap().0, "message.start");
+    let (kind, payload, _) = events.last().unwrap();
+    assert_eq!(kind, "message.complete");
+    assert_eq!(payload["text"], "ok", "{payload}");
+    holder.join().unwrap();
 }

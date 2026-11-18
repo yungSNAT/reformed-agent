@@ -4,7 +4,6 @@
 //! capture headers at the HTTP boundary while CLI and gateway surfaces can render
 //! the last-known state without depending on `hermes-agent`.
 
-use chrono::Utc;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -389,7 +388,7 @@ where
         paid_access,
         disabled_reason,
         as_of_ms,
-        captured_at_ms: Utc::now().timestamp_millis(),
+        captured_at_ms: jiff::Timestamp::now().as_millisecond(),
     })
 }
 

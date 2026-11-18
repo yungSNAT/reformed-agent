@@ -406,7 +406,7 @@ fn export_rows(
         })?;
     }
     let payload = json!({
-        "generated_at": chrono::Utc::now().to_rfc3339(),
+        "generated_at": hermes_core::time::now_rfc3339(),
         "stream": stream.as_str(),
         "source": source.display().to_string(),
         "rows": rows,

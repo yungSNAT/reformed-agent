@@ -1,6 +1,6 @@
 //! Hermes `cron/jobs.json` jobs as Reformed cron jobs, all paused.
 //!
-//! Reformed evaluates schedules in UTC with the `cron` crate; Hermes evaluates
+//! Reformed evaluates schedules in UTC with the `jiff-cron` crate; Hermes evaluates
 //! them in its configured zone with croniter. A job converts only when the
 //! result fires at the same instants (interval and one-off jobs) or the same
 //! wall-clock fields read in UTC (cron jobs, with a warning); anything else is
@@ -8,8 +8,9 @@
 
 use std::path::{Component, Path};
 
-use chrono::{DateTime, Datelike, TimeDelta, Timelike, Utc};
+use hermes_core::time::{parse_rfc3339, utc_civil};
 use hermes_cron::{CronJob, DeliverConfig, JobStatus, ModelConfig};
+use jiff::{RoundMode, Timestamp, TimestampRound, Unit};
 use serde_json::{Map, Value};
 
 use super::super::blueprint_deliver_config;
@@ -70,7 +71,7 @@ pub(super) fn label(job: &Value, position: usize) -> String {
 /// The paused Reformed job and a note on its schedule, or why it is skipped.
 pub(super) fn convert(
     job: &Value,
-    now: DateTime<Utc>,
+    now: Timestamp,
     scripts: &Path,
 ) -> Result<(CronJob, String), String> {
     let fields = job.as_object().ok_or("not a job object")?;
@@ -136,23 +137,23 @@ pub(super) fn convert(
             let at = schedule
                 .get("run_at")
                 .and_then(Value::as_str)
-                .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
-                .ok_or("its one-off time is not a time with a zone")?
-                .with_timezone(&Utc);
-            let at = whole_second(at);
+                .and_then(parse_rfc3339)
+                .and_then(whole_second)
+                .ok_or("its one-off time is not a time with a zone")?;
             if at <= now {
                 return Err("its one-off time has passed".into());
             }
+            let civil = utc_civil(at);
             let expression = format!(
                 "{} {} {} {} {} * {}",
-                at.second(),
-                at.minute(),
-                at.hour(),
-                at.day(),
-                at.month(),
-                at.year()
+                civil.second(),
+                civil.minute(),
+                civil.hour(),
+                civil.day(),
+                civil.month(),
+                civil.year()
             );
-            let note = format!("once, at {} UTC", at.format("%Y-%m-%d %H:%M:%S"));
+            let note = format!("once, at {} UTC", at.strftime("%Y-%m-%d %H:%M:%S"));
             (expression, note, true)
         }
         _ => return Err("its schedule kind is unknown".into()),
@@ -170,9 +171,9 @@ pub(super) fn convert(
     if let Some(created) = fields
         .get("created_at")
         .and_then(Value::as_str)
-        .and_then(|at| DateTime::parse_from_rfc3339(at).ok())
+        .and_then(parse_rfc3339)
     {
-        converted.created_at = created.with_timezone(&Utc);
+        converted.created_at = created;
     }
     converted.repeat = if once { Some(1) } else { times };
     converted.run_count = completed;
@@ -255,27 +256,30 @@ fn cron_expression(expression: Option<&Value>) -> Result<String, String> {
 
 /// The time an interval job's runs are counted from: its next run, else its
 /// last run, else its creation.
-fn anchor(fields: &Map<String, Value>) -> Option<DateTime<Utc>> {
+fn anchor(fields: &Map<String, Value>) -> Option<Timestamp> {
     ["next_run_at", "last_run_at", "created_at"]
         .iter()
         .filter_map(|field| fields.get(*field).and_then(Value::as_str))
-        .find_map(|at| DateTime::parse_from_rfc3339(at).ok())
-        .map(|at| whole_second(at.with_timezone(&Utc)))
+        .find_map(parse_rfc3339)
+        .and_then(whole_second)
 }
 
 /// `at` rounded up to a whole second, as Reformed's schedules have no
 /// fractions: a converted job then never runs before its Hermes time.
-fn whole_second(at: DateTime<Utc>) -> DateTime<Utc> {
-    match at.with_nanosecond(0) {
-        Some(whole) if whole < at => whole + TimeDelta::seconds(1),
-        _ => at,
-    }
+/// `None` when that second is past the latest supported instant.
+fn whole_second(at: Timestamp) -> Option<Timestamp> {
+    at.round(
+        TimestampRound::new()
+            .smallest(Unit::Second)
+            .mode(RoundMode::Ceil),
+    )
+    .ok()
 }
 
 /// An interval that divides the hour or the day, as a UTC expression with
 /// seconds firing at the same whole seconds as from `at`, which
 /// `whole_second` has rounded up.
-fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
+fn interval(minutes: u64, at: Option<Timestamp>) -> Result<String, String> {
     let hourly = minutes < 60 && 60_u64.is_multiple_of(minutes);
     if !hourly && !(minutes.is_multiple_of(60) && 1440_u64.is_multiple_of(minutes)) {
         return Err(format!(
@@ -289,7 +293,12 @@ fn interval(minutes: u64, at: Option<DateTime<Utc>>) -> Result<String, String> {
             .collect::<Vec<_>>()
             .join(",")
     };
-    let (second, minute, hour) = (at.second(), u64::from(at.minute()), u64::from(at.hour()));
+    let at = utc_civil(at);
+    let (second, minute, hour) = (
+        at.second(),
+        u64::from(at.minute().unsigned_abs()),
+        u64::from(at.hour().unsigned_abs()),
+    );
     Ok(match minutes {
         1 => format!("{second} * * * * *"),
         60 => format!("{second} {minute} * * * *"),

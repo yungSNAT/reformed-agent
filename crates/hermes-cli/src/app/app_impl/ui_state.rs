@@ -226,7 +226,7 @@ impl App {
             store.drafts.push(ComposerDraftRecord {
                 session_id: key,
                 text: text.to_string(),
-                updated_at: chrono::Utc::now().to_rfc3339(),
+                updated_at: hermes_core::time::now_rfc3339(),
             });
         }
         if store.drafts.len() > MAX_COMPOSER_DRAFTS {

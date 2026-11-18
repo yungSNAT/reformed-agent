@@ -6,12 +6,12 @@
 
 use std::collections::HashMap;
 
-use chrono::{DateTime, Utc};
+use hermes_core::time::utc_civil;
+use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
 use tokio::sync::RwLock;
 use uuid::Uuid;
 
-use chrono::Timelike;
 use hermes_config::session::{SessionResetPolicy, SessionType};
 use hermes_core::types::Message;
 
@@ -50,10 +50,12 @@ pub struct Session {
     pub title: Option<String>,
 
     /// When this session was created.
-    pub created_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub created_at: Timestamp,
 
     /// When this session was last active.
-    pub last_active_at: DateTime<Utc>,
+    #[serde(with = "hermes_core::time::serde_utc")]
+    pub last_active_at: Timestamp,
 
     /// The reset policy for this session (may override global defaults).
     pub reset_policy: SessionResetPolicy,
@@ -71,7 +73,7 @@ impl Session {
         session_type: SessionType,
         reset_policy: SessionResetPolicy,
     ) -> Self {
-        let now = Utc::now();
+        let now = Timestamp::now();
         Self {
             id: Uuid::new_v4().to_string(),
             platform: platform.into(),
@@ -88,7 +90,7 @@ impl Session {
 
     /// Touch the session, updating `last_active_at` to now.
     pub fn touch(&mut self) {
-        self.last_active_at = Utc::now();
+        self.last_active_at = Timestamp::now();
     }
 
     /// Check whether this session should be reset based on its reset policy
@@ -97,29 +99,28 @@ impl Session {
         match &self.reset_policy {
             SessionResetPolicy::None => false,
             SessionResetPolicy::Idle { timeout_minutes } => {
-                let elapsed = Utc::now()
-                    .signed_duration_since(self.last_active_at)
-                    .num_minutes();
+                let elapsed = Timestamp::now()
+                    .duration_since(self.last_active_at)
+                    .as_mins();
                 elapsed >= *timeout_minutes as i64
             }
             SessionResetPolicy::Daily { at_hour } => {
                 // Reset if current hour matches and we haven't reset today
-                let now = Utc::now();
-                now.time().hour() as u8 == *at_hour
-                    && now.date_naive() != self.last_active_at.date_naive()
+                let now = utc_civil(Timestamp::now());
+                now.hour() as u8 == *at_hour && now.date() != utc_civil(self.last_active_at).date()
             }
             SessionResetPolicy::Both {
                 daily: DailyReset { at_hour },
                 idle: IdleReset { timeout_minutes },
             } => {
                 // Reset if either condition is met
-                let idle_elapsed = Utc::now()
-                    .signed_duration_since(self.last_active_at)
-                    .num_minutes();
-                let now = Utc::now();
+                let idle_elapsed = Timestamp::now()
+                    .duration_since(self.last_active_at)
+                    .as_mins();
+                let now = utc_civil(Timestamp::now());
                 idle_elapsed >= *timeout_minutes as i64
-                    || (now.time().hour() as u8 == *at_hour
-                        && now.date_naive() != self.last_active_at.date_naive())
+                    || (now.hour() as u8 == *at_hour
+                        && now.date() != utc_civil(self.last_active_at).date())
             }
         }
     }
@@ -347,8 +348,8 @@ impl SessionManager {
             if session.should_reset() {
                 // Reset: clear messages but keep the session alive
                 session.messages.clear();
-                session.created_at = Utc::now();
-                session.last_active_at = Utc::now();
+                session.created_at = Timestamp::now();
+                session.last_active_at = Timestamp::now();
             } else {
                 session.touch();
             }
@@ -382,8 +383,8 @@ impl SessionManager {
             let old = session.clone();
             session.messages.clear();
             session.id = Uuid::new_v4().to_string();
-            session.created_at = Utc::now();
-            session.last_active_at = Utc::now();
+            session.created_at = Timestamp::now();
+            session.last_active_at = Timestamp::now();
             return Some((old, session.clone()));
         }
         None
@@ -399,7 +400,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
             session.messages.push(message);
-            session.last_active_at = Utc::now();
+            session.last_active_at = Timestamp::now();
         }
     }
 
@@ -417,7 +418,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         if let Some(session) = sessions.get_mut(session_id) {
             session.messages = messages;
-            session.last_active_at = Utc::now();
+            session.last_active_at = Timestamp::now();
             return true;
         }
         false
@@ -435,7 +436,7 @@ impl SessionManager {
         if let Some(session) = sessions.get_mut(session_id) {
             session.messages = messages;
             session.title = normalize_session_title(title.as_deref());
-            session.last_active_at = Utc::now();
+            session.last_active_at = Timestamp::now();
             return true;
         }
         false
@@ -447,7 +448,7 @@ impl SessionManager {
         let normalized = normalize_session_title(Some(title.as_ref()));
         let session = sessions.get_mut(session_id)?;
         session.title = normalized.clone();
-        session.last_active_at = Utc::now();
+        session.last_active_at = Timestamp::now();
         normalized
     }
 
@@ -463,7 +464,7 @@ impl SessionManager {
         sessions.get_mut(session_id).and_then(|s| {
             let popped = s.messages.pop();
             if popped.is_some() {
-                s.last_active_at = Utc::now();
+                s.last_active_at = Timestamp::now();
             }
             popped
         })
@@ -553,8 +554,8 @@ impl SessionManager {
         if let Some(session) = sessions.get_mut(session_id) {
             if session.should_reset() {
                 session.messages.clear();
-                session.created_at = Utc::now();
-                session.last_active_at = Utc::now();
+                session.created_at = Timestamp::now();
+                session.last_active_at = Timestamp::now();
                 return true;
             }
         }
@@ -569,7 +570,7 @@ impl SessionManager {
             let mut ctx = SessionContext::new(session);
             ctx.set_metadata("session_type", format!("{:?}", session.session_type));
             ctx.set_metadata("message_count", session.messages.len().to_string());
-            ctx.set_metadata("created_at", session.created_at.to_rfc3339());
+            ctx.set_metadata("created_at", hermes_core::time::rfc3339(session.created_at));
             if let Some(title) = &session.title {
                 ctx.set_metadata("title", title.clone());
             }

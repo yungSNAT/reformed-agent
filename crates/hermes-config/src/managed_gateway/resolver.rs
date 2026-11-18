@@ -150,8 +150,7 @@ mod tests {
     }
 
     fn iso_in(secs: i64) -> String {
-        (chrono::Utc::now() + chrono::Duration::seconds(secs))
-            .to_rfc3339_opts(chrono::SecondsFormat::Secs, true)
+        format!("{:.0}", hermes_core::time::now_plus_secs(secs))
     }
 
     #[test]
