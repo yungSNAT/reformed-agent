@@ -312,6 +312,72 @@ async fn connect_silent(transport: SilentTransport) -> (McpError, std::time::Dur
     (err, started.elapsed())
 }
 
+/// Answers the handshake with no tools, then never finishes closing.
+struct StuckOnCloseTransport(FakeTransport);
+
+#[async_trait]
+impl McpTransport for StuckOnCloseTransport {
+    async fn start(&mut self) -> Result<(), McpError> {
+        self.0.start().await
+    }
+
+    async fn send(&mut self, message: serde_json::Value) -> Result<(), McpError> {
+        self.0.send(message).await
+    }
+
+    async fn receive(&mut self) -> Result<serde_json::Value, McpError> {
+        self.0.receive().await
+    }
+
+    async fn close(&mut self) -> Result<(), McpError> {
+        std::future::pending().await
+    }
+}
+
+/// A server's answers to the handshake and tool discovery, with no tools.
+fn no_tools_server() -> FakeTransport {
+    FakeTransport::new(
+        vec![
+            json!({
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": "2024-11-05",
+                    "capabilities": {},
+                    "serverInfo": {"name": "fake", "version": "0"}
+                }
+            }),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {"tools": []}}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+    )
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_replaced_server_that_never_closes_does_not_hold_up_its_replacement() {
+    let mut manager = McpManager::new(Arc::new(hermes_tools::ToolRegistry::new()));
+    let config = || McpServerConfig::stdio("fake", Vec::new());
+    manager
+        .connect_with_transport_for_test(
+            "srv",
+            config(),
+            Box::new(StuckOnCloseTransport(no_tools_server())),
+        )
+        .await
+        .expect("first connect");
+
+    let started = tokio::time::Instant::now();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(super::MCP_CLOSE_TIMEOUT_SECS * 4),
+        manager.connect_with_transport_for_test("srv", config(), Box::new(no_tools_server())),
+    )
+    .await
+    .expect("the old client's close must not hold up its replacement")
+    .expect("the replacement connects");
+    assert_took(started.elapsed(), super::MCP_CLOSE_TIMEOUT_SECS);
+    assert!(manager.is_connected("srv"));
+}
+
 #[tokio::test(start_paused = true)]
 async fn connect_gives_up_on_a_server_that_never_answers_and_closes_it() {
     let close_called = Arc::new(AtomicBool::new(false));
