@@ -161,9 +161,9 @@ impl WebhookAdapter {
         });
         let secrets = std::iter::once(("global".to_string(), config.secret.as_str())).chain(routes);
         for (owner, secret) in secrets {
-            if secret.trim().is_empty() {
+            if is_blank_secret(secret) {
                 return Err(GatewayError::Auth(format!(
-                    "webhook {owner} secret is blank; set a secret, or INSECURE_NO_AUTH for a loopback test bind"
+                    "webhook {owner} secret is blank or encodes a blank key; set a secret, or INSECURE_NO_AUTH for a loopback test bind"
                 )));
             }
             if secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
@@ -236,6 +236,16 @@ impl WebhookAdapter {
 
         false
     }
+}
+
+/// True for a secret that gives a key anyone can guess: blank, or a Svix `whsec_` secret
+/// whose base64 key (see `verify_svix_signature`) decodes to nothing but whitespace.
+fn is_blank_secret(secret: &str) -> bool {
+    let secret = secret.trim();
+    let svix_key = secret
+        .strip_prefix("whsec_")
+        .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok());
+    secret.is_empty() || svix_key.is_some_and(|key| key.iter().all(u8::is_ascii_whitespace))
 }
 
 fn is_loopback_host(host: &str) -> bool {
