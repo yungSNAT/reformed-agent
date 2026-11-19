@@ -752,6 +752,40 @@ mod tests {
         ));
     }
 
+    /// Cases from the gateway's former `ssrf` module that the tests above do
+    /// not already hold, kept when that duplicate was removed.
+    #[test]
+    fn former_gateway_ssrf_cases_keep_their_verdicts() {
+        for ip in [
+            "10.255.255.255",
+            "172.31.255.255",
+            "fc00::1",
+            "fd00::1",
+            "::ffff:10.0.0.1",
+        ] {
+            assert!(is_blocked_ip(&ip.parse().expect("valid ip")), "{ip}");
+        }
+        for ip in ["172.15.0.1", "172.32.0.1", "192.169.0.1", "2001:db8::1"] {
+            assert!(!is_blocked_ip(&ip.parse().expect("valid ip")), "{ip}");
+        }
+
+        let _lock = ENV_TEST_LOCK.lock().expect("lock env");
+        let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "true");
+        let _no_proxy = without_proxy();
+        assert!(!is_safe_url_with_resolver("not-a-url", resolver_err));
+        assert!(is_safe_url_with_resolver(
+            "http://198.18.0.1/api",
+            resolver_err
+        ));
+        for url in [
+            "http://169.254.170.2/v2/credentials",
+            "http://169.254.169.253/",
+            "http://169.254.42.99/anything",
+        ] {
+            assert!(!is_safe_url_with_resolver(url, resolver_err), "{url}");
+        }
+    }
+
     #[test]
     fn env_toggle_false_values_keep_private_blocked_and_cache_result() {
         let _lock = ENV_TEST_LOCK.lock().expect("lock env");
