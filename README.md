@@ -86,6 +86,8 @@ Gateway mode, in the foreground. Without chat platforms the gateway serves only 
 hermes-ultra gateway run
 ```
 
+On Linux and macOS, `gateway run` also serves the start-up half of [Hermes Desktop](https://github.com/NousResearch/hermes-agent/tree/v0.23.2/apps/desktop)'s local mode: the desktop can start and find the local gateway, but chat is not served yet, as the desktop's local connection speaks a session protocol (`hermes-gateway-v1`) this gateway does not implement. `gateway run` holds `gateway.lock` in the Hermes home, so a second `gateway run` for the same home exits at start-up. It listens on one 127.0.0.1 port, answers the desktop on `gateway.sock` (mode 0600) and writes `gateway_state.json`. SIGTERM stops it as Ctrl+C does. The desktop starts it with `hermes gateway ensure --json`. Local mode is off, with a warning, in a home too deep for a socket path or where `gateway.lock` cannot be locked safely (some network file systems). Creating, renaming and deleting profiles from the desktop is not served yet.
+
 Deep diagnostics bundle:
 
 ```bash
@@ -494,6 +496,7 @@ OpenHuman runbooks and matrices:
 - Policy-controlled tool execution modes: `off`, `audit`, `simulate`, `enforce`
 - Tool policy presets: `strict`, `balanced`, `dev`, `relaxed`
 - Sensitive field redaction in traces/log surfaces
+- Loaded secret values are matched exactly, whatever their shape. A loaded secret is the value of an environment variable whose name names a credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*PASSWORD`, `*_PASS`, `*_AUTH`, `Authorization` and similar; not `*_PATH`, `*_FILE`, `*_URL` or `*_ID`), whether it came from the profile's `.env`, a vault or the shell, or a credential-named value in `config.yaml`. Values under 8 characters, short words, paths, `${VAR}` references and documented placeholders such as `not-needed` or `lm-studio` do not count. Tool output and redacted text show `***` in place of the value, so a file read through a tool shows `***` and writing it back whole would store `***`. A tool call whose arguments contain the value is refused, naming the variable or config key but not the value. There is no allow-list: to use such a value in a tool call on purpose, rename or unset the variable, or move the value out of the credential-named key. Encoded or split copies are not matched, and tokens held only in the auth stores are covered by shape redaction alone.
 - Guardrails for path traversal, unsafe file ops, and runtime boundary violations
 
 Operator runtime overrides (env):
