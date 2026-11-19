@@ -33,8 +33,8 @@ fn verdict(output: &Output) -> Value {
 }
 
 fn lock_pid(home: &Path) -> u32 {
-    let lock: Value = serde_json::from_slice(&std::fs::read(home.join("gateway.lock")).unwrap())
-        .unwrap();
+    let lock: Value =
+        serde_json::from_slice(&std::fs::read(home.join("gateway.lock")).unwrap()).unwrap();
     lock["pid"].as_u64().unwrap() as u32
 }
 
@@ -74,7 +74,10 @@ fn ensure_starts_one_gateway_run_owner_and_then_attaches_to_it() {
     let endpoint = &ready["endpoint"];
     assert_eq!(endpoint["profile_id"], home.to_str().unwrap());
     assert_eq!(endpoint["runtime_protocol"], 1);
-    assert_eq!(endpoint["capabilities"], serde_json::json!(["session-authority-v1"]));
+    assert_eq!(
+        endpoint["capabilities"],
+        serde_json::json!(["session-authority-v1"])
+    );
     assert!(endpoint["api_origin"]
         .as_str()
         .unwrap()
@@ -111,7 +114,10 @@ fn ensure_starts_one_gateway_run_owner_and_then_attaches_to_it() {
     while home.join("gateway.sock").exists() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
-    assert!(!home.join("gateway.sock").exists(), "the owner removed its socket");
+    assert!(
+        !home.join("gateway.sock").exists(),
+        "the owner removed its socket"
+    );
 }
 
 #[test]
@@ -119,22 +125,34 @@ fn profile_selects_the_named_profile_home_or_the_root_for_default() {
     let (_dir, root) = private_root();
     let work = root.join("profiles").join("work");
     std::fs::create_dir_all(&work).unwrap();
-    std::fs::set_permissions(root.join("profiles"), std::fs::Permissions::from_mode(0o700))
-        .unwrap();
+    std::fs::set_permissions(
+        root.join("profiles"),
+        std::fs::Permissions::from_mode(0o700),
+    )
+    .unwrap();
     std::fs::set_permissions(&work, std::fs::Permissions::from_mode(0o700)).unwrap();
     let _owners = (Owner(root.clone()), Owner(work.clone()));
 
     let named = hermes(&root, &["--profile", "work", "gateway", "ensure", "--json"]);
     let named_verdict = verdict(&named);
     assert_eq!(named.status.code(), Some(0), "{named_verdict}");
-    assert_eq!(named_verdict["endpoint"]["profile_id"], work.to_str().unwrap());
+    assert_eq!(
+        named_verdict["endpoint"]["profile_id"],
+        work.to_str().unwrap()
+    );
     assert!(work.join("gateway.lock").exists());
     assert!(!root.join("gateway.lock").exists());
 
-    let default = hermes(&root, &["--profile", "default", "gateway", "ensure", "--json"]);
+    let default = hermes(
+        &root,
+        &["--profile", "default", "gateway", "ensure", "--json"],
+    );
     let default_verdict = verdict(&default);
     assert_eq!(default.status.code(), Some(0), "{default_verdict}");
-    assert_eq!(default_verdict["endpoint"]["profile_id"], root.to_str().unwrap());
+    assert_eq!(
+        default_verdict["endpoint"]["profile_id"],
+        root.to_str().unwrap()
+    );
     assert_ne!(
         default_verdict["endpoint"]["instance_id"],
         named_verdict["endpoint"]["instance_id"]
@@ -161,7 +179,10 @@ fn a_missing_or_invalid_profile_is_refused_before_anything_runs() {
 fn an_unusable_timeout_is_an_invalid_invocation() {
     let (_dir, home) = private_root();
     for timeout in ["soon", "-1", "nan"] {
-        let output = hermes(&home, &["gateway", "ensure", "--json", "--timeout", timeout]);
+        let output = hermes(
+            &home,
+            &["gateway", "ensure", "--json", "--timeout", timeout],
+        );
         assert_eq!(output.status.code(), Some(2), "{timeout}");
         assert_eq!(
             String::from_utf8_lossy(&output.stdout).trim(),

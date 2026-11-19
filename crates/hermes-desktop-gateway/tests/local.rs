@@ -136,7 +136,10 @@ async fn a_lock_and_socket_left_by_a_dead_owner_are_replaced() {
     let stale = std::os::unix::net::UnixListener::bind(home.join("gateway.sock")).unwrap();
     drop(stale);
     let runtime = start(&home).await;
-    assert_eq!(identify(&home)["result"]["instance_id"], runtime.instance_id());
+    assert_eq!(
+        identify(&home)["result"]["instance_id"],
+        runtime.instance_id()
+    );
 }
 
 /// As upstream, the runtime still starts (its messaging side needs no ticket), but its socket
@@ -147,16 +150,23 @@ async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
     let runtime = start(&home).await;
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o775)).unwrap();
     assert_eq!(identify(&home)["ok"], true);
-    let reply = control(&home, ticket_request(&home, runtime.instance_id(), "interactive"));
+    let reply = control(
+        &home,
+        ticket_request(&home, runtime.instance_id(), "interactive"),
+    );
     assert_eq!(reply["ok"], false, "{reply}");
     let probe = home.clone();
-    let (verdict, text, code) =
-        tokio::task::spawn_blocking(move || ensure(&probe, Duration::from_secs(2), never_spawned()))
-            .await
-            .unwrap();
+    let (verdict, text, code) = tokio::task::spawn_blocking(move || {
+        ensure(&probe, Duration::from_secs(2), never_spawned())
+    })
+    .await
+    .unwrap();
     assert_eq!(code, 7, "{text}");
     assert_eq!(verdict["reason_code"], "unsafe_control_permissions");
-    assert!(verdict["detail"].as_str().unwrap().contains("chmod"), "{text}");
+    assert!(
+        verdict["detail"].as_str().unwrap().contains("chmod"),
+        "{text}"
+    );
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
@@ -165,7 +175,10 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
     let origin = runtime.api_origin().to_string();
-    let reply = control(&home, ticket_request(&home, runtime.instance_id(), "interactive"));
+    let reply = control(
+        &home,
+        ticket_request(&home, runtime.instance_id(), "interactive"),
+    );
     let result = &reply["result"];
     assert_eq!(result["expires_in_seconds"], 30);
     assert_eq!(result["instance_id"], runtime.instance_id());
@@ -175,7 +188,9 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
     assert!(ticket.len() >= 32);
 
     let url = ws_url(&origin, &format!("?native_dial=n1&ticket={ticket}"));
-    let (mut socket, _) = tokio_tungstenite::connect_async(url.as_str()).await.unwrap();
+    let (mut socket, _) = tokio_tungstenite::connect_async(url.as_str())
+        .await
+        .unwrap();
     let first = tokio::time::timeout(Duration::from_secs(10), socket.next())
         .await
         .unwrap()
@@ -187,7 +202,10 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
     let ready: Value = serde_json::from_str(&text).unwrap();
     assert_eq!(ready["params"]["type"], "gateway.ready");
     // Used once.
-    assert_eq!(refused_status(url.as_str().into_client_request().unwrap()).await, 401);
+    assert_eq!(
+        refused_status(url.as_str().into_client_request().unwrap()).await,
+        401
+    );
 
     // A ticket presented with any Origin is refused, and spent.
     let ticket = mint(&home, runtime.instance_id(), "interactive");
@@ -197,12 +215,18 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
         .headers_mut()
         .insert("Origin", "file://".parse().unwrap());
     assert_eq!(refused_status(request).await, 403);
-    assert_eq!(refused_status(url.as_str().into_client_request().unwrap()).await, 401);
+    assert_eq!(
+        refused_status(url.as_str().into_client_request().unwrap()).await,
+        401
+    );
 
     // A REST ticket does not open the socket, and the remote token path is off.
     let ticket = mint(&home, runtime.instance_id(), "native-http");
     let url = ws_url(&origin, &format!("?ticket={ticket}"));
-    assert_eq!(refused_status(url.as_str().into_client_request().unwrap()).await, 401);
+    assert_eq!(
+        refused_status(url.as_str().into_client_request().unwrap()).await,
+        401
+    );
     for query in ["", "?token=", "?ticket=", "?ticket=made-up"] {
         let url = ws_url(&origin, query);
         assert_eq!(
@@ -253,8 +277,14 @@ async fn session_ticket_refuses_anything_but_upstreams_exact_request() {
     let home_text = home.to_str().unwrap().to_string();
     let good = ticket_request(&home, &instance, "interactive");
     let mut cases = vec![
-        ("stale instance", ticket_request(&home, "other", "interactive")),
-        ("unknown purpose", ticket_request(&home, &instance, "native-profile-create")),
+        (
+            "stale instance",
+            ticket_request(&home, "other", "interactive"),
+        ),
+        (
+            "unknown purpose",
+            ticket_request(&home, &instance, "native-profile-create"),
+        ),
         ("protocol 2", {
             let mut r = good.clone();
             r["protocol"] = json!(2);
@@ -275,9 +305,12 @@ async fn session_ticket_refuses_anything_but_upstreams_exact_request() {
             r["params"] = json!([]);
             r
         }),
-        ("another profile", json!({"protocol": 1, "id": 1, "verb": "session-ticket", "params": {
+        (
+            "another profile",
+            json!({"protocol": 1, "id": 1, "verb": "session-ticket", "params": {
             "profile_id": format!("{home_text}/profiles/work"), "instance_id": instance,
-            "purpose": "interactive"}})),
+            "purpose": "interactive"}}),
+        ),
         ("extra param", {
             let mut r = good.clone();
             r["params"]["extra"] = json!(1);
@@ -326,7 +359,11 @@ async fn session_ticket_refuses_anything_but_upstreams_exact_request() {
 fn ensure(home: &Path, timeout: Duration, command: Command) -> (Value, String, i32) {
     let verdict = local::ensure(home, timeout, command);
     let text = verdict.to_json();
-    (serde_json::from_str(&text).unwrap(), text, verdict.exit_code())
+    (
+        serde_json::from_str(&text).unwrap(),
+        text,
+        verdict.exit_code(),
+    )
 }
 
 fn never_spawned() -> Command {
@@ -338,10 +375,11 @@ async fn ensure_reports_a_running_owner_in_upstreams_verdict_shape() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
     let probe = home.clone();
-    let (verdict, text, code) =
-        tokio::task::spawn_blocking(move || ensure(&probe, Duration::from_secs(5), never_spawned()))
-            .await
-            .unwrap();
+    let (verdict, text, code) = tokio::task::spawn_blocking(move || {
+        ensure(&probe, Duration::from_secs(5), never_spawned())
+    })
+    .await
+    .unwrap();
     assert_eq!(code, 0, "{text}");
     let home_text = home.to_str().unwrap();
     assert_eq!(
@@ -366,7 +404,13 @@ async fn ensure_reports_a_running_owner_in_upstreams_verdict_shape() {
     );
     // One compact line with sorted keys, as `json.dumps(..., separators=(",", ":"), sort_keys=True)`.
     assert!(!text.contains('\n') && !text.contains(": "), "{text}");
-    let keys = ["client_code_sha", "detail", "endpoint", "reason_code", "state"];
+    let keys = [
+        "client_code_sha",
+        "detail",
+        "endpoint",
+        "reason_code",
+        "state",
+    ];
     let positions: Vec<usize> = keys
         .iter()
         .map(|k| text.find(&format!("\"{k}\":")).unwrap())

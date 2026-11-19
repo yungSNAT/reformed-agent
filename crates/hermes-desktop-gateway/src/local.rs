@@ -15,7 +15,7 @@
 //! Windows named pipe with its SID checks is not ported). Upgrade path: upstream's modules above.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
-use std::os::unix::fs::{MetadataExt, OpenOptionsExt, PermissionsExt};
+use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -92,7 +92,10 @@ fn check_home(home: &Path) -> Result<(), String> {
     let meta = std::fs::symlink_metadata(home)
         .map_err(|e| format!("cannot read the Hermes home {}: {e}", home.display()))?;
     if !meta.is_dir() {
-        return Err(format!("the Hermes home {} is not a directory", home.display()));
+        return Err(format!(
+            "the Hermes home {} is not a directory",
+            home.display()
+        ));
     }
     if meta.uid() != own_uid() {
         return Err(format!(
@@ -219,8 +222,8 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
         listener
             .set_nonblocking(true)
             .map_err(|e| format!("cannot use {}: {e}", target.display()))?;
-        let identity = file_identity(&target)
-            .map_err(|e| format!("cannot read {}: {e}", target.display()))?;
+        let identity =
+            file_identity(&target).map_err(|e| format!("cannot read {}: {e}", target.display()))?;
         let listener = tokio::net::UnixListener::from_std(listener)
             .map_err(|e| format!("cannot use {}: {e}", target.display()))?;
         Ok((listener, identity))
@@ -300,7 +303,8 @@ async fn serve_control(listener: tokio::net::UnixListener, control: Arc<Control>
         };
         let control = Arc::clone(&control);
         tokio::spawn(async move {
-            let _ = tokio::time::timeout(CONTROL_TIMEOUT, answer_connection(stream, &control)).await;
+            let _ =
+                tokio::time::timeout(CONTROL_TIMEOUT, answer_connection(stream, &control)).await;
         });
     }
 }
@@ -324,7 +328,10 @@ impl Control {
     fn answer(&self, raw: &[u8], peer_ok: bool) -> Value {
         let request: Option<Map<String, Value>> = serde_json::from_slice(raw).ok();
         let id = request.as_ref().and_then(|r| r.get("id")).cloned();
-        let verb = request.as_ref().and_then(|r| r.get("verb")).and_then(Value::as_str);
+        let verb = request
+            .as_ref()
+            .and_then(|r| r.get("verb"))
+            .and_then(Value::as_str);
         let result = match (verb, &request) {
             (Some("identify"), _) => Ok(self.identify()),
             (Some("session-ticket"), Some(request)) => self.session_ticket(request, peer_ok),
@@ -373,7 +380,13 @@ impl Control {
             return Err("PermissionError: invalid bootstrap envelope".into());
         };
         let text = |key: &str| params.get(key).and_then(Value::as_str);
-        let known = ["profile_id", "instance_id", "purpose", "scope", "restart_wait"];
+        let known = [
+            "profile_id",
+            "instance_id",
+            "purpose",
+            "scope",
+            "restart_wait",
+        ];
         let purpose = match text("purpose") {
             Some("interactive") => Some(Purpose::Interactive),
             Some("native-http") => Some(Purpose::NativeHttp),
@@ -499,26 +512,28 @@ pub fn ensure(home: &Path, timeout: Duration, mut command: Command) -> Verdict {
         match discover(&home) {
             Discovery::Found(verdict) => return verdict,
             Discovery::Starting => {}
-            Discovery::Absent => match (&started, exited) {
-                (Some((_, log, offset)), Some(status)) => {
+            Discovery::Absent if started.is_none() => match spawn(&home, &mut command) {
+                Ok(child) => started = Some(child),
+                Err(e) => {
+                    return Verdict::refused(
+                        "inaccessible",
+                        "runtime_start_failed",
+                        Some(e.to_string()),
+                    )
+                }
+            },
+            Discovery::Absent => {
+                if let (Some((_, log, offset)), Some(status)) = (&started, exited) {
                     return Verdict::refused(
                         "inaccessible",
                         "runtime_exited",
-                        Some(format!("the gateway exited ({status}): {}", log_tail(log, *offset))),
+                        Some(format!(
+                            "the gateway exited ({status}): {}",
+                            log_tail(log, *offset)
+                        )),
                     );
                 }
-                (Some(_), None) => {}
-                (None, _) => match spawn(&home, &mut command) {
-                    Ok(child) => started = Some(child),
-                    Err(e) => {
-                        return Verdict::refused(
-                            "inaccessible",
-                            "runtime_start_failed",
-                            Some(e.to_string()),
-                        )
-                    }
-                },
-            },
+            }
         }
         let now = Instant::now();
         if now >= deadline {
@@ -636,7 +651,12 @@ fn discover(home: &Path) -> Discovery {
     match reply {
         Ok(line) => Discovery::Found(endpoint_verdict(&line, home)),
         // A starved owner: keep waiting until the deadline.
-        Err(e) if matches!(e.kind(), std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {
+        Err(e)
+            if matches!(
+                e.kind(),
+                std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+            ) =>
+        {
             Discovery::Starting
         }
         Err(e) => Discovery::Found(Verdict::refused(
@@ -650,7 +670,11 @@ fn discover(home: &Path) -> Discovery {
 /// Upstream's `_endpoint`: the checks a client makes of an `identify` answer.
 fn endpoint_verdict(line: &[u8], home: &Path) -> Verdict {
     let peer = |detail: &str| {
-        Verdict::refused("inaccessible", "invalid_control_peer", Some(detail.to_string()))
+        Verdict::refused(
+            "inaccessible",
+            "invalid_control_peer",
+            Some(detail.to_string()),
+        )
     };
     let Ok(reply) = serde_json::from_slice::<Value>(line) else {
         return peer("the control socket's reply is not JSON");
@@ -740,7 +764,10 @@ fn loopback_origin(origin: &str) -> bool {
     let Some((host, port)) = rest.rsplit_once(':') else {
         return false;
     };
-    let host = host.strip_prefix('[').and_then(|h| h.strip_suffix(']')).unwrap_or(host);
+    let host = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
     port.parse::<u16>().is_ok_and(|p| p > 0)
         && host
             .parse::<std::net::IpAddr>()

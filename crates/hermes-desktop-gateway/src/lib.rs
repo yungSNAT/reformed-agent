@@ -215,7 +215,13 @@ fn token_matches(given: Option<&str>, token: &str) -> bool {
 async fn token_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next) -> Response {
     let headers = request.headers();
     let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
-    match admit(&gw, header(TOKEN_HEADER), header(TICKET_HEADER), Purpose::NativeHttp, headers) {
+    match admit(
+        &gw,
+        header(TOKEN_HEADER),
+        header(TICKET_HEADER),
+        Purpose::NativeHttp,
+        headers,
+    ) {
         Ok(()) => next.run(request).await,
         Err(status) => status.into_response(),
     }
