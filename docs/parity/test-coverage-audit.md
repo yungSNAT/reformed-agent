@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-19T09:00:58.736046+00:00`
+Generated: `2026-11-19T08:18:49.922256+00:00`
 
 ## Gate
 
@@ -15,8 +15,8 @@ Generated: `2026-11-19T09:00:58.736046+00:00`
 | `tracked_behavior_rows` | 511 |
 | `covered_behavior_rows` | 33 |
 | `tracked_behavior_coverage_ratio` | 0.0646 |
-| `rust_test_files` | 483 |
-| `rust_test_functions` | 8868 |
+| `rust_test_files` | 486 |
+| `rust_test_functions` | 8874 |
 | `coverage_manifest_entries` | 501 |
 | `coverage_manifest_entries_with_valid_rust_tests` | 23 |
 | `coverage_manifest_deferred_entries` | 141 |
@@ -41,11 +41,11 @@ Generated: `2026-11-19T09:00:58.736046+00:00`
 | --- | --- | ---: | ---: |
 | `gateway-platform-behavior` | `direct_rust_test` | 25 | 22 |
 | `tool-runtime-behavior` | `direct_rust_test` | 132 | 108 |
-| `cli-command-surface` | `direct_rust_test` | 189 | 56 |
+| `cli-command-surface` | `direct_rust_test` | 189 | 58 |
 | `agent-loop-and-runtime` | `direct_rust_test` | 114 | 79 |
 | `acp-protocol-and-transport` | `direct_rust_test` | 21 | 15 |
-| `skills-management-contract` | `direct_rust_test` | 78 | 22 |
-| `cron-and-scheduler-runtime` | `direct_rust_test` | 80 | 22 |
+| `skills-management-contract` | `direct_rust_test` | 78 | 24 |
+| `cron-and-scheduler-runtime` | `direct_rust_test` | 80 | 24 |
 | `memory-plugin-integration` | `direct_rust_test` | 12 | 12 |
 | `environment-lifecycle-contract` | `direct_rust_test` | 16 | 11 |
 | `tool-call-parser-contract` | `direct_rust_test` | 3 | 3 |
