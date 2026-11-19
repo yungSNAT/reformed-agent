@@ -1,6 +1,6 @@
 # Workstream Status
 
-- Local HEAD: `9164b58a4ebe570cd63dcda36549cadde8e41952`
+- Local HEAD: `60d5a2e49593e00eaf98967c1785d1cd97890687`
 - Upstream: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 
 | Workstream | Title | State |
@@ -48,8 +48,8 @@
 
 - State: **in_progress**
 - CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.
-- 337 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"ci_jobs": 0, "parity_gate_present": true, "rows_not_shown_matching": 337}`
+- 338 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"ci_jobs": 0, "parity_gate_present": true, "rows_not_shown_matching": 338}`
 
 ## WS7 — Security/secrets/store/webhook parity
 

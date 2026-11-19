@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-11-19T05:47:39.993920+00:00",
+  "generated_at_utc": "2026-11-19T05:08:12.431156+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "9164b58a4ebe570cd63dcda36549cadde8e41952",
+    "local_sha": "60d5a2e49593e00eaf98967c1785d1cd97890687",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
@@ -12,14 +12,14 @@
     "commits_ahead": 1625,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1354,
+    "local_patch_unique": 1353,
     "files_only_upstream": 24117,
     "files_only_local": 2022,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
     "tree_files_changed": 27376,
-    "tree_insertions": 4528864,
-    "tree_deletions": 935242
+    "tree_insertions": 4528880,
+    "tree_deletions": 934855
   },
   "top_upstream_only": [
     {
@@ -432,7 +432,7 @@
     },
     {
       "path": "crates/hermes-core",
-      "count": 22
+      "count": 21
     },
     {
       "path": "crates/hermes-eval",
@@ -756,7 +756,7 @@
     },
     {
       "path": "crates/hermes-core",
-      "count": 22
+      "count": 21
     },
     {
       "path": "crates/hermes-eval",
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 341,
+      "local_only": 340,
       "risk": "critical",
       "effort": "XL"
     },
@@ -848,7 +848,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 8048,
       "shared_different": 697,
-      "local_only": 355,
+      "local_only": 356,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1354,
+    "local_patch_unique": 1353,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
