@@ -1288,6 +1288,12 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
     );
 
     let with_live_member = process_tree::only_zombies_in_group(pid as libc::pid_t);
+    let ps = std::process::Command::new("ps").args(["-axo", "pid=,ppid=,pgid=,stat=,comm="]).output().unwrap();
+    for line in String::from_utf8_lossy(&ps.stdout).lines() {
+        if line.split_whitespace().nth(2) == Some(pid.to_string().as_str()) || line.split_whitespace().nth(1) == Some(pid.to_string().as_str()) {
+            eprintln!("DIAG ps {line}");
+        }
+    }
     tree.kill().unwrap();
     let mut after_kill = false;
     for _ in 0..50 {
