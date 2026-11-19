@@ -1251,12 +1251,24 @@ fn add_record(records: &mut Value, name: &str, mut record: Value) {
 
 /// Copies `source` into a new folder `destination`, creating every folder and
 /// file afresh so nothing already there, a link included, is written through.
-/// Copied files are owner-only on Unix.
+/// Copied files are owner-only on Unix. The copy is built in a hidden folder
+/// beside `destination` and renamed into place, so a copy that fails part way
+/// leaves nothing that a later run would take for the finished folder.
 pub(crate) fn copy_tree(
     source: &Path,
     destination: &Path,
     links: &mut usize,
 ) -> std::io::Result<()> {
+    let parent = destination.parent().unwrap_or_else(|| Path::new("."));
+    let staging = tempfile::Builder::new()
+        .prefix(".copying-")
+        .tempdir_in(parent)?;
+    let staged = staging.path().join("copy");
+    copy_into(source, &staged, links)?;
+    std::fs::rename(&staged, destination)
+}
+
+fn copy_into(source: &Path, destination: &Path, links: &mut usize) -> std::io::Result<()> {
     std::fs::create_dir(destination)?;
     for entry in std::fs::read_dir(source)? {
         let entry = entry?;
@@ -1265,7 +1277,7 @@ pub(crate) fn copy_tree(
         if kind.is_symlink() {
             *links += 1;
         } else if kind.is_dir() {
-            copy_tree(&entry.path(), &target, links)?;
+            copy_into(&entry.path(), &target, links)?;
         } else {
             let mut from = open_regular(&entry.path())?;
             let mut to = std::fs::OpenOptions::new()
@@ -2169,6 +2181,33 @@ enabled = false
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
         assert!(!home.join("skills/codex-imports/piped").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_copy_that_fails_part_way_leaves_nothing_behind() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = tempfile::tempdir().expect("temp root");
+        let source = root.path().join("skill");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(source.join("a")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("a/SKILL.md"), "a skill\n").unwrap();
+        std::fs::write(source.join("z.md"), "locked\n").unwrap();
+        let locked = source.join("z.md");
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = std::fs::File::open(&locked).is_err();
+
+        let destination = home.join("skill");
+        let copied = copy_tree(&source, &destination, &mut 0);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+        if !unreadable {
+            return; // running as root: permissions do not stop reads
+        }
+        assert!(copied.is_err(), "the locked file was copied");
+        // A partial folder would read as an existing skill on the next run.
+        let left: Vec<_> = std::fs::read_dir(&home).unwrap().flatten().collect();
+        assert!(left.is_empty(), "left behind: {left:?}");
     }
 
     #[cfg(unix)]
