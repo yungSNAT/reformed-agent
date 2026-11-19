@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-19T13:36:17.898813+00:00",
+  "generated_at_utc": "2026-11-19T13:58:50.124490+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "62fd0c6eeb67bc1a05457b10db9e0bf58bef5d96",
+    "local_sha": "6442532c4640f6f14892f894aba6bdf27ad8d8cd",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1638,
+    "commits_ahead": 1642,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1363,
+    "local_patch_unique": 1366,
     "files_only_upstream": 24117,
-    "files_only_local": 2029,
+    "files_only_local": 2030,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27383,
+    "tree_files_changed": 27384,
     "tree_insertions": 4528880,
-    "tree_deletions": 938903
+    "tree_deletions": 939188
   },
   "top_upstream_only": [
     {
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 346,
+      "local_only": 347,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1363,
+    "local_patch_unique": 1366,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
