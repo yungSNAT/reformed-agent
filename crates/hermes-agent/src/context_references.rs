@@ -364,7 +364,7 @@ async fn expand_git_reference(
     let run = tokio::task::spawn_blocking(move || {
         let mut git = read_only_git(&cwd).ok_or(
             "git could not be run safely here: it is missing, older than 2.39.1, \
-             or this repository's configuration could not be read",
+             or this repository's configuration could not be read or names a user",
         )?;
         // `diff.submodule=diff` would start a second diff inside a submodule.
         git.args(["-c", "diff.submodule=short", subcommand])
