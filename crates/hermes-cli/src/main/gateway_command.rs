@@ -1,6 +1,67 @@
 type ToolStartCallback = Box<dyn Fn(&str, &serde_json::Value) + Send + Sync>;
 type ToolCompleteCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
 
+/// `hermes gateway ensure`: print the verdict for the home's local desktop runtime, starting a
+/// detached `gateway run` when none answers, and exit with upstream's code for it.
+fn run_gateway_ensure(timeout: &str) -> ! {
+    const INVALID: &str =
+        r#"{"endpoint":null,"reason_code":"invalid_invocation","state":"inaccessible"}"#;
+    let timeout = timeout
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .and_then(|seconds| std::time::Duration::try_from_secs_f64(seconds).ok());
+    let (line, code) = match timeout {
+        Some(timeout) => ensure_verdict(timeout),
+        None => (INVALID.to_string(), 2),
+    };
+    println!("{line}");
+    let _ = std::io::Write::flush(&mut std::io::stdout());
+    std::process::exit(code)
+}
+
+#[cfg(unix)]
+fn ensure_verdict(timeout: std::time::Duration) -> (String, i32) {
+    let home = hermes_config::hermes_home();
+    let mut command = std::process::Command::new(
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hermes-agent-ultra")),
+    );
+    command
+        .args(["gateway", "run", "--quiet"])
+        .env("HERMES_HOME", &home);
+    let verdict = hermes_desktop_gateway::local::ensure(&home, timeout, command);
+    (verdict.to_json(), verdict.exit_code())
+}
+
+/// Upstream reaches its Windows gateway over a named pipe with SID checks, not ported here.
+#[cfg(not(unix))]
+fn ensure_verdict(_timeout: std::time::Duration) -> (String, i32) {
+    (
+        r#"{"client_code_sha":null,"detail":"the local desktop gateway runs on Linux and macOS only","endpoint":null,"reason_code":"unsupported_platform","state":"inaccessible"}"#.to_string(),
+        7,
+    )
+}
+
+/// Ctrl+C, or on Unix the SIGTERM `hermes gateway stop` sends.
+async fn gateway_shutdown_signal() -> Result<(), AgentError> {
+    let ctrl_c = async {
+        tokio::signal::ctrl_c()
+            .await
+            .map_err(|e| AgentError::Io(format!("Failed to listen for Ctrl+C: {}", e)))
+    };
+    #[cfg(unix)]
+    {
+        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
+            .map_err(|e| AgentError::Io(format!("Failed to listen for SIGTERM: {}", e)))?;
+        tokio::select! {
+            result = ctrl_c => result,
+            _ = term.recv() => Ok(()),
+        }
+    }
+    #[cfg(not(unix))]
+    ctrl_c.await
+}
+
 /// Handle `hermes gateway [action]`.
 #[allow(clippy::too_many_arguments)]
 async fn run_gateway(
@@ -43,6 +104,17 @@ async fn run_gateway(
                     let _ = gateway_pid_terminate(pid);
                     cleanup_stale_gateway_metadata(&pid_path);
                     println!("Stopped existing gateway process {}.", pid);
+                }
+            }
+            // The old owner holds the home until it has shut down; give it time to finish.
+            #[cfg(unix)]
+            {
+                let home = hermes_state_root(&cli);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while hermes_desktop_gateway::local::lock_held(&home)
+                    && std::time::Instant::now() < deadline
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
             return Box::pin(run_gateway(
@@ -102,6 +174,33 @@ async fn run_gateway(
                 msg.push_str("请先执行 `hermes gateway setup` 或 `hermes auth login <provider>` 修复后再启动。");
                 return Err(AgentError::Config(msg));
             }
+
+            // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`), claimed
+            // here and served once the pid file is written. A failed claim stops the run, as
+            // upstream's does, so 2 runs never share a home, and comes before the stale-pid
+            // clean-up, so a run that cannot own the home never removes the owner's pid file. A
+            // home too deep for a socket path runs without it, as before.
+            #[cfg(unix)]
+            let mut desktop = {
+                let home = hermes_state_root(&cli);
+                if hermes_desktop_gateway::local::control_socket_fits(&home) {
+                    let claim = hermes_desktop_gateway::local::claim(&home)
+                        .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?;
+                    if claim.is_none() {
+                        eprintln!(
+                            "Desktop local mode is off: {}/gateway.lock cannot be used safely.",
+                            home.display()
+                        );
+                    }
+                    claim
+                } else {
+                    eprintln!(
+                        "Desktop local mode is off: the control socket path under {} is too long for a Unix socket.",
+                        home.display()
+                    );
+                    None
+                }
+            };
 
             let pid_path = gateway_pid_path_for_cli(&cli);
             if let Some(pid) = read_gateway_pid(&pid_path) {
@@ -913,13 +1012,26 @@ async fn run_gateway(
                 .map_err(|e| {
                     AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
                 })?;
+            // Ready for the desktop only now, so `gateway stop` can stop what ensure reports.
+            #[cfg(unix)]
+            if let Some(runtime) = desktop.as_mut() {
+                let chat = hermes_desktop_gateway::Chat::new(config.clone());
+                if let Err(e) = runtime.serve(chat) {
+                    let _ = tokio::fs::remove_file(&pid_path).await;
+                    return Err(AgentError::Config(format!("Desktop local runtime: {e}")));
+                }
+            }
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
-            // Keep gateway alive for future adapter/event wiring.
-            // Wait for Ctrl+C
-            tokio::signal::ctrl_c()
-                .await
-                .map_err(|e| AgentError::Io(format!("Failed to listen for Ctrl+C: {}", e)))?;
+            let stopping = gateway_shutdown_signal().await;
+            // Withdraw local mode before the slower shutdown below, whilst keeping the home
+            // claimed until exit: the pid file goes next, and ensure must not report ready an
+            // owner that `gateway stop` can no longer find.
+            #[cfg(unix)]
+            if let Some(runtime) = desktop.as_mut() {
+                runtime.stop_serving();
+            }
+            stopping?;
 
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
@@ -929,6 +1041,8 @@ async fn run_gateway(
             for task in sidecar_tasks {
                 task.abort();
             }
+            #[cfg(unix)]
+            drop(desktop);
             println!("Gateway stopped.");
         }
         Some("status") => {
@@ -977,7 +1091,7 @@ async fn run_gateway(
             if !gateway_pid_is_alive(pid) {
                 cleanup_stale_gateway_metadata(&pid_path);
                 println!(
-                    "Gateway stop: process {} not running; removed stale PID/lock metadata for {}.",
+                    "Gateway stop: process {} not running; removed the stale PID file {}.",
                     pid,
                     pid_path.display()
                 );
