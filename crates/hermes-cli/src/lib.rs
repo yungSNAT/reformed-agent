@@ -38,6 +38,7 @@ pub mod runtime_tool_wiring;
 pub mod setup;
 pub mod skills_config;
 pub mod skin_engine;
+pub(crate) mod source_tree;
 pub mod systems;
 pub mod teams_pipeline_cli;
 pub mod terminal_backend;
