@@ -1730,7 +1730,7 @@
       "classification": "intentional_divergence",
       "classification_path": "optional-skills/research",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "d67fc8e4fff8caa4d1919c5d3c0724c238352058",
+      "local_blob": "5cdfc2f74281dc590d84e27a18798f18b8fc90f3",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/research/gitnexus-explorer/SKILL.md",
@@ -1745,7 +1745,7 @@
       "classification": "intentional_divergence",
       "classification_path": "optional-skills/research",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "6e71340e58cc61dd72e4deeda984ef0225e06a5e",
+      "local_blob": "383c40344ee2fd99315dd20c74d539c2a5e6b8fe",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/research/gitnexus-explorer/scripts/proxy.mjs",
@@ -20816,7 +20816,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "d7678ba49f85808d52dcf1ee319421eadc1baf58",
+      "local_blob": "ce3ef25f1b127d959a2545610f072f78c36948a4",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/user-guide/messaging/webhooks.md",
@@ -22136,7 +22136,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "5b1f62458d1d36ae869db9bd0e1bf4dcb774f032",
+      "local_blob": "d4b31f989c8c412cdcf8eb655cd51e04600d0a28",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/user-guide/skills/optional/research/research-gitnexus-explorer.md",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-19T01:46:37.632364+00:00",
+  "generated_at_utc": "2026-11-19T05:40:25.569128+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "1bec17304309679fb14ba9c7a67052fae98bf1ce",
+    "local_sha": "84e621f83c7f7c6138b6f7adb6b96a1b4e526ff4",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
