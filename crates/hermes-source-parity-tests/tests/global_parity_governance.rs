@@ -454,8 +454,8 @@ fn assert_deferred_row_is_explained(source: &str, row: &Value) {
 /// governance change reviewers see in this file.
 const DEFERRED_SHARED_DIFF: u64 = 27;
 const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
-    ("python-test-suite-coverage.json", 44),
-    ("hermes-cli-test-coverage.json", 36),
+    ("python-test-suite-coverage.json", 46),
+    ("hermes-cli-test-coverage.json", 37),
     ("ui-tui-source-coverage.json", 59),
 ];
 
@@ -510,10 +510,11 @@ fn test_deferred_rows_are_explained_and_match_the_ratchet() {
 
 /// Covered manifest rows whose upstream file changed after the row was judged, so the
 /// coverage they cite was not rechecked at the pin. Each carries `not_rechecked_at_pin`;
-/// a recheck removes the field and lowers its number here.
+/// a recheck removes the field and lowers its number here. A re-pin's review sets the field:
+/// nothing here detects a covered row whose upstream file changes after that.
 const NOT_RECHECKED_MANIFEST_ROWS: [(&str, u64); 3] = [
-    ("python-test-suite-coverage.json", 133),
-    ("hermes-cli-test-coverage.json", 111),
+    ("python-test-suite-coverage.json", 131),
+    ("hermes-cli-test-coverage.json", 110),
     ("ui-tui-source-coverage.json", 96),
 ];
 

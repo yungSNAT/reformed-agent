@@ -2,7 +2,7 @@
   "generated_at_utc": "2026-07-02T18:14:12Z",
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 133,
+    "covered_paths": 131,
     "required_backlog_classification_paths": [
       "tests",
       "tests/agent",
@@ -20,8 +20,8 @@
     "guard_test": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
     "coverage_kind": "rust_test_suite_contract_or_documented_divergence",
     "rust_only_runtime": true,
-    "deferred_paths": 44,
-    "not_rechecked_paths": 133
+    "deferred_paths": 46,
+    "not_rechecked_paths": 131
   },
   "entries": [
     {
@@ -136,66 +136,19 @@
     {
       "path": "tests/agent/test_bedrock_adapter.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "bedrock_adapter",
         "python_test_suite",
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/agent_loop.rs",
-          "name": "test_hydrate_session_search_args_injects_current_session_id"
-        },
-        {
-          "file": "crates/hermes-agent/src/agent_loop.rs",
-          "name": "test_contextlattice_shell_invocation_detector"
-        },
-        {
-          "file": "crates/hermes-agent/tests/e2e_agent_loop.rs",
-          "name": "e2e_agent_loop_tool_call_then_final_reply"
-        },
-        {
-          "file": "crates/hermes-agent/tests/prop_budget.rs",
-          "name": "budget_per_result_invariant"
-        },
-        {
-          "file": "crates/hermes-agent/tests/prop_budget.rs",
-          "name": "budget_does_not_grow_content"
-        },
-        {
-          "file": "crates/hermes-agent/tests/prop_max_turns.rs",
-          "name": "agent_loop_respects_max_turns"
-        },
-        {
-          "file": "crates/hermes-agent/src/bedrock.rs",
-          "name": "build_converse_body_maps_messages_tools_and_1m_beta"
-        },
-        {
-          "file": "crates/hermes-agent/src/bedrock.rs",
-          "name": "parse_bedrock_response_preserves_text_tool_reasoning_and_usage"
-        },
-        {
-          "file": "crates/hermes-agent/src/bedrock.rs",
-          "name": "parse_bedrock_stream_events_collects_text_tool_reasoning_and_usage"
-        },
-        {
-          "file": "crates/hermes-agent/src/provider.rs",
-          "name": "test_anthropic_convert_messages"
-        },
-        {
-          "file": "crates/hermes-agent/src/provider.rs",
-          "name": "test_openrouter_build_headers"
-        },
-        {
-          "file": "crates/hermes-agent/src/provider.rs",
-          "name": "test_openrouter_parse_response_with_reasoning"
-        }
-      ],
-      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+      "rationale": "Rechecked in the re-pin review against upstream's v0.23.2 test: it has 95 test functions, 53 of them absent at b51fbc73, for example test_cache_point_added_for_supported_model, test_call_converse_one_shot_carries_no_cache_point and test_bedrock_xai_grok_models_never_receive_sampling_params. The Rust tests this row cited (agent-loop session search, shell detection, budget and max-turn properties) do not exercise Bedrock. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/agent/test_context_references.py",
@@ -271,28 +224,13 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rust_tests": [
-        {
-          "file": "crates/hermes-agent/src/agent_loop.rs",
-          "name": "non_cloudcode_multi_key_pool_retries_primary_before_fallback"
-        },
-        {
-          "file": "crates/hermes-agent/src/agent_loop.rs",
-          "name": "single_entry_pool_rate_limit_uses_fallback_without_retry"
-        },
-        {
-          "file": "crates/hermes-agent/src/agent_loop.rs",
-          "name": "cloudcode_rate_limit_uses_fallback_without_pool_retry"
-        },
-        {
-          "file": "crates/hermes-intelligence/src/credential_pool.rs",
-          "name": "test_exhaustion_and_rotation"
-        }
-      ],
-      "status": "covered_by_rust_test_suite_contracts",
-      "coverage_kind": "rust_contract_or_documented_divergence",
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
-      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+      "rust_tests": [],
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "rationale": "Rechecked in the re-pin review against upstream's v0.23.2 test: it has 14 test functions, 8 of them absent at b51fbc73, including test_classified_billing_403_recorded_on_entry and test_unclassified_403_records_no_billing_reason. The Rust tests this row cited exercise pool retry and rotation, not billing-403 classification. Deferred until mapped to a Rust test or ported.",
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "tests/agent/test_crossloop_client_cache.py",
