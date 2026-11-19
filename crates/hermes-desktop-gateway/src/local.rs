@@ -8,6 +8,8 @@
 //! on `<home>/gateway.sock` (mode 0600) and publishes `<home>/gateway_state.json`. The socket
 //! mints tickets only for a peer with this process's uid, in a home no other user can write;
 //! ensure refuses such a home too, so neither side trusts a socket another user could replace.
+//! A ticket is then a one-use, 30-second bearer credential, as upstream's: the loopback routes
+//! check the ticket, not who presents it.
 //!
 //! shortcut: one profile a process (no multiplexer); no long-path socket pointer (where the
 //! socket path would pass 103 bytes, `gateway run` runs without local mode and ensure answers
@@ -47,7 +49,7 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
 const MAX_DETAIL: usize = 500;
 
 /// A local runtime: from [`claim`], a held home; after [`LocalRuntime::serve`], a served one.
-/// Dropping it stops serving and removes its files.
+/// Dropping it stops serving, removes its files and empties `gateway.lock`.
 pub struct LocalRuntime {
     home: PathBuf,
     api_origin: String,
@@ -56,8 +58,8 @@ pub struct LocalRuntime {
     /// owner wrote since is left alone.
     files: Vec<(PathBuf, (u64, u64))>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
-    /// The `flock` on `gateway.lock`, released when this closes, after the files go.
-    _lock: std::fs::File,
+    /// `gateway.lock`, whose `flock` is released when this closes, after the files go.
+    lock: std::fs::File,
 }
 
 impl LocalRuntime {
@@ -76,13 +78,15 @@ impl Drop for LocalRuntime {
         for task in &self.tasks {
             task.abort();
         }
-        // The lock file goes last, and the lock itself after this returns: while it is held, a
-        // concurrent ensure waits instead of starting.
         for (path, identity) in self.files.iter().rev() {
             if file_identity(path).ok() == Some(*identity) {
                 let _ = std::fs::remove_file(path);
             }
         }
+        // The lock file stays, emptied of its pid: unlinking the inode this still locks would let
+        // a new claimant lock a fresh one at the path whilst this process still runs. The lock
+        // itself is released after this returns.
+        let _ = self.lock.set_len(0);
     }
 }
 
@@ -156,7 +160,7 @@ fn lock_held(home: &Path) -> bool {
 /// Claims the home: an exclusive `flock` on `<home>/gateway.lock`, held for the runtime's life
 /// and released by the kernel when the process ends, so neither a crash nor a reused pid leaves a
 /// lock that reads as live. The file names the owner's pid, which upstream's e2e census reads.
-fn claim_lock(home: &Path) -> Result<(std::fs::File, PathBuf, (u64, u64)), String> {
+fn claim_lock(home: &Path) -> Result<std::fs::File, String> {
     let path = home.join(LOCK);
     for _ in 0..2 {
         let mut file = std::fs::OpenOptions::new()
@@ -183,7 +187,7 @@ fn claim_lock(home: &Path) -> Result<(std::fs::File, PathBuf, (u64, u64)), Strin
             .metadata()
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let identity = (meta.dev(), meta.ino());
-        // A stopping owner may have removed the file this opened: lock the one at the path.
+        // Someone may have removed or replaced the file this opened: lock the one at the path.
         if file_identity(&path).ok() != Some(identity) {
             continue;
         }
@@ -193,7 +197,7 @@ fn claim_lock(home: &Path) -> Result<(std::fs::File, PathBuf, (u64, u64)), Strin
             .and_then(|()| file.write_all(record.to_string().as_bytes()))
             .and_then(|()| file.sync_all())
             .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        return Ok((file, path, identity));
+        return Ok(file);
     }
     Err(format!(
         "cannot claim {}: it was replaced while claiming",
@@ -267,14 +271,14 @@ pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
 pub fn claim(home: &Path) -> Result<LocalRuntime, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
-    let (lock, lock_path, lock_identity) = claim_lock(&home)?;
+    let lock = claim_lock(&home)?;
     Ok(LocalRuntime {
         home,
         api_origin: String::new(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
-        files: vec![(lock_path, lock_identity)],
+        files: Vec::new(),
         tasks: Vec::new(),
-        _lock: lock,
+        lock,
     })
 }
 
