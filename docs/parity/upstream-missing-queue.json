@@ -2,31 +2,31 @@
   "commits": [
     {
       "classification_rule": "sha_override",
-      "disposition": "ported",
+      "disposition": "superseded",
       "files_sample": [
+        ".coderabbit.yaml",
         ".dockerignore",
         ".env.example",
         ".envrc",
         ".gitattributes",
+        ".github/CODEOWNERS",
         ".github/ISSUE_TEMPLATE/bug_report.yml",
         ".github/ISSUE_TEMPLATE/config.yml",
         ".github/ISSUE_TEMPLATE/feature_request.yml",
         ".github/ISSUE_TEMPLATE/setup_help.yml",
         ".github/PULL_REQUEST_TEMPLATE.md",
+        ".github/actionlint.yaml",
+        ".github/actions/check-clean-worktree/action.yml",
+        ".github/actions/desktop-build-cache/action.yml",
         ".github/actions/detect-changes/action.yml",
+        ".github/actions/e2e-screen-record/action.yml",
+        ".github/actions/get-app-token/action.yml",
         ".github/actions/nix-setup/action.yml",
-        ".github/actions/retry/action.yml",
-        ".github/dependabot.yml",
-        ".github/pr-screenshots/39327/providers-collapsed.png",
-        ".github/pr-screenshots/39327/providers-expanded.png",
-        ".github/pr-screenshots/39327/tools-collapsed.png",
-        ".github/pr-screenshots/39327/tools-expanded.png",
-        ".github/pr-screenshots/45449/billing-confirm.png",
-        ".github/pr-screenshots/45449/billing-overview.png",
-        ".github/pr-screenshots/telegram-overflow/topic-final-response-clipped.jpg"
+        ".github/actions/plugin-validate/action.yml",
+        ".github/actions/retry/action.yml"
       ],
-      "files_touched": 6177,
-      "notes": "Ported as Rust relay identity-token contract coverage: hermes_gateway::relay now models generic OIDC client_credentials relay provisioning with env/config precedence, Nous-Portal default mode selection, client_credentials form shape, fail-closed missing client credentials, async access_token fetch, and focused relay tests. The experimental relay adapter remains inactive by default in Ultra.",
+      "files_touched": 26190,
+      "notes": "Not carried: upstream's /api/cloud/agents dashboard route now answers a missing Nous Portal sign-in with 409 instead of 401. This tree has no cloud agents route (no match for cloud/agents or cloud_agents under crates/), so the status change has nothing to apply to.",
       "owner": "rust-runtime",
       "rust_only_guard": {
         "allow_python_test_surfaces": false,
@@ -34,15 +34,15 @@
         "rust_primary_surface_only_commit": false,
         "superseded_by_guard": false
       },
-      "sha": "f64e4f4f5768c18a53f44890747653bafcab2796",
-      "subject": "feat(gateway): generic OIDC client-credentials relay provisioning (NAS-free) (#60730)",
+      "sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
+      "subject": "fix(cloud): answer 'not signed in to Nous Portal' with 409, not 401",
       "target_ticket": 20,
       "target_ticket_name": "GPAR-01 tests+CI parity"
     }
   ],
-  "generated_at_utc": "2026-11-10T12:06:12.889615+00:00",
+  "generated_at_utc": "2026-11-19T01:46:38.148282+00:00",
   "refs": {
-    "baseline_start_sha": "f64e4f4f5768c18a53f44890747653bafcab2796",
+    "baseline_start_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "local_ref": "HEAD",
     "prior_ref": "HEAD",
     "prior_source": "HEAD",
@@ -52,7 +52,7 @@
   },
   "summary": {
     "by_disposition": {
-      "ported": 1
+      "superseded": 1
     },
     "by_target_ticket": {
       "20": 1

@@ -164,6 +164,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/autonomous-ai-agents",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/blockchain",
       "rationale": "Upstream optional-skills blockchain tree is Python-skill-store content; Hermes Ultra keeps Rust-first runtime parity and supports external skill registries via native loader paths.",
@@ -199,6 +206,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/mcp",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/migration",
       "rationale": "Optional migration skill content is curated locally for Hermes Agent Ultra migration workflows while runtime skill loading remains governed by native skill-loader contracts.",
@@ -226,6 +240,20 @@
       "ticket": 25
     },
     {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/security",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "optional-skills/web-development",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `optional-skills` entry: Optional skill catalog content is curated locally; Hermes Ultra tracks runtime parity through native skill-loader contracts instead of vendoring every upstream Python skill implementation.",
+      "ticket": 3524
+    },
+    {
       "classification": "functional",
       "owner": "sheawinkler",
       "path": "packaging/homebrew",
@@ -247,6 +275,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/browser_use/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/browser/browser_use/provider.py",
@@ -254,11 +289,25 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/browserbase/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/browser/browserbase/provider.py",
       "rationale": "Browserbase runtime behavior is now covered by the Rust-native browser backend, including direct env config, seconds timeout, keepAlive/proxies/advanced-stealth feature knobs, 402 fallbacks, and session release; the Python plugin remains reference-only compatibility material.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/browser/firecrawl/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -273,6 +322,15 @@
       "path": "plugins/context_engine/__init__.py",
       "rationale": "No current shared-different content remains for this upstream file; the Rust-first command surface rejects Python plugin dispatch and the Python context-engine loader is retained only as upstream reference material.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/dashboard_auth/basic/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream reworked the dashboard basic-auth provider (session revocation list, token kind and expiry checks, non-interactive mixin). Rust does not run this Python plugin, and no Rust code implements a basic-auth dashboard provider. Deferred until the dashboard auth providers are ported or dropped.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -324,6 +382,24 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/README.md",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's README now says realtime mode is speak-only and installs with `hermes meet install`. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/SKILL.md",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's SKILL.md replaces the pip install steps with `hermes meet install`. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "policy_only",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/__init__.py",
@@ -353,10 +429,35 @@
     },
     {
       "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring, the import layout and the order of `__all__` changed; the same names are exported. No behaviour changed."
+    },
+    {
+      "classification": "policy_only",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/node/cli.py",
       "rationale": "The shared diff is behavior-equivalent tuple membership for node status and ping command dispatch.",
       "ticket": 304
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/client.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: the node client now leaves byte decoding to protocol.decode. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/node/protocol.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's node protocol now imports hmac for the token check and decodes bytes itself. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -373,11 +474,25 @@
       "ticket": 304
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream renamed the manifest key `hooks` to `provides_hooks`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/google_meet/process_manager.py",
       "rationale": "Ultra uses the plugin-local Hermes home helper so local meeting state remains importable in the Rust-first tree without vendoring upstream hermes_constants.",
       "ticket": 304
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/google_meet/realtime/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): only the docstring and a noqa comment changed."
     },
     {
       "classification": "policy_only",
@@ -422,10 +537,19 @@
       "ticket": 3524
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/hermes-achievements/dashboard/plugin_api.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream rewrote the achievements dashboard API (460 lines added, 627 removed). Rust does not run this Python plugin, and no Rust code implements the achievements dashboard. Deferred until that plugin is ported or dropped.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "policy_only",
       "owner": "yungSNAT",
       "path": "plugins/hermes-achievements/tests/test_achievement_engine.py",
-      "rationale": "Upstream's Python test for its achievements engine; the Rust runtime has no achievements engine and runs no Python tests.",
+      "rationale": "Upstream's Python test for its achievements engine; the Rust runtime has no achievements engine, and this tree does not run upstream's Python test suite.",
       "ticket": 3524
     },
     {
@@ -443,6 +567,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/fal/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name its nano-banana-2 and nano-banana-pro models. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text, and the Rust FAL backend was not changed to match it."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/image_gen/openai-codex/__init__.py",
@@ -450,11 +581,25 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/openai-codex/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name its native Codex image endpoints and its cache/generated/images folder. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); keeping the earlier text describes nothing this tree was changed to do."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/image_gen/openai/__init__.py",
       "rationale": "OpenAI image generation is implemented by the Rust OpenAiImageGenBackend with direct Images API generation/edit routing, env/config credentials, multipart reference-image edits, b64/url persistence, and focused hermes-tools tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/image_gen/openai/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to name GPT Image 2.5 and its cache/generated/images folder. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -511,6 +656,13 @@
       "path": "plugins/memory/byterover/__init__.py",
       "rationale": "The shared diff is behavior-equivalent tuple membership for action and role guards; no ByteRover runtime behavior is missing.",
       "ticket": 304
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/byterover/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream replaced the manifest's `hooks` list with `config_keys`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
     },
     {
       "classification": "intentional_divergence",
@@ -632,11 +784,25 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/retaindb/README.md",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's README now says `requests` is a core dependency and points to `hermes pm repair`. This tree's RetainDB provider is Rust (crates/hermes-agent/src/memory_plugins/retaindb.rs) and needs no Python package; the README's install note has no runtime effect."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/memory/retaindb/__init__.py",
       "rationale": "RetainDB runtime behavior is owned by the Rust RetainDbMemoryPlugin: core profile/search/context/remember/forget tools, shared file-store upload/list/read/ingest/delete tools, SOUL.md agent seeding, context plus user-synthesis/self-model prefetch, and durable SQLite queued turn ingest are implemented and covered by focused hermes-agent tests; the Python plugin remains reference-only in the Rust runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/memory/retaindb/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream replaced `pip_dependencies` with `config_keys`. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest), so neither key has any effect here."
     },
     {
       "classification": "intentional_divergence",
@@ -667,6 +833,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/ai-gateway/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared this tree's file with v0.23.2 (upstream had no such file at b51fbc73): both define the same profile subclass with the same three reasoning cases (no reasoning support: no extras; a config: passed through; none: enabled at medium effort), the same aliases, headers and auxiliary model. Upstream's copy is shorter; behaviour is the same."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/alibaba-coding-plan/__init__.py",
@@ -674,11 +847,27 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/alibaba/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added the alibaba-cn, alibaba-token-plan and alibaba-token-plan-cn profiles, the aliyun alias and DashScope's preserve-thinking extras. The Rust CLI already maps aliyun to alibaba (crates/hermes-cli/src/main/auth_providers.rs); the Rust provider tables (crates/hermes-agent/src/provider_profiles.rs, crates/hermes-core/src/providers.rs) have none of the 3 profiles or the extras. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/anthropic/__init__.py",
       "rationale": "Anthropic provider behavior is implemented through Rust provider registry, setup/auth detection, Anthropic Messages request shaping, OAuth import, and request-body tests; Python provider files are not loaded at runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/arcee/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
       "classification": "intentional_divergence",
@@ -737,6 +926,31 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/gmi/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream builds GMI's User-Agent lazily and adds anthropic/claude-sonnet-5 to its fallback models. Rust's generic provider sends no User-Agent for gmi (crates/hermes-agent/src/provider/generic.rs sends one only for Kimi Code and Fireworks), a gap that predates b51fbc73. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/huggingface/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/kilocode/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed Kilo Code's default auxiliary model from google/gemini-3-flash-preview to google/gemini-3.6-flash. No Rust code sets a per-provider default auxiliary model for kilocode, and which model this tree uses there was not established. Deferred until checked.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/kimi-coding/__init__.py",
@@ -758,11 +972,34 @@
       "ticket": 304
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/novita/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/nvidia/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/model-providers/ollama-cloud/__init__.py",
       "rationale": "Ollama Cloud provider behavior is implemented by Rust provider normalization, ACP auth env-key support, setup/provider defaults, and runtime provider config; the Python profile is reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/openai-codex/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
       "classification": "intentional_divergence",
@@ -784,6 +1021,22 @@
       "path": "plugins/model-providers/qwen-oauth/__init__.py",
       "rationale": "Upstream copies image parts before editing a request so the caller's messages stay unchanged. The Rust providers take the conversation by shared reference (ChatRequestParams.messages) and build a new request body, so the caller's messages cannot be edited.",
       "ticket": 3524
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/stepfun/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/model-providers/xai/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -856,6 +1109,15 @@
       "ticket": 304
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/discord/voice_mixer.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream refactored its Discord voice mixer (child names and the speech flag removed, the mixer now a discord.AudioSource, ffmpeg resolution added). This tree's Rust mixer (crates/hermes-gateway/src/voice_mixer.rs) ports the b51fbc73 design; whether the mixing behaviour changed was not established. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/platforms/google_chat/adapter.py",
@@ -898,6 +1160,13 @@
       "ticket": 304
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/line/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description of the LINE webhook bind host, to its new dual-stack default. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/platforms/ntfy/adapter.py",
@@ -938,6 +1207,22 @@
       "path": "plugins/platforms/teams/adapter.py",
       "rationale": "Ultra keeps explicit standalone attachment rejection and tuple membership contracts while porting upstream proxy-env support and resilient Teams port coercion.",
       "ticket": 304
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "plugins/platforms/teams/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs, crates/hermes-tools/src/teams_pipeline/graph_backend.rs), and neither TEAMS_HOST nor TEAMS_REQUIRE_MENTION. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/plugin_utils.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream reimplemented lazy_singleton on SingletonSlot and trimmed docstrings. These helpers serve Python plugin authors; Rust runs no Python plugins, so nothing here uses them."
     },
     {
       "classification": "intentional_divergence",
@@ -1017,11 +1302,32 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: only a comment block changed."
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/brave_free/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/brave_free/provider.py",
       "rationale": "Brave free web search is implemented by Rust BraveFreeSearchBackend with BRAVE_SEARCH_API_KEY gating, free endpoint routing, X-Subscription-Token auth, count clamping, result normalization, explicit/generic backend aliases, auto-detect, and search-only extract/crawl error routing covered by web backend tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/ddgs/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1031,11 +1337,32 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/exa/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/exa/provider.py",
       "rationale": "Exa search and extraction are implemented by Rust ExaSearchBackend and ExaExtractBackend with EXA_API_KEY/EXA_BASE_URL config, /search and /contents request contracts, source-quality result normalization, explicit/generic extract routing, auto-detect, and focused mocked web backend tests; the Python SDK plugin remains reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/firecrawl/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/firecrawl/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to mention keyless cloud use. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
     },
     {
       "classification": "intentional_divergence",
@@ -1045,11 +1372,25 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/parallel/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/parallel/provider.py",
       "rationale": "Parallel search and extraction are implemented by Rust ParallelWebBackend with PARALLEL_API_KEY/PARALLEL_BASE_URL/PARALLEL_SEARCH_MODE config, /v1/search and /v1/extract REST payloads, full-content extraction, result/error normalization, explicit/generic backend routing, auto-detect, and focused mocked web backend tests; the Python SDK plugin remains reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/searxng/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1066,11 +1407,25 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/tavily/plugin.yaml",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed only the description, to mention opt-in keyless use. Reformed's plugin loader reads only name, version, description, kind, author, homepage and dependencies from plugin.yaml (crates/hermes-agent/src/plugins.rs PluginManifest); the description is display text."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "plugins/web/tavily/provider.py",
       "rationale": "Tavily search, extract, and crawl are covered by Rust-native web backends, including /crawl Bearer auth plus body api_key and standard document/error normalization; this legacy upstream Python provider is reference-only and is not used by the Rust-only runtime.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "plugins/web/xai/__init__.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only shortened docstrings."
     },
     {
       "classification": "intentional_divergence",
@@ -1092,6 +1447,13 @@
       "path": "skills/apple/apple-reminders/SKILL.md",
       "rationale": "Apple Reminders skill documentation is curated locally; skill catalog drift is tracked separately from the Rust runtime skill-loader contract.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/apple/findmy/SKILL.md",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream moved the skill's screenshots from /tmp to ~/.hermes/cache/scratch. This tree's home is ~/.hermes-agent-ultra, so upstream's path would point at the wrong home; the earlier text stays."
     },
     {
       "classification": "intentional_divergence",
@@ -1127,6 +1489,13 @@
       "path": "skills/github",
       "rationale": "GitHub skill content is curated locally; upstream HERMES_HOME .env resolution has been ported and runtime skill loading remains governed by Rust skill contracts.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "skills/media/DESCRIPTION.md",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's media category now names YouTube only, because upstream moved its other media skills. This folder still holds gif-search, heartmula, songsee and spotify, so the earlier description is the true one here."
     },
     {
       "classification": "intentional_divergence",
@@ -1577,6 +1946,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/cron/test_compute_next_run_last_run_at.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (6b81590c) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/cron/test_cron_context_from.py",
@@ -1633,6 +2009,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/cron/test_rewrite_skill_refs.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 cases in its test purges (6b81590c, aedc6ccc) and gave one remaining job a prompt, because a job with a blank prompt and no skills is now refused at creation (350fb975). Rust already refuses a blank prompt without a script, and is stricter: it refuses one even when skills are set (crates/hermes-cron/src/job.rs CronJob::validate, test_validate_empty_prompt)."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/cron/test_scheduler.py",
@@ -1666,6 +2049,13 @@
       "path": "tests/gateway",
       "rationale": "Gateway test deltas exercise platform adapter behavior and must be reviewed as runtime parity coverage.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/_plugin_adapter_loader.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: only a comment changed."
     },
     {
       "classification": "intentional_divergence",
@@ -1736,6 +2126,13 @@
       "path": "tests/gateway/test_api_server_jobs.py",
       "rationale": "API-server cron jobs behavior is covered by Rust-native gateway contracts backed by hermes_cron: list/create/get/update/delete, include_disabled filtering, pause/resume/manual run, default local delivery, whitelisted updates including skill aliases, required-field and length validation, repeat validation, invalid-ID rejection with source-context logging, and bearer-auth gating. Python-only cron-unavailable and mock self-binding branches are not applicable because the Rust gateway links the scheduler directly and exercises real scheduler calls.",
       "ticket": 303
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_api_server_multimodal.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 16 cases in its pruning (39975613) and in folding contract tests into their keepers (93a7267b), and added none. One removed name, test_non_image_data_url_rejected, now lives in tests/tools/test_image_source.py. No new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -1850,6 +2247,15 @@
       "ticket": 302
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_complete_path_at_filter.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 7 path-completion cases (remote-backend completion, leading slash, fuzzy matching outside a git repository) and removed 10. No Rust test for these completion cases was found. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_compress_command.py",
@@ -1897,6 +2303,13 @@
       "path": "tests/gateway/test_delivery.py",
       "rationale": "Upstream delivery target parsing is covered by Rust DeliveryTarget tests for origin resolution, local fallback, platform-home targets, explicit chat IDs, thread IDs, case-insensitive platform names, case-preserving chat IDs, Matrix-style colon splitting, target string roundtrips, and unknown-platform local fallback.",
       "ticket": 302
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_destructive_slash_confirm.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 4 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
     },
     {
       "classification": "intentional_divergence",
@@ -2214,6 +2627,22 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_goal_max_turns_config.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_goal_command_slow_db_init_still_persists. Whether the Rust /goal command persists when the session database is slow to open was not established. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_goal_status_notice.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import; a feature added and reverted in between (#94266) left no net change."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_goal_verdict_send.py",
@@ -2226,6 +2655,13 @@
       "path": "tests/gateway/test_google_chat.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_home_target_env_var.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2361,6 +2797,15 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_notice_delivery.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning (39975613) and added none, and the kept case now expects a private notice's thread metadata to carry the author's user_id (upstream's per-turn identity stamp). No Rust code matches notice_delivery or private_notice under crates/, so the private notice path was not compared. Deferred until compared with the Rust gateway's notice delivery.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_ntfy_plugin.py",
@@ -2387,6 +2832,13 @@
       "path": "tests/gateway/test_pending_drain_race.py",
       "rationale": "Pending-drain race intent is covered by Rust gateway busy-session queue, reset/finish, and primary-platform contract tests for deterministic deferred-message delivery.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_pii_redaction.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 6 test cases in its suite-wide pruning of low-value tests (39975613 and 61fa0f47) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2431,6 +2883,15 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_pre_gateway_dispatch.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 13 cases on webhook and relay admission (the pre-dispatch hook fires once at ingress, resends and rewritten deliveries keep or refuse their admission) and removed 4. Rust has no equivalent admission records. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_proxy_mode.py",
@@ -2457,6 +2918,13 @@
       "path": "tests/gateway/test_reasoning_command.py",
       "rationale": "Reasoning command behavior is covered by Rust CLI/gateway slash command handling, model/provider reasoning controls, TUI rendering tests, and reasoning-content parser tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_reload_skills_command.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The kept case lost 4 assertions on the reply and note wording and gained none. The change sets no new behaviour for the Rust code to match. The remaining change moves MessageEvent's import."
     },
     {
       "classification": "intentional_divergence",
@@ -2557,11 +3025,38 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_running_agent_session_toggles.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_fresh_ancient_turn_remains_controllable and removed 3 cases. Not compared with the Rust session toggles. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_runtime_env_reload_config_authority.py",
       "rationale": "Runtime env reload/config authority is covered by Rust config/env bridge tests, gateway runtime controls, and provider setup diagnostics; Python reload tests are reference-only.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_runtime_footer.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 8 runtime-footer cases (turn latency and an opt-in served-model field) and removed 14. No Rust footer renders latency. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_safe_adapter_disconnect.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added test_safe_disconnect_detaches_cancellation_swallowing_disconnect. Not compared with Rust adapter shutdown. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2634,11 +3129,27 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_session_list_allowed_sources.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_session_model_override_routing.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_session_model_reset.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 cases and now checks that /new clears the session's reasoning override while other sessions keep theirs. No Rust code names a per-session reasoning override. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -2683,11 +3194,27 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_shared_group_sender_prefix.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream now includes the Slack author's mention in a shared thread's sender prefix. No Rust code adds it. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_shutdown_cache_cleanup.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_shutdown_memory_provider_messages.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 6 test cases in its suite-wide pruning of low-value tests (39975613 and 8e755a06) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2774,6 +3301,15 @@
       "ticket": 25
     },
     {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_steer_command.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added cases where /steer reaches a long-running turn and where a steer with media queues the whole event. No Rust code queues a steer's media. Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_step_callback_compat.py",
@@ -2821,6 +3357,13 @@
       "path": "tests/gateway/test_teams.py",
       "rationale": "Upstream Python gateway test intent is superseded by Rust-native gateway runtime contracts. Existing Rust coverage spans access policy, DM pairing/auth fallback, command handling, sessions, status/usage/compression, platform adapters, media extraction, webhooks, delivery routing, hooks, approvals, voice, and streaming consumers. This tranche adds bounded platform message-id redelivery suppression, definitive streaming final-response delivery before deferred messages, and asynchronous /background and /btw result/error notifications to the origin chat, covered by hermes-gateway unit and primary-platform contract tests.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_teams_pipeline_runtime_wiring.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -2977,6 +3520,22 @@
       "ticket": 302
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_unavailable_skill_hint.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 3 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_unknown_command.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added cases for /egress status and for running a synchronous plugin command off the event loop, and removed 7 command-hook cases. /egress is not ported (slash allowlist). Deferred until ported.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_update_command.py",
@@ -3003,6 +3562,13 @@
       "path": "tests/gateway/test_verbose_command.py",
       "rationale": "Upstream gateway /verbose tool-progress behavior is covered by Rust DisplayConfig and gateway runtime tests: bool-like display.tool_progress_command gating, quoted false disablement, per-platform/default tool_progress resolution, off/new/all/verbose cycling, and runtime verbose/tool_progress state updates.",
       "ticket": 302
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_vision_memory_leak.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning of low-value tests (39975613) and added none; no removed name exists elsewhere in upstream's tests. The change sets no new behaviour for the Rust code to match."
     },
     {
       "classification": "intentional_divergence",
@@ -3052,6 +3618,15 @@
       "path": "tests/gateway/test_webhook_integration.py",
       "rationale": "Upstream webhook integration intent is covered by Rust end-to-end webhook route handling: signed provider payload validation, dot-notation template rendering into MessageEvent text, route event filtering, deliver/log/direct outbound handling, health checks, and route-specific chat/user/session isolation.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_webhook_signature_rate_limit.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream now answers a bad webhook signature with the 404 an unknown route gets, so route names cannot be probed, and removed 2 rate-limit cases. Since PR #164 Rust gives a bad signature the unknown-route reply (crates/hermes-gateway/src/platforms/webhook.rs, test a_bad_signature_reads_as_an_unknown_route), with an empty body where upstream's says 'Unknown route'. Rust checks the signature before the rate limit, but no Rust test sends more bad requests than the limit as upstream's remaining case does. Deferred until that case has a Rust test.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3108,6 +3683,15 @@
       "path": "tests/gateway/test_ws_auth_retry.py",
       "rationale": "Upstream auth-aware retry intent is covered by Rust Matrix sync_loop auth failure handling for 401/403 and Rust Mattermost WebSocket reconnect contracts that stop immediately on auth errors while retrying transient failures with backoff.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/test_yolo_command.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream added 3 cases on /yolo persistence (it survives a gateway restart, dies at the session boundary, and a revocation outlives the next turn). Not compared with the Rust /yolo handling. Deferred until compared.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3297,6 +3881,15 @@
       "path": "tests/providers",
       "rationale": "Provider tests cover model transport compatibility and error handling.",
       "ticket": 25
+    },
+    {
+      "classification": "deferred",
+      "owner": "yungSNAT",
+      "path": "tests/providers/test_e2e_wiring.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, the NVIDIA change in row 26. Deferred with it.",
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "classification": "intentional_divergence",
@@ -3745,6 +4338,13 @@
       "path": "tests/skills",
       "rationale": "Upstream Python test-suite rows are reference-only in Ultra; Rust runtime behavior is covered by docs/parity/python-test-suite-coverage.json and enforced by crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "tests/skills/test_google_workspace_setup_permissions.py",
+      "ticket": 3524,
+      "rationale": "Upstream's v0.23.2 test, taken in PR #162 with its platform marker replaced by a POSIX skipif, because this tree's suite has no conftest that defines the marker. CI runs it against the skill's Python scripts (ci.yml, 'Google Workspace credentials are written owner-only')."
     },
     {
       "classification": "intentional_divergence",
@@ -4515,6 +5115,13 @@
       "path": "website/src",
       "rationale": "Website source differs for documentation/product presentation and does not change Rust runtime behavior.",
       "ticket": 25
+    },
+    {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "website/static",
+      "rationale": "Folder entry for the parity matrix, which lists this folder among those that differ most. Its rows keep the classification of the `website` entry: Website top-level package, sidebar, localization, and static API files support documentation publishing and are not Rust runtime behavior unless covered by more specific functional classifications.",
+      "ticket": 3524
     }
   ],
   "schema_version": 1
