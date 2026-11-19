@@ -120,8 +120,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_PORT = parseInt(process.env.API_PORT || '4747');
-const DIST_DIR = process.argv[2] || './dist';
+// The real path, so files reached through links can be checked against it
+const DIST_DIR = fs.realpathSync(path.resolve(process.argv[2] || './dist'));
 const PORT = parseInt(process.argv[3] || '8888');
+const HOST = '127.0.0.1'; // loopback only: remote access goes through the tunnel
 
 const MIME = {
   '.html': 'text/html', '.js': 'application/javascript', '.css': 'text/css',
@@ -144,12 +146,18 @@ function proxyToApi(req, res) {
 }
 
 function serveStatic(req, res) {
-  let filePath = path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]);
+  // normalize again: on Windows, join keeps '..' after a device name such as NUL:
+  let filePath = path.normalize(path.join(DIST_DIR, req.url === '/' ? 'index.html' : req.url.split('?')[0]));
+  // Refuse request paths whose '..' segments climb out of the dist folder
+  if (!filePath.startsWith(path.join(DIST_DIR, path.sep))) { res.writeHead(404); res.end('Not found'); return; }
   if (!fs.existsSync(filePath)) filePath = path.join(DIST_DIR, 'index.html');
   const ext = path.extname(filePath);
   const mime = MIME[ext] || 'application/octet-stream';
   try {
-    const data = fs.readFileSync(filePath);
+    // Refuse a link inside dist that leads to a file outside it
+    const realPath = fs.realpathSync(filePath);
+    if (!realPath.startsWith(path.join(DIST_DIR, path.sep))) throw new Error('outside dist');
+    const data = fs.readFileSync(realPath);
     res.writeHead(200, { 'Content-Type': mime, 'Cache-Control': 'public, max-age=3600' });
     res.end(data);
   } catch { res.writeHead(404); res.end('Not found'); }
@@ -158,7 +166,7 @@ function serveStatic(req, res) {
 http.createServer((req, res) => {
   if (req.url.startsWith('/api')) proxyToApi(req, res);
   else serveStatic(req, res);
-}).listen(PORT, () => console.log(`GitNexus proxy on http://localhost:${PORT}`));
+}).listen(PORT, HOST, () => console.log(`GitNexus proxy on http://${HOST}:${PORT}`));
 ```
 
 ### 5. Start the Services
@@ -171,7 +179,8 @@ npx gitnexus serve &
 node "$GITNEXUS_DIR/proxy.mjs" "$GITNEXUS_DIR/gitnexus-web/dist" 8888 &
 ```
 
-Verify: `curl -s http://localhost:8888/api/repos` should return the indexed repo(s).
+Verify: `curl -s http://127.0.0.1:8888/api/repos` should return the indexed repo(s).
+The proxy listens on 127.0.0.1 only; reach it from other machines through the tunnel below.
 
 ### 6. Tunnel with Cloudflare (optional — for remote access)
 
@@ -186,7 +195,7 @@ if ! command -v cloudflared &>/dev/null; then
 fi
 
 # Start tunnel (--config /dev/null avoids conflicts with existing named tunnels)
-cloudflared tunnel --config /dev/null --url http://localhost:8888 --no-autoupdate --protocol http2
+cloudflared tunnel --config /dev/null --url http://127.0.0.1:8888 --no-autoupdate --protocol http2
 ```
 
 The tunnel URL (e.g., `https://random-words.trycloudflare.com`) is printed to stderr.
