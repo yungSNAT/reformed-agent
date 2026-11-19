@@ -2,6 +2,7 @@ use super::*;
 use crate::test_env_lock;
 use std::ffi::OsString;
 use std::path::Path;
+use std::process::Command;
 use tempfile::tempdir;
 use tokio::sync::MutexGuard;
 

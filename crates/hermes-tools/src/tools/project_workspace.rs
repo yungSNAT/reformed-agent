@@ -2,12 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use async_trait::async_trait;
-use hermes_core::{
-    subprocess::CommandNoWindowExt, tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema,
-};
+use hermes_core::git::{output_within_timeout, read_only_git, GIT_SNAPSHOT_TIMEOUT};
+use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 
@@ -403,7 +401,12 @@ fn git_snapshot(root: &Path) -> Value {
     };
     let branch = git_output(&git_root, &["branch", "--show-current"]);
     let head = git_output(&git_root, &["rev-parse", "--short", "HEAD"]);
-    let status = git_output(&git_root, &["status", "--short"]);
+    // A submodule has its own config and filter drivers, which the overrides
+    // do not reach: never run status inside its dirty worktree.
+    let status = git_output(
+        &git_root,
+        &["status", "--short", "--ignore-submodules=dirty"],
+    );
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     if let Some(status) = status.as_deref() {
         for line in status.lines() {
@@ -425,19 +428,17 @@ fn git_snapshot(root: &Path) -> Value {
         "root": git_root.display().to_string(),
         "branch": branch,
         "head": head,
-        "dirty": !counts.is_empty(),
+        // Unknown when git did not report the status.
+        "dirty": status.is_some().then_some(!counts.is_empty()),
         "statusCounts": counts,
     })
 }
 
+/// The trimmed output of a git command that the repository's own
+/// configuration cannot use to run a program, or `None` when git cannot run
+/// safely, fails, times out or prints nothing.
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .suppress_windows_console()
-        .output()
-        .ok()?;
+    let output = output_within_timeout(read_only_git(root)?.args(args), GIT_SNAPSHOT_TIMEOUT)?;
     if !output.status.success() {
         return None;
     }
@@ -523,6 +524,7 @@ fn collect_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn project_facts_reports_git_and_verify_commands() {

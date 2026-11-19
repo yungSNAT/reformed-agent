@@ -6,6 +6,7 @@
 pub mod auth_gate;
 pub mod credits;
 pub mod errors;
+pub mod git;
 pub mod providers;
 pub mod schema_sanitizer;
 pub mod subprocess;

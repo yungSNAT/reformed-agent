@@ -774,12 +774,18 @@ fn parse_github_spec(spec: &str) -> Result<(String, String, String), ToolError> 
 }
 
 fn github_repo_from_remote(root: &Path) -> Result<(String, String), ToolError> {
-    let out = std::process::Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(["config", "--get", "remote.origin.url"])
-        .output()
-        .map_err(|e| ToolError::ExecutionFailed(format!("git remote lookup failed: {e}")))?;
+    let mut git = hermes_core::git::read_only_git(root).ok_or_else(|| {
+        ToolError::ExecutionFailed(
+            "git could not be run safely here: it is missing, older than 2.39.1, \
+             or this repository's configuration could not be read"
+                .into(),
+        )
+    })?;
+    let out = hermes_core::git::output_within_timeout(
+        git.args(["config", "--get", "remote.origin.url"]),
+        hermes_core::git::GIT_SNAPSHOT_TIMEOUT,
+    )
+    .ok_or_else(|| ToolError::ExecutionFailed("git remote lookup failed or timed out".into()))?;
     let raw = String::from_utf8_lossy(&out.stdout)
         .trim()
         .trim_end_matches(".git")
@@ -2906,7 +2912,12 @@ mod tests {
         git(tmp.path(), &["init", "-q"]);
         git(
             tmp.path(),
-            &["remote", "add", "origin", "https://github.com/croft/manor.git"],
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/croft/manor.git",
+            ],
         );
         assert_eq!(
             github_repo_from_remote(tmp.path()).unwrap(),
