@@ -46,8 +46,10 @@ const CONTROL_TIMEOUT: Duration = Duration::from_secs(2);
 /// Longest `detail` an ensure verdict carries.
 const MAX_DETAIL: usize = 500;
 
-/// A running local runtime. Dropping it stops serving and removes its files.
+/// A local runtime: from [`claim`], a held home; after [`LocalRuntime::serve`], a served one.
+/// Dropping it stops serving and removes its files.
 pub struct LocalRuntime {
+    home: PathBuf,
     api_origin: String,
     instance_id: String,
     /// Files this runtime created, with the device and inode it created, so a file another
@@ -59,6 +61,7 @@ pub struct LocalRuntime {
 }
 
 impl LocalRuntime {
+    /// Empty until [`LocalRuntime::serve`].
     pub fn api_origin(&self) -> &str {
         &self.api_origin
     }
@@ -253,51 +256,67 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
 
 /// Starts the local runtime for `home`: lock, listener, control socket, then state file.
 pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
+    let mut runtime = claim(home)?;
+    runtime.serve(chat).await?;
+    Ok(runtime)
+}
+
+/// Claims `home` for one runtime without serving it yet. While claimed and unserved, ensure
+/// waits, so a host can finish starting (say, write the pid file `gateway stop` reads) before
+/// [`LocalRuntime::serve`] makes it ready.
+pub fn claim(home: &Path) -> Result<LocalRuntime, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
     let (lock, lock_path, lock_identity) = claim_lock(&home)?;
-    let mut runtime = LocalRuntime {
+    Ok(LocalRuntime {
+        home,
         api_origin: String::new(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
         files: vec![(lock_path, lock_identity)],
         tasks: Vec::new(),
         _lock: lock,
-    };
-    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-        .await
-        .map_err(|e| format!("cannot bind 127.0.0.1: {e}"))?;
-    let port = listener
-        .local_addr()
-        .map_err(|e| format!("cannot read the bound address: {e}"))?
-        .port();
-    runtime.api_origin = format!("http://127.0.0.1:{port}");
-    let (control, identity) = bind_control(&home)?;
-    runtime.files.push((home.join(SOCKET), identity));
+    })
+}
 
-    let tickets = Arc::new(Tickets::default());
-    let app = router(Auth::Native(Arc::clone(&tickets)), port, chat);
-    runtime.tasks.push(tokio::spawn(async move {
-        if let Err(err) = axum::serve(listener, app).await {
-            tracing::error!("local desktop gateway stopped: {err}");
-        }
-    }));
-    let control_state = Arc::new(Control {
-        home: home.clone(),
-        instance_id: runtime.instance_id.clone(),
-        api_origin: runtime.api_origin.clone(),
-        tickets,
-    });
-    runtime
-        .tasks
-        .push(tokio::spawn(serve_control(control, control_state)));
+impl LocalRuntime {
+    /// Serves the claimed home: listener, control socket, then state file.
+    pub async fn serve(&mut self, chat: Chat) -> Result<(), String> {
+        let home = self.home.clone();
+        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
+            .await
+            .map_err(|e| format!("cannot bind 127.0.0.1: {e}"))?;
+        let port = listener
+            .local_addr()
+            .map_err(|e| format!("cannot read the bound address: {e}"))?
+            .port();
+        self.api_origin = format!("http://127.0.0.1:{port}");
+        let (control, identity) = bind_control(&home)?;
+        self.files.push((home.join(SOCKET), identity));
 
-    let state_path = home.join(STATE);
-    let _ = std::fs::remove_file(&state_path);
-    let state = json!({"gateway_state": "running", "pid": std::process::id()}).to_string();
-    let identity = create_private(&state_path, state.as_bytes())
-        .map_err(|e| format!("cannot write {}: {e}", state_path.display()))?;
-    runtime.files.push((state_path, identity));
-    Ok(runtime)
+        let tickets = Arc::new(Tickets::default());
+        let app = router(Auth::Native(Arc::clone(&tickets)), port, chat);
+        self.tasks.push(tokio::spawn(async move {
+            if let Err(err) = axum::serve(listener, app).await {
+                tracing::error!("local desktop gateway stopped: {err}");
+            }
+        }));
+        let control_state = Arc::new(Control {
+            home: home.clone(),
+            instance_id: self.instance_id.clone(),
+            api_origin: self.api_origin.clone(),
+            tickets,
+        });
+        self.tasks
+            .push(tokio::spawn(serve_control(control, control_state)));
+
+        let state_path = home.join(STATE);
+        let _ = std::fs::remove_file(&state_path);
+        let state = json!({"gateway_state": "running", "pid": std::process::id()}).to_string();
+        let identity = create_private(&state_path, state.as_bytes())
+            .map_err(|e| format!("cannot write {}: {e}", state_path.display()))?;
+        self.files.push((state_path, identity));
+        Ok(())
+    }
 }
 
 struct Control {

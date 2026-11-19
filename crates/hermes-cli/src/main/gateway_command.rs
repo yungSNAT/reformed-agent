@@ -176,21 +176,17 @@ async fn run_gateway(
                 cleanup_stale_gateway_metadata(&pid_path);
             }
 
-            // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`). Its
-            // failure stops the run, as upstream's does, so 2 runs never share a home; a home too
-            // deep for a socket path runs without it, as before.
+            // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`), claimed
+            // here and served once the pid file is written. A failed claim stops the run, as
+            // upstream's does, so 2 runs never share a home; a home too deep for a socket path
+            // runs without it, as before.
             #[cfg(unix)]
-            let desktop = {
+            let mut desktop = {
                 let home = hermes_state_root(&cli);
                 if hermes_desktop_gateway::local::control_socket_fits(&home) {
-                    Some(
-                        hermes_desktop_gateway::local::start(
-                            &home,
-                            hermes_desktop_gateway::Chat::new(config.clone()),
-                        )
-                        .await
-                        .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?,
-                    )
+                    let claim = hermes_desktop_gateway::local::claim(&home)
+                        .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?;
+                    Some(claim)
                 } else {
                     eprintln!(
                         "Desktop local mode is off: the control socket path under {} is too long for a Unix socket.",
@@ -997,6 +993,15 @@ async fn run_gateway(
                 .map_err(|e| {
                     AgentError::Io(format!("failed to write {}: {}", pid_path.display(), e))
                 })?;
+            // Ready for the desktop only now, so `gateway stop` can stop what ensure reports.
+            #[cfg(unix)]
+            if let Some(runtime) = desktop.as_mut() {
+                let chat = hermes_desktop_gateway::Chat::new(config.clone());
+                if let Err(e) = runtime.serve(chat).await {
+                    let _ = tokio::fs::remove_file(&pid_path).await;
+                    return Err(AgentError::Config(format!("Desktop local runtime: {e}")));
+                }
+            }
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             gateway_shutdown_signal().await?;
