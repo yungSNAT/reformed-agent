@@ -118,10 +118,22 @@ impl ProcessTree {
         // SAFETY: kill(2) with a negative pid signals a process group and
         // touches no memory.
         if unsafe { libc::kill(-self.pgid, signal) } == 0 {
-            Ok(())
-        } else {
-            Err(io::Error::last_os_error())
+            return Ok(());
         }
+        let err = io::Error::last_os_error();
+        // macOS leaves zombies out when it signals a group and answers EPERM
+        // when no other member could be signalled; Linux counts a zombie as
+        // signalled. The leader is this process's child, kept unreaped until
+        // the last signal, so once it has exited Linux would have succeeded
+        // here, and so does this. As on Linux, a live member that refused the
+        // signal alongside it then goes unreported.
+        #[cfg(target_os = "macos")]
+        if err.raw_os_error() == Some(libc::EPERM)
+            && matches!(has_exited_unreaped(self.pgid as u32), Ok(true))
+        {
+            return Ok(());
+        }
+        Err(err)
     }
 }
 
