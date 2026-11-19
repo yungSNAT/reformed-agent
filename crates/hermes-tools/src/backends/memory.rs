@@ -576,8 +576,8 @@ mod tests {
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn add_refuses_a_memory_link_into_a_protected_path() {
+    #[test]
+    fn add_refuses_a_memory_link_into_a_protected_path() {
         let temp = tempfile::tempdir().unwrap();
         let home = temp.path().join("home");
         let keys = home.join(".ssh").join("authorized_keys");
@@ -590,7 +590,9 @@ mod tests {
         let _lock = hermes_config::managed_gateway::test_lock::lock();
         let saved = std::env::var_os("HOME");
         std::env::set_var("HOME", &home);
-        let result = backend.add("memory", "Planted.").await;
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(backend.add("memory", "Planted."));
         match saved {
             Some(value) => std::env::set_var("HOME", value),
             None => std::env::remove_var("HOME"),
@@ -601,8 +603,8 @@ mod tests {
         assert!(!keys.exists(), "the protected file was written");
     }
 
-    #[tokio::test]
-    async fn add_works_whilst_a_write_safe_root_is_set() {
+    #[test]
+    fn add_works_whilst_a_write_safe_root_is_set() {
         let temp = tempfile::tempdir().unwrap();
         let project = temp.path().join("project");
         std::fs::create_dir_all(&project).unwrap();
@@ -611,7 +613,9 @@ mod tests {
         let _lock = hermes_config::managed_gateway::test_lock::lock();
         let saved = std::env::var_os("HERMES_WRITE_SAFE_ROOT");
         std::env::set_var("HERMES_WRITE_SAFE_ROOT", &project);
-        let result = backend.add("memory", "Outside the project.").await;
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(backend.add("memory", "Outside the project."));
         match saved {
             Some(value) => std::env::set_var("HERMES_WRITE_SAFE_ROOT", value),
             None => std::env::remove_var("HERMES_WRITE_SAFE_ROOT"),

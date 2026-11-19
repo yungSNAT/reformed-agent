@@ -2687,6 +2687,79 @@ fn shell_quote(input: &str) -> String {
 mod tests {
     use super::*;
 
+    /// Runs `check` with `vars` set (None removes one), under the shared
+    /// environment lock, then restores them.
+    fn with_env<T>(vars: &[(&str, Option<&std::path::Path>)], check: impl FnOnce() -> T) -> T {
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved: Vec<_> = vars
+            .iter()
+            .map(|(key, _)| (*key, std::env::var_os(key)))
+            .collect();
+        for (key, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(check));
+        for (key, value) in saved {
+            match value {
+                Some(value) => std::env::set_var(key, value),
+                None => std::env::remove_var(key),
+            }
+        }
+        result.unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_edit_judges_a_relative_path_where_it_writes_it() {
+        // The protected file sits under the process folder, so a relative
+        // path without `..` reaches it; from another work folder the same
+        // path names a harmless file.
+        let cwd = std::env::current_dir().unwrap();
+        let local = tempfile::Builder::new()
+            .prefix(".hash-edit-test-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let name = local
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let home = local.path().join("home");
+        // `~/.bashrc` is denied by the path rule alone, not by a name rule.
+        let profile = home.join(".bashrc");
+        fs::create_dir_all(&home).unwrap();
+        fs::write(&profile, "export MADE_UP=1\n").unwrap();
+        let relative = format!("{name}/home/.bashrc");
+        let elsewhere = tempfile::tempdir().unwrap();
+        let workdir = elsewhere.path().to_path_buf();
+
+        let result = with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(&workdir)),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new().unwrap().block_on(hash_edit(
+                    json!({"path": relative, "old_string": "MADE_UP=1", "new_string": "PLANTED=1"}),
+                ))
+            },
+        );
+
+        let err = result.expect_err("hash_edit wrote a protected file through a relative path");
+        assert!(
+            err.to_string()
+                .contains("protected system or credential path"),
+            "{err}"
+        );
+        assert_eq!(fs::read_to_string(&profile).unwrap(), "export MADE_UP=1\n");
+    }
+
     #[tokio::test]
     async fn hash_edit_rejects_stale_hash_and_applies_prefix_hash() {
         let tmp = tempfile::tempdir().unwrap();

@@ -961,6 +961,8 @@ mod tests {
             ".ENV",
             "mcp_auth.json::$DATA",
             "hub_token:alt",
+            "auth.jſon",
+            "mcp_auth.jſon",
         ] {
             assert!(denied(rel), "{rel} was writable");
         }
