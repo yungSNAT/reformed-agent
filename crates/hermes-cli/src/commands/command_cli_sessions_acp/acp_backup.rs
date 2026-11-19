@@ -240,6 +240,20 @@ fn register_interrupt(
     interrupt
 }
 
+/// Queues a steer the turn accepted but never delivered as the session's next prompt, ahead of
+/// anything queued meanwhile, as upstream sends it. Call it once the turn's controller is out of
+/// the registry. A later steer then finds no controller, or is refused by one it cloned before,
+/// and either way the handler queues it instead.
+fn requeue_leftover_steer(
+    interrupt: &hermes_agent::InterruptController,
+    sessions: &hermes_acp::SessionManager,
+    session_id: &str,
+) {
+    if let Some(text) = interrupt.take_leftover_steer() {
+        sessions.push_queued_prompt_front(session_id, &text);
+    }
+}
+
 impl CliAcpPromptExecutor {
     fn current_tool_schemas(&self) -> Vec<hermes_core::ToolSchema> {
         hermes_tool_planning::resolve_platform_tool_schemas(
@@ -312,8 +326,13 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
             streamed.clone(),
         );
         let agent = hermes_agent::attach_discovered_memory(
-            hermes_agent::AgentLoop::with_interrupt(agent_config, agent_tools, provider, interrupt)
-                .with_callbacks(callbacks),
+            hermes_agent::AgentLoop::with_interrupt(
+                agent_config,
+                agent_tools,
+                provider,
+                interrupt.clone(),
+            )
+            .with_callbacks(callbacks),
         );
         let messages = acp_history_to_messages(history, user_text);
 
@@ -330,6 +349,7 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         if let Ok(mut active) = self.interrupts.lock() {
             active.remove(&session.session_id);
         }
+        requeue_leftover_steer(&interrupt, &self.session_manager, &session.session_id);
         let result = result.map_err(|e| e.to_string())?;
         let response_text = result
             .messages

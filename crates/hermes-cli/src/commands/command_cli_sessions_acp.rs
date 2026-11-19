@@ -1921,7 +1921,8 @@ fn claw_status_cmd() {
     let home = dirs::home_dir();
 
     match find_openclaw_dir(None) {
-        Some(dir) => {
+        Err(err) => println!("  OpenClaw directory: {err}"),
+        Ok(Some(dir)) => {
             println!("  OpenClaw directory: {} (found)", dir.display());
 
             let config_yaml = dir.join("config.yaml");
@@ -1966,7 +1967,7 @@ fn claw_status_cmd() {
             println!("\n  Run `hermes claw migrate` to import into Hermes.");
             println!("  Run `hermes claw cleanup` to remove legacy files.");
         }
-        None => {
+        Ok(None) => {
             println!("  No OpenClaw directory found.");
             if let Some(h) = &home {
                 println!(
@@ -2006,12 +2007,10 @@ fn claw_migrate_cmd() -> Result<(), hermes_core::AgentError> {
     println!("OpenClaw → Hermes Migration");
     println!("===========================\n");
 
-    let source_dir = find_openclaw_dir(None);
-    if source_dir.is_none() {
+    let Some(source_dir) = find_openclaw_dir(None).map_err(hermes_core::AgentError::Config)? else {
         println!("No OpenClaw directory found. Nothing to migrate.");
         return Ok(());
-    }
-    let source_dir = source_dir.unwrap();
+    };
     println!("Source: {}", source_dir.display());
     println!("Target: {}\n", hermes_config::hermes_home().display());
 
@@ -2073,12 +2072,10 @@ fn claw_cleanup_cmd() -> Result<(), hermes_core::AgentError> {
     use crate::claw_migrate::find_openclaw_dir;
     use std::io::{self, BufRead, Write};
 
-    let source_dir = find_openclaw_dir(None);
-    if source_dir.is_none() {
+    let Some(source_dir) = find_openclaw_dir(None).map_err(hermes_core::AgentError::Config)? else {
         println!("No OpenClaw directory found. Nothing to clean up.");
         return Ok(());
-    }
-    let source_dir = source_dir.unwrap();
+    };
 
     println!("OpenClaw Cleanup");
     println!("================\n");
