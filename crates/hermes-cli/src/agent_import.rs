@@ -276,17 +276,16 @@ impl Importer<'_> {
     }
 
     /// Every `*.md` in `folder`, in name order, as memory entries; a linked
-    /// file is skipped.
+    /// file or a folder is skipped, and anything else that is not a file is
+    /// an error.
     fn memory_folder(&mut self, item: &str, folder: &Path) {
         // Every entry is opened before any is read, so one that cannot be
         // looked up fails the folder rather than dropping quietly.
         let files = SourceDir::open(folder).and_then(|dir| {
             let mut files = Vec::new();
             for name in dir.names()? {
-                if !Path::new(&name).extension().is_some_and(|ext| ext == "md") {
-                    continue;
-                }
-                if let Some(entry @ (Entry::File(_) | Entry::Link)) = dir.entry(&name)? {
+                if Path::new(&name).extension().is_some_and(|ext| ext == "md") {
+                    let entry = dir.entry(&name)?;
                     files.push((name, entry));
                 }
             }
@@ -305,13 +304,22 @@ impl Importer<'_> {
         };
         let mut incoming = Vec::new();
         for (name, entry) in files {
-            let Entry::File(file) = entry else {
-                self.record(
-                    Status::Skip,
-                    &format!("{item}/{}", name.to_string_lossy()),
-                    "it is a link, which this import does not follow".to_string(),
-                );
-                continue;
+            let file = match entry {
+                Some(Entry::File(file)) => file,
+                other => {
+                    let (status, reason) = match other {
+                        Some(Entry::Link) => (
+                            Status::Skip,
+                            "it is a link, which this import does not follow",
+                        ),
+                        Some(Entry::Dir(_)) => (Status::Skip, "it is a folder"),
+                        None => (Status::Error, "it went away while it was read"),
+                        _ => (Status::Error, "it is not a regular file"),
+                    };
+                    let at = format!("{item}/{}", name.to_string_lossy());
+                    self.record(status, &at, reason.to_string());
+                    continue;
+                }
             };
             let text = read_all(file).and_then(|bytes| {
                 String::from_utf8(bytes)
@@ -699,19 +707,28 @@ impl Importer<'_> {
     /// reported and skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
         // A linked entry is kept so that it is reported, never followed; a
-        // folder is kept with whether its SKILL.md is a link.
+        // folder whose SKILL.md is not a file, or an entry gone since the
+        // listing, is kept so that it is reported as an error.
         let skill_dirs = SourceDir::open(source).and_then(|dir| {
             let mut kept = Vec::new();
             for name in dir.names()? {
-                match dir.entry(&name)? {
-                    Some(Entry::Link) => kept.push((name, None)),
+                let found = match dir.entry(&name)? {
+                    Some(Entry::Link) => Err((
+                        Status::Skip,
+                        "it is a link, which this import does not follow",
+                    )),
                     Some(Entry::Dir(skill)) => match skill.entry("SKILL.md")? {
-                        Some(Entry::File(_)) => kept.push((name, Some((skill, false)))),
-                        Some(Entry::Link) => kept.push((name, Some((skill, true)))),
-                        _ => {}
+                        Some(Entry::File(_)) => Ok(skill),
+                        Some(Entry::Link) => Err((Status::Skip, "its SKILL.md is a link")),
+                        Some(Entry::Other) => {
+                            Err((Status::Error, "its SKILL.md is not a regular file"))
+                        }
+                        Some(Entry::Dir(_)) | None => continue,
                     },
-                    _ => {}
-                }
+                    Some(Entry::File(_) | Entry::Other) => continue,
+                    None => Err((Status::Error, "it went away while it was read")),
+                };
+                kept.push((name, found));
             }
             Ok(kept)
         });
@@ -750,18 +767,13 @@ impl Importer<'_> {
                 continue;
             }
             let item = format!("skill {}", name.to_string_lossy());
-            let Some((skill, linked_marker)) = skill else {
-                self.record(
-                    Status::Skip,
-                    &item,
-                    "it is a link, which this import does not follow".to_string(),
-                );
-                continue;
+            let skill = match skill {
+                Ok(skill) => skill,
+                Err((status, reason)) => {
+                    self.record(status, &item, reason.to_string());
+                    continue;
+                }
             };
-            if linked_marker {
-                self.record(Status::Skip, &item, "its SKILL.md is a link".to_string());
-                continue;
-            }
             // What is checked for credentials is what is copied.
             let tree = match Tree::read(&skill) {
                 Ok(tree) if tree.holds_secret() => {
@@ -2073,7 +2085,10 @@ enabled = false
         });
         let text = report.lines.join("\n");
         assert!(report.failed, "{text}");
-        for expected in ["error        memories/notes.md: ", "error        skill odd: "] {
+        for expected in [
+            "error        memories/notes.md: ",
+            "error        skill odd: ",
+        ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
     }
