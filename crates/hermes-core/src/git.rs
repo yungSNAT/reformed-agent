@@ -78,6 +78,8 @@ pub fn is_git_2_39_1_or_later(version: &str) -> bool {
 /// tracked files. Reading config names itself does not execute those commands.
 /// Git must not fetch an object the repository lacks from a promisor remote
 /// either, which runs `core.sshCommand` or a remote helper: `guard` says how.
+/// A repository whose own config names a user (see [`names_a_user`]) gets
+/// no command.
 pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     // Every config key git reads for this repository, from every scope and
     // included file. `git config` alone reads the file `GIT_CONFIG` names in
@@ -89,7 +91,7 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
         Command::new("git")
             .arg("-C")
             .arg(root)
-            .args(["config", "--includes", "--null", "--name-only", "--list"])
+            .args(["config", "--includes", "--null", "--show-scope", "--list"])
             .env_remove("GIT_CONFIG")
             .stdin(std::process::Stdio::null())
             .suppress_windows_console(),
@@ -102,7 +104,19 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     }
     let mut drivers = BTreeMap::new();
     let mut filter_keys = 0;
-    for key in listed.stdout.split(|byte| *byte == 0) {
+    // Each entry is its scope, then its key and, unless it has none, its value.
+    let mut fields = listed.stdout.split(|byte| *byte == 0);
+    while let (Some(scope), Some(entry)) = (fields.next(), fields.next()) {
+        let (key, value) = match entry.iter().position(|byte| *byte == b'\n') {
+            Some(newline) => (&entry[..newline], Some(&entry[newline + 1..])),
+            None => (entry, None),
+        };
+        // The repository's own config, with the files it includes, cannot
+        // make git look up a user. The machine's and the user's config are
+        // trusted.
+        if matches!(scope, b"local" | b"worktree") && names_a_user(key, value) {
+            return None;
+        }
         // Git prints a key as `section.name` or `section.subsection.name`, with
         // the section and the name in lower case. Only a subsection holds dots.
         let Some(first) = key.iter().position(|byte| *byte == b'.') else {
@@ -164,6 +178,32 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     cmd.env("GIT_CONFIG_COUNT", config_count.to_string())
         .env_remove("GIT_CONFIG_PARAMETERS");
     Some(cmd)
+}
+
+/// Whether git would expand the value, or an include's `gitdir` condition,
+/// as a path that begins `~name`: git finds that user's home through
+/// `getpwnam`, which can ask a directory service about a name the repository
+/// chose. Any value counts, as git takes many keys as paths.
+///
+/// shortcut: git follows the includes, and expands their paths and `gitdir`
+/// conditions, as soon as it starts in the repository, so the listing itself
+/// still makes those lookups; this stops the ones status, log and the other
+/// commands would make for every other path. Ending those too means finding
+/// and reading the repository's config files without git.
+fn names_a_user(key: &[u8], value: Option<&[u8]>) -> bool {
+    let condition = key
+        .strip_prefix(b"includeif.")
+        .and_then(|rest| rest.strip_suffix(b".path"))
+        .and_then(|condition| {
+            condition
+                .strip_prefix(b"gitdir:")
+                .or_else(|| condition.strip_prefix(b"gitdir/i:"))
+        });
+    value.into_iter().chain(condition).any(|path| {
+        // Git 2.52 and later take a path marked optional.
+        let path = path.strip_prefix(b":(optional)").unwrap_or(path);
+        path.len() > 1 && path[0] == b'~' && path[1] != b'/'
+    })
 }
 
 /// A `git` command for reading the repository at `root` that its own
@@ -276,5 +316,117 @@ mod tests {
         );
         assert!(output.is_none());
         assert!(started.elapsed() < GIT_SNAPSHOT_TIMEOUT + Duration::from_secs(5));
+    }
+
+    /// A user name no machine has, so a lookup cannot find a home for it.
+    const USER: &str = "r2058-croft";
+
+    fn git(repo: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    }
+
+    /// A new repository at `repo` that gets a command before any change.
+    fn new_repo(repo: &Path) {
+        std::fs::create_dir_all(repo).unwrap();
+        git(repo, &["init", "-q"]);
+        assert!(workspace_git(repo, LazyFetchGuard::NoPromisorRemote).is_some());
+    }
+
+    /// Git expands a path that begins `~name` through `getpwnam`, which can
+    /// ask a directory service for the name the repository chose.
+    #[test]
+    fn a_user_name_in_the_repository_config_gets_no_command() {
+        for (key, value) in [
+            ("core.excludesFile".to_string(), format!("~{USER}/x")),
+            (
+                "core.hooksPath".to_string(),
+                format!(":(optional)~{USER}/x"),
+            ),
+            ("mailmap.file".to_string(), format!("~{USER}")),
+            ("include.path".to_string(), format!("~{USER}/x")),
+            (format!("includeIf.gitdir:~{USER}/.path"), "x".to_string()),
+            (format!("includeIf.gitdir/i:~{USER}/.path"), "x".to_string()),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            new_repo(&repo);
+            git(&repo, &["config", &key, &value]);
+            assert!(
+                workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_none(),
+                "{key} = {value}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_home_directory_is_not_a_user_name() {
+        for value in ["~/x", "~"] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            new_repo(&repo);
+            git(&repo, &["config", "core.excludesFile", value]);
+            assert!(
+                workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some(),
+                "{value}"
+            );
+        }
+    }
+
+    /// Git reports a value from an included file under the scope of the
+    /// file that includes it.
+    #[test]
+    fn a_user_name_in_an_included_file_gets_no_command() {
+        for (included, kept) in [
+            (format!("[core]\n\texcludesFile = ~{USER}/x\n"), false),
+            ("[core]\n\texcludesFile = ~/x\n".to_string(), true),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            new_repo(&repo);
+            std::fs::write(repo.join("shared.config"), &included).unwrap();
+            // Relative to the directory of the file that includes it, `.git`.
+            git(&repo, &["config", "include.path", "../shared.config"]);
+            assert_eq!(
+                workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some(),
+                kept,
+                "{included}"
+            );
+        }
+    }
+
+    /// A linked worktree reads the main repository's config.
+    #[test]
+    fn a_user_name_in_a_linked_worktree_s_config_gets_no_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        new_repo(&repo);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let linked = tmp.path().join("linked");
+        git(&repo, &["worktree", "add", "-q", linked.to_str().unwrap()]);
+        assert!(workspace_git(&linked, LazyFetchGuard::NoPromisorRemote).is_some());
+        git(
+            &repo,
+            &["config", "core.excludesFile", &format!("~{USER}/x")],
+        );
+        assert!(workspace_git(&linked, LazyFetchGuard::NoPromisorRemote).is_none());
     }
 }
