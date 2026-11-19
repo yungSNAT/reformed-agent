@@ -421,6 +421,19 @@ fn secure_file(_path: &std::path::Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_suggestions_file_is_owner_only_from_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".suggestions.staged.tmp");
+
+        let file = create_staged_file(&path).expect("created");
+
+        let mode = file.metadata().unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     #[test]
     fn suggestion_file_keeps_its_timestamp_form() {
         let file: SuggestionFile =

@@ -579,17 +579,45 @@ mod tests {
     #[tokio::test]
     async fn add_refuses_a_memory_link_into_a_protected_path() {
         let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let keys = home.join(".ssh").join("authorized_keys");
+        std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
         let memories = temp.path().join("memories");
         std::fs::create_dir_all(&memories).unwrap();
-        std::os::unix::fs::symlink("/etc/hosts", memories.join("MEMORY.md")).unwrap();
+        std::os::unix::fs::symlink(&keys, memories.join("MEMORY.md")).unwrap();
         let backend = FileMemoryBackend::with_dir(memories);
 
-        let err = backend
-            .add("memory", "Planted.")
-            .await
-            .expect_err("a memory write followed a link into /etc/hosts");
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let result = backend.add("memory", "Planted.").await;
+        match saved {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
 
+        let err = result.expect_err("a memory write followed a link into ~/.ssh");
         assert!(err.to_string().contains("Write denied"), "{err}");
+        assert!(!keys.exists(), "the protected file was written");
+    }
+
+    #[tokio::test]
+    async fn add_works_whilst_a_write_safe_root_is_set() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let backend = FileMemoryBackend::with_dir(temp.path().join("memories"));
+
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved = std::env::var_os("HERMES_WRITE_SAFE_ROOT");
+        std::env::set_var("HERMES_WRITE_SAFE_ROOT", &project);
+        let result = backend.add("memory", "Outside the project.").await;
+        match saved {
+            Some(value) => std::env::set_var("HERMES_WRITE_SAFE_ROOT", value),
+            None => std::env::remove_var("HERMES_WRITE_SAFE_ROOT"),
+        }
+
+        result.expect("the safe root refused a memory write");
     }
 
     #[cfg(unix)]

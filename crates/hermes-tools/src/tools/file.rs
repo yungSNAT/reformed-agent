@@ -964,27 +964,65 @@ mod tests {
         }
     }
 
-    /// Counts its calls.
-    struct CountingPatch(std::sync::atomic::AtomicUsize);
+    /// Counts its calls and keeps the last path it was given.
+    #[derive(Default)]
+    struct CountingPatch(
+        std::sync::atomic::AtomicUsize,
+        std::sync::Mutex<Option<String>>,
+    );
 
     #[async_trait]
     impl PatchBackend for CountingPatch {
         async fn patch_file(
             &self,
-            _path: &str,
+            path: &str,
             _old: &str,
             _new: &str,
             _all: bool,
         ) -> Result<String, ToolError> {
             self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            *self.1.lock().unwrap() = Some(path.to_string());
             Ok("patched".into())
         }
+    }
+
+    #[tokio::test]
+    async fn patch_hands_its_backend_the_absolute_path_it_judged() {
+        let backend = Arc::new(CountingPatch::default());
+        let handler = PatchHandler::new(backend.clone());
+
+        handler
+            .execute(json!({"path": "relative/notes.txt", "old_string": "a", "new_string": "b"}))
+            .await
+            .unwrap();
+
+        let expected = std::path::absolute("relative/notes.txt").unwrap();
+        assert_eq!(
+            backend.1.lock().unwrap().as_deref(),
+            Some(expected.to_string_lossy().as_ref())
+        );
+    }
+
+    #[tokio::test]
+    async fn patch_allows_a_file_named_like_a_credential() {
+        let tmp = tempfile::tempdir().unwrap();
+        let backend = Arc::new(CountingPatch::default());
+        let handler = PatchHandler::new(backend.clone());
+
+        for name in ["credential_guard.rs", "fixture.pem"] {
+            let path = tmp.path().join(name);
+            handler
+                .execute(json!({"path": path, "old_string": "a", "new_string": "b"}))
+                .await
+                .unwrap_or_else(|e| panic!("{name} was refused: {e}"));
+        }
+        assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
     #[cfg(unix)]
     #[tokio::test]
     async fn patch_refuses_a_protected_path_before_its_backend_runs() {
-        let backend = Arc::new(CountingPatch(Default::default()));
+        let backend = Arc::new(CountingPatch::default());
         let handler = PatchHandler::new(backend.clone());
 
         let result = handler

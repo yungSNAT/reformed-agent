@@ -895,6 +895,81 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn write_deny_matches_the_stores_whatever_their_case_or_stream_suffix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&hermes_home).expect("home");
+        let denied = |rel: &str| {
+            is_write_denied_with_roots(&hermes_home.join(rel), None, Some(&hermes_home))
+        };
+
+        for rel in [
+            "AUTH/pool.json",
+            "Auth/tokens.json",
+            "MCP_AUTH.JSON",
+            "Auth.Json",
+            ".ENV",
+            "mcp_auth.json::$DATA",
+            "hub_token:alt",
+        ] {
+            assert!(denied(rel), "{rel} was writable");
+        }
+        for rel in ["AUTHORITY.md", "Config.yaml", "notes:auth"] {
+            assert!(!denied(rel), "{rel} was denied");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_store_link_to_a_target_not_yet_created() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::os::unix::fs::symlink(
+            vault.join("custom.dat"),
+            hermes_home.join("auth/tokens.json"),
+        )
+        .expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("custom.dat"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_known_store_link_in_an_auth_folder_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        let auth = hermes_home.join("auth");
+        std::fs::create_dir_all(&auth).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::fs::write(vault.join("pool.dat"), "{}").expect("store");
+        std::os::unix::fs::symlink(vault.join("pool.dat"), auth.join("pool.json")).expect("link");
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o111)).expect("chmod");
+
+        let pool_denied =
+            is_write_denied_with_roots(&vault.join("pool.dat"), None, Some(&hermes_home));
+        let notes_denied =
+            is_write_denied_with_roots(&vault.join("notes.md"), None, Some(&hermes_home));
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        assert!(pool_denied, "the pool's link target was writable");
+        assert!(!notes_denied);
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_deny_follows_a_store_file_linked_out_of_the_auth_folder() {
