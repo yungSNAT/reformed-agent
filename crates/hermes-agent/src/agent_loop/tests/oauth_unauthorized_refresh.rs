@@ -126,6 +126,9 @@
             }
         });
         std::fs::write(auth_dir.join("tokens.json"), store.to_string()).expect("token store");
+        // Present already, as after any earlier refresh, so that tests which
+        // make the folder read-only can still take the lock.
+        std::fs::write(auth_dir.join("tokens.json.lock"), "").expect("token store lock file");
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
@@ -502,6 +505,25 @@
         assert_eq!(exchanged_while_held, 0);
         result.expect("the refresh goes ahead once the lock is released");
         assert_eq!(token_requests(&server).await, 1);
+    }
+
+    #[tokio::test]
+    async fn store_lock_that_cannot_be_taken_stops_the_refresh() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let lock_path = home.path().join("auth").join("tokens.json.lock");
+        std::fs::remove_file(&lock_path).expect("remove the lock file");
+        std::fs::create_dir(&lock_path).expect("a folder where the lock file belongs");
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let err = agent
+            .call_llm_with_retry(&user_context(), &[], None, None)
+            .await
+            .expect_err("the 401 stands without the store lock");
+
+        assert!(err.to_string().contains("401"), "{err}");
+        assert_eq!(provider.sent_keys(), ["old-access"]);
+        assert_eq!(token_requests(&server).await, 0);
     }
 
     #[tokio::test(start_paused = true)]
