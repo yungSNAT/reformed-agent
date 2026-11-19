@@ -1365,3 +1365,24 @@ async fn test_commands_longer_than_a_windows_command_line_run() {
         "{wait}"
     );
 }
+
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn diag_kill_process_repeated() {
+    for round in 0..25 {
+        let backend = std::sync::Arc::new(LocalBackend::new(60, 1_048_576));
+        let started = backend
+            .execute_command("sleep 30; echo unreachable", None, None, true, false)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+        let session_id = payload["session_id"]
+            .as_str()
+            .expect("session_id")
+            .to_string();
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        eprintln!("DIAG round {round} pid {}", payload["pid"]);
+        let killed = backend.kill_process(&session_id).await;
+        assert!(killed.is_ok(), "round {round}: {killed:?}");
+    }
+}

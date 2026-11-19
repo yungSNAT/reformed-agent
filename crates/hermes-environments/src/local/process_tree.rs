@@ -172,6 +172,7 @@ pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
                 size,
             )
         };
+        eprintln!("DIAG member {pid} of {pgid}: written {written}/{size} status {} pgid {} ppid {} errno {:?}", info.pbi_status, info.pbi_pgid, info.pbi_ppid, io::Error::last_os_error());
         if written == size {
             info.pbi_status == libc::SZOMB
         } else {
