@@ -93,13 +93,14 @@ const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".config/gh",
 ];
 /// Credential stores under the active Hermes home, each denied with
-/// everything below it: provider keys (`.env`); the token store, credential
-/// pool, provenance key and Gemini OAuth file (`auth/`); MCP server tokens
-/// (`mcp_auth.json`) and the skills hub token (`hub_token`). A file in `auth/`
-/// that links elsewhere is denied where it points, too. `auth.json` and
-/// `config.yaml` stay writable, as upstream
-/// keeps its control files (upstream #45947).
-const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] = &[".env", "auth", "mcp_auth.json", "hub_token"];
+/// everything below it: provider keys (`.env`); the Nous OAuth token
+/// (`auth.json`); the token store, credential pool, provenance key and Gemini
+/// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
+/// hub token (`hub_token`). A file in `auth/` that links elsewhere is denied
+/// where it points, too. `config.yaml` stays writable, as upstream keeps its
+/// control files (upstream #45947).
+const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] =
+    &[".env", "auth.json", "auth", "mcp_auth.json", "hub_token"];
 
 // ---------------------------------------------------------------------------
 // Content secret patterns
@@ -273,6 +274,9 @@ pub fn is_protected_file(path: &Path) -> bool {
 /// judged where the local backend writes it (`resolve_path` in
 /// hermes-environments): `~` is the `HOME` or `USERPROFILE` value as set, and
 /// another relative path sits under a non-empty `TERMINAL_CWD`.
+///
+/// This guards the file tools only: the terminal tool (redirects, `cp`, `mv`,
+/// `ln`) is outside it, as upstream's rule is defence in depth, not a boundary.
 ///
 /// shortcut: the path is judged before the write, not at it, so a symlink
 /// swapped in between is followed. Closing that needs the write itself to

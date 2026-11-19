@@ -441,6 +441,8 @@ impl ToolHandler for PatchHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
+        CredentialGuard::new().check_write_access(Path::new(path), new_string)?;
+
         self.backend
             .patch_file(path, old_string, new_string, replace_all)
             .await

@@ -109,30 +109,27 @@ impl FileMemoryBackend {
 
     async fn write_file(&self, path: &std::path::Path, content: &str) -> Result<(), ToolError> {
         self.ensure_dir().await?;
-        // A symlinked memory file keeps its link: the target is replaced.
-        let path = &hermes_config::resolve_symlink_target(path);
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                ToolError::ExecutionFailed(format!("Failed to create {}: {}", parent.display(), e))
-            })?;
-        }
-        let tmp = Self::temp_path_for(path);
-        if let Err(e) = tokio::fs::write(&tmp, content).await {
+        // A symlinked memory file keeps its link and the target's mode, but
+        // the entries are text the model chose, so the link may not lead into
+        // a protected path.
+        let target = hermes_config::resolve_symlink_target(path);
+        if crate::credential_guard::is_write_denied(&target) {
             return Err(ToolError::ExecutionFailed(format!(
-                "Failed to write temporary memory file '{}': {}",
-                tmp.display(),
-                e
-            )));
-        }
-        if let Err(e) = tokio::fs::rename(&tmp, path).await {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(ToolError::ExecutionFailed(format!(
-                "Failed to atomically replace '{}': {}",
+                "Write denied: memory file '{}' links to the protected path '{}'",
                 path.display(),
-                e
+                target.display()
             )));
         }
-        Ok(())
+        let content = content.as_bytes().to_vec();
+        tokio::task::spawn_blocking(move || hermes_config::atomic_write_bytes(&target, &content))
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Memory write task failed: {e}")))?
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!(
+                    "Failed to write memory file '{}': {e}",
+                    path.display()
+                ))
+            })
     }
 
     fn parse_entries(content: &str) -> Vec<String> {
@@ -205,18 +202,6 @@ impl FileMemoryBackend {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0)
-    }
-
-    fn temp_path_for(path: &Path) -> PathBuf {
-        let file_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("memory");
-        path.with_file_name(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            Self::now_nanos()
-        ))
     }
 
     fn backup_path_for(path: &Path) -> PathBuf {
