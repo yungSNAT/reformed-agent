@@ -1287,11 +1287,11 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
         "the shell's exit was not seen"
     );
 
-    let with_live_member = process_tree::only_zombies_in_group(pid as libc::pid_t);
+    let with_live_member = process_tree::group_has_exited(pid as libc::pid_t);
     tree.kill().unwrap();
     let mut after_kill = false;
     for _ in 0..50 {
-        after_kill = process_tree::only_zombies_in_group(pid as libc::pid_t);
+        after_kill = process_tree::group_has_exited(pid as libc::pid_t);
         if after_kill {
             break;
         }
@@ -1299,8 +1299,11 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
     }
     child.wait().await.unwrap();
 
-    assert!(!with_live_member, "a live member was taken for a zombie");
-    assert!(after_kill, "the group was not seen as zombies only");
+    assert!(
+        !with_live_member,
+        "a live member was taken for one that has ended"
+    );
+    assert!(after_kill, "the group was not seen as ended");
 }
 
 #[tokio::test]

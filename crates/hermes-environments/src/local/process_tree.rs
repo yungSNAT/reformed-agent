@@ -121,24 +121,27 @@ impl ProcessTree {
             return Ok(());
         }
         let err = io::Error::last_os_error();
-        // macOS leaves zombies out when it signals a group and answers EPERM
-        // when it signalled nobody, where Linux counts a zombie as signalled.
-        // The leader stays unreaped until the last signal, so a group whose
-        // members have all exited gets EPERM there.
+        // macOS signals neither zombies nor, at times, processes already in
+        // exit, and answers EPERM when it signalled nobody; Linux counts a
+        // zombie as signalled. The leader stays unreaped until the last
+        // signal, so a group whose members have all exited or are exiting
+        // gets EPERM there.
         #[cfg(target_os = "macos")]
-        if err.raw_os_error() == Some(libc::EPERM) && only_zombies_in_group(self.pgid) {
+        if err.raw_os_error() == Some(libc::EPERM) && group_has_exited(self.pgid) {
             return Ok(());
         }
         Err(err)
     }
 }
 
-/// Whether every process left in group `pgid` has exited. False when the
-/// group cannot be listed or a member's state cannot be read (another user's
-/// process, for one), so a live member that refused a signal is never taken
-/// for a zombie.
+/// Whether every process left in group `pgid` is a zombie or in exit, which
+/// it cannot leave. False when the group cannot be listed or a member's state
+/// cannot be read (another user's process, for one), so a live member that
+/// refused a signal is never taken for one that has ended.
 #[cfg(target_os = "macos")]
-pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
+pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
+    /// `PROC_FLAG_INEXIT` in `<sys/proc_info.h>`, which libc does not export.
+    const PROC_FLAG_INEXIT: u32 = 4;
     use std::mem::size_of;
 
     let mut pids: Vec<libc::pid_t> = vec![0; 16];
@@ -172,9 +175,9 @@ pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
                 size,
             )
         };
-        eprintln!("DIAG member {pid} of {pgid}: written {written}/{size} status {} pgid {} ppid {} errno {:?}", info.pbi_status, info.pbi_pgid, info.pbi_ppid, io::Error::last_os_error());
+        eprintln!("DIAG member {pid} of {pgid}: written {written}/{size} status {} flags {:#x} pgid {} ppid {} errno {:?}", info.pbi_status, info.pbi_flags, info.pbi_pgid, info.pbi_ppid, io::Error::last_os_error());
         if written == size {
-            info.pbi_status == libc::SZOMB
+            info.pbi_status == libc::SZOMB || info.pbi_flags & PROC_FLAG_INEXIT != 0
         } else {
             // A member reaped since the listing has gone.
             written == 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
