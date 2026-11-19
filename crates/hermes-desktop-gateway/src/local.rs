@@ -10,7 +10,7 @@
 //! ensure refuses such a home too, so neither side trusts a socket another user could replace.
 //!
 //! shortcut: one profile a process (no multiplexer), no long-path socket pointer (a home whose
-//! socket path is over 104 bytes refuses to start), no restart drain or update fence, no code
+//! socket path is over 103 bytes refuses to start), no restart drain or update fence, no code
 //! identity (`code_sha` null, which the desktop attaches to as-is), and Unix only (upstream's
 //! Windows named pipe with its SID checks is not ported). Upgrade path: upstream's modules above.
 
@@ -33,8 +33,8 @@ const CAPABILITY: &str = "session-authority-v1";
 const SOCKET: &str = "gateway.sock";
 const LOCK: &str = "gateway.lock";
 const STATE: &str = "gateway_state.json";
-/// Longest socket path every Unix accepts (macOS's `sun_path`).
-const MAX_SOCKET_PATH: usize = 104;
+/// Longest socket path every Unix accepts (macOS's 104-byte `sun_path`, with its NUL).
+const MAX_SOCKET_PATH: usize = 103;
 /// Longest request or reply line on the control socket.
 const MAX_LINE: usize = 64 << 10;
 /// How long one control connection may take to send its line or read the reply.
@@ -138,8 +138,8 @@ fn pid_alive(pid: u32) -> bool {
             || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
 }
 
-/// The pid of the live process `<home>/gateway.lock` names: alive, not this process, and with
-/// the start time the lock recorded when it recorded one.
+/// The pid of the live process `<home>/gateway.lock` names: alive, and with the start time the
+/// lock recorded when it recorded one.
 fn lock_owner(home: &Path) -> Option<u32> {
     let raw = std::fs::read(home.join(LOCK)).ok()?;
     let lock: Value = serde_json::from_slice(&raw).ok()?;
@@ -149,7 +149,7 @@ fn lock_owner(home: &Path) -> Option<u32> {
         (Some(recorded), Some(live)) => recorded == live,
         _ => true,
     };
-    (pid != std::process::id() && pid_alive(pid) && same_process).then_some(pid)
+    (pid_alive(pid) && same_process).then_some(pid)
 }
 
 /// Creates `path` with mode 0600 and `contents`; fails if it exists.
@@ -201,12 +201,22 @@ fn claim_lock(home: &Path) -> Result<(PathBuf, (u64, u64)), String> {
 /// it is never reachable with looser permissions, and a stale socket or link there is replaced.
 fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), String> {
     let target = home.join(SOCKET);
-    let staging = home.join(format!(".gateway-sock-{}", uuid::Uuid::new_v4().simple()));
+    // Short: the staged path is the longest this binds.
+    let staging = home.join(format!(
+        ".g{}",
+        &uuid::Uuid::new_v4().simple().to_string()[..6]
+    ));
+    let staged = staging.join(SOCKET);
+    if staged.as_os_str().len() > MAX_SOCKET_PATH {
+        return Err(format!(
+            "the control socket path {} is longer than {MAX_SOCKET_PATH} bytes; use a shorter HERMES_HOME",
+            staged.display()
+        ));
+    }
     std::fs::DirBuilder::new()
         .mode(0o700)
         .create(&staging)
         .map_err(|e| format!("cannot create {}: {e}", staging.display()))?;
-    let staged = staging.join(SOCKET);
     let result = (|| {
         let listener = std::os::unix::net::UnixListener::bind(&staged)
             .map_err(|e| format!("cannot bind {}: {e}", staged.display()))?;
@@ -237,13 +247,6 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
 pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
-    let socket_path = home.join(SOCKET);
-    if socket_path.as_os_str().len() > MAX_SOCKET_PATH {
-        return Err(format!(
-            "the control socket path {} is longer than {MAX_SOCKET_PATH} bytes; use a shorter HERMES_HOME",
-            socket_path.display()
-        ));
-    }
     let mut runtime = LocalRuntime {
         api_origin: String::new(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
@@ -259,7 +262,7 @@ pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
         .port();
     runtime.api_origin = format!("http://127.0.0.1:{port}");
     let (control, identity) = bind_control(&home)?;
-    runtime.files.push((socket_path, identity));
+    runtime.files.push((home.join(SOCKET), identity));
 
     let tickets = Arc::new(Tickets::default());
     let app = router(Auth::Native(Arc::clone(&tickets)), port, chat);

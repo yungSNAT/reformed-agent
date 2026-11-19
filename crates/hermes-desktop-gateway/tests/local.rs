@@ -30,7 +30,8 @@ async fn start(home: &Path) -> LocalRuntime {
     local::start(home, chat).await.expect("the runtime starts")
 }
 
-/// One request line to the control socket and its one reply line, as the desktop sends them.
+/// One request line to the control socket and its one reply line, as the desktop sends them. It
+/// blocks, so the tests that call it run on a multi-threaded runtime, where the server keeps running.
 fn control(home: &Path, request: Value) -> Value {
     let mut stream = UnixStream::connect(home.join("gateway.sock")).unwrap();
     stream
@@ -69,7 +70,7 @@ async fn refused_status(request: tungstenite::handshake::client::Request) -> u16
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn identify_names_a_ready_session_authority_runtime_for_this_home() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -98,7 +99,7 @@ async fn identify_names_a_ready_session_authority_runtime_for_this_home() {
     assert_eq!(status.status(), 200);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn the_runtime_publishes_its_owner_files_privately_and_removes_them_when_dropped() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -117,7 +118,7 @@ async fn the_runtime_publishes_its_owner_files_privately_and_removes_them_when_d
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn a_second_runtime_for_the_same_home_is_refused() {
     let (_dir, home) = private_home();
     let _runtime = start(&home).await;
@@ -126,7 +127,7 @@ async fn a_second_runtime_for_the_same_home_is_refused() {
     assert!(err.contains("already"), "{err}");
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn a_lock_and_socket_left_by_a_dead_owner_are_replaced() {
     let (_dir, home) = private_home();
     let mut child = Command::new("true").spawn().unwrap();
@@ -144,7 +145,7 @@ async fn a_lock_and_socket_left_by_a_dead_owner_are_replaced() {
 
 /// As upstream, the runtime still starts (its messaging side needs no ticket), but its socket
 /// mints nothing and ensure names the repair.
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -170,7 +171,7 @@ async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -237,7 +238,7 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
     }
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn rest_needs_a_one_use_native_http_ticket_and_no_origin() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -269,7 +270,7 @@ async fn rest_needs_a_one_use_native_http_ticket_and_no_origin() {
     assert_eq!(request.send().await.unwrap().status(), 401);
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn session_ticket_refuses_anything_but_upstreams_exact_request() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
@@ -370,7 +371,7 @@ fn never_spawned() -> Command {
     Command::new("/nonexistent/should-not-run")
 }
 
-#[tokio::test]
+#[tokio::test(flavor = "multi_thread")]
 async fn ensure_reports_a_running_owner_in_upstreams_verdict_shape() {
     let (_dir, home) = private_home();
     let runtime = start(&home).await;
