@@ -269,11 +269,11 @@ impl Chat {
         let Some(Value::String(id)) = params.get("session_id") else {
             return Err((INVALID_PARAMS, "session_id must be a string".into()));
         };
-        // As upstream, an absent, null or blank `content_base64` gives way to `data`.
+        // As upstream, an absent, null or empty `content_base64` gives way to `data`.
         let mut payload = None;
         for key in ["content_base64", "data"] {
             match params.get(key) {
-                Some(Value::String(text)) if !text.trim().is_empty() => {
+                Some(Value::String(text)) if !text.is_empty() => {
                     payload = Some(text);
                     break;
                 }
@@ -281,7 +281,7 @@ impl Chat {
                 Some(_) => return Err((INVALID_PARAMS, format!("{key} must be a string"))),
             }
         }
-        let Some(payload) = payload else {
+        let Some(payload) = payload.filter(|text| !text.trim().is_empty()) else {
             return Err((ATTACHMENT_REQUIRED, "content_base64 required".into()));
         };
         let Some(session) = self.lock_sessions().get(id).cloned() else {

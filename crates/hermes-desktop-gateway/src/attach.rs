@@ -150,7 +150,7 @@ fn image_kind(data: &[u8]) -> Option<(&'static str, &'static str)> {
 }
 
 /// Creates `dir` and its parents, `dir` itself owner-only when made, and refuses it when it is a
-/// link or a file.
+/// link or a file, or on Windows when its volume keeps no file permissions.
 fn private_folder(dir: &Path) -> Result<(), String> {
     #[cfg(not(windows))]
     let made = {
@@ -173,6 +173,9 @@ fn private_folder(dir: &Path) -> Result<(), String> {
     if !fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
         return Err(format!("{} is not a folder", dir.display()));
     }
+    #[cfg(windows)]
+    owner_only::require_permissions(dir)
+        .map_err(|e| format!("cannot keep {} owner-only: {e}", dir.display()))?;
     Ok(())
 }
 
@@ -320,10 +323,11 @@ fn file_name(name: &str) -> String {
 /// `create_private_profile` makes profile folders.
 #[cfg(windows)]
 mod owner_only {
-    use std::fs::File;
+    use std::fs::{File, OpenOptions};
     use std::io;
     use std::os::windows::ffi::OsStrExt;
-    use std::os::windows::io::FromRawHandle;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
     use std::path::Path;
     use std::ptr::null_mut;
 
@@ -333,12 +337,51 @@ mod owner_only {
     };
     use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
     use windows_sys::Win32::Storage::FileSystem::{
-        CreateDirectoryW, CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
-        FILE_SHARE_READ, FILE_SHARE_WRITE,
+        CreateDirectoryW, CreateFileW, GetVolumeInformationByHandleW, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
     };
+    use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
 
     /// Protected, and inherited by what a folder holds.
     const OWNER_ONLY: &str = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+    /// Refuses `dir` when its volume keeps no security descriptors (FAT32 or exFAT, say), where
+    /// the creates below would succeed without protecting anything.
+    pub(super) fn require_permissions(dir: &Path) -> io::Result<()> {
+        let folder = OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)?;
+        let mut flags = 0;
+        // The handle and the flags buffer remain valid for the call.
+        let read = unsafe {
+            GetVolumeInformationByHandleW(
+                folder.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                &mut flags,
+                null_mut(),
+                0,
+            )
+        };
+        if read == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        keeps_permissions(flags)
+    }
+
+    pub(super) fn keeps_permissions(volume_flags: u32) -> io::Result<()> {
+        if volume_flags & FILE_PERSISTENT_ACLS == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the volume keeps no file permissions",
+            ));
+        }
+        Ok(())
+    }
 
     pub(super) fn create_dir(path: &Path) -> io::Result<()> {
         let name = wide(path)?;
