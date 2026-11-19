@@ -968,6 +968,24 @@ mod tests {
         WebhookAdapter::validate_auth_safety(&config).unwrap();
     }
 
+    /// The documented loopback hosts start, not only `127.0.0.1`.
+    #[tokio::test]
+    async fn loopback_host_names_start() {
+        for host in ["127.0.0.1", "localhost", "::1"] {
+            let adapter = WebhookAdapter::new(WebhookConfig {
+                host: host.into(),
+                port: 0,
+                path: "/webhook".into(),
+                secret: INSECURE_NO_AUTH.into(),
+                rate_limit: default_webhook_rate_limit(),
+                max_body_bytes: default_webhook_max_body_bytes(),
+                routes: BTreeMap::new(),
+            });
+            adapter.start().await.unwrap_or_else(|e| panic!("{host}: {e}"));
+            adapter.stop().await.unwrap();
+        }
+    }
+
     #[test]
     fn insecure_no_auth_signature_bypass_is_explicit_sentinel_only() {
         assert!(WebhookAdapter::verify_hmac_signature(
