@@ -34,15 +34,14 @@ pub(super) fn spawn(cmd: &mut Command) -> io::Result<(Child, ProcessTree)> {
 
 /// Waits until the child `pid` has exited, without reaping it, so its
 /// process id, and the group id it leads, cannot be reused until the caller
-/// reaps it.
+/// reaps it. Returns false, without waiting, when `pid` cannot be waited on.
 #[cfg(unix)]
-pub(super) async fn wait_unreaped(pid: u32) {
+pub(super) async fn wait_unreaped(pid: u32) -> bool {
     use tokio::signal::unix::{signal, SignalKind};
 
-    // Listening before the first check means no exit is missed.
-    let Ok(mut exits) = signal(SignalKind::child()) else {
-        return;
-    };
+    // Listening before the first check means no exit is missed; without a
+    // listener the check is repeated every 100 ms.
+    let mut exits = signal(SignalKind::child()).ok();
     loop {
         // SAFETY: an all-zero siginfo_t is a valid value.
         let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
@@ -50,12 +49,22 @@ pub(super) async fn wait_unreaped(pid: u32) {
         // SAFETY: waitid writes only into `info`, and WNOWAIT leaves the
         // child unreaped.
         let rc = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
-        // SAFETY: waitid filled `info` (or left it zeroed under WNOHANG).
-        if rc != 0 || unsafe { info.si_pid() } != 0 {
-            return;
+        if rc != 0 {
+            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return false;
         }
-        if exits.recv().await.is_none() {
-            return;
+        // SAFETY: waitid filled `info` (or left it zeroed under WNOHANG).
+        if unsafe { info.si_pid() } != 0 {
+            return true;
+        }
+        if let Some(listener) = exits.as_mut() {
+            if listener.recv().await.is_none() {
+                exits = None;
+            }
+        } else {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
 }

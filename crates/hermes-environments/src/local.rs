@@ -526,12 +526,14 @@ impl TerminalBackend for LocalBackend {
 
             tokio::spawn(async move {
                 let _script_file = script_file;
+                // Reaping under the lock only once the exit is seen, so a
+                // failed wait cannot hold the lock for the command's life.
                 #[cfg(unix)]
-                let _signalling = {
-                    if let Some(pid) = pid {
-                        process_tree::wait_unreaped(pid).await;
+                let _signalling = match pid {
+                    Some(pid) if process_tree::wait_unreaped(pid).await => {
+                        Some(signal_lock.lock_owned().await)
                     }
-                    signal_lock.lock_owned().await
+                    _ => None,
                 };
                 #[cfg(not(unix))]
                 drop(signal_lock);
