@@ -175,7 +175,6 @@ pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
                 size,
             )
         };
-        eprintln!("DIAG member {pid} of {pgid}: written {written}/{size} status {} flags {:#x} pgid {} ppid {} errno {:?}", info.pbi_status, info.pbi_flags, info.pbi_pgid, info.pbi_ppid, io::Error::last_os_error());
         if written == size {
             info.pbi_status == libc::SZOMB || info.pbi_flags & PROC_FLAG_INEXIT != 0
         } else {
