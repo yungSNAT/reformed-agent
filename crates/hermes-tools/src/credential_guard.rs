@@ -1067,6 +1067,37 @@ mod tests {
         ));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_dangling_link_at_a_top_level_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&hermes_home).expect("home");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        for store in [".env", "auth.json", "mcp_auth.json", "hub_token"] {
+            let target = vault.join(format!("new-{store}"));
+            std::os::unix::fs::symlink(&target, hermes_home.join(store)).expect("link");
+            assert!(
+                is_write_denied_with_roots(&target, None, Some(&hermes_home)),
+                "{store}"
+            );
+        }
+        std::os::unix::fs::symlink(vault.join("new-auth"), hermes_home.join("auth"))
+            .expect("auth link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("new-auth").join("tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
     #[test]
     fn write_deny_expands_tilde_against_home_root() {
         let tmp = tempfile::tempdir().expect("tempdir");

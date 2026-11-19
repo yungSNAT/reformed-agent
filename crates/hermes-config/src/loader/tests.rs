@@ -679,6 +679,25 @@ fn atomic_write_keeps_the_file_mode() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn atomic_temp_file_is_created_with_the_target_mode() {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Created owner-only, before any byte or mode change, so no other
+    // account can open it in the meantime.
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir.path().join("tokens.json");
+    std::fs::write(&target, "{}").unwrap();
+    std::fs::set_permissions(&target, std::fs::Permissions::from_mode(0o600)).unwrap();
+    let temp = dir.path().join(".tokens.json.tmp");
+
+    let _file = create_temp_file(&temp, &target).unwrap();
+
+    let mode = std::fs::metadata(&temp).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode, 0o600, "the temp file started at {mode:o}");
+}
+
 #[cfg(windows)]
 #[test]
 fn atomic_write_keeps_an_explicit_acl_entry() {

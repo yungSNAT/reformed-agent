@@ -2141,6 +2141,7 @@ dependencies = [
  "futures",
  "hermes-config",
  "hermes-core",
+ "hermes-environments",
  "hermes-intelligence",
  "hermes-skills",
  "hex",

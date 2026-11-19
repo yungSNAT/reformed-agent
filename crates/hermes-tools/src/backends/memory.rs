@@ -603,6 +603,45 @@ mod tests {
         assert!(!keys.exists(), "the protected file was written");
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn add_judges_a_relative_memory_link_where_it_writes_it() {
+        // A relative memory folder (a relative `HERMES_HOME`) with a
+        // relative link: the write lands under the process folder, so the
+        // link's target is judged there, not under `TERMINAL_CWD`.
+        let cwd = std::env::current_dir().unwrap();
+        let local = tempfile::Builder::new()
+            .prefix(".memory-link-test-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let name = local.path().file_name().unwrap().to_owned();
+        let home = local.path().join("home");
+        let keys = home.join(".ssh").join("authorized_keys");
+        std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
+        let memories = local.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        std::os::unix::fs::symlink("../home/.ssh/authorized_keys", memories.join("MEMORY.md"))
+            .unwrap();
+        let backend = FileMemoryBackend::with_dir(Path::new(&name).join("memories"));
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let result = crate::test_env::with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(elsewhere.path())),
+            ],
+            || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(backend.add("memory", "Planted."))
+            },
+        );
+
+        let err = result.expect_err("a relative memory link reached ~/.ssh");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert!(!keys.exists(), "the protected file was written");
+    }
+
     #[test]
     fn add_works_whilst_a_write_safe_root_is_set() {
         let temp = tempfile::tempdir().unwrap();
