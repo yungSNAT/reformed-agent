@@ -11,8 +11,9 @@ use std::time::{Duration, Instant};
 use assert_cmd::cargo::cargo_bin;
 use serde_json::Value;
 
+/// A root under /tmp, whose short path leaves room for the socket wherever TMPDIR points.
 fn private_root() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in("/tmp").unwrap();
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let root = std::fs::canonicalize(dir.path()).unwrap();
     (dir, root)
@@ -118,6 +119,65 @@ fn ensure_starts_one_gateway_run_owner_and_then_attaches_to_it() {
         !home.join("gateway.sock").exists(),
         "the owner removed its socket"
     );
+}
+
+#[test]
+fn concurrent_ensures_converge_on_one_owner() {
+    let (_dir, home) = private_root();
+    let _owner = Owner(home.clone());
+    let clients: Vec<_> = (0..2)
+        .map(|_| {
+            Command::new(cargo_bin("hermes"))
+                .env("HERMES_HOME", &home)
+                .args(["gateway", "ensure", "--json"])
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped())
+                .spawn()
+                .unwrap()
+        })
+        .collect();
+    let verdicts: Vec<Value> = clients
+        .into_iter()
+        .map(|client| {
+            let output = client.wait_with_output().unwrap();
+            let ready = verdict(&output);
+            assert_eq!(output.status.code(), Some(0), "{ready}");
+            ready
+        })
+        .collect();
+    assert_eq!(
+        verdicts[0]["endpoint"]["instance_id"],
+        verdicts[1]["endpoint"]["instance_id"]
+    );
+    assert!(alive(lock_pid(&home)));
+}
+
+/// A home whose socket path would not fit runs the messaging gateway as before, without local mode.
+#[test]
+fn gateway_run_in_a_home_too_deep_for_a_socket_runs_without_local_mode() {
+    let (_dir, root) = private_root();
+    let home = root.join("d".repeat(100));
+    std::fs::create_dir(&home).unwrap();
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let mut run = Command::new(cargo_bin("hermes"))
+        .env("HERMES_HOME", &home)
+        .args(["gateway", "run"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    let pid_file = home.join("gateway.pid");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !pid_file.exists() && run.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let running = run.try_wait().unwrap().is_none();
+    let _ = Command::new("kill").arg(run.id().to_string()).status();
+    let output = run.wait_with_output().unwrap();
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(running && pid_file.exists(), "{stderr}");
+    assert!(stderr.contains("Desktop local mode is off"), "{stderr}");
+    assert!(!home.join("gateway.lock").exists());
 }
 
 #[test]

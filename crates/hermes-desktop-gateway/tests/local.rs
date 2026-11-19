@@ -6,6 +6,7 @@
 #![cfg(unix)]
 
 use std::io::{BufRead, BufReader, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
@@ -17,8 +18,9 @@ use hermes_desktop_gateway::local::{self, LocalRuntime};
 use serde_json::{json, Value};
 use tokio_tungstenite::tungstenite::{self, client::IntoClientRequest, Message};
 
+/// A home under /tmp, whose short path leaves room for the socket wherever TMPDIR points.
 fn private_home() -> (tempfile::TempDir, PathBuf) {
-    let dir = tempfile::tempdir().unwrap();
+    let dir = tempfile::tempdir_in("/tmp").unwrap();
     std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
     let home = std::fs::canonicalize(dir.path()).unwrap();
     (dir, home)
@@ -127,20 +129,77 @@ async fn a_second_runtime_for_the_same_home_is_refused() {
     assert!(err.contains("already"), "{err}");
 }
 
+/// Holds `<home>/gateway.lock` as a running owner does.
+fn hold_lock(home: &Path) -> std::fs::File {
+    let file = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(home.join("gateway.lock"))
+        .unwrap();
+    // SAFETY: flock on a descriptor `file` keeps open.
+    assert_eq!(
+        unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) },
+        0
+    );
+    file
+}
+
+/// The lock names a live process that is no owner, as after a crash and pid reuse: no process
+/// holds it, so it is free.
 #[tokio::test(flavor = "multi_thread")]
-async fn a_lock_and_socket_left_by_a_dead_owner_are_replaced() {
+async fn a_lock_and_socket_left_by_a_gone_owner_are_replaced_even_when_its_pid_lives() {
     let (_dir, home) = private_home();
-    let mut child = Command::new("true").spawn().unwrap();
-    let dead = child.id();
-    child.wait().unwrap();
-    std::fs::write(home.join("gateway.lock"), format!("{{\"pid\": {dead}}}")).unwrap();
+    let mut unrelated = Command::new("sleep").arg("30").spawn().unwrap();
+    std::fs::write(
+        home.join("gateway.lock"),
+        format!("{{\"pid\": {}}}", unrelated.id()),
+    )
+    .unwrap();
     let stale = std::os::unix::net::UnixListener::bind(home.join("gateway.sock")).unwrap();
     drop(stale);
-    let runtime = start(&home).await;
+    let started = local::start(
+        &home,
+        hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default()),
+    )
+    .await;
+    unrelated.kill().unwrap();
+    unrelated.wait().unwrap();
+    let runtime = started.expect("the runtime starts");
     assert_eq!(
         identify(&home)["result"]["instance_id"],
         runtime.instance_id()
     );
+    let lock: Value =
+        serde_json::from_slice(&std::fs::read(home.join("gateway.lock")).unwrap()).unwrap();
+    assert_eq!(lock["pid"], std::process::id());
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
+    let (_dir, home) = private_home();
+    let held = hold_lock(&home);
+    let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
+    let err = local::start(&home, chat).await.err().expect("refused");
+    assert!(err.contains("already"), "{err}");
+    drop(held);
+    drop(start(&home).await);
+    drop(start(&home).await);
+}
+
+#[test]
+fn a_home_too_deep_for_a_socket_path_is_named_and_not_started() {
+    let (_dir, home) = private_home();
+    assert!(local::control_socket_fits(&home));
+    let deep = home.join("d".repeat(100));
+    std::fs::create_dir(&deep).unwrap();
+    std::fs::set_permissions(&deep, std::fs::Permissions::from_mode(0o700)).unwrap();
+    assert!(!local::control_socket_fits(&deep));
+    let (verdict, text, code) = ensure(&deep, Duration::from_secs(2), never_spawned());
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["state"], "inaccessible");
+    assert_eq!(verdict["reason_code"], "control_path_too_long");
+    assert!(!deep.join("logs").exists(), "nothing started");
 }
 
 /// As upstream, the runtime still starts (its messaging side needs no ticket), but its socket
@@ -449,15 +508,8 @@ fn ensure_answers_starting_at_its_deadline_and_starts_one_owner_only() {
 #[test]
 fn ensure_waits_for_a_live_lock_holder_instead_of_starting_another() {
     let (_dir, home) = private_home();
-    let mut holder = Command::new("sleep").arg("5").spawn().unwrap();
-    std::fs::write(
-        home.join("gateway.lock"),
-        format!("{{\"pid\": {}}}", holder.id()),
-    )
-    .unwrap();
+    let _held = hold_lock(&home);
     let (verdict, text, code) = ensure(&home, Duration::from_millis(500), never_spawned());
-    holder.kill().unwrap();
-    holder.wait().unwrap();
     assert_eq!(code, 5, "{text}");
     assert_eq!(verdict["state"], "starting");
 }
