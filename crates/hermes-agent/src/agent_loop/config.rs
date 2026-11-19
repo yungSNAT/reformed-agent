@@ -101,8 +101,9 @@ static UNSAVED_OAUTH_CREDENTIALS: Mutex<UnsavedOAuthCredentials> = Mutex::new(BT
 /// `tokens.json.lock` file lock for other processes, so that one refresh
 /// token is exchanged once.
 /// shortcut: hermes-auth's `FileTokenStore` (the CLI login) takes neither
-/// lock and writes from the copy it loaded when opened. Upgrade: have it take
-/// the file lock and reload before each write.
+/// lock and writes from the copy it loaded when opened, so a login running
+/// alongside a refresh can overwrite the refresh token rotated here. Upgrade:
+/// have it take the file lock and reload before each write.
 static OAUTH_STORE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
@@ -114,6 +115,8 @@ const SKILLS_GUIDANCE: &str = "After completing a complex task (5+ tool calls), 
 
 const CONVERSATIONAL_SUPPORT_GUIDANCE: &str = "# Conversational support protocol\nWhen users share personal stress, emotions, or difficult decisions, start with a brief non-judgmental acknowledgment, ask one clarifying question if context is missing, then offer practical options with trade-offs. Keep factual or technical requests direct and do not force emotional language where it does not fit. Do not present yourself as a therapist or crisis service; when safety risk appears, urge the user to seek immediate professional or emergency help.";
 const OAUTH_REFRESH_BACKOFF_SECS: u64 = 60;
+/// Longest wait for a token endpoint during an OAuth refresh.
+const OAUTH_REFRESH_TIMEOUT_SECS: u64 = 30;
 const SESSION_OBJECTIVE_PREFIX: &str = "[SESSION_OBJECTIVE] ";
 const OBJECTIVE_PATCH_TAG: &str = "PATCH_VERIFIED:";
 const OBJECTIVE_ANALYTICS_TAG: &str = "ANALYTICS_VERIFIED:";

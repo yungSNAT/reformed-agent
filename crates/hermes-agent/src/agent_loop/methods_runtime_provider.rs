@@ -606,9 +606,19 @@ impl AgentLoop {
             client_secret: None,
             client_auth_method: hermes_auth::OAuth2ClientAuthMethod::default(),
         };
-        let cred = exchange_refresh_token(provider_key, &endpoints, refresh_token)
-            .await
-            .map_err(|e| AgentError::AuthFailed(e.to_string()))?;
+        // The store locks are held across the exchange, so a token endpoint
+        // that never answers must not hold every loop on this home.
+        let cred = tokio::time::timeout(
+            Duration::from_secs(OAUTH_REFRESH_TIMEOUT_SECS),
+            exchange_refresh_token(provider_key, &endpoints, refresh_token),
+        )
+        .await
+        .map_err(|_| {
+            AgentError::AuthFailed(format!(
+                "token endpoint did not answer within {OAUTH_REFRESH_TIMEOUT_SECS}s"
+            ))
+        })?
+        .map_err(|e| AgentError::AuthFailed(e.to_string()))?;
         Ok(OAuthStoreCredential {
             provider: Some(provider_key.to_string()),
             access_token: cred.access_token,
