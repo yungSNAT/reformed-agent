@@ -54,7 +54,7 @@ fn stage_within(
         return Err(format!("attachment larger than {limit} bytes"));
     }
     let dir = attachments_folder(workspace)?;
-    let (path, file) = create_new(&dir, &file_name(name), 0o666)?;
+    let (path, file) = create_new(&dir, &file_name(name), false)?;
     if let Err(e) = decode_into(payload, file) {
         let _ = fs::remove_file(&path);
         return Err(e);
@@ -100,8 +100,7 @@ pub(crate) struct StagedImage {
 /// name and hints are not used, so it cannot choose where or as what the file lands. Nothing
 /// is written for a payload that is refused.
 ///
-/// On Unix the folder (when made) and the file are owner-only. On Windows both inherit the
-/// Hermes home's permissions, as upstream's files and Reformed's credential stores do.
+/// The folder (when made) and the file are owner-only, whatever the permissions around them.
 pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, ImageError> {
     let payload = base64_payload(payload).ok_or_else(|| ImageError::Invalid(INVALID.into()))?;
     if decoded_len(payload) > MAX_IMAGE_BYTES {
@@ -120,8 +119,8 @@ pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, I
     let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
     private_folder(images).map_err(ImageError::Write)?;
     let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
-    // Owner-only on Unix, as upstream's mkstemp, whatever the folder's own mode.
-    let (path, mut file) = create_new(images, &name, 0o600).map_err(ImageError::Write)?;
+    // Owner-only, as upstream's mkstemp on Unix, whatever the folder allows.
+    let (path, mut file) = create_new(images, &name, true).map_err(ImageError::Write)?;
     if let Err(e) = file.write_all(&data) {
         let _ = fs::remove_file(&path);
         return Err(ImageError::Write(format!("cannot write the image: {e}")));
@@ -150,16 +149,26 @@ fn image_kind(data: &[u8]) -> Option<(&'static str, &'static str)> {
     }
 }
 
-/// Creates `dir` and its parents, `dir` itself owner-only on Unix, and refuses it when it is a
+/// Creates `dir` and its parents, `dir` itself owner-only when made, and refuses it when it is a
 /// link or a file.
 fn private_folder(dir: &Path) -> Result<(), String> {
-    let mut builder = fs::DirBuilder::new();
-    builder.recursive(true);
-    #[cfg(unix)]
-    std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
-    builder
-        .create(dir)
-        .map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    #[cfg(not(windows))]
+    let made = {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)
+    };
+    #[cfg(windows)]
+    let made = dir
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| match owner_only::create_dir(dir) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+            made => made,
+        });
+    made.map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
     // `symlink_metadata` describes a link (a Windows junction included), not its target.
     if !fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
         return Err(format!("{} is not a folder", dir.display()));
@@ -239,9 +248,10 @@ fn attachments_folder(workspace: &Path) -> Result<PathBuf, String> {
     Ok(dir)
 }
 
-/// Creates a new file in `dir` named `name`, or `<stem>-2<ext>` and so on when it is taken,
-/// with Unix permissions `mode` before the umask.
-fn create_new(dir: &Path, name: &str, mode: u32) -> Result<(PathBuf, File), String> {
+/// Creates a new file in `dir` named `name`, or `<stem>-2<ext>` and so on when it is taken.
+/// A `private` file is owner-only (mode 0600 on Unix, `owner_only` on Windows); any other
+/// takes mode 0666 before the umask on Unix and the folder's permissions on Windows.
+fn create_new(dir: &Path, name: &str, private: bool) -> Result<(PathBuf, File), String> {
     let (stem, ext) = match name.rfind('.') {
         Some(dot) if dot > 0 => name.split_at(dot),
         _ => (name, ""),
@@ -249,16 +259,21 @@ fn create_new(dir: &Path, name: &str, mode: u32) -> Result<(PathBuf, File), Stri
     let mut options = OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
-    #[cfg(not(unix))]
-    let _ = mode;
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, if private { 0o600 } else { 0o666 });
+    let open = |path: &Path| {
+        #[cfg(windows)]
+        if private {
+            return owner_only::create_new(path);
+        }
+        options.open(path)
+    };
     let mut candidate = name.to_string();
     for n in 2u64.. {
         let path = dir.join(&candidate);
         // Any existing entry, a dangling link included, takes the name: Windows' create-new
         // follows a dangling link and would create its target.
         if fs::symlink_metadata(&path).is_err() {
-            match options.open(&path) {
+            match open(&path) {
                 Ok(file) => return Ok((path, file)),
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
@@ -298,6 +313,105 @@ fn file_name(name: &str) -> String {
         return "attachment".to_string();
     }
     safe
+}
+
+/// Windows creation with a protected security descriptor, so nothing is inherited from the
+/// folders above: full access for the owner, SYSTEM and administrators only, as hermes-cli's
+/// `create_private_profile` makes profile folders.
+#[cfg(windows)]
+mod owner_only {
+    use std::fs::File;
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::io::FromRawHandle;
+    use std::path::Path;
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Foundation::{LocalFree, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateDirectoryW, CreateFileW, CREATE_NEW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_DELETE,
+        FILE_SHARE_READ, FILE_SHARE_WRITE,
+    };
+
+    /// Protected, and inherited by what a folder holds.
+    const OWNER_ONLY: &str = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+    pub(super) fn create_dir(path: &Path) -> io::Result<()> {
+        let name = wide(path)?;
+        with_owner_only(|security| {
+            // The name and attributes remain valid for the synchronous call.
+            if unsafe { CreateDirectoryW(name.as_ptr(), security) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })
+    }
+
+    /// A new file open for writing, as `OpenOptions::new().write(true).create_new(true)`.
+    pub(super) fn create_new(path: &Path) -> io::Result<File> {
+        let name = wide(path)?;
+        with_owner_only(|security| {
+            let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+            // The name and attributes remain valid for the synchronous call.
+            let handle = unsafe {
+                CreateFileW(
+                    name.as_ptr(),
+                    GENERIC_WRITE,
+                    share,
+                    security,
+                    CREATE_NEW,
+                    FILE_ATTRIBUTE_NORMAL,
+                    null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            // The handle is new, valid and owned by nothing else.
+            Ok(unsafe { File::from_raw_handle(handle) })
+        })
+    }
+
+    fn with_owner_only<T>(
+        create: impl FnOnce(&SECURITY_ATTRIBUTES) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let sddl: Vec<u16> = OWNER_ONLY.encode_utf16().chain([0]).collect();
+        let mut descriptor = null_mut();
+        // The input is NUL-terminated and the output lives until `LocalFree` below.
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                null_mut(),
+            )
+        };
+        if converted == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let security = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let created = create(&security);
+        // The descriptor was allocated by the conversion above.
+        unsafe { LocalFree(descriptor) };
+        created
+    }
+
+    fn wide(path: &Path) -> io::Result<Vec<u16>> {
+        let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if name.contains(&0) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        name.push(0);
+        Ok(name)
+    }
 }
 
 #[cfg(test)]
@@ -542,6 +656,48 @@ mod tests {
         let staged = stage_image(images.path(), "iVBORw0KGgoB").unwrap();
         let mode = fs::metadata(&staged.path).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_image_is_owner_only_in_an_existing_open_folder() {
+        let icacls = |path: &Path, grant: &[&str]| {
+            let out = std::process::Command::new("icacls")
+                .arg(path)
+                .args(grant)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "icacls {}", path.display());
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let images = tempfile::tempdir().unwrap();
+        // Everyone (S-1-1-0) may read whatever the folder holds.
+        icacls(images.path(), &["/grant", "*S-1-1-0:(OI)(CI)R"]);
+        let plain = images.path().join("plain.txt");
+        fs::write(&plain, "x").unwrap();
+        assert!(
+            icacls(&plain, &[]).contains("Everyone"),
+            "the folder is open"
+        );
+
+        let staged = stage_image(images.path(), "iVBORw0KGgoB").unwrap();
+        let acl = icacls(&staged.path, &[]);
+        assert!(!acl.contains("Everyone") && !acl.contains("(I)"), "{acl}");
+        assert_eq!(fs::read(&staged.path).unwrap(), b"\x89PNG\r\n\x1a\n\x01");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_new_images_folder_is_owner_only() {
+        let home = tempfile::tempdir().unwrap();
+        let images = home.path().join("images");
+        stage_image(&images, "iVBORw0KGgoB").unwrap();
+        let out = std::process::Command::new("icacls")
+            .arg(&images)
+            .output()
+            .unwrap();
+        let acl = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && !acl.contains("(I)"), "{acl}");
     }
 
     #[cfg(unix)]
