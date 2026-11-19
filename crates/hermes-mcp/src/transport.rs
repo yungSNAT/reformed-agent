@@ -10,7 +10,7 @@
 //! - Error handling and connection lifecycle
 
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -157,6 +157,100 @@ fn is_sensitive_env_key(key: &str) -> bool {
         || upper.contains("SESSION")
 }
 
+/// Variables a stdio server inherits from Hermes, as upstream's
+/// `_build_safe_env` passes them; none holds a secret.
+const INHERITED_ENV_KEYS: &[&str] = &[
+    "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
+];
+
+/// Windows process and location variables, matched case-insensitively.
+/// A Windows server often fails without them: `cmd.exe` needs `PATHEXT` to
+/// run a bare `node`, and networking fails without `SYSTEMROOT`.
+const INHERITED_WINDOWS_ENV_KEYS: &[&str] = &[
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMPUTERNAME",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+];
+
+fn is_windows_env_key(key: &str) -> bool {
+    INHERITED_WINDOWS_ENV_KEYS.contains(&key.to_ascii_uppercase().as_str())
+}
+
+fn is_inherited_env_key(key: &str) -> bool {
+    // Windows variable names are case-insensitive, and `Path` is the usual
+    // spelling there.
+    let named = if cfg!(windows) {
+        INHERITED_ENV_KEYS.contains(&key.to_ascii_uppercase().as_str())
+    } else {
+        INHERITED_ENV_KEYS.contains(&key)
+    };
+    named || is_windows_env_key(key) || key.starts_with("XDG_")
+}
+
+/// A server's environment before sanitising: the inherited variables, then
+/// its configured `env`, which wins.
+fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(key, _)| is_inherited_env_key(key))
+        .collect();
+    for (key, value) in configured {
+        if cfg!(windows) {
+            env.retain(|inherited, _| !inherited.eq_ignore_ascii_case(key));
+        }
+        env.insert(key.clone(), value.clone());
+    }
+    env
+}
+
+/// The program to start for `command`. On Windows, Rust's `Command` finds
+/// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`; the name
+/// is looked up through `PATHEXT` on the server's own `PATH` instead.
+fn program_for(command: &str, env: &HashMap<String, String>, cwd: Option<&Path>) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let path = env
+            .iter()
+            .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value);
+        let cwd = cwd
+            .map(Path::to_path_buf)
+            .or_else(|| std::env::current_dir().ok());
+        if let (Some(path), Some(cwd)) = (path, cwd) {
+            if let Ok(found) = which::which_in(command, Some(path), cwd) {
+                return found;
+            }
+        }
+    }
+    #[cfg(not(windows))]
+    let _ = (env, cwd);
+    PathBuf::from(command)
+}
+
 fn sanitize_child_env(
     env: &HashMap<String, String>,
     profile: McpSandboxProfile,
@@ -183,7 +277,8 @@ fn sanitize_child_env(
                 || key_upper == "TERM"
                 || key_upper.starts_with("LC_")
                 || key_upper.starts_with("MCP_")
-                || key_upper.starts_with("HERMES_MCP_");
+                || key_upper.starts_with("HERMES_MCP_")
+                || is_windows_env_key(k);
             if !allowed_strict {
                 continue;
             }
@@ -349,7 +444,7 @@ impl StdioTransport {
     }
 
     fn effective_child_env(&self, profile: McpSandboxProfile) -> HashMap<String, String> {
-        let mut env = sanitize_child_env(&self.env, profile);
+        let mut env = sanitize_child_env(&child_env_with_inherited(&self.env), profile);
         if self.suppress_interactive_oauth {
             env.insert(
                 "HERMES_MCP_BACKGROUND_DISCOVERY".to_string(),
@@ -395,7 +490,8 @@ impl McpTransport for StdioTransport {
             self.command, self.args
         );
 
-        let mut cmd = Command::new(&self.command);
+        let cwd = sandbox_cwd(sandbox_profile);
+        let mut cmd = Command::new(program_for(&self.command, &sanitized_env, cwd.as_deref()));
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -404,7 +500,7 @@ impl McpTransport for StdioTransport {
             // reconnect) may never read stdin to see EOF.
             .kill_on_drop(true);
 
-        if let Some(cwd) = sandbox_cwd(sandbox_profile) {
+        if let Some(cwd) = cwd {
             cmd.current_dir(cwd);
         }
 
@@ -1459,6 +1555,11 @@ mod tests {
 
         let parent_path = std::env::var("PATH").expect("the test runs with a PATH");
         assert_eq!(path_entries(&env), vec![&parent_path]);
+        let foreign: Vec<_> = env.keys().filter(|k| !is_inherited_env_key(k)).collect();
+        assert!(
+            foreign.is_empty(),
+            "variables outside the inherited set: {foreign:?}"
+        );
     }
 
     #[test]

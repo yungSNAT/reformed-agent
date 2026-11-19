@@ -18,6 +18,9 @@ use tokio::task::JoinHandle;
 use hermes_config::{TerminalConfig, TerminalHomeMode};
 use hermes_core::{subprocess::CommandNoWindowExt, AgentError, CommandOutput, TerminalBackend};
 
+mod process_tree;
+use process_tree::ProcessTree;
+
 const PROCESS_OUTPUT_WINDOW_CHARS: usize = 200_000;
 const PROCESS_PREVIEW_CHARS: usize = 1_000;
 const PROCESS_WAIT_OUTPUT_CHARS: usize = 2_000;
@@ -31,6 +34,7 @@ struct ProcessSession {
     id: String,
     command: String,
     pid: Option<u32>,
+    tree: Arc<ProcessTree>,
     started_at: u64,
     status: Arc<Mutex<ProcessStatus>>,
     output: Arc<Mutex<String>>,
@@ -284,11 +288,9 @@ impl LocalBackend {
         spawn_label: &str,
         timeout_label: &str,
     ) -> Result<CommandOutput, AgentError> {
-        configure_foreground_process_group(&mut cmd);
-        let child = cmd
-            .spawn()
+        let (child, tree) = process_tree::spawn(&mut cmd)
             .map_err(|e| AgentError::Io(format!("Failed to spawn {spawn_label}: {e}")))?;
-        let mut child_guard = ForegroundChildGuard::new(child);
+        let mut child_guard = ForegroundChildGuard::new(child, tree);
         if let Some(payload) = stdin_payload {
             if let Some(mut stdin) = child_guard.child_mut().stdin.take() {
                 stdin
@@ -346,8 +348,7 @@ impl LocalBackend {
                 "Failed to wait for {spawn_label}: {e}"
             ))),
             Err(_) => {
-                terminate_child_process(child_guard.child_mut()).await;
-                child_guard.disarm();
+                child_guard.terminate().await;
                 if let Some(handle) = stdout_task.take() {
                     Self::finish_or_abort_reader(handle).await;
                 }
@@ -356,42 +357,6 @@ impl LocalBackend {
                 }
                 Err(AgentError::Timeout(format!(
                     "{timeout_label} timed out after {timeout_secs} seconds"
-                )))
-            }
-        }
-    }
-
-    fn terminate_pid(pid: u32) -> Result<(), AgentError> {
-        #[cfg(unix)]
-        {
-            let status = std::process::Command::new("kill")
-                .arg("-TERM")
-                .arg(pid.to_string())
-                .suppress_windows_console()
-                .status()
-                .map_err(|e| AgentError::Io(format!("Failed to invoke kill for pid {pid}: {e}")))?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(AgentError::Io(format!(
-                    "Failed to terminate pid {pid} (exit status: {status})"
-                )))
-            }
-        }
-        #[cfg(not(unix))]
-        {
-            let status = std::process::Command::new("taskkill")
-                .args(["/PID", &pid.to_string(), "/T", "/F"])
-                .suppress_windows_console()
-                .status()
-                .map_err(|e| {
-                    AgentError::Io(format!("Failed to invoke taskkill for pid {pid}: {e}"))
-                })?;
-            if status.success() {
-                Ok(())
-            } else {
-                Err(AgentError::Io(format!(
-                    "Failed to terminate pid {pid} (exit status: {status})"
                 )))
             }
         }
@@ -468,7 +433,7 @@ impl TerminalBackend for LocalBackend {
             }
         }
 
-        let mut cmd = if pty {
+        let (mut cmd, script_file) = if pty {
             #[cfg(unix)]
             {
                 let mut pty_cmd = TokioCommand::new("script");
@@ -477,21 +442,17 @@ impl TerminalBackend for LocalBackend {
                     .arg("/dev/null")
                     .arg("-c")
                     .arg(&command_with_profiles);
-                pty_cmd
+                (pty_cmd, None)
             }
             #[cfg(not(unix))]
             {
                 tracing::warn!(
                     "PTY mode is not supported on this platform; using standard shell execution"
                 );
-                let mut shell_cmd = TokioCommand::new("sh");
-                shell_cmd.arg("-c").arg(&command_with_profiles);
-                shell_cmd
+                shell_command(&command_with_profiles)?
             }
         } else {
-            let mut shell_cmd = TokioCommand::new("sh");
-            shell_cmd.arg("-c").arg(&command_with_profiles);
-            shell_cmd
+            shell_command(&command_with_profiles)?
         };
         cmd.stdout(Stdio::piped()).stderr(Stdio::piped());
         scrub_subprocess_env(&mut cmd, &self.env_passthrough);
@@ -518,8 +479,7 @@ impl TerminalBackend for LocalBackend {
         }
 
         let result = tokio::time::timeout(std::time::Duration::from_secs(timeout_secs), async {
-            let mut child = cmd
-                .spawn()
+            let (mut child, tree) = process_tree::spawn(&mut cmd)
                 .map_err(|e| AgentError::Io(format!("Failed to spawn command: {}", e)))?;
 
             let session_id = Self::next_process_session_id();
@@ -532,6 +492,7 @@ impl TerminalBackend for LocalBackend {
                 id: session_id.clone(),
                 command: rewritten_command.clone(),
                 pid,
+                tree: Arc::new(tree),
                 started_at: Self::now_unix_ts(),
                 status: status.clone(),
                 output: output.clone(),
@@ -556,6 +517,7 @@ impl TerminalBackend for LocalBackend {
             }
 
             tokio::spawn(async move {
+                let _script_file = script_file;
                 match child.wait().await {
                     Ok(exit) => {
                         let mut guard = status.lock().unwrap_or_else(|e| e.into_inner());
@@ -681,10 +643,8 @@ impl TerminalBackend for LocalBackend {
             }
         }
 
-        let mut cmd = TokioCommand::new("sh");
-        cmd.arg("-c")
-            .arg(&command_with_profiles)
-            .stdout(Stdio::piped())
+        let (mut cmd, _script_file) = shell_command(&command_with_profiles)?;
+        cmd.stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::piped());
         scrub_subprocess_env(&mut cmd, &self.env_passthrough);
@@ -913,12 +873,9 @@ impl TerminalBackend for LocalBackend {
                 "exit_code": status.exit_code
             }));
         }
-        let pid = session.pid.ok_or_else(|| {
-            AgentError::Io(format!(
-                "Cannot terminate process {session_id}: missing pid"
-            ))
+        session.tree.terminate().map_err(|e| {
+            AgentError::Io(format!("Failed to terminate process {session_id}: {e}"))
         })?;
-        Self::terminate_pid(pid)?;
 
         {
             let mut guard = session.status.lock().unwrap_or_else(|e| e.into_inner());
