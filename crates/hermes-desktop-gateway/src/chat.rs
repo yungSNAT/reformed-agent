@@ -269,12 +269,20 @@ impl Chat {
         let Some(Value::String(id)) = params.get("session_id") else {
             return Err((INVALID_PARAMS, "session_id must be a string".into()));
         };
-        let payload = match params.get("content_base64").or_else(|| params.get("data")) {
-            Some(Value::String(payload)) if !payload.trim().is_empty() => payload,
-            None | Some(Value::String(_)) => {
-                return Err((ATTACHMENT_REQUIRED, "content_base64 required".into()));
+        // As upstream, an absent, null or blank `content_base64` gives way to `data`.
+        let mut payload = None;
+        for key in ["content_base64", "data"] {
+            match params.get(key) {
+                Some(Value::String(text)) if !text.trim().is_empty() => {
+                    payload = Some(text);
+                    break;
+                }
+                None | Some(Value::Null | Value::String(_)) => {}
+                Some(_) => return Err((INVALID_PARAMS, format!("{key} must be a string"))),
             }
-            Some(_) => return Err((INVALID_PARAMS, "content_base64 must be a string".into())),
+        }
+        let Some(payload) = payload else {
+            return Err((ATTACHMENT_REQUIRED, "content_base64 required".into()));
         };
         let Some(session) = self.lock_sessions().get(id).cloned() else {
             return Err((SESSION_NOT_FOUND, "session not found".into()));
@@ -416,17 +424,21 @@ impl Chat {
     }
 }
 
-/// The prompt `text` with `images`, as upstream's `build_native_content_parts`: its words (the
-/// text, then an `[Image attached at: <path>]` marker per staged file), which the session
-/// keeps, and the content the model gets, those words as a text part and then each image as a
-/// `data:` URL part.
-fn with_images(text: String, images: &[StagedImage]) -> Result<(String, String), String> {
-    use base64::Engine as _;
+/// The words a session keeps for a prompt `text` with `images`, as upstream's
+/// `build_native_content_parts`: the text, then an `[Image attached at: <path>]` marker per
+/// staged file.
+fn with_markers(text: String, images: &[StagedImage]) -> String {
     let markers: Vec<String> = images
         .iter()
         .map(|image| format!("[Image attached at: {}]", image.path.display()))
         .collect();
-    let words = format!("{text}\n\n{}", markers.join("\n"));
+    format!("{text}\n\n{}", markers.join("\n"))
+}
+
+/// The content the model gets for a prompt's `words` and `images`: the words as a text part,
+/// then each image as a `data:` URL part.
+fn with_images(words: String, images: &[StagedImage]) -> Result<String, String> {
+    use base64::Engine as _;
     let mut parts = vec![json!({"type": "text", "text": words})];
     for image in images {
         let data = std::fs::read(&image.path)
@@ -438,8 +450,7 @@ fn with_images(text: String, images: &[StagedImage]) -> Result<(String, String),
         );
         parts.push(json!({"type": "image_url", "image_url": {"url": url}}));
     }
-    let content = format!("{PARTS_PREFIX}{}", Value::Array(parts));
-    Ok((words, content))
+    Ok(format!("{PARTS_PREFIX}{}", Value::Array(parts)))
 }
 
 /// Gives the newest user row in `rows` that holds image parts its text parts' text instead,
@@ -547,14 +558,11 @@ impl Turn {
             .model()
             .ok_or("no model is configured: run `hermes model`")?
             .to_string();
-        // The model gets the images; the session keeps the prompt's words.
-        let (text, content) = if images.is_empty() {
-            (text, None)
+        let sent_images = !images.is_empty();
+        let text = if sent_images {
+            with_markers(text, &images)
         } else {
-            let (words, content) = tokio::task::spawn_blocking(move || with_images(text, &images))
-                .await
-                .map_err(|e| e.to_string())??;
-            (words, Some(content))
+            text
         };
         let id = self.id.clone();
         let mut transcript = self
@@ -568,10 +576,24 @@ impl Turn {
             .take_while(|m| m.role == MessageRole::System)
             .count();
         let mut messages = transcript[prompt_rows..].to_vec();
-        let sent_images = content.is_some();
-        messages.push(Message::user(content.unwrap_or_else(|| text.clone())));
-        transcript.push(Message::user(text));
-        let mut result = match self.answer(&model, messages, session, streamed).await {
+        transcript.push(Message::user(text.clone()));
+        // The model gets the images; the session keeps the prompt's words, also when an image
+        // can no longer be read.
+        let content = if sent_images {
+            tokio::task::spawn_blocking(move || with_images(text, &images))
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()))
+        } else {
+            Ok(text)
+        };
+        let answered = match content {
+            Ok(content) => {
+                messages.push(Message::user(content));
+                self.answer(&model, messages, session, streamed).await
+            }
+            Err(error) => Err(error),
+        };
+        let mut result = match answered {
             Ok(result) => result,
             Err(error) => {
                 // As upstream keeps the user's row once a prompt is admitted, a failed turn

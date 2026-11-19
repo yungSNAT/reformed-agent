@@ -96,9 +96,12 @@ pub(crate) struct StagedImage {
 }
 
 /// Writes the image `payload` (base64, bare or as a `data:` URL) holds to a new file in
-/// `images`, made owner-only if absent. The bytes decide the type and the name's extension;
-/// the client's name and hints are not used, so it cannot choose where or as what the file
-/// lands. Nothing is written for a payload that is refused.
+/// `images`, made if absent. The bytes decide the type and the name's extension; the client's
+/// name and hints are not used, so it cannot choose where or as what the file lands. Nothing
+/// is written for a payload that is refused.
+///
+/// On Unix the folder (when made) and the file are owner-only. On Windows both inherit the
+/// Hermes home's permissions, as upstream's files and Reformed's credential stores do.
 pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, ImageError> {
     let payload = base64_payload(payload).ok_or_else(|| ImageError::Invalid(INVALID.into()))?;
     if decoded_len(payload) > MAX_IMAGE_BYTES {
@@ -117,7 +120,7 @@ pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, I
     let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
     private_folder(images).map_err(ImageError::Write)?;
     let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
-    // Owner-only, as upstream's mkstemp, whatever the folder's own mode.
+    // Owner-only on Unix, as upstream's mkstemp, whatever the folder's own mode.
     let (path, mut file) = create_new(images, &name, 0o600).map_err(ImageError::Write)?;
     if let Err(e) = file.write_all(&data) {
         let _ = fs::remove_file(&path);

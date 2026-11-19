@@ -55,9 +55,10 @@ pub const MAX_MESSAGE_BYTES: usize = 16 << 20;
 /// single `file.attach` or `image.attach_bytes` request with a string or number id and its
 /// method's data is read, into fixed fields, so its parse costs about its size; anything else
 /// closes the connection.
-// shortcut: such a message is held twice while parsed (the text and its data), up to
-// 768 MiB a connection, and connections are not limited. Upgrade path: a streaming reader
-// that decodes the data_url as it arrives.
+// shortcut: such a message is held 2 or 3 times while parsed (the text, its data and, when the
+// data holds an escape, the parser's scratch copy), up to about 1.1 GiB a connection, and
+// connections are not limited. Upgrade path: a streaming reader that decodes the data as it
+// arrives.
 pub const ATTACH_MAX_MESSAGE_BYTES: usize = 384 << 20;
 
 /// Most requests one JSON-RPC batch may hold; a longer batch gets a single -32600. It bounds
@@ -370,7 +371,26 @@ fn attach_request(text: &str) -> Option<Value> {
         #[serde(default, deserialize_with = "present")]
         id: Option<Id>,
         method: String,
-        params: Params,
+        params: Object<Params>,
+    }
+    /// `T` read from a JSON object only: a derived struct also takes an array of its fields
+    /// in order, which is no JSON-RPC request.
+    struct Object<T>(T);
+    impl<'de, T: serde::Deserialize<'de>> serde::Deserialize<'de> for Object<T> {
+        fn deserialize<D: serde::Deserializer<'de>>(from: D) -> Result<Self, D::Error> {
+            struct Fields<T>(std::marker::PhantomData<T>);
+            impl<'de, T: serde::Deserialize<'de>> serde::de::Visitor<'de> for Fields<T> {
+                type Value = T;
+                fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                    f.write_str("an object")
+                }
+                fn visit_map<A: serde::de::MapAccess<'de>>(self, map: A) -> Result<T, A::Error> {
+                    T::deserialize(serde::de::value::MapAccessDeserializer::new(map))
+                }
+            }
+            from.deserialize_map(Fields(std::marker::PhantomData))
+                .map(Object)
+        }
     }
     fn present<'de, D: serde::Deserializer<'de>>(from: D) -> Result<Option<Id>, D::Error> {
         serde::Deserialize::deserialize(from).map(Some)
@@ -417,14 +437,14 @@ fn attach_request(text: &str) -> Option<Value> {
             from.deserialize_any(Scalar).map(Id)
         }
     }
-    let request: Request = serde_json::from_str(text).ok()?;
-    let Params {
+    let Object(request): Object<Request> = serde_json::from_str(text).ok()?;
+    let Object(Params {
         session_id,
         data_url,
         name,
         content_base64,
         data,
-    } = request.params;
+    }) = request.params;
     let fields = match request.method.as_str() {
         "file.attach" if data_url.is_some() => [("data_url", data_url), ("name", name)],
         "image.attach_bytes" if content_base64.is_some() || data.is_some() => {
