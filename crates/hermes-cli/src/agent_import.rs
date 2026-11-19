@@ -2077,6 +2077,7 @@ enabled = false
         std::fs::create_dir_all(&home).unwrap();
         make_fifo(&codex.join("memories/notes.md"));
         make_fifo(&codex.join("skills/odd/SKILL.md"));
+        make_fifo(&codex.join("skills/stray"));
 
         let report = import_agent(&AgentImportRequest {
             agent: SourceAgent::Codex,
@@ -2090,6 +2091,7 @@ enabled = false
             "error        memories/notes.md: ",
             "error        skill odd: ",
             "error        skill nested: ",
+            "error        skill stray: ",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
