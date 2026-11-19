@@ -10,7 +10,7 @@
 //! - Error handling and connection lifecycle
 
 use std::collections::{HashMap, VecDeque};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -203,12 +203,9 @@ fn is_windows_env_key(key: &str) -> bool {
 fn is_inherited_env_key(key: &str) -> bool {
     // Windows variable names are case-insensitive, and `Path` is the usual
     // spelling there.
-    let named = if cfg!(windows) {
-        INHERITED_ENV_KEYS.contains(&key.to_ascii_uppercase().as_str())
-    } else {
-        INHERITED_ENV_KEYS.contains(&key)
-    };
-    named || is_windows_env_key(key) || key.starts_with("XDG_")
+    let upper = key.to_ascii_uppercase();
+    let name = if cfg!(windows) { upper.as_str() } else { key };
+    INHERITED_ENV_KEYS.contains(&name) || is_windows_env_key(key) || name.starts_with("XDG_")
 }
 
 /// A server's environment before sanitising: the inherited variables, then
@@ -228,26 +225,46 @@ fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<Str
 }
 
 /// The program to start for `command`. On Windows, Rust's `Command` finds
-/// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`; the name
-/// is looked up through `PATHEXT` on the server's own `PATH` instead.
-fn program_for(command: &str, env: &HashMap<String, String>, cwd: Option<&Path>) -> PathBuf {
+/// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`. A bare
+/// name is looked up on the server's own `PATH` through its `PATHEXT`,
+/// keeping only the kinds `Command` can start: Node installs an extensionless
+/// shell script named `npx` beside `npx.cmd`.
+fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
     #[cfg(windows)]
-    {
-        let path = env
-            .iter()
-            .find(|(key, _)| key.eq_ignore_ascii_case("PATH"))
-            .map(|(_, value)| value);
-        let cwd = cwd
-            .map(Path::to_path_buf)
-            .or_else(|| std::env::current_dir().ok());
-        if let (Some(path), Some(cwd)) = (path, cwd) {
-            if let Ok(found) = which::which_in(command, Some(path), cwd) {
-                return found;
+    if !command.contains(['/', '\\']) {
+        const STARTABLE: [&str; 4] = ["com", "exe", "bat", "cmd"];
+        let startable = |ext: &str| STARTABLE.iter().any(|s| s.eq_ignore_ascii_case(ext));
+        let var = |name: &str| {
+            env.iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.as_str())
+        };
+        let named_extension = std::path::Path::new(command)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(startable);
+        let candidates: Vec<String> = if named_extension {
+            vec![command.to_string()]
+        } else {
+            var("PATHEXT")
+                .unwrap_or(".COM;.EXE;.BAT;.CMD")
+                .split(';')
+                .filter_map(|ext| ext.strip_prefix('.'))
+                .filter(|ext| startable(ext))
+                .map(|ext| format!("{command}.{ext}"))
+                .collect()
+        };
+        for dir in std::env::split_paths(var("PATH").unwrap_or_default()) {
+            for candidate in &candidates {
+                let path = dir.join(candidate);
+                if path.is_file() {
+                    return path;
+                }
             }
         }
     }
     #[cfg(not(windows))]
-    let _ = (env, cwd);
+    let _ = env;
     PathBuf::from(command)
 }
 
@@ -490,8 +507,7 @@ impl McpTransport for StdioTransport {
             self.command, self.args
         );
 
-        let cwd = sandbox_cwd(sandbox_profile);
-        let mut cmd = Command::new(program_for(&self.command, &sanitized_env, cwd.as_deref()));
+        let mut cmd = Command::new(program_for(&self.command, &sanitized_env));
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -500,7 +516,7 @@ impl McpTransport for StdioTransport {
             // reconnect) may never read stdin to see EOF.
             .kill_on_drop(true);
 
-        if let Some(cwd) = cwd {
+        if let Some(cwd) = sandbox_cwd(sandbox_profile) {
             cmd.current_dir(cwd);
         }
 

@@ -54,9 +54,11 @@ pub(super) fn spawn(cmd: &mut Command) -> io::Result<(Child, ProcessTree)> {
 
 #[cfg(unix)]
 impl ProcessTree {
-    /// Asks every process in the tree to stop (SIGTERM).
+    /// Asks every process in the tree to stop (SIGTERM), waking any that
+    /// a terminal read has stopped so they receive it.
     pub(super) fn terminate(&self) -> io::Result<()> {
-        self.signal(libc::SIGTERM)
+        self.signal(libc::SIGTERM)?;
+        self.signal(libc::SIGCONT)
     }
 
     /// Stops every process in the tree (SIGKILL).
@@ -120,8 +122,13 @@ impl ProcessTree {
         let pid = child
             .id()
             .ok_or_else(|| io::Error::other("the new process has no id"))?;
-        resume_threads(pid)?;
-        Ok(Self { job })
+        let tree = Self { job };
+        if let Err(err) = resume_threads(pid) {
+            // A thread resumed before the failure may have started children.
+            let _ = tree.kill();
+            return Err(err);
+        }
+        Ok(tree)
     }
 }
 

@@ -26,6 +26,9 @@ const PROCESS_PREVIEW_CHARS: usize = 1_000;
 const PROCESS_WAIT_OUTPUT_CHARS: usize = 2_000;
 const PROCESS_LOG_DEFAULT_LINES: usize = 200;
 const FOREGROUND_DRAIN_GRACE_MS: u64 = 120;
+/// How long a process tree has to stop after SIGTERM before SIGKILL.
+#[cfg(unix)]
+const PROCESS_TREE_TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
 
 static NEXT_PROCESS_ID: AtomicU64 = AtomicU64::new(1);
 
@@ -876,6 +879,13 @@ impl TerminalBackend for LocalBackend {
         session.tree.terminate().map_err(|e| {
             AgentError::Io(format!("Failed to terminate process {session_id}: {e}"))
         })?;
+        // A descendant that ignores SIGTERM is killed after the grace; the
+        // group may already be gone by then.
+        #[cfg(unix)]
+        {
+            tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
+            let _ = session.tree.kill();
+        }
 
         {
             let mut guard = session.status.lock().unwrap_or_else(|e| e.into_inner());

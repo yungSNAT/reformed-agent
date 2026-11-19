@@ -24,12 +24,13 @@ impl ForegroundChildGuard {
     async fn terminate(&mut self) {
         let _ = self.tree.terminate();
         let child = self.child.as_mut().expect("foreground child present");
+        // The group is killed even when the shell has exited: a descendant
+        // that ignores SIGTERM outlives it. The unreaped shell keeps its
+        // group id from being reused meanwhile.
         #[cfg(unix)]
         {
-            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-            if !matches!(child.try_wait(), Ok(Some(_))) {
-                let _ = self.tree.kill();
-            }
+            tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
+            let _ = self.tree.kill();
         }
         let _ = child.kill().await;
         let _ = child.wait().await;
