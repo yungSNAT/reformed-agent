@@ -1025,6 +1025,36 @@ mod tests {
         }
     }
 
+    /// An INSECURE_NO_AUTH bind starts exactly when every address its host resolves to here
+    /// is loopback: the host name alone decides nothing, since `localhost` can resolve
+    /// anywhere (a hosts file, a resolver that forwards the name).
+    #[tokio::test]
+    async fn insecure_no_auth_start_follows_the_resolved_addresses() {
+        for host in ["localhost", "127.0.0.1", "::1"] {
+            let all_loopback = match tokio::net::lookup_host((host, 0)).await {
+                Ok(addrs) => {
+                    let addrs: Vec<SocketAddr> = addrs.collect();
+                    !addrs.is_empty() && addrs.iter().all(|a| a.ip().to_canonical().is_loopback())
+                }
+                Err(_) => false,
+            };
+            let adapter = WebhookAdapter::new(WebhookConfig {
+                host: host.into(),
+                port: 0,
+                path: "/webhook".into(),
+                secret: INSECURE_NO_AUTH.into(),
+                rate_limit: default_webhook_rate_limit(),
+                max_body_bytes: default_webhook_max_body_bytes(),
+                routes: BTreeMap::new(),
+            });
+            let started = adapter.start().await;
+            if started.is_ok() {
+                adapter.stop().await.unwrap();
+            }
+            assert_eq!(started.is_ok(), all_loopback, "{host}: {started:?}");
+        }
+    }
+
     fn config_with_route_secret(host: &str, route_secret: &str) -> WebhookConfig {
         let mut routes = BTreeMap::new();
         routes.insert(
