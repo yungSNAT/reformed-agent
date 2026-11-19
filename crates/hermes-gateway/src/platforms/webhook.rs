@@ -1072,7 +1072,9 @@ mod tests {
     #[test]
     fn insecure_no_auth_needs_every_resolved_address_on_loopback() {
         let addrs = |list: &[&str]| -> Vec<SocketAddr> {
-            list.iter().map(|a| a.parse().expect("socket address")).collect()
+            list.iter()
+                .map(|a| a.parse().expect("socket address"))
+                .collect()
         };
         let mut global = config_with_route_secret("localhost", "route-secret");
         global.secret = INSECURE_NO_AUTH.into();
@@ -1087,7 +1089,10 @@ mod tests {
             ] {
                 let err = WebhookAdapter::validate_auth_safety(config, &addrs(refused))
                     .expect_err("refused");
-                assert!(err.to_string().contains("non-loopback"), "{refused:?}: {err}");
+                assert!(
+                    err.to_string().contains("non-loopback"),
+                    "{refused:?}: {err}"
+                );
             }
             for allowed in [
                 &["127.0.0.1:9000"][..],
