@@ -153,12 +153,24 @@ impl WebhookAdapter {
         &self.config
     }
 
+    /// Checks the global secret and each route's effective secret before the server starts.
     fn validate_auth_safety(config: &WebhookConfig) -> Result<(), GatewayError> {
-        if config.secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
-            return Err(GatewayError::Auth(
-                "webhook secret INSECURE_NO_AUTH is refused on non-loopback binds; unauthenticated webhook routes are only safe on loopback test binds"
-                    .to_string(),
-            ));
+        let routes = config.routes.iter().map(|(name, route)| {
+            let secret = route.secret.as_deref().unwrap_or(&config.secret);
+            (format!("route '{name}'"), secret)
+        });
+        let secrets = std::iter::once(("global".to_string(), config.secret.as_str())).chain(routes);
+        for (owner, secret) in secrets {
+            if is_blank_secret(secret) {
+                return Err(GatewayError::Auth(format!(
+                    "webhook {owner} secret is blank or encodes a blank key; set a secret, or INSECURE_NO_AUTH for a loopback test bind"
+                )));
+            }
+            if secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
+                return Err(GatewayError::Auth(format!(
+                    "webhook {owner} secret INSECURE_NO_AUTH is refused on non-loopback binds; unauthenticated webhook routes are only safe on loopback test binds"
+                )));
+            }
         }
         Ok(())
     }
@@ -224,6 +236,19 @@ impl WebhookAdapter {
 
         false
     }
+}
+
+/// True for a secret that gives a key anyone can guess: blank, or a Svix `whsec_` secret
+/// whose base64 key (decoded as `verify_svix_signature` does) is blank. HMAC pads a short
+/// key with zero bytes, so NUL counts as blank.
+fn is_blank_secret(secret: &str) -> bool {
+    let blank = |key: &[u8]| key.iter().all(|&b| b == 0 || b.is_ascii_whitespace());
+    let svix_key = secret.strip_prefix("whsec_").and_then(|encoded| {
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok()
+    });
+    secret.trim().is_empty() || blank(secret.as_bytes()) || svix_key.is_some_and(|key| blank(&key))
 }
 
 fn is_loopback_host(host: &str) -> bool {
@@ -520,6 +545,11 @@ async fn handle_webhook_request(
             None => write_empty_response(&mut writer, 404).await?,
         }
     } else if method == "GET" && path == format!("{}/outbound", config.path).as_str() {
+        // A poll drains the queue, so it needs the global secret as a POST does.
+        if !WebhookAdapter::validate_signature(&headers, body_bytes, &config.secret) {
+            write_json_response(&mut writer, 403, r#"{"error":"bad signature"}"#).await?;
+            return Ok(());
+        }
         let messages = outbound_queue.write().await.drain(..).collect::<Vec<_>>();
         let body = serde_json::to_string(&messages)?;
         write_json_response(&mut writer, 200, &body).await?;
@@ -968,6 +998,83 @@ mod tests {
         WebhookAdapter::validate_auth_safety(&config).unwrap();
     }
 
+    fn config_with_route_secret(host: &str, route_secret: &str) -> WebhookConfig {
+        let mut routes = BTreeMap::new();
+        routes.insert(
+            "open".into(),
+            WebhookRouteConfig {
+                secret: Some(route_secret.into()),
+                ..WebhookRouteConfig::default()
+            },
+        );
+        WebhookConfig {
+            host: host.into(),
+            port: 9000,
+            path: "/webhook".into(),
+            secret: "global-secret".into(),
+            rate_limit: default_webhook_rate_limit(),
+            max_body_bytes: default_webhook_max_body_bytes(),
+            routes,
+        }
+    }
+
+    /// A route's own INSECURE_NO_AUTH secret is refused on a public bind, as the global one is.
+    #[test]
+    fn route_insecure_no_auth_is_refused_for_public_bind() {
+        for secret in [INSECURE_NO_AUTH, " INSECURE_NO_AUTH "] {
+            let config = config_with_route_secret("0.0.0.0", secret);
+            let err = WebhookAdapter::validate_auth_safety(&config).unwrap_err();
+            assert!(err.to_string().contains("'open'"), "{err}");
+            assert!(err.to_string().contains("non-loopback"), "{err}");
+        }
+        let loopback = config_with_route_secret("127.0.0.1", INSECURE_NO_AUTH);
+        WebhookAdapter::validate_auth_safety(&loopback).unwrap();
+    }
+
+    /// A blank secret, or a Svix `whsec_` secret encoding a blank key, is an HMAC key anyone
+    /// knows, so it is refused on every bind. HMAC pads a short key with zero bytes, so an
+    /// all-NUL key signs as the empty key does.
+    #[test]
+    fn blank_secret_is_refused() {
+        assert_eq!(sign("\0", b"{}"), sign("", b"{}"));
+        for host in ["0.0.0.0", "127.0.0.1"] {
+            for secret in ["", "  ", "\0", "whsec_", "whsec_ICAg", "whsec_AA=="] {
+                let route = config_with_route_secret(host, secret);
+                let err = WebhookAdapter::validate_auth_safety(&route).unwrap_err();
+                assert!(err.to_string().contains("'open'"), "{err}");
+
+                let mut global = config_with_route_secret(host, "route-secret");
+                global.secret = secret.into();
+                assert!(WebhookAdapter::validate_auth_safety(&global).is_err());
+            }
+        }
+        let svix = config_with_route_secret("0.0.0.0", "whsec_YWdlbnRtYWlsLXNlY3JldA==");
+        WebhookAdapter::validate_auth_safety(&svix).unwrap();
+    }
+
+    /// Secrets that only look like a blank Svix key start, and sign with their own bytes.
+    #[test]
+    fn whsec_lookalike_secrets_start() {
+        let lookalikes = [" whsec_", "whsec_!!"];
+        for host in ["0.0.0.0", "127.0.0.1"] {
+            for secret in lookalikes {
+                let route = config_with_route_secret(host, secret);
+                WebhookAdapter::validate_auth_safety(&route).unwrap();
+                let mut global = config_with_route_secret(host, "route-secret");
+                global.secret = secret.into();
+                WebhookAdapter::validate_auth_safety(&global).unwrap();
+            }
+        }
+        for secret in lookalikes {
+            let signature = sign(secret, b"{}");
+            let headers = HashMap::from([("x-webhook-signature".to_string(), signature)]);
+            assert!(
+                WebhookAdapter::validate_signature(&headers, b"{}", secret),
+                "{secret}"
+            );
+        }
+    }
+
     #[test]
     fn insecure_no_auth_signature_bypass_is_explicit_sentinel_only() {
         assert!(WebhookAdapter::verify_hmac_signature(
@@ -1157,6 +1264,86 @@ mod tests {
             let reply = route_reply(&config, route, &signature).await;
             assert!(reply.starts_with("HTTP/1.1 2"), "{route}: {reply}");
         }
+    }
+
+    /// What `handle_webhook_request` replies to a raw `request`.
+    async fn request_reply(
+        config: &WebhookConfig,
+        outbound_queue: Arc<RwLock<VecDeque<OutboundMessage>>>,
+        request: &str,
+    ) -> String {
+        use tokio::io::AsyncReadExt;
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let mut client = tokio::net::TcpStream::connect(listener.local_addr().unwrap())
+            .await
+            .unwrap();
+        let (server, peer) = listener.accept().await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        handle_webhook_request(
+            server,
+            peer,
+            config.clone(),
+            outbound_queue,
+            Arc::new(RwLock::new(None)),
+            Arc::new(RwLock::new(HashMap::new())),
+            Arc::new(RwLock::new(HashMap::new())),
+        )
+        .await
+        .unwrap();
+        let mut reply = String::new();
+        client.read_to_string(&mut reply).await.unwrap();
+        reply
+    }
+
+    fn queue_of_one() -> Arc<RwLock<VecDeque<OutboundMessage>>> {
+        Arc::new(RwLock::new(VecDeque::from([OutboundMessage {
+            platform: None,
+            chat_id: "chat-1".into(),
+            text: "reply".into(),
+        }])))
+    }
+
+    fn poll(headers: &str) -> String {
+        format!("GET /webhook/outbound HTTP/1.1\r\n{headers}\r\n")
+    }
+
+    /// Polling the outbound queue drains it, so it needs the global secret on every bind.
+    #[tokio::test]
+    async fn outbound_poll_needs_the_global_secret() {
+        for host in ["0.0.0.0", "127.0.0.1"] {
+            let config = config_with_route_secret(host, "route-secret");
+            let queue = queue_of_one();
+            for headers in [
+                String::new(),
+                "X-Webhook-Signature: 00\r\n".to_string(),
+                format!("X-Webhook-Signature: {}\r\n", sign("route-secret", b"")),
+            ] {
+                let reply = request_reply(&config, queue.clone(), &poll(&headers)).await;
+                assert!(
+                    reply.starts_with("HTTP/1.1 403"),
+                    "{host} {headers}: {reply}"
+                );
+                assert_eq!(queue.read().await.len(), 1, "{host} {headers}: queue kept");
+            }
+
+            let signed = format!("X-Webhook-Signature: {}\r\n", sign("global-secret", b""));
+            let reply = request_reply(&config, queue.clone(), &poll(&signed)).await;
+            assert!(reply.starts_with("HTTP/1.1 200"), "{host}: {reply}");
+            assert!(reply.contains(r#""text":"reply""#), "{host}: {reply}");
+            assert!(queue.read().await.is_empty(), "{host}");
+        }
+    }
+
+    /// A loopback test bind on the INSECURE_NO_AUTH global secret polls without a signature.
+    #[tokio::test]
+    async fn outbound_poll_on_a_loopback_sentinel_bind_needs_no_signature() {
+        let mut config = config_with_route_secret("127.0.0.1", "route-secret");
+        config.secret = INSECURE_NO_AUTH.into();
+        WebhookAdapter::validate_auth_safety(&config).unwrap();
+        let queue = queue_of_one();
+        let reply = request_reply(&config, queue.clone(), &poll("")).await;
+        assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
+        assert!(queue.read().await.is_empty());
     }
 
     #[test]
