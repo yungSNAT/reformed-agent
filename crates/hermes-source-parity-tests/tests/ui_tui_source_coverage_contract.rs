@@ -26,7 +26,7 @@ fn ui_tui_manifest_covers_source_cluster_and_references_real_tests() {
     let manifest_entries = manifest["entries"]
         .as_array()
         .expect("entries should be array");
-    let deferred = manifest_entries
+    let not_covered = manifest_entries
         .iter()
         .filter(|entry| {
             matches!(
@@ -37,7 +37,7 @@ fn ui_tui_manifest_covers_source_cluster_and_references_real_tests() {
         .count();
     assert_eq!(
         manifest["summary"]["covered_paths"].as_u64(),
-        Some((manifest_entries.len() - deferred) as u64),
+        Some((manifest_entries.len() - not_covered) as u64),
         "manifest summary covered_paths must count the rows that cite Rust tests"
     );
 

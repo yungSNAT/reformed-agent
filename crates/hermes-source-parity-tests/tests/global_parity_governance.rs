@@ -48,8 +48,8 @@ fn test_coverage_audit_gate_passes() {
         Some(0),
         "test coverage audit must have zero missing Rust test refs"
     );
-    // Every tracked row is covered or deferred; the deferred rows are counted and
-    // ratcheted by test_deferred_rows_are_explained_and_match_the_ratchet.
+    // Every tracked row is covered, deferred or not rechecked at the pin; the last 2 are
+    // counted and ratcheted by the deferred and not-rechecked tests below.
     let summary = &payload["summary"];
     let count = |key: &str| {
         summary[key]
@@ -543,6 +543,13 @@ fn test_rows_not_rechecked_at_the_pin_are_counted_and_match_the_ratchet() {
                 row["status"].as_str(),
                 Some("not_rechecked_since_upstream_changed"),
                 "{name}: {path} must not read as covered"
+            );
+            assert!(
+                row["rationale"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("Not rechecked at "),
+                "{name}: {path} rationale must say it was not rechecked"
             );
         }
         assert_eq!(

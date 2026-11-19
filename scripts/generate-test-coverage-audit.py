@@ -458,7 +458,7 @@ def main() -> int:
             advisory_gaps.append(
                 advisory(
                     "coverage_manifest_not_rechecked",
-                    f"{manifest['path']} has covered rows not rechecked since upstream changed their files",
+                    f"{manifest['path']} has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered",
                     count=len(manifest["not_rechecked_entries"]),
                 )
             )

@@ -29,7 +29,7 @@ fn python_test_suite_manifest_covers_all_backlog_rows_and_references_real_tests(
     let manifest_entries = manifest["entries"]
         .as_array()
         .expect("manifest entries should be array");
-    let deferred = manifest_entries
+    let not_covered = manifest_entries
         .iter()
         .filter(|entry| {
             matches!(
@@ -40,7 +40,7 @@ fn python_test_suite_manifest_covers_all_backlog_rows_and_references_real_tests(
         .count();
     assert_eq!(
         manifest["summary"]["covered_paths"].as_u64(),
-        Some((manifest_entries.len() - deferred) as u64),
+        Some((manifest_entries.len() - not_covered) as u64),
         "manifest summary covered_paths must count the rows that cite Rust tests"
     );
 
@@ -123,7 +123,7 @@ fn python_test_suite_manifest_covers_all_backlog_rows_and_references_real_tests(
                 .unwrap_or_default()
                 .trim()
                 .is_empty(),
-            "{path} must explain why the Python test row is covered"
+            "{path} must give its reason"
         );
         let tests = entry["rust_tests"]
             .as_array()
