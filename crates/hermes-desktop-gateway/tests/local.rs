@@ -203,6 +203,55 @@ async fn a_runtime_that_stops_serving_keeps_the_home_until_dropped() {
     assert!(!local::lock_held(&home));
 }
 
+/// Connections a stopping host accepted earlier outlive the stop, so they must not be served as
+/// a ready owner: no `ready` identify, no new ticket, and no ticket minted earlier opens anything.
+#[tokio::test(flavor = "multi_thread")]
+async fn connections_accepted_before_a_stop_get_no_ready_owner_and_no_ticket() {
+    let (_dir, home) = private_home();
+    let mut runtime = start(&home);
+    let instance = runtime.instance_id().to_string();
+    let url = format!("{}/api/sessions/none/messages", runtime.api_origin());
+    let client = reqwest::Client::new();
+    // A served request leaves a keep-alive connection in the client's pool.
+    let ticket = mint(&home, &instance, "native-http");
+    let served = client.get(&url).header("X-Hermes-Gateway-Ticket", &ticket);
+    let served = served.send().await.unwrap();
+    assert_eq!(served.status(), 200);
+    served.bytes().await.unwrap();
+    let earlier = mint(&home, &instance, "native-http");
+    let connect = || {
+        let stream = UnixStream::connect(home.join("gateway.sock")).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+    };
+    let (identify_stream, ticket_stream) = (connect(), connect());
+    // Long enough for the control socket to accept both.
+    tokio::time::sleep(Duration::from_millis(300)).await;
+
+    runtime.stop_serving();
+    let reply = |mut stream: &UnixStream, request: Value| {
+        let _ = stream.write_all(format!("{request}\n").as_bytes());
+        let mut line = String::new();
+        let _ = BufReader::new(stream).read_line(&mut line);
+        line
+    };
+    let identified = reply(
+        &identify_stream,
+        json!({"protocol": 1, "id": 1, "verb": "identify"}),
+    );
+    assert!(!identified.contains("\"ready\""), "{identified}");
+    let minted = reply(
+        &ticket_stream,
+        ticket_request(&home, &instance, "native-http"),
+    );
+    assert!(!minted.contains("\"ticket\""), "{minted}");
+    let late = client.get(&url).header("X-Hermes-Gateway-Ticket", &earlier);
+    let late = late.send().await.map(|response| response.status().as_u16());
+    assert!(!matches!(late, Ok(200)), "{late:?}");
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
     let (_dir, home) = private_home();
