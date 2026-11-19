@@ -1,0 +1,11 @@
+# Codecov only reports coverage. The CI gate decides merges, so Codecov's own
+# statuses are informational and it posts no comments.
+coverage:
+  status:
+    project:
+      default:
+        informational: true
+    patch:
+      default:
+        informational: true
+comment: false
