@@ -1178,8 +1178,93 @@ mod tests {
 
         for result in [&sync, &not_sync] {
             assert!(!result.contains(value), "{result}");
-            assert!(result.contains("the token is"), "{result}");
+            assert!(result.contains("the token is ***."), "{result}");
         }
+    }
+
+    /// Fails with the text it was built with.
+    struct Failing(String);
+
+    #[async_trait]
+    impl ToolHandler for Failing {
+        async fn execute(&self, _params: Value) -> Result<String, ToolError> {
+            Err(ToolError::ExecutionFailed(self.0.clone()))
+        }
+        fn schema(&self) -> ToolSchema {
+            tool_schema("failing", "Fails", JsonSchema::new("object"))
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_masks_a_loaded_secret_value_in_a_tool_error() {
+        let value = "made-up-error-value-slate-heron";
+        std::env::set_var("REFORMED_TEST_ERROR_SECRET", value);
+        let handler = Arc::new(Failing(format!("rejected key {value}")));
+        let registry = ToolRegistry::new();
+        let schema = handler.schema();
+        registry.register(
+            "failing",
+            "test",
+            schema,
+            handler,
+            Arc::new(|| true),
+            vec![],
+            false,
+            "Failing",
+            "🔊",
+            None,
+        );
+
+        let sync = registry.dispatch("failing", json!({}));
+        let not_sync = registry.dispatch_async("failing", json!({})).await;
+        std::env::remove_var("REFORMED_TEST_ERROR_SECRET");
+
+        for result in [&sync, &not_sync] {
+            assert!(!result.contains(value), "{result}");
+            assert!(result.contains("rejected key ***"), "{result}");
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn dispatch_refuses_a_loaded_secret_value_sent_as_a_number() {
+        std::env::set_var("REFORMED_TEST_NUMERIC_PASSWORD", "31415926535");
+        let handler = Arc::new(Fixed(Default::default(), "done".into()));
+        let registry = registry_with_fixed(handler.clone());
+
+        let sync = registry.dispatch("fixed", json!({"body": 31_415_926_535_u64}));
+        let not_sync = registry
+            .dispatch_async("fixed", json!({"form": [{"pin": 31_415_926_535_u64}]}))
+            .await;
+        std::env::remove_var("REFORMED_TEST_NUMERIC_PASSWORD");
+
+        for result in [&sync, &not_sync] {
+            assert!(
+                result.contains("REFORMED_TEST_NUMERIC_PASSWORD"),
+                "{result}"
+            );
+        }
+        assert_eq!(
+            handler.0.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a tool ran with a secret number in its arguments"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn the_refusal_does_not_reveal_a_secret_held_in_its_source_name() {
+        // A made-up variable whose name ends with its own value.
+        let value = "ZX81QK7WM3";
+        let name = format!("REFORMED_TEST_API_KEY_{value}");
+        std::env::set_var(&name, value);
+        let handler = Arc::new(Fixed(Default::default(), "done".into()));
+        let registry = registry_with_fixed(handler.clone());
+
+        let result = registry.dispatch("fixed", json!({"x": value}));
+        std::env::remove_var(&name);
+
+        assert!(result.contains("REFORMED_TEST_API_KEY_***"), "{result}");
+        assert!(!result.contains(value), "{result}");
+        assert_eq!(handler.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
     #[test]

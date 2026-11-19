@@ -216,6 +216,92 @@ mod tests {
     }
 
     #[test]
+    fn identifier_names_shaped_like_credentials_are_not_secrets() {
+        for name in [
+            "GIT_CONFIG_KEY_0",
+            "GIT_CONFIG_KEY_12",
+            "HERMES_SESSION_KEY",
+            "HERMES_DASHBOARD_OIDC_TOKEN_ENDPOINT",
+        ] {
+            assert!(!is_secret_name(name), "{name} was taken for a credential");
+        }
+        assert!(is_secret_name("AWS_SESSION_TOKEN"));
+    }
+
+    #[test]
+    fn other_common_credential_names_are_recognised() {
+        for name in [
+            "PGPASSWORD",
+            "MYSQL_PWD",
+            "SMTP_PASS",
+            "DB_PASS",
+            "NPM_AUTH",
+            "Authorization",
+            "Cookie",
+            "Proxy-Authorization",
+        ] {
+            assert!(
+                is_secret_name(name),
+                "{name} was not taken for a credential"
+            );
+        }
+        for name in [
+            "PGPASSWORD_FILE",
+            "PWD",
+            "OLDPWD",
+            "PASS_THROUGH_ENV",
+            "HERMES_AUTH_DEFAULT_PROVIDER",
+            "HERMES_DASHBOARD_COOKIE_SECURE",
+        ] {
+            assert!(!is_secret_name(name), "{name} was taken for a credential");
+        }
+    }
+
+    #[test]
+    fn documented_placeholder_keys_are_not_secrets() {
+        for value in [
+            "not-needed",
+            "lm-studio",
+            "LM-Studio",
+            "no-key-required",
+            "sk-no-key-required",
+            "dummy-key",
+        ] {
+            assert!(!is_secret_value(value), "{value} was taken for a secret");
+        }
+    }
+
+    #[test]
+    fn the_token_in_an_authorization_value_is_found_without_its_scheme() {
+        // Made up.
+        register_json(
+            "config",
+            &json!({"mcp": {"headers": {"Authorization": "Bearer made-up-bearer-ochre-58"}}}),
+        );
+
+        assert_eq!(
+            find("token=made-up-bearer-ochre-58").as_deref(),
+            Some("config.mcp.headers.Authorization")
+        );
+        assert_eq!(mask("Bearer made-up-bearer-ochre-58"), "***");
+    }
+
+    #[test]
+    fn a_number_under_a_credential_key_is_registered_and_found() {
+        // Made up.
+        register_json(
+            "config",
+            &json!({"vault": {"pin_password": 27_182_818_284_u64}}),
+        );
+
+        assert_eq!(
+            find_in_json(&json!({"body": 27_182_818_284_u64})).as_deref(),
+            Some("config.vault.pin_password")
+        );
+        assert_eq!(mask("pin 27182818284"), "pin ***");
+    }
+
+    #[test]
     fn short_plain_path_and_reference_values_are_not_secrets() {
         for value in [
             "hunter2",
