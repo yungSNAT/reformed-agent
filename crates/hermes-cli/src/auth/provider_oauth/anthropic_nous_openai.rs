@@ -456,10 +456,12 @@ pub async fn login_nous_device_code(
         .map(|secs| nous_access_expires_at(now, secs))
         .transpose()?;
 
+    // The token response is network provenance: a URL outside the allowlist would receive the
+    // inference bearer, so it falls back to the requested URL as an absent one does.
     let resolved_inference_url = token_payload
         .inference_base_url
-        .map(|v| v.trim().trim_end_matches('/').to_string())
-        .filter(|v| !v.is_empty())
+        .as_deref()
+        .and_then(trusted_nous_inference_url)
         .unwrap_or_else(|| {
             requested_inference_base_url
                 .trim_end_matches('/')

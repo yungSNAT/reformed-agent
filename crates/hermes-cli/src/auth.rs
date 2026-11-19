@@ -10,6 +10,7 @@ use base64::engine::general_purpose::{
     URL_SAFE as BASE64_URL_SAFE, URL_SAFE_NO_PAD as BASE64_URL_SAFE_NO_PAD,
 };
 use base64::Engine as _;
+use hermes_core::nous_urls::{trusted_nous_inference_url, trusted_nous_portal_url};
 use hermes_core::AgentError;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
@@ -603,9 +604,32 @@ fn nous_oauth_discovery_paths() -> Vec<PathBuf> {
 }
 
 fn parse_nous_oauth_state(value: Value) -> Option<NousAuthState> {
-    let state: NousAuthState = serde_json::from_value(value).ok()?;
+    let mut state: NousAuthState = serde_json::from_value(value).ok()?;
     state.runtime_api_key()?;
+    // A stored URL may predate the allowlist or come from another tool's file; one outside it
+    // heals to the operator's setting or the default instead of receiving a token.
+    state.inference_base_url = trusted_nous_inference_url(&state.inference_base_url)
+        .unwrap_or_else(default_nous_inference_url);
+    state.portal_base_url =
+        trusted_nous_portal_url(&state.portal_base_url).unwrap_or_else(default_nous_portal_url);
     Some(state)
+}
+
+/// The operator's `NOUS_INFERENCE_BASE_URL`, else the production inference URL.
+fn default_nous_inference_url() -> String {
+    env_or_default("NOUS_INFERENCE_BASE_URL", DEFAULT_NOUS_INFERENCE_URL)
+        .trim_end_matches('/')
+        .to_string()
+}
+
+/// The operator's `HERMES_PORTAL_BASE_URL` or `NOUS_PORTAL_BASE_URL`, else the production Portal.
+fn default_nous_portal_url() -> String {
+    env_or_default(
+        "HERMES_PORTAL_BASE_URL",
+        &env_or_default("NOUS_PORTAL_BASE_URL", DEFAULT_NOUS_PORTAL_URL),
+    )
+    .trim_end_matches('/')
+    .to_string()
 }
 
 fn nous_auth_state_is_runtime_viable(state: &NousAuthState) -> bool {
@@ -986,7 +1010,8 @@ async fn refresh_nous_access_token(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        state.inference_base_url = inference_url.trim_end_matches('/').to_string();
+        state.inference_base_url =
+            trusted_nous_inference_url(inference_url).unwrap_or_else(default_nous_inference_url);
     }
     state.portal_base_url = portal_base_url;
     state.client_id = client_id;
@@ -1003,17 +1028,6 @@ pub async fn resolve_nous_runtime_credentials(
         AgentError::AuthFailed("Hermes is not logged into Nous Portal. Run `hermes portal`.".into())
     })?;
 
-    if state.portal_base_url.trim().is_empty() {
-        state.portal_base_url = env_or_default("NOUS_PORTAL_BASE_URL", DEFAULT_NOUS_PORTAL_URL)
-            .trim_end_matches('/')
-            .to_string();
-    }
-    if state.inference_base_url.trim().is_empty() {
-        state.inference_base_url =
-            env_or_default("NOUS_INFERENCE_BASE_URL", DEFAULT_NOUS_INFERENCE_URL)
-                .trim_end_matches('/')
-                .to_string();
-    }
     if state.client_id.trim().is_empty() {
         state.client_id = DEFAULT_NOUS_CLIENT_ID.to_string();
     }
@@ -1062,7 +1076,6 @@ pub async fn resolve_nous_runtime_credentials(
     assert_nous_invoke_jwt_usable(&state, None, refresh_skew_seconds)?;
     set_nous_agent_key_from_invoke_jwt(&mut state);
 
-    state.inference_base_url = state.inference_base_url.trim_end_matches('/').to_string();
     let _ = save_nous_auth_state(&state)?;
 
     let api_key = state.runtime_api_key().ok_or_else(|| {
