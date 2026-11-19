@@ -63,8 +63,20 @@ impl SourceDir {
         let name = name.as_ref();
         #[cfg(unix)]
         {
-            use rustix::fs::{FileType, Mode, OFlags};
+            use rustix::fs::{AtFlags, FileType, Mode, OFlags};
             use rustix::io::Errno;
+            // Classed before it is opened, as opening some devices can block
+            // or act on them; the open below classes it again, as the entry
+            // can change in between.
+            match rustix::fs::statat(&self.fd, name, AtFlags::SYMLINK_NOFOLLOW) {
+                Ok(stat) => match FileType::from_raw_mode(stat.st_mode) {
+                    FileType::Symlink => return Ok(Some(Entry::Link)),
+                    FileType::RegularFile | FileType::Directory => {}
+                    _ => return Ok(Some(Entry::Other)),
+                },
+                Err(Errno::NOENT) => return Ok(None),
+                Err(err) => return Err(err.into()),
+            }
             let flags = OFlags::RDONLY
                 | OFlags::NOFOLLOW
                 | OFlags::NONBLOCK
@@ -75,7 +87,7 @@ impl SourceDir {
                 Err(Errno::NOENT) => return Ok(None),
                 // A link refused by O_NOFOLLOW (EMLINK on FreeBSD).
                 Err(Errno::LOOP | Errno::MLINK) => return Ok(Some(Entry::Link)),
-                // A socket, which cannot be opened.
+                // A socket swapped in, which cannot be opened.
                 Err(Errno::NXIO) => return Ok(Some(Entry::Other)),
                 Err(err) => return Err(err.into()),
             };
