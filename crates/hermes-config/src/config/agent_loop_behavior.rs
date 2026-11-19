@@ -64,6 +64,12 @@ pub struct AgentLoopBehaviorConfig {
     /// Total lifetime of each streaming response attempt in seconds. Zero disables it.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stream_max_lifetime: Option<f64>,
+    /// How images reach the model: `auto` (the default) or `native`, as upstream's
+    /// `agent.image_input_mode`. `native` sends image parts whatever the model's
+    /// vision support. Upstream's `text` (describe images first) is not ported and
+    /// behaves as `auto`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub image_input_mode: Option<String>,
     /// Legacy location for `prefill_messages_file`.
     ///
     /// The top-level key is canonical; this field is retained so older CLI and
@@ -134,6 +140,7 @@ impl Default for AgentLoopBehaviorConfig {
             service_tier: None,
             api_max_retries: None,
             stream_max_lifetime: None,
+            image_input_mode: None,
             prefill_messages_file: None,
         }
     }
@@ -142,6 +149,13 @@ impl Default for AgentLoopBehaviorConfig {
 impl AgentLoopBehaviorConfig {
     pub fn normalized_service_tier(&self) -> Option<String> {
         normalize_service_tier(self.service_tier.as_deref())
+    }
+
+    /// Whether `image_input_mode` is `native`.
+    pub fn native_image_input(&self) -> bool {
+        self.image_input_mode
+            .as_deref()
+            .is_some_and(|mode| mode.trim().eq_ignore_ascii_case("native"))
     }
 }
 

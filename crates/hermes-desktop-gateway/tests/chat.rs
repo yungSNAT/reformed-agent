@@ -35,7 +35,7 @@ async fn complete(State(model): State<Model>, Json(body): Json<Value>) -> Respon
     let fail = body["messages"]
         .as_array()
         .and_then(|m| m.last())
-        .and_then(|m| m["content"].as_str())
+        .and_then(|m| m["content"].as_str().or(m["content"][0]["text"].as_str()))
         .is_some_and(|text| text.contains("FAIL"));
     model.requests.lock().unwrap().push(body);
     tokio::time::sleep(model.delay).await;
@@ -74,14 +74,16 @@ struct Started {
 /// Starts the scripted model and a gateway whose Hermes home names it as upstream's tests do
 /// (`providers.<name>.api` and `key_env`).
 async fn start(pieces: Vec<&'static str>, delay: Duration) -> Started {
-    start_with(pieces, delay, None).await
+    start_with(pieces, delay, None, "").await
 }
 
-/// As [`start`], with the gateway's socket write timeout when given.
+/// As [`start`], with the gateway's socket write timeout when given and `extra_config` appended
+/// to `config.yaml`.
 async fn start_with(
     pieces: Vec<&'static str>,
     delay: Duration,
     write_timeout: Option<Duration>,
+    extra_config: &str,
 ) -> Started {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let model = Model {
@@ -102,7 +104,7 @@ async fn start_with(
         format!(
             "model:\n  default: mock-model\n  provider: mock\nproviders:\n  mock:\n    \
              api: http://{model_addr}/v1\n    name: Mock\n    api_mode: chat_completions\n    \
-             key_env: DESKTOP_CHAT_TEST_KEY\n    models:\n      mock-model: {{}}\n"
+             key_env: DESKTOP_CHAT_TEST_KEY\n    models:\n      mock-model: {{}}\n{extra_config}"
         ),
     )
     .unwrap();
@@ -682,7 +684,7 @@ async fn a_stalled_reader_holds_its_turn_slot_until_it_is_closed() {
     // The timeout runs from when each frame is queued, so all 8 stalled turns and the check
     // below must fit inside it: 10 seconds was too short on a loaded runner.
     let timeout = Duration::from_secs(30);
-    let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout)).await;
+    let started = start_with(vec![piece; 4], Duration::ZERO, Some(timeout), "").await;
     let mut stalled = Vec::new();
     for _ in 0..8 {
         stalled.push(stalled_turn(started.addr).await);
@@ -729,7 +731,7 @@ async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
     let piece: &'static str = Box::leak("x".repeat(1 << 20).into_boxed_str());
     let timeout = Duration::from_secs(6);
     let pause = Duration::from_secs(4);
-    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout)).await;
+    let started = start_with(vec![piece; 8], Duration::ZERO, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let reply = client.submit(2, &session, "hi").await;
@@ -769,7 +771,7 @@ async fn a_slow_reader_is_closed_once_a_frame_has_waited_the_write_timeout() {
 /// at once: with no time allowed, not even `gateway.ready` is written.
 #[tokio::test]
 async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
-    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO)).await;
+    let started = start_with(vec!["hi"], Duration::ZERO, Some(Duration::ZERO), "").await;
     let request = format!("ws://{}/api/ws?token={TOKEN}", started.addr)
         .into_client_request()
         .unwrap();
@@ -788,7 +790,7 @@ async fn a_frame_past_its_deadline_is_not_written_even_to_an_idle_socket() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
     let timeout = Duration::from_secs(1);
-    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout)).await;
+    let started = start_with(vec!["slow ", "reply"], timeout * 3, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let reply = client.submit(2, &session, "hi").await;
@@ -805,7 +807,7 @@ async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
 #[tokio::test]
 async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
     let timeout = Duration::from_millis(200);
-    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout)).await;
+    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout), "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let store = hermes_agent::SessionPersistence::new(started.home.path());
@@ -841,4 +843,262 @@ async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
     assert_eq!(kind, "message.complete");
     assert_eq!(payload["text"], "ok", "{payload}");
     holder.join().unwrap();
+}
+
+/// A small payload that starts as a PNG does: the gateway checks only the signature.
+fn png(tag: &str) -> Vec<u8> {
+    let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a];
+    bytes.extend_from_slice(tag.as_bytes());
+    bytes
+}
+
+fn b64(bytes: &[u8]) -> String {
+    use base64::Engine as _;
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+/// The files under `<home>/images`.
+fn staged_images(home: &std::path::Path) -> Vec<std::path::PathBuf> {
+    match std::fs::read_dir(home.join("images")) {
+        Ok(entries) => entries.map(|e| e.unwrap().path()).collect(),
+        Err(_) => Vec::new(),
+    }
+}
+
+/// `image.attach_bytes` stages the bytes under the gateway's home, and the next prompt, only,
+/// sends the model the image and the staged path, as upstream's remote-topology spec expects.
+#[tokio::test]
+async fn an_attached_image_goes_to_the_model_with_the_next_prompt() {
+    // As the spec's backend: mock-model has no vision support, so only `native` sends the parts.
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["saw it"], Duration::ZERO, None, native).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let image = png("client-only");
+
+    let params = json!({"session_id": session, "content_base64": b64(&image),
+                        "filename": "../../shot.png", "ext": "exe"});
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    let result = &reply["result"];
+    assert_eq!(result["attached"], true, "{reply}");
+    assert_eq!(result["count"], 1);
+    assert_eq!(result["bytes"], image.len());
+    // The client's name and extension are not used: the bytes name the file.
+    let staged = std::path::PathBuf::from(result["path"].as_str().unwrap());
+    assert_eq!(staged_images(started.home.path()), vec![staged.clone()]);
+    assert_eq!(staged.extension().unwrap(), "png");
+    assert_eq!(std::fs::read(&staged).unwrap(), image);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt as _;
+        let mode = std::fs::metadata(started.home.path().join("images"))
+            .unwrap()
+            .permissions()
+            .mode();
+        assert_eq!(mode & 0o777, 0o700);
+    }
+
+    let reply = client.submit(3, &session, "U2 what is this").await;
+    assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let complete = client.turn_events(&session).await.pop().unwrap().1;
+    assert_eq!(complete["status"], "complete", "{complete}");
+
+    // Upstream's prompt text: the words, then a marker naming each staged image, which the
+    // desktop matches against its own row.
+    let words = format!(
+        "U2 what is this\n\n[Image attached at: {}]",
+        staged.display()
+    );
+    let user = |body: &Value| body["messages"].as_array().unwrap().last().unwrap().clone();
+    let first = user(&started.requests.lock().unwrap()[0]);
+    let parts = first["content"].as_array().expect("text and image parts");
+    assert_eq!(parts[0]["text"], words.as_str());
+    let url = parts[1]["image_url"]["url"].as_str().unwrap();
+    assert_eq!(url, format!("data:image/png;base64,{}", b64(&image)));
+    assert_eq!(parts.len(), 2);
+
+    // As upstream, the saved prompt is its text, so the transcript holds no image data.
+    let shown = history(started.addr, &session).await;
+    assert_eq!(shown[0], ("user".to_string(), words.clone()));
+
+    // The image went with that prompt only: the next request carries it as text.
+    client.submit(4, &session, "U3 and now").await;
+    client.turn_events(&session).await;
+    let second = started.requests.lock().unwrap()[1]["messages"].clone();
+    let users: Vec<&Value> = second
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|m| m["role"] == "user")
+        .map(|m| &m["content"])
+        .collect();
+    assert_eq!(users, [&json!(words), &json!("U3 and now")]);
+}
+
+/// A failed turn with an image keeps its prompt as text, as a turn that completes does.
+#[tokio::test]
+async fn a_failed_image_turn_keeps_its_prompt_as_text() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["x"], Duration::ZERO, None, native).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let params = json!({"session_id": session, "content_base64": b64(&png("x"))});
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    let staged = reply["result"]["path"].as_str().unwrap().to_string();
+
+    client.submit(3, &session, "FAIL with an image").await;
+    let complete = client.turn_events(&session).await.pop().unwrap().1;
+    assert_eq!(complete["status"], "error", "{complete}");
+    let words = format!("FAIL with an image\n\n[Image attached at: {staged}]");
+    assert_eq!(
+        history(started.addr, &session).await,
+        vec![("user".to_string(), words)]
+    );
+}
+
+/// Each refusal comes before anything is written under the home.
+#[tokio::test]
+async fn image_attach_bytes_refuses_bad_requests() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let image = b64(&png("x"));
+    let cases = [
+        (json!({"content_base64": image}), 4000),
+        (
+            json!({"session_id": "no-such-session", "content_base64": image}),
+            4001,
+        ),
+        (json!({"session_id": session}), 4015),
+        (json!({"session_id": session, "content_base64": "  "}), 4015),
+        (json!({"session_id": session, "content_base64": 5}), 4000),
+        (
+            json!({"session_id": session, "content_base64": "not base64!"}),
+            4017,
+        ),
+        // Text, not an image, under the `data` alias.
+        (json!({"session_id": session, "data": b64(b"hello")}), 4016),
+    ];
+    for (n, (params, code)) in cases.into_iter().enumerate() {
+        let reply = client
+            .call(10 + n as u64, "image.attach_bytes", params.clone())
+            .await;
+        assert_eq!(reply["error"]["code"], code, "{params}: {reply}");
+    }
+    assert!(staged_images(started.home.path()).is_empty());
+}
+
+/// An image whose request is over the 16 MiB message limit is still read, as a `file.attach`
+/// request is, rather than closing the connection.
+#[tokio::test]
+async fn a_large_image_is_attached() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let mut image = png("large");
+    image.resize(13 << 20, 7);
+    let params = json!({"session_id": session, "content_base64": b64(&image)});
+    assert!(params.to_string().len() > hermes_desktop_gateway::MAX_MESSAGE_BYTES);
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
+}
+
+/// As upstream, an empty or null `content_base64` gives way to the `data` alias, in a small
+/// request and in one over the message limit.
+#[tokio::test]
+async fn an_empty_content_base64_gives_way_to_data() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let mut large = png("large");
+    large.resize(13 << 20, 7);
+    let cases = [
+        (json!(null), png("a")),
+        (json!(""), png("b")),
+        (json!(""), large),
+    ];
+    for (n, (primary, image)) in cases.into_iter().enumerate() {
+        let params = json!({"session_id": session, "content_base64": primary, "data": b64(&image)});
+        let reply = client
+            .call(2 + n as u64, "image.attach_bytes", params)
+            .await;
+        assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
+    }
+    // A blank but not empty one is taken, as upstream's `or` takes it, and refused as missing.
+    let params = json!({"session_id": session, "content_base64": "  ", "data": b64(&png("c"))});
+    let reply = client.call(9, "image.attach_bytes", params).await;
+    assert_eq!(reply["error"]["code"], 4015, "{reply}");
+}
+
+/// A staged image that can no longer be read fails the turn before the model is asked, and
+/// the session keeps the prompt's words, as for any failed turn.
+#[tokio::test]
+async fn an_unreadable_staged_image_fails_the_turn_and_keeps_its_words() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["x"], Duration::ZERO, None, native).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let params = json!({"session_id": session, "content_base64": b64(&png("gone"))});
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    let staged = reply["result"]["path"].as_str().unwrap().to_string();
+    std::fs::remove_file(&staged).unwrap();
+
+    client.submit(3, &session, "U5 look").await;
+    let complete = client.turn_events(&session).await.pop().unwrap().1;
+    assert_eq!(complete["status"], "error", "{complete}");
+    let words = format!("U5 look\n\n[Image attached at: {staged}]");
+    assert_eq!(
+        history(started.addr, &session).await,
+        vec![("user".to_string(), words)]
+    );
+    assert!(started.requests.lock().unwrap().is_empty());
+}
+
+/// Each session's staged images go with its own next prompt only, once, and a prompt refused
+/// as busy leaves them staged.
+#[tokio::test]
+async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["ok"], Duration::from_millis(1000), None, native).await;
+    let mut client = connect(started.addr).await;
+    let (a, b) = (client.create().await, client.create().await);
+    let attach =
+        |session: &str, tag: &str| json!({"session_id": session, "content_base64": b64(&png(tag))});
+    client
+        .call(10, "image.attach_bytes", attach(&a, "a1"))
+        .await;
+    client
+        .call(11, "image.attach_bytes", attach(&b, "b1"))
+        .await;
+    client.submit(12, &a, "A1").await;
+    // Staged during A's turn, which the model holds for a second.
+    client
+        .call(13, "image.attach_bytes", attach(&a, "a2"))
+        .await;
+    let busy = client.submit(14, &a, "A again").await;
+    assert_eq!(busy["error"]["code"], 4009, "{busy}");
+    client.turn_events(&a).await;
+    client.submit(15, &a, "A2").await;
+    client.turn_events(&a).await;
+    client.submit(16, &b, "B1").await;
+    client.turn_events(&b).await;
+
+    let images = |body: &Value| -> Vec<String> {
+        let parts = &body["messages"].as_array().unwrap().last().unwrap()["content"];
+        parts
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| part["image_url"]["url"].as_str().map(str::to_string))
+            .collect()
+    };
+    let url = |tag: &str| format!("data:image/png;base64,{}", b64(&png(tag)));
+    let seen: Vec<Vec<String>> = started
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(images)
+        .collect();
+    assert_eq!(seen, [vec![url("a1")], vec![url("a2")], vec![url("b1")]]);
 }
