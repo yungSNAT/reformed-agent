@@ -158,7 +158,7 @@ fn git<S: AsRef<OsStr>>(
     timeout: Duration,
 ) -> Result<Git, String> {
     let mut cmd: Command = hermes_core::git::read_only_git(cwd).ok_or_else(|| {
-        "git could not be run safely here: it is missing, older than 2.39.1, or this repository's configuration could not be read.".to_string()
+        "git could not be run safely here: it is missing, older than 2.39.1, or this repository's configuration could not be read or names a user.".to_string()
     })?;
     // `diff.submodule=diff` would start a second diff inside a submodule.
     cmd.args(["-c", "core.quotePath=false", "-c", "diff.submodule=short"])

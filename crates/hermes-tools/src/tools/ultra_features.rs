@@ -777,7 +777,7 @@ fn github_repo_from_remote(root: &Path) -> Result<(String, String), ToolError> {
     let mut git = hermes_core::git::read_only_git(root).ok_or_else(|| {
         ToolError::ExecutionFailed(
             "git could not be run safely here: it is missing, older than 2.39.1, \
-             or this repository's configuration could not be read"
+             or this repository's configuration could not be read or names a user"
                 .into(),
         )
     })?;
