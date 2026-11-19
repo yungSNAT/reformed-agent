@@ -623,14 +623,17 @@ mod tests {
         assert!(output.status.success(), "git {args:?}: {output:?}");
     }
 
-    /// A repository at `dir` with `README.md` ("test") committed.
+    /// A repository at `dir` with `README.md` ("test") committed, and an
+    /// `AGENTS.md` marker so that `dir` is the workspace root even when a
+    /// directory above the temporary folder carries a marker of its own.
     fn committed_repo(dir: &Path) {
         std::fs::create_dir_all(dir).unwrap();
         std::fs::write(dir.join("README.md"), "test").unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "").unwrap();
         git(dir, &["init", "-q"]);
         git(dir, &["config", "user.email", "t@example.com"]);
         git(dir, &["config", "user.name", "T"]);
-        git(dir, &["add", "README.md"]);
+        git(dir, &["add", "README.md", "AGENTS.md"]);
         git(dir, &["commit", "-qm", "init"]);
     }
 
