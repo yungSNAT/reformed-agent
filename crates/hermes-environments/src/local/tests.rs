@@ -379,6 +379,7 @@ fn test_foreground_process_group_avoids_fork_hook() {
     let source = [
         include_str!("../local.rs"),
         include_str!("../local/env_shell.rs"),
+        include_str!("../local/process_tree.rs"),
     ]
     .join("\n");
     let forbidden = ["pre", "_exec"].concat();
@@ -1124,9 +1125,12 @@ async fn test_kill_process_ends_the_shells_descendants() {
     assert_no_survivor(&marker).await;
 }
 
+/// CreateProcess refuses a command line over 32,767 UTF-16 units. Linux
+/// caps one argument at 128 KiB, which the Unix wrapper reaches sooner: it
+/// repeats the command for each login shell it may run.
+#[cfg(windows)]
 #[tokio::test]
 async fn test_commands_longer_than_a_windows_command_line_run() {
-    // CreateProcess refuses a command line over 32,767 UTF-16 units.
     let command = format!("x={}; read -r line; echo ${{#x}} $line", "a".repeat(40_000));
     let backend = LocalBackend::new(30, 1_048_576);
 
