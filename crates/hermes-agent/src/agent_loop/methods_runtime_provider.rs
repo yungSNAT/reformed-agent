@@ -268,7 +268,7 @@ impl AgentLoop {
     }
 
     async fn refresh_oauth_store_tokens_if_needed(&self) {
-        let _store = OAUTH_STORE_LOCK.lock().await;
+        let _store = self.lock_oauth_store().await;
         self.store_unsaved_oauth_credentials().await;
         // Keep this list explicit so behavior is deterministic and parity-scoped.
         self.refresh_single_oauth_store_token_if_needed("openai")
@@ -319,7 +319,7 @@ impl AgentLoop {
         let Some(provider_key) = Self::oauth_store_provider_key(provider_name) else {
             return false;
         };
-        let _store = OAUTH_STORE_LOCK.lock().await;
+        let _store = self.lock_oauth_store().await;
         let Some(entries) = self.read_oauth_store().await else {
             return false;
         };
@@ -343,6 +343,41 @@ impl AgentLoop {
             return false;
         };
         provider.replace_credential(&access_token)
+    }
+
+    /// Takes this process's store lock, then an exclusive advisory lock on
+    /// `tokens.json.lock` beside the store, so loops and agent processes
+    /// sharing a Hermes home read, exchange and write it one at a time. Both
+    /// are released when the result is dropped. A lock file that cannot be
+    /// opened (a read-only auth folder, where the store cannot be written
+    /// either) is skipped with a warning.
+    async fn lock_oauth_store(&self) -> (tokio::sync::MutexGuard<'static, ()>, Option<std::fs::File>) {
+        let in_process = OAUTH_STORE_LOCK.lock().await;
+        let path = self.auth_tokens_path();
+        if !path.exists() {
+            return (in_process, None);
+        }
+        let lock_path = path.with_extension("json.lock");
+        let locked = tokio::task::spawn_blocking(move || {
+            let file = std::fs::OpenOptions::new()
+                .read(true)
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .open(&lock_path)?;
+            file.lock()?;
+            Ok::<_, std::io::Error>(file)
+        })
+        .await
+        .map_err(|e| std::io::Error::other(e.to_string()))
+        .and_then(|locked| locked);
+        match locked {
+            Ok(file) => (in_process, Some(file)),
+            Err(e) => {
+                tracing::warn!(error = %e, "oauth store lock file unavailable; refreshing without it");
+                (in_process, None)
+            }
+        }
     }
 
     /// `tokens.json` as it is now, with any credential exchanged but not

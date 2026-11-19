@@ -97,11 +97,12 @@ type UnsavedOAuthCredentials =
 /// these are the only copy until a write succeeds.
 static UNSAVED_OAUTH_CREDENTIALS: Mutex<UnsavedOAuthCredentials> = Mutex::new(BTreeMap::new());
 
-/// Held across each read, exchange and write of `tokens.json`, so that loops
-/// running at once exchange one refresh token once.
-/// shortcut: in this process only; another process writing the store (the
-/// CLI's login) can still race a read and its rename. Upgrade: an advisory
-/// lock file taken by every writer.
+/// Held across each read, exchange and write of `tokens.json`, with the
+/// `tokens.json.lock` file lock for other processes, so that one refresh
+/// token is exchanged once.
+/// shortcut: hermes-auth's `FileTokenStore` (the CLI login) takes neither
+/// lock and writes from the copy it loaded when opened. Upgrade: have it take
+/// the file lock and reload before each write.
 static OAUTH_STORE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
     LazyLock::new(|| tokio::sync::Mutex::new(()));
 
