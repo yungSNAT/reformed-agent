@@ -4,6 +4,7 @@
 #![cfg_attr(not(unix), allow(dead_code))]
 
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
@@ -24,11 +25,27 @@ pub(crate) enum Purpose {
 #[derive(Default)]
 pub(crate) struct Tickets {
     issued: Mutex<HashMap<String, (Purpose, Instant)>>,
+    /// Set when the owner stops: nothing mints or redeems after, on any connection.
+    closed: AtomicBool,
 }
 
 impl Tickets {
+    /// Spends every outstanding ticket and refuses all later mints.
+    pub(crate) fn close(&self) {
+        let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        self.closed.store(true, Ordering::SeqCst);
+        issued.clear();
+    }
+
+    pub(crate) fn is_closed(&self) -> bool {
+        self.closed.load(Ordering::SeqCst)
+    }
+
     pub(crate) fn mint(&self, purpose: Purpose) -> Result<String, &'static str> {
         let mut issued = self.issued.lock().unwrap_or_else(|e| e.into_inner());
+        if self.is_closed() {
+            return Err("gateway is stopping");
+        }
         issued.retain(|_, (_, at)| at.elapsed() < TICKET_TTL);
         if issued.len() >= MAX_OUTSTANDING {
             return Err("too many outstanding tickets");

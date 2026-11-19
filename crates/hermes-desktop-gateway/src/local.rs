@@ -58,6 +58,9 @@ pub struct LocalRuntime {
     /// owner wrote since is left alone.
     files: Vec<(PathBuf, (u64, u64))>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// Shared with the control socket and the router, so connections accepted before a stop
+    /// mint and redeem nothing after it.
+    tickets: Arc<Tickets>,
     /// `gateway.lock`, whose `flock` is released when this closes, after the files go.
     lock: std::fs::File,
 }
@@ -72,9 +75,12 @@ impl LocalRuntime {
         &self.instance_id
     }
 
-    /// Withdraws local mode: stops serving and removes the socket and state file, so ensure
-    /// cannot report a stopping host ready, whilst the home stays claimed until this drops.
+    /// Withdraws local mode: closes the tickets, stops accepting and removes the socket and state
+    /// file, so ensure cannot report a stopping host ready, whilst the home stays claimed until
+    /// this drops. Connections accepted earlier still answer, as draining, and redeem nothing;
+    /// a WebSocket session opened earlier runs until the process exits.
     pub fn stop_serving(&mut self) {
+        self.tickets.close();
         for task in self.tasks.drain(..) {
             task.abort();
         }
@@ -377,6 +383,7 @@ pub fn claim(home: &Path) -> Result<Option<LocalRuntime>, String> {
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
         files: Vec::new(),
         tasks: Vec::new(),
+        tickets: Arc::default(),
         lock,
     }))
 }
@@ -400,7 +407,7 @@ impl LocalRuntime {
         let (control, identity) = bind_control(&home)?;
         self.files.push((home.join(SOCKET), identity));
 
-        let tickets = Arc::new(Tickets::default());
+        let tickets = Arc::clone(&self.tickets);
         let app = router(Auth::Native(Arc::clone(&tickets)), port, chat);
         self.tasks.push(tokio::spawn(async move {
             if let Err(err) = axum::serve(listener, app).await {
@@ -495,7 +502,8 @@ impl Control {
             "supervisor": "none",
             "launch_supervisor": "manual",
             "runtime_protocol": 1,
-            "state": "ready",
+            // A stopping owner's open connections still answer, as upstream's draining owner.
+            "state": if self.tickets.is_closed() { "draining" } else { "ready" },
             "instance_id": self.instance_id,
             "authority_epoch": 1,
             "api_origin": self.api_origin,
