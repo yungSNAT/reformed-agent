@@ -26,10 +26,19 @@ fn hermes_cli_manifest_covers_all_backlog_rows_and_references_real_tests() {
     let manifest_entries = manifest["entries"]
         .as_array()
         .expect("entries should be array");
+    let not_covered = manifest_entries
+        .iter()
+        .filter(|entry| {
+            matches!(
+                entry["status"].as_str(),
+                Some("deferred_not_covered" | "not_rechecked_since_upstream_changed")
+            )
+        })
+        .count();
     assert_eq!(
         manifest["summary"]["covered_paths"].as_u64(),
-        Some(manifest_entries.len() as u64),
-        "manifest summary covered_paths must match entries length"
+        Some((manifest_entries.len() - not_covered) as u64),
+        "manifest summary covered_paths must count the rows that cite Rust tests"
     );
 
     let manifest_paths: BTreeSet<String> = manifest_entries
@@ -57,10 +66,23 @@ fn hermes_cli_manifest_covers_all_backlog_rows_and_references_real_tests() {
 
     for entry in manifest_entries {
         let path = entry["path"].as_str().expect("manifest path");
+        // A deferred row cites no test; global_parity_governance checks its reason and count.
+        if entry["status"].as_str() == Some("deferred_not_covered") {
+            assert_eq!(entry["rust_tests"], Value::Array(Vec::new()), "{path}");
+            continue;
+        }
+        // A row whose upstream file changed after its tests were cited still names real
+        // tests, but does not count as covered; global_parity_governance counts it.
+        let status = entry["status"].as_str();
+        let not_rechecked = status == Some("not_rechecked_since_upstream_changed");
         assert_eq!(
-            entry["status"].as_str(),
-            Some("covered_by_rust_contracts"),
-            "{path} should be marked covered_by_rust_contracts"
+            not_rechecked,
+            !entry["not_rechecked_at_pin"].is_null(),
+            "{path}: status and not_rechecked_at_pin must agree"
+        );
+        assert!(
+            not_rechecked || status == Some("covered_by_rust_contracts"),
+            "{path} should be marked covered_by_rust_contracts, not_rechecked_since_upstream_changed or deferred_not_covered"
         );
         let tests = entry["rust_tests"]
             .as_array()

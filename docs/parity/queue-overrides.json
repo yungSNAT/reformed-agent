@@ -5157,6 +5157,11 @@
       "notes": "Upstream readable agent terminal tab fixes are limited to the absent Electron desktop terminal UI. Hermes Agent Ultra's shipped runtime uses Rust CLI/gateway/TUI surfaces, so no Rust port applies.",
       "owner": "rust-runtime"
     },
+    "ae2a81ccc00e9b7c06301523e5bb09608397149c": {
+      "disposition": "superseded",
+      "notes": "Not carried: upstream's /api/cloud/agents dashboard route now answers a missing Nous Portal sign-in with 409 instead of 401. This tree has no cloud agents route (no match for cloud/agents or cloud_agents under crates/), so the status change has nothing to apply to.",
+      "owner": "rust-runtime"
+    },
     "ae433634db56": {
       "disposition": "superseded",
       "notes": "Upstream Electron desktop-only delta is superseded by Hermes Ultra's Rust-first operator surfaces: crates/hermes-cli/src/tui.rs, crates/hermes-gateway/src/gateway.rs, and ui-tui parity contracts. The local repo intentionally does not ship apps/desktop, so this TS/Electron UI commit has no Rust runtime port target."
