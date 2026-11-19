@@ -1031,37 +1031,51 @@ mod tests {
     fn write_file_then_patch_edit_one_file_under_terminal_cwd() {
         let tmp = tempfile::tempdir().unwrap();
         let work = tmp.path().join("work");
+        let home = tmp.path().join("home");
         std::fs::create_dir_all(&work).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let absolute = tmp.path().join("absolute.md");
         let write = WriteFileHandler::new(Arc::new(hermes_environments::LocalBackend::new(
             30, 100_000,
         )));
         let patch = PatchHandler::new(Arc::new(crate::backends::file::LocalPatchBackend::new()));
+        let cases = [
+            ("notes.md".to_string(), work.join("notes.md")),
+            ("~/notes.md".to_string(), home.join("notes.md")),
+            (absolute.to_str().unwrap().to_string(), absolute.clone()),
+        ];
 
-        crate::test_env::with_env(
-            &[
-                ("TERMINAL_CWD", Some(&work)),
-                ("HERMES_WRITE_SAFE_ROOT", None),
-            ],
-            || {
-                tokio::runtime::Runtime::new().unwrap().block_on(async {
-                    write
-                        .execute(json!({"path": "notes.md", "content": "draft one\n"}))
-                        .await
-                        .expect("write_file");
-                    patch
-                        .execute(
-                            json!({"path": "notes.md", "old_string": "one", "new_string": "two"}),
-                        )
-                        .await
-                })
-            },
-        )
-        .expect("patch did not find the file write_file wrote");
+        for (path, file) in &cases {
+            crate::test_env::with_env(
+                &[
+                    ("HOME", Some(&home)),
+                    ("TERMINAL_CWD", Some(&work)),
+                    ("HERMES_WRITE_SAFE_ROOT", None),
+                ],
+                || {
+                    tokio::runtime::Runtime::new().unwrap().block_on(async {
+                        write
+                            .execute(json!({"path": path, "content": "draft one\n"}))
+                            .await
+                            .expect("write_file");
+                        patch
+                            .execute(
+                                json!({"path": path, "old_string": "one", "new_string": "two"}),
+                            )
+                            .await
+                    })
+                },
+            )
+            .unwrap_or_else(|e| {
+                panic!("patch did not find the file write_file wrote for {path}: {e}")
+            });
 
-        assert_eq!(
-            std::fs::read_to_string(work.join("notes.md")).unwrap(),
-            "draft two\n"
-        );
+            assert_eq!(
+                std::fs::read_to_string(file).unwrap(),
+                "draft two\n",
+                "{path}"
+            );
+        }
     }
 
     #[cfg(unix)]
