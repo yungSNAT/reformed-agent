@@ -1,6 +1,6 @@
 {
   "summary": {
-    "covered_paths": 122,
+    "covered_paths": 22,
     "required_backlog_classification_paths": [
       "ui-tui",
       "ui-tui/packages",
@@ -8,18 +8,20 @@
     ],
     "guard_test": "crates/hermes-source-parity-tests/tests/ui_tui_source_coverage_contract.rs",
     "rust_primary_tui": "crates/hermes-cli/src/tui.rs",
-    "rust_only_runtime": true
+    "rust_only_runtime": true,
+    "deferred_paths": 59,
+    "not_rechecked_paths": 96
   },
   "entries": [
     {
       "path": "ui-tui/README.md",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -61,7 +63,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/eslint.config.mjs",
@@ -118,13 +121,13 @@
     },
     {
       "path": "ui-tui/package.json",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -166,18 +169,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/index.d.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -227,19 +231,20 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/package.json",
       "classification_path": "ui-tui/packages",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -289,18 +294,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/entry-exports.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -350,18 +356,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/colorize.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "ink_reference_surface",
         "colorize_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -404,7 +411,8 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/packages"
+      "classification_path": "ui-tui/packages",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/colorize.ts",
@@ -523,14 +531,14 @@
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/App.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -580,7 +588,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/Link.tsx",
@@ -646,7 +655,7 @@
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/ScrollBox.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -654,7 +663,7 @@
         "terminal_rendering",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -704,18 +713,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/Text.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "ink_reference_surface",
         "Text_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -734,7 +744,23 @@
           "name": "test_default_mouse_enabled_respects_env_override"
         }
       ],
-      "classification_path": "ui-tui/packages"
+      "classification_path": "ui-tui/packages",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/components/Text.tsx",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/constants.ts",
@@ -791,15 +817,45 @@
       "classification_path": "ui-tui/packages"
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/dom.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/events/cmd-shortcuts.test.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/events/input-event.ts",
       "classification_path": "ui-tui/packages",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -849,7 +905,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/hit-test.ts",
@@ -914,15 +971,30 @@
       ]
     },
     {
+      "path": "ui-tui/packages/hermes-ink/src/ink/hooks/use-terminal-title.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "path": "ui-tui/packages/hermes-ink/src/ink/ink.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -972,18 +1044,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/log-update.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1033,18 +1106,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/log-update.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1094,11 +1168,27 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/output.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/parse-keypress.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -1106,7 +1196,7 @@
         "terminal_rendering",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1156,11 +1246,12 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/parse-keypress.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -1168,7 +1259,7 @@
         "terminal_rendering",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1218,18 +1309,49 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/reconciler.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/render-border.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/render-node-to-output.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1279,7 +1401,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/root.ts",
@@ -1341,6 +1464,66 @@
           "name": "test_transcript_placeholder_shows_when_empty"
         }
       ]
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/screen.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/selection.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/terminal.test.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/terminal.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/dec.ts",
@@ -1406,7 +1589,7 @@
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/osc.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -1414,7 +1597,7 @@
         "terminal_rendering",
         "terminal_capabilities"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1464,11 +1647,12 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/osc.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -1476,7 +1660,7 @@
         "terminal_rendering",
         "terminal_capabilities"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1526,18 +1710,34 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/termio/parser.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/tokenize.ts",
       "classification_path": "ui-tui/packages",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1587,7 +1787,38 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/ink/termio/types.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/packages/hermes-ink/src/native-ts/yoga-layout/index.ts",
+      "classification_path": "ui-tui/packages",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/utils/env.ts",
@@ -1653,7 +1884,7 @@
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/utils/execFileNoThrow.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
@@ -1661,7 +1892,7 @@
         "terminal_rendering",
         "terminal_command_execution"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1711,85 +1942,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
-    },
-    {
-      "path": "ui-tui/scripts/build.mjs",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui",
-        "package_surface",
-        "build_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_serve_alias_for_headless_dashboard_api"
-        },
-        {
-          "file": "crates/hermes-cli/src/banner.rs",
-          "name": "startup_banner_names_reformed_agent"
-        }
-      ]
-    },
-    {
-      "path": "ui-tui/src/__tests__/asCommandDispatch.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui"
-      ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        }
-      ]
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/clipboard.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "clipboard"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1815,17 +1979,18 @@
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "promoted_paste_command_uses_test_clipboard_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/createGatewayEventHandler.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1867,17 +2032,18 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/createSlashHandler.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -1927,7 +2093,38 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/details.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/__tests__/emoji.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/externalLink.test.ts",
@@ -2052,13 +2249,13 @@
     },
     {
       "path": "ui-tui/src/__tests__/gatewayClient.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2100,17 +2297,18 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/markdown.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2156,18 +2354,19 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/mathUnicode.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reference_test_surface",
         "mathUnicode_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2186,18 +2385,49 @@
           "name": "test_default_mouse_enabled_respects_env_override"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/messages.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/__tests__/osc52.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/paths.test.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "test_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2215,19 +2445,20 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/platform.test.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reference_test_surface",
         "platform_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2245,7 +2476,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/reasoning.test.ts",
@@ -2292,14 +2524,29 @@
       ]
     },
     {
+      "path": "ui-tui/src/__tests__/scroll.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "path": "ui-tui/src/__tests__/slashParity.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2349,18 +2596,34 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/streamingMarkdown.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/subagentTree.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reference_test_surface",
         "subagentTree_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2411,18 +2674,19 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/terminalModes.test.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "test_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2440,16 +2704,32 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/terminalParity.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/terminalSetup.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui"
       ],
-      "rationale": "Intentional divergence: upstream's Ink TUI writes newline keybindings into VS Code family keybindings.json files. The Rust TUI handles newline and submit shortcuts itself and edits no editor settings (cited tests).",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Intentional divergence: upstream's Ink TUI writes newline keybindings into VS Code family keybindings.json files. The Rust TUI handles newline and submit shortcuts itself and edits no editor settings (cited tests).",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui/tests.rs",
@@ -2459,16 +2739,17 @@
           "file": "crates/hermes-cli/src/tui/tests.rs",
           "name": "test_insert_newline_at_cursor_updates_input_and_cursor"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/text.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2486,17 +2767,33 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/textInputLineNav.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/textInputPassThrough.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2546,17 +2843,33 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/textInputRightClick.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/textInputWrap.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2606,18 +2919,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/theme.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reference_test_surface",
         "theme_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2660,17 +2974,63 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/turnStore.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/__tests__/useCompletion.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/__tests__/useComposerState.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/useConfigSync.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2720,17 +3080,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/useInputHandlers.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2780,17 +3141,33 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/useQueue.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/useSessionLifecycle.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2832,18 +3209,34 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/useVirtualHistoryHeights.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/__tests__/viewportStore.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reference_test_surface",
         "viewportStore_test"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2886,17 +3279,18 @@
           "name": "test_transcript_wrap_width_caps_at_80"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/virtualHeights.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "virtual_history"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2938,17 +3332,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/virtualHistoryOffsetCache.test.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "virtual_history"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -2990,17 +3385,33 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/__tests__/wheelAccel.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/createGatewayEventHandler.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3042,17 +3453,18 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/createSlashHandler.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3102,16 +3514,47 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/app/delegationStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/app/inputSelectionStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/interfaces.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3129,17 +3572,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/overlayStore.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3189,17 +3633,48 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/app/scroll.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/app/setupHandoff.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/slash/commands/core.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3249,17 +3724,33 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/app/slash/commands/debug.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/slash/commands/ops.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3309,17 +3800,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/slash/commands/session.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3369,18 +3861,34 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/app/slash/commands/setup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/slash/registry.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3430,17 +3938,33 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/app/slash/types.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/app/spawnHistoryStore.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3490,17 +4014,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/turnController.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "reasoning_stream"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3534,17 +4059,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_stream_chunk_has_progress_for_extra_only_events"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/uiStore.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3594,17 +4120,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useComposerState.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3654,17 +4181,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useConfigSync.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3714,17 +4242,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useInputHandlers.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3774,17 +4303,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useMainApp.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3834,17 +4364,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useSessionLifecycle.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3886,18 +4417,19 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useSubmission.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "app_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -3915,7 +4447,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/banner.ts",
@@ -3971,13 +4504,13 @@
     },
     {
       "path": "ui-tui/src/components/agentsOverlay.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4027,17 +4560,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appChrome.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4087,17 +4621,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appLayout.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4147,17 +4682,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appOverlays.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4207,17 +4743,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/branding.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "chrome_status_theme"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4259,17 +4796,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/helpHint.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "chrome_status_theme"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4311,17 +4849,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/markdown.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4367,17 +4906,33 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/components/maskedPrompt.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/components/messageLine.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4423,17 +4978,18 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/modelPicker.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4483,17 +5039,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/prompts.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "slash_overlay_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4543,18 +5100,49 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/components/queuedMessages.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/components/skillsHub.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/components/streamingAssistant.tsx",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "component_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4572,17 +5160,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/streamingMarkdown.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4628,17 +5217,18 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/textInput.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4688,18 +5278,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/thinking.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_rendering",
         "reasoning_stream"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4749,17 +5340,33 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/components/todoPanel.tsx",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/config/env.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "chrome_status_theme"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4801,17 +5408,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/config/limits.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "chrome_status_theme"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4853,19 +5461,20 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/config/timing.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "timing",
         "streaming_state"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4891,17 +5500,48 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_stream_lane_budget_throughput_profile_expands"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/content/faces.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/content/fortunes.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/content/hotkeys.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4951,18 +5591,79 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/content/placeholders.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/content/setup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/content/verbs.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/domain/messages.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/domain/paths.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -4980,79 +5681,33 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
-      "path": "ui-tui/src/domain/slash.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
+      "path": "ui-tui/src/domain/usage.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
       "coverage_tags": [
         "rust_primary_tui",
-        "state_or_domain_surface",
-        "slash"
+        "repin_v0_23_2"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_completions_update"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_completion_popup_hidden_when_slash_deleted"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_completion_popup_hidden_when_modal_or_processing_active"
-        },
-        {
-          "file": "crates/hermes-cli/src/commands.rs",
-          "name": "quick_alias_rewrites_to_builtin_and_passes_args"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_status"
-        },
-        {
-          "file": "crates/hermes-cli/src/cli.rs",
-          "name": "cli_parse_resume_latest_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "app_new_session_invokes_session_lifecycle_hooks"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "app_reset_session_invokes_session_lifecycle_hooks"
-        }
-      ],
-      "classification_path": "ui-tui/src"
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/entry.tsx",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "package_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5094,17 +5749,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/gatewayClient.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5146,70 +5802,19 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
-    },
-    {
-      "path": "ui-tui/src/gatewayTypes.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
-      "coverage_kind": "rust_primary_tui_or_documented_divergence",
-      "coverage_tags": [
-        "rust_primary_tui",
-        "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
-      "rust_tests": [
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_tui_state_default"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_input_mode_display"
-        },
-        {
-          "file": "crates/hermes-cli/src/tui.rs",
-          "name": "test_fit_status_line_pads_and_respects_display_width"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_default_mouse_enabled_respects_env_override"
-        },
-        {
-          "file": "crates/hermes-cli/src/runtime_tool_wiring.rs",
-          "name": "gateway_messaging_backend_sends_real_message"
-        },
-        {
-          "file": "crates/hermes-cli/src/runtime_tool_wiring.rs",
-          "name": "stdio_clarify_backend_uses_auto_answer_in_non_interactive_mode"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_session_info_serialization"
-        },
-        {
-          "file": "crates/hermes-cli/src/app.rs",
-          "name": "test_new_session_persists_startup_stub_snapshot"
-        },
-        {
-          "file": "crates/hermes-acp/src/handler.rs",
-          "name": "test_session_lifecycle"
-        },
-        {
-          "file": "crates/hermes-acp/src/handler.rs",
-          "name": "test_prompt_slash_command"
-        }
-      ]
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/hooks/useCompletion.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "state_or_domain_surface",
         "useCompletion"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5260,17 +5865,48 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/hooks/useInputHistory.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/hooks/useQueue.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/hooks/useVirtualHistory.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "virtual_history"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5312,17 +5948,18 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/clipboard.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "clipboard"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5348,7 +5985,23 @@
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "promoted_paste_command_uses_test_clipboard_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/lib/editor.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/lib/editor.ts",
@@ -5390,14 +6043,14 @@
     },
     {
       "path": "ui-tui/src/lib/externalLink.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_rendering",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5447,7 +6100,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/forceTruecolor.ts",
@@ -5541,13 +6195,13 @@
     },
     {
       "path": "ui-tui/src/lib/inputMetrics.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_input"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5597,7 +6251,38 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/lib/liveProgress.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/lib/liveProgress.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/lib/mathUnicode.ts",
@@ -5688,15 +6373,30 @@
       ]
     },
     {
+      "path": "ui-tui/src/lib/messages.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
       "path": "ui-tui/src/lib/osc52.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "library_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5714,19 +6414,20 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/platform.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "library_surface",
         "platform"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5744,7 +6445,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/reasoning.ts",
@@ -5792,13 +6494,13 @@
     },
     {
       "path": "ui-tui/src/lib/rpc.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "gateway_session"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5840,18 +6542,19 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/subagentTree.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "library_surface",
         "subagentTree"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5902,19 +6605,35 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/lib/syntax.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/lib/terminalModes.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "library_surface",
         "terminalModes"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5932,18 +6651,49 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/lib/terminalParity.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/lib/terminalSetup.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/lib/text.test.ts",
       "classification_path": "ui-tui/src",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "test_surface"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -5961,17 +6711,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/text.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "markdown_text"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -6017,17 +6768,63 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
+    },
+    {
+      "path": "ui-tui/src/lib/todo.test.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/lib/todo.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
+    },
+    {
+      "path": "ui-tui/src/lib/viewportStore.ts",
+      "classification_path": "ui-tui/src",
+      "status": "deferred_not_covered",
+      "coverage_kind": "none",
+      "coverage_tags": [
+        "rust_primary_tui",
+        "repin_v0_23_2"
+      ],
+      "rationale": "This tree's copy differs from upstream's v0.23.2 TypeScript/Ink TUI file. Reformed's TUI is the Rust Ratatui one, and no Rust test known to exercise this file's behaviour is cited. Deferred until mapped to a Rust test or ported.",
+      "rust_tests": [],
+      "ticket": 3524,
+      "ledger": "R2338",
+      "review_date": "2027-02-18"
     },
     {
       "path": "ui-tui/src/lib/virtualHeights.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "virtual_history"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -6069,18 +6866,19 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/theme.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "source_surface",
         "theme"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -6123,16 +6921,17 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/types.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -6150,17 +6949,18 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/types/hermes-ink.d.ts",
-      "status": "covered_by_rust_primary_tui_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_primary_tui_or_documented_divergence",
       "coverage_tags": [
         "rust_primary_tui",
         "terminal_rendering"
       ],
-      "rationale": "The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: The upstream TypeScript/Ink TUI row is superseded by the Rust Ratatui CLI/TUI runtime; the cited Rust tests cover the equivalent input, rendering, gateway, slash/session, text, theme, or virtual-history behavior without requiring a JS runtime path.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/tui.rs",
@@ -6210,7 +7010,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/tsconfig.build.json",

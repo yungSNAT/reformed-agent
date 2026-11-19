@@ -58,7 +58,7 @@
         "status": "pass"
       },
       {
-        "actual": 3439.0,
+        "actual": 24117.0,
         "limit": 2600,
         "metric": "max_files_only_upstream",
         "status": "fail"
@@ -82,15 +82,27 @@
         "status": "pass"
       },
       {
-        "actual": 1.0,
+        "actual": 0.0626,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
-        "status": "pass"
+        "status": "fail"
       },
       {
         "actual": 0.0,
         "limit": 0,
         "metric": "max_test_coverage_audit_critical_gaps",
+        "status": "pass"
+      },
+      {
+        "actual": 0.0,
+        "limit": 0,
+        "metric": "max_test_coverage_unaccounted_rows",
+        "status": "pass"
+      },
+      {
+        "actual": 0.0,
+        "limit": 0,
+        "metric": "max_deferred_review_overdue",
         "status": "pass"
       },
       {
@@ -248,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-10T12:06:12.983042+00:00",
+  "generated_at_utc": "2026-11-19T01:46:38.332604+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -272,13 +284,17 @@
     "max_deep_problem_solving_missing_rust_refs": 0.0,
     "max_deep_problem_solving_regressions": 0.0,
     "max_deep_problem_solving_unverified_cases": 0.0,
+    "max_deferred_review_overdue": 0.0,
     "max_divergence_review_overdue": 0.0,
-    "max_files_only_upstream": 3439.0,
+    "max_files_only_upstream": 24117.0,
     "max_queue_pending_commits": 0.0,
+    "max_shared_diff_deferred_rows": 27.0,
     "max_sota_harness_critical_gaps": 0.0,
     "max_sota_harness_missing_rust_refs": 0.0,
     "max_test_coverage_audit_critical_gaps": 0.0,
     "max_test_coverage_missing_rust_refs": 0.0,
+    "max_test_coverage_not_rechecked_rows": 337.0,
+    "max_test_coverage_unaccounted_rows": 0.0,
     "max_unowned_divergences": 0.0,
     "max_upstream_patch_missing": 1.0,
     "min_behavioral_similarity_ratio": 1.0,
@@ -287,7 +303,7 @@
     "min_deep_problem_solving_superiority_cases": 10.0,
     "min_deep_problem_solving_total_cases": 10.0,
     "min_sota_harness_domain_coverage_ratio": 1.0,
-    "min_test_coverage_tracked_behavior_ratio": 1.0,
+    "min_test_coverage_tracked_behavior_ratio": 0.0626,
     "min_test_intent_mapping_ratio": 1.0
   },
   "program": {
@@ -298,7 +314,7 @@
   },
   "queue_summary": {
     "by_disposition": {
-      "ported": 1
+      "superseded": 1
     },
     "by_target_ticket": {
       "20": 1
@@ -328,15 +344,39 @@
         "status": "pass"
       },
       {
-        "actual": 1.0,
+        "actual": 0.0626,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
-        "status": "pass"
+        "status": "fail"
       },
       {
         "actual": 0.0,
         "limit": 0,
         "metric": "max_test_coverage_audit_critical_gaps",
+        "status": "pass"
+      },
+      {
+        "actual": 0.0,
+        "limit": 0,
+        "metric": "max_test_coverage_unaccounted_rows",
+        "status": "pass"
+      },
+      {
+        "actual": 27.0,
+        "limit": 0,
+        "metric": "max_shared_diff_deferred_rows",
+        "status": "fail"
+      },
+      {
+        "actual": 337.0,
+        "limit": 0,
+        "metric": "max_test_coverage_not_rechecked_rows",
+        "status": "fail"
+      },
+      {
+        "actual": 0.0,
+        "limit": 0,
+        "metric": "max_deferred_review_overdue",
         "status": "pass"
       },
       {
@@ -467,7 +507,7 @@
       }
     ],
     "mode": "functional",
-    "pass": true
+    "pass": false
   },
   "sota_harness_summary": {
     "gate": {
@@ -503,31 +543,33 @@
   },
   "test_coverage_audit_summary": {
     "audit_gate": {
-      "advisory_gaps": 3,
+      "advisory_gaps": 9,
       "critical_gaps": 0,
       "pass": true
     },
     "summary": {
-      "coverage_manifest_entries": 467,
-      "coverage_manifest_entries_with_valid_rust_tests": 467,
-      "covered_behavior_rows": 477,
+      "coverage_manifest_deferred_entries": 142,
+      "coverage_manifest_entries": 501,
+      "coverage_manifest_entries_with_valid_rust_tests": 22,
+      "coverage_manifest_not_rechecked_entries": 337,
+      "covered_behavior_rows": 32,
       "divergence_errors": 0,
       "divergence_review_overdue": 0,
       "divergence_unowned": 0,
       "missing_rust_test_refs": 0,
       "queue_pending": 0,
       "queue_total": 1,
-      "rust_test_files": 430,
-      "rust_test_functions": 7649,
+      "rust_test_files": 483,
+      "rust_test_functions": 8815,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,
-      "tracked_behavior_coverage_ratio": 1.0,
-      "tracked_behavior_rows": 477
+      "tracked_behavior_coverage_ratio": 0.0626,
+      "tracked_behavior_rows": 511
     }
   },
   "ws_legacy_states": {
-    "complete": 5,
-    "in_progress": 2
+    "complete": 2,
+    "in_progress": 5
   }
 }

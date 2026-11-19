@@ -1,12 +1,12 @@
 {
-  "generated_at_utc": "2026-11-10T22:36:50+11:00",
-  "head_sha": "b1e03bcd37eb5106742105e8e938ce0b04bb6653",
+  "generated_at_utc": "2026-11-19T12:46:22+11:00",
+  "head_sha": "1bec17304309679fb14ba9c7a67052fae98bf1ce",
   "states": {
-    "complete": 5,
-    "in_progress": 2
+    "complete": 2,
+    "in_progress": 5
   },
   "upstream_ref": "upstream/parity-reference",
-  "upstream_sha": "f64e4f4f5768c18a53f44890747653bafcab2796",
+  "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
   "workstreams": [
     {
       "evidence": [
@@ -24,12 +24,14 @@
       "evidence": [
         "send_message tool wired to live gateway backend in gateway runtime.",
         "clarify tool wired to channel backend in gateway and stdio backend in CLI runtimes.",
-        "cronjob tool wired to live scheduler backend."
+        "cronjob tool wired to live scheduler backend.",
+        "13 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
+        "rows_not_shown_matching": 13,
         "runtime_wiring_functions": 4
       },
-      "state": "complete",
+      "state": "in_progress",
       "title": "Tools/adapters parity",
       "workstream": "WS3"
     },
@@ -40,8 +42,8 @@
       ],
       "metrics": {
         "divergence_documented": false,
-        "local_skill_files": 917,
-        "upstream_skill_files": 951
+        "local_skill_files": 999,
+        "upstream_skill_files": 1127
       },
       "state": "in_progress",
       "title": "Skills parity",
@@ -50,25 +52,29 @@
     {
       "evidence": [
         "Rust CLI/TUI runtime validated through e2e_cli and gateway e2e smoke tests.",
-        "Web/UI upstream trees classified as intentional divergence in Rust-first mode."
+        "Web/UI upstream trees classified as intentional divergence in Rust-first mode.",
+        "155 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "divergence_documented": true,
-        "e2e_cli_tests": 13
+        "e2e_cli_tests": 16,
+        "rows_not_shown_matching": 155
       },
-      "state": "complete",
+      "state": "in_progress",
       "title": "UX parity",
       "workstream": "WS5"
     },
     {
       "evidence": [
-        "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests."
+        "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.",
+        "338 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "ci_jobs": 0,
-        "parity_gate_present": true
+        "parity_gate_present": true,
+        "rows_not_shown_matching": 338
       },
-      "state": "complete",
+      "state": "in_progress",
       "title": "Tests and CI parity",
       "workstream": "WS6"
     },
@@ -91,7 +97,7 @@
         "Intentional divergences are codified in docs/parity/intentional-divergence.json."
       ],
       "metrics": {
-        "divergence_items": 13,
+        "divergence_items": 23,
         "policy_exists": true
       },
       "state": "complete",
