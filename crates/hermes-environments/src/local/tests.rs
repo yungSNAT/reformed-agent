@@ -466,13 +466,21 @@ async fn test_execute_command_with_stdin_data() {
 
 #[tokio::test]
 async fn test_execute_command_with_workdir() {
+    let dir = tempdir().unwrap();
+    // An MSYS shell prints `/c/...` for `C:\...`, so compare the last part.
+    let name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let backend = LocalBackend::default();
     let output = backend
-        .execute_command("pwd", None, Some("/tmp"), false, false)
+        .execute_command("pwd", None, dir.path().to_str(), false, false)
         .await
         .unwrap();
     assert_eq!(output.exit_code, 0);
-    assert!(output.stdout.trim().contains("/tmp"));
+    assert!(output.stdout.trim().ends_with(&name), "{}", output.stdout);
 }
 
 // Shell init files are sourced only on Unix; see `with_login_profile_sources`.
@@ -685,14 +693,19 @@ fn test_relative_file_paths_use_terminal_cwd() {
 
 #[tokio::test]
 async fn test_file_exists() {
+    let dir = tempdir().unwrap();
     let backend = LocalBackend::default();
 
     // A path that should exist
-    assert!(backend.file_exists("/tmp").await.unwrap());
+    assert!(backend
+        .file_exists(dir.path().to_str().unwrap())
+        .await
+        .unwrap());
 
     // A path that should not exist
+    let missing = dir.path().join("hermes_nonexistent_test_file_xyz");
     assert!(!backend
-        .file_exists("/tmp/hermes_nonexistent_test_file_xyz")
+        .file_exists(missing.to_str().unwrap())
         .await
         .unwrap());
 }

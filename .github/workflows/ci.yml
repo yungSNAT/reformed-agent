@@ -204,4 +204,4 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Native tests
-        run: cargo test --locked -p hermes-environments -p hermes-mcp
+        run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp
