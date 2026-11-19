@@ -270,8 +270,12 @@ fn resolve_openrouter_compat_base_url(provider: OpenRouterCompatImageProviderKin
         }
     }
     if provider == OpenRouterCompatImageProviderKind::Nous {
-        if let Some(value) = read_provider_auth_string("nous", &["inference_base_url"]) {
-            return value.trim_end_matches('/').to_string();
+        // The stored URL came from a Portal response; it is used only on a Nous host.
+        if let Some(value) = read_provider_auth_string("nous", &["inference_base_url"])
+            .as_deref()
+            .and_then(hermes_core::nous_urls::trusted_nous_inference_url)
+        {
+            return value;
         }
     }
     provider.default_base_url().to_string()

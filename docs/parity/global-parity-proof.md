@@ -1,6 +1,6 @@
 # Global Parity Proof
 
-Generated: `2026-11-19T05:40:26.252903+00:00`
+Generated: `2026-11-19T07:45:29.173852+00:00`
 
 ## Gate Status
 
@@ -19,7 +19,7 @@ Generated: `2026-11-19T05:40:26.252903+00:00`
 | `max_unowned_divergences` | 0.0 |
 | `max_divergence_review_overdue` | 0.0 |
 | `min_test_intent_mapping_ratio` | 1.0 |
-| `min_test_coverage_tracked_behavior_ratio` | 0.0626 |
+| `min_test_coverage_tracked_behavior_ratio` | 0.0646 |
 | `max_test_coverage_audit_critical_gaps` | 0.0 |
 | `max_test_coverage_unaccounted_rows` | 0.0 |
 | `max_shared_diff_deferred_rows` | 27.0 |
@@ -63,7 +63,7 @@ Generated: `2026-11-19T05:40:26.252903+00:00`
 ## Test Coverage Audit
 
 - Audit gate: **PASS**
-- Tracked behavior coverage ratio: `0.0626`
+- Tracked behavior coverage ratio: `0.0646`
 - Critical gaps: `0`
 - Missing Rust test refs: `0`
 
