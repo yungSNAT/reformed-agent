@@ -477,6 +477,32 @@ fn nous_config_reads_auth_store_agent_key_and_inference_base_url() {
 }
 
 #[test]
+fn nous_config_ignores_auth_store_inference_url_outside_allowlist() {
+    let g = EnvScope::new();
+    let auth_path = g.auth_path();
+    std::env::set_var("HERMES_AUTH_FILE", &auth_path);
+    for stored in [
+        "https://attacker.example.com/v1",
+        "http://inference-api.nousresearch.com/v1",
+    ] {
+        let store = serde_json::json!({
+            "version": 1,
+            "providers": {
+                "nous": { "agent_key": "nous-agent-key", "inference_base_url": stored }
+            }
+        });
+        std::fs::write(&auth_path, store.to_string()).expect("write auth");
+
+        let cfg = OpenRouterCompatImageGenConfig::from_env_or_config(
+            OpenRouterCompatImageProviderKind::Nous,
+        )
+        .unwrap();
+        assert_eq!(cfg.base_url(), DEFAULT_NOUS_IMAGE_BASE_URL, "{stored}");
+        assert_eq!(cfg.api_key.as_deref(), Some("nous-agent-key"));
+    }
+}
+
+#[test]
 fn openrouter_reference_images_inline_local_files_and_clamp() {
     let g = EnvScope::new();
     let ref_a = g.home.join("base.png");
