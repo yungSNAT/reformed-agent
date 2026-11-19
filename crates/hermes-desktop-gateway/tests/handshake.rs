@@ -102,6 +102,29 @@ async fn upgrade_with_a_wrong_token_is_refused() {
 }
 
 #[tokio::test]
+async fn the_token_listener_refuses_a_ticket_protocol_and_keeps_the_legacy_wire() {
+    let addr = start().await;
+    let mut request = ws_request(addr, &format!("?token={TOKEN}"));
+    request.headers_mut().insert(
+        "Sec-WebSocket-Protocol",
+        "hermes-gateway-v1, hermes-gateway-ticket.abc"
+            .parse()
+            .unwrap(),
+    );
+    assert_eq!(refused_status(request).await, 401);
+    let (mut socket, response) =
+        tokio_tungstenite::connect_async(ws_request(addr, &format!("?token={TOKEN}")))
+            .await
+            .unwrap();
+    assert!(response.headers().get("sec-websocket-protocol").is_none());
+    let ready = next_json(&mut socket).await;
+    assert_eq!(ready["params"]["type"], "gateway.ready");
+    assert!(ready["params"]["payload"]
+        .get("session_authority")
+        .is_none());
+}
+
+#[tokio::test]
 async fn first_frame_is_gateway_ready() {
     let addr = start().await;
     let (mut socket, _) =
