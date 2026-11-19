@@ -162,7 +162,7 @@ async fn test_acp_regular_prompt_queues_while_session_is_active() {
 }
 
 #[tokio::test]
-async fn test_acp_steer_slash_command_signals_active_executor_and_queues_guidance() {
+async fn test_acp_steer_slash_command_signals_active_executor_and_does_not_queue_it() {
     let executor = Arc::new(SteeringPromptExecutor::default());
     let handler = make_handler().with_prompt_executor(executor.clone());
     let session_id = create_session(&handler).await;
@@ -187,9 +187,35 @@ async fn test_acp_steer_slash_command_signals_active_executor_and_queues_guidanc
         executor.steers.lock().unwrap().as_slice(),
         ["prefer the simpler fix"]
     );
+    // The running turn delivers it; queued as well, it would run again as the next turn.
+    let state = handler.session_manager.get_session(&session_id).unwrap();
+    assert!(state.queued_prompts.is_empty());
+    assert!(executor.runs.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn test_acp_steer_no_agent_takes_is_queued_for_the_next_turn() {
+    let handler = make_handler();
+    let session_id = create_session(&handler).await;
+    handler
+        .session_manager
+        .set_phase(&session_id, SessionPhase::Active);
+
+    let resp = handler
+        .handle_request(AcpRequest {
+            jsonrpc: "2.0".into(),
+            id: Some(json!(2)),
+            method: "prompt".into(),
+            params: Some(json!({
+                "session_id": session_id.clone(),
+                "text": "/steer prefer the simpler fix",
+            })),
+        })
+        .await;
+
+    assert_eq!(resp.result.unwrap()["stopReason"], "end_turn");
     let state = handler.session_manager.get_session(&session_id).unwrap();
     assert_eq!(state.queued_prompts, vec!["prefer the simpler fix"]);
-    assert!(executor.runs.lock().unwrap().is_empty());
 }
 
 #[tokio::test]

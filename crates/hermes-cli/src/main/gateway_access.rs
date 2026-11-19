@@ -37,8 +37,16 @@ impl ActiveSessionControl for GatewayAgentBusyControl {
         self.interrupt.interrupt(Some(message.to_string()));
     }
 
+    fn redirect(&self, message: &str) -> Option<String> {
+        self.interrupt.redirect(message.to_string())
+    }
+
     fn steer(&self, message: &str) -> bool {
         self.interrupt.steer(message)
+    }
+
+    fn take_steer(&self) -> Option<String> {
+        self.interrupt.take_steer()
     }
 }
 
