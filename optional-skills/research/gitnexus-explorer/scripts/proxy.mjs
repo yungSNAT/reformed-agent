@@ -4,7 +4,7 @@
  *
  * Usage: node proxy.mjs <dist-dir> [port]
  *   dist-dir: path to gitnexus-web/dist (production build)
- *   port: listen port (default: 8888)
+ *   port: listen port on 127.0.0.1 (default: 8888)
  *
  * Environment:
  *   API_PORT: GitNexus serve backend port (default: 4747)
@@ -14,8 +14,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const API_PORT = parseInt(process.env.API_PORT || '4747');
-const DIST_DIR = path.resolve(process.argv[2] || './dist');
+// The real path, so files reached through links can be checked against it
+const DIST_DIR = fs.realpathSync(path.resolve(process.argv[2] || './dist'));
 const PORT = parseInt(process.argv[3] || '8888');
+// Loopback only: remote access goes through a tunnel to this address
+const HOST = '127.0.0.1';
 
 const MIME = {
   '.html': 'text/html',
@@ -72,7 +75,10 @@ function serveStatic(req, res) {
   const mime = MIME[ext] || 'application/octet-stream';
 
   try {
-    const data = fs.readFileSync(filePath);
+    // Refuse a link inside dist that leads to a file outside it
+    const realPath = fs.realpathSync(filePath);
+    if (!realPath.startsWith(path.join(DIST_DIR, path.sep))) throw new Error('outside dist');
+    const data = fs.readFileSync(realPath);
     res.writeHead(200, {
       'Content-Type': mime,
       'Cache-Control': ext === '.html' ? 'no-cache' : 'public, max-age=86400',
@@ -92,9 +98,10 @@ const server = http.createServer((req, res) => {
   }
 });
 
-server.listen(PORT, () => {
-  console.log(`GitNexus proxy listening on http://localhost:${PORT}`);
-  console.log(`  Web UI: http://localhost:${PORT}/`);
-  console.log(`  API:    http://localhost:${PORT}/api/repos`);
+server.listen(PORT, HOST, () => {
+  const { address, port } = server.address();
+  console.log(`GitNexus proxy listening on http://${address}:${port}`);
+  console.log(`  Web UI: http://${address}:${port}/`);
+  console.log(`  API:    http://${address}:${port}/api/repos`);
   console.log(`  Backend: http://127.0.0.1:${API_PORT}`);
 });
