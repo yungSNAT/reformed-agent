@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "c05eb56c9c435e0560c80ffea1d62c7b0f476a44",
+      "local_blob": "1e90e1772bad515f7ed76f16247ba983695a04fb",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -3187,19 +3187,16 @@
       "workstream": "WS3"
     },
     {
-      "action": "Review against upstream by the review date; see the rationale and ledger line.",
-      "classification": "deferred",
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
       "classification_path": "plugins/model-providers/gmi/__init__.py",
-      "existing_coverage": "not_established",
-      "ledger": "R2338",
+      "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "fb0220708038ec3e4460b9556271964493953ba4",
-      "necessity": "deferred",
+      "necessity": "approved_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/gmi/__init__.py",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream builds GMI's User-Agent lazily and adds anthropic/claude-sonnet-5 to its fallback models. Rust's generic provider sends no User-Agent for gmi (crates/hermes-agent/src/provider/generic.rs sends one only for Kimi Code and Fireworks), a gap that predates b51fbc73. Deferred until ported.",
-      "review_date": "2027-02-18",
-      "rust_requirement": "rust_native_runtime_parity_required_if_needed",
-      "status": "deferred_review",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
       "ticket": 3524,
       "upstream_blob": "d564920fdc081ecd7f22f9175105f292bb2aa4b6",
       "workstream": "WS3"
@@ -3220,19 +3217,16 @@
       "workstream": "WS3"
     },
     {
-      "action": "Review against upstream by the review date; see the rationale and ledger line.",
-      "classification": "deferred",
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
       "classification_path": "plugins/model-providers/kilocode/__init__.py",
-      "existing_coverage": "not_established",
-      "ledger": "R2338",
+      "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "23123966aacaded599147dda83a2cd7166d53599",
-      "necessity": "deferred",
+      "necessity": "approved_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/kilocode/__init__.py",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed Kilo Code's default auxiliary model from google/gemini-3-flash-preview to google/gemini-3.6-flash. No Rust code sets a per-provider default auxiliary model for kilocode, and which model this tree uses there was not established. Deferred until checked.",
-      "review_date": "2027-02-18",
-      "rust_requirement": "rust_native_runtime_parity_required_if_needed",
-      "status": "deferred_review",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
       "ticket": 3524,
       "upstream_blob": "eb44f077825482c0b46877a78aae17ee2ea48ca4",
       "workstream": "WS3"
@@ -3298,19 +3292,16 @@
       "workstream": "WS3"
     },
     {
-      "action": "Review against upstream by the review date; see the rationale and ledger line.",
-      "classification": "deferred",
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
       "classification_path": "plugins/model-providers/nvidia/__init__.py",
-      "existing_coverage": "not_established",
-      "ledger": "R2338",
+      "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "f6fdc550f6204027616d8c6a006e9b55bf31b091",
-      "necessity": "deferred",
+      "necessity": "approved_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/nvidia/__init__.py",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported.",
-      "review_date": "2027-02-18",
-      "rust_requirement": "rust_native_runtime_parity_required_if_needed",
-      "status": "deferred_review",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
       "ticket": 3524,
       "upstream_blob": "e0ab95dd8bbdf274d0ccf9f32462c8c99c3d32ac",
       "workstream": "WS3"
@@ -3406,19 +3397,16 @@
       "workstream": "WS3"
     },
     {
-      "action": "Review against upstream by the review date; see the rationale and ledger line.",
-      "classification": "deferred",
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
       "classification_path": "plugins/model-providers/xai/__init__.py",
-      "existing_coverage": "not_established",
-      "ledger": "R2338",
+      "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "8d73ae0199e85133406b4bb219295f74170b7990",
-      "necessity": "deferred",
+      "necessity": "approved_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/xai/__init__.py",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported.",
-      "review_date": "2027-02-18",
-      "rust_requirement": "rust_native_runtime_parity_required_if_needed",
-      "status": "deferred_review",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
       "ticket": 3524,
       "upstream_blob": "2bd79c40488194e1727fed733b0aaeac12599812",
       "workstream": "WS3"
@@ -13069,19 +13057,16 @@
       "workstream": "WS6"
     },
     {
-      "action": "Review against upstream by the review date; see the rationale and ledger line.",
-      "classification": "deferred",
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
       "classification_path": "tests/providers/test_e2e_wiring.py",
-      "existing_coverage": "not_established",
-      "ledger": "R2338",
+      "existing_coverage": "claimed_by_shared_diff_classification",
       "local_blob": "424dad69bc5bc24a7835cf0fa8261e177803f696",
-      "necessity": "deferred",
+      "necessity": "approved_divergence",
       "owner": "yungSNAT",
       "path": "tests/providers/test_e2e_wiring.py",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, the NVIDIA change in row 26. Deferred with it.",
-      "review_date": "2027-02-18",
-      "rust_requirement": "rust_equivalent_or_contract_test_required",
-      "status": "deferred_review",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
       "ticket": 3524,
       "upstream_blob": "1d292d2287e633b0fa97d96cdeb755b3803bc206",
       "workstream": "WS6"
@@ -22702,29 +22687,29 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-19T19:37:30.560415+00:00",
+  "generated_at_utc": "2026-11-19T20:21:35.185570+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "345bdec7d0fa01178695185e322fedaa5ca11aaf",
+    "local_sha": "162bde815ea306c0ce78d5ebe381431f74833e2a",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
   "summary": {
     "by_classification": {
       "branding_only": 1,
-      "deferred": 27,
-      "intentional_divergence": 1161,
+      "deferred": 22,
+      "intentional_divergence": 1166,
       "policy_only": 319
     },
     "by_rust_requirement": {
-      "not_required_for_runtime": 1481,
-      "rust_equivalent_or_contract_test_required": 14,
-      "rust_native_runtime_parity_required_if_needed": 13
+      "not_required_for_runtime": 1486,
+      "rust_equivalent_or_contract_test_required": 13,
+      "rust_native_runtime_parity_required_if_needed": 9
     },
     "by_status": {
-      "cleared_intentional_divergence": 1161,
+      "cleared_intentional_divergence": 1166,
       "cleared_non_runtime": 320,
-      "deferred_review": 27
+      "deferred_review": 22
     },
     "by_workstream": {
       "WS3": 134,
@@ -22733,9 +22718,9 @@
       "WS6": 697,
       "WS8": 13
     },
-    "cleared_intentional_divergence": 1161,
+    "cleared_intentional_divergence": 1166,
     "cleared_non_runtime": 320,
-    "deferred_review": 27,
+    "deferred_review": 22,
     "pending_classification": 0,
     "pending_review": 0,
     "total_shared_different": 1508

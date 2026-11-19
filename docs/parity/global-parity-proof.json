@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-19T19:37:31.013880+00:00",
+  "generated_at_utc": "2026-11-19T20:21:36.178478+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -288,7 +288,7 @@
     "max_divergence_review_overdue": 0.0,
     "max_files_only_upstream": 24117.0,
     "max_queue_pending_commits": 0.0,
-    "max_shared_diff_deferred_rows": 27.0,
+    "max_shared_diff_deferred_rows": 22.0,
     "max_sota_harness_critical_gaps": 0.0,
     "max_sota_harness_missing_rust_refs": 0.0,
     "max_test_coverage_audit_critical_gaps": 0.0,
@@ -362,7 +362,7 @@
         "status": "pass"
       },
       {
-        "actual": 27.0,
+        "actual": 22.0,
         "limit": 0,
         "metric": "max_shared_diff_deferred_rows",
         "status": "fail"
@@ -560,7 +560,7 @@
       "queue_pending": 0,
       "queue_total": 1,
       "rust_test_files": 490,
-      "rust_test_functions": 8962,
+      "rust_test_functions": 8974,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,

@@ -535,6 +535,16 @@ impl GenericProvider {
                     concat!("HermesAgent/", env!("CARGO_PKG_VERSION")),
                 );
         }
+        // Upstream's GMI and xAI profiles name Hermes in the User-Agent, each in its own form.
+        match self.provider_profile.as_deref() {
+            Some("gmi") => {
+                req = req.header("User-Agent", concat!("HermesAgent/", env!("CARGO_PKG_VERSION")));
+            }
+            Some("xai") => {
+                req = req.header("User-Agent", concat!("Hermes-Agent/", env!("CARGO_PKG_VERSION")));
+            }
+            _ => {}
+        }
         for (key, value) in &self.extra_headers {
             req = req.header(key.as_str(), value.as_str());
         }
