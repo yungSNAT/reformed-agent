@@ -1253,6 +1253,27 @@ async fn test_kill_process_keeps_the_shell_unreaped_until_it_has_signalled() {
     assert!(exists, "the shell was reaped before the group was killed");
 }
 
+/// A group whose only member is the exited, still unreaped shell can be
+/// signalled, as `kill_process` does after the shell ends on SIGTERM.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_group_left_with_only_its_unreaped_shell_can_be_signalled() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let terminated = tree.terminate();
+    let killed = tree.kill();
+    child.wait().await.unwrap();
+
+    assert!(terminated.is_ok(), "terminate: {terminated:?}");
+    assert!(killed.is_ok(), "kill: {killed:?}");
+}
+
 #[tokio::test]
 async fn test_finished_command_leaves_its_background_child_running() {
     let dir = tempdir().unwrap();
