@@ -233,7 +233,7 @@ fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<Str
 /// name is looked up on the server's own `PATH` through its `PATHEXT`,
 /// keeping only the kinds `Command` can start (not `.js` or `.vbs`) and only
 /// absolute entries, so a file planted in the working folder cannot run.
-fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
+fn program_for(command: &str, env: &HashMap<String, String>) -> std::io::Result<PathBuf> {
     #[cfg(windows)]
     if !command.contains(['/', '\\']) {
         const STARTABLE: [&str; 4] = ["com", "exe", "bat", "cmd"];
@@ -264,14 +264,14 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
             for candidate in &candidates {
                 let path = dir.join(candidate);
                 if path.is_file() {
-                    return path;
+                    return Ok(path);
                 }
             }
         }
     }
     #[cfg(not(windows))]
     let _ = env;
-    PathBuf::from(command)
+    Ok(PathBuf::from(command))
 }
 
 fn sanitize_child_env(
@@ -513,7 +513,10 @@ impl McpTransport for StdioTransport {
             self.command, self.args
         );
 
-        let mut cmd = Command::new(program_for(&self.command, &sanitized_env));
+        let program = program_for(&self.command, &sanitized_env).map_err(|e| {
+            McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
+        })?;
+        let mut cmd = Command::new(program);
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1619,7 +1622,7 @@ mod tests {
     }
 
     #[cfg(windows)]
-    fn find_probe(path: String, pathext: &str) -> PathBuf {
+    fn find_probe(path: String, pathext: &str) -> std::io::Result<PathBuf> {
         let env = HashMap::from([
             ("Path".to_string(), path),
             ("PATHEXT".to_string(), pathext.to_string()),
@@ -1647,9 +1650,9 @@ mod tests {
         let path = format!("{};{}", a.path().display(), b.path().display());
 
         // `.js` is in Windows' default PATHEXT but `Command` cannot start it.
-        let found = find_probe(path.clone(), ".JS;.BAT;.CMD");
+        let found = find_probe(path.clone(), ".JS;.BAT;.CMD").unwrap();
         assert_same_path(found, b.path().join("probe.bat"));
-        let found = find_probe(path, ".CMD;.BAT");
+        let found = find_probe(path, ".CMD;.BAT").unwrap();
         assert_same_path(found, b.path().join("probe.cmd"));
     }
 
@@ -1658,7 +1661,7 @@ mod tests {
     fn program_lookup_treats_an_empty_pathext_as_unset() {
         let [_a, b, _near] = lookup_dirs();
 
-        let found = find_probe(b.path().display().to_string(), "");
+        let found = find_probe(b.path().display().to_string(), "").unwrap();
         assert_same_path(found, b.path().join("probe.bat"));
     }
 
@@ -1669,8 +1672,38 @@ mod tests {
         let [_a, b, near] = lookup_dirs();
         let near_name = near.path().file_name().unwrap().to_string_lossy();
 
-        let found = find_probe(format!("{near_name};{}", b.path().display()), ".CMD");
+        let found = find_probe(format!("{near_name};{}", b.path().display()), ".CMD").unwrap();
         assert_same_path(found, b.path().join("probe.cmd"));
+    }
+
+    /// A bare name found nowhere the lookup allows is refused, rather than
+    /// handed to `Command`, whose own search takes any `.exe` on the parent's
+    /// `PATH` or beside Hermes.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_refuses_a_name_it_cannot_find() {
+        let [_a, b, near] = lookup_dirs();
+        std::fs::write(near.path().join("probe.exe"), "").unwrap();
+        std::fs::write(b.path().join("probe.exe"), "").unwrap();
+        let near_name = near
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        // Only a relative entry holds the program.
+        let found = find_probe(near_name, ".EXE");
+        assert_eq!(
+            found.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::NotFound)
+        );
+        // The server's PATHEXT does not admit the `.exe` that is there.
+        let found = find_probe(b.path().display().to_string(), ".COM");
+        assert_eq!(
+            found.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::NotFound)
+        );
     }
 
     /// `npx` is `npx.cmd` on Windows, which Rust's `Command` does not find by

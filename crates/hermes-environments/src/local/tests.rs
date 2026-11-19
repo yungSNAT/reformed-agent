@@ -1096,6 +1096,10 @@ async fn test_timeout_ends_the_shells_descendants() {
         .await;
 
     assert!(matches!(result, Err(AgentError::Timeout(_))), "{result:?}");
+    assert!(
+        marker.with_extension("ready").exists(),
+        "the inner shell never started"
+    );
     assert_no_survivor(&marker).await;
 }
 
@@ -1137,6 +1141,65 @@ async fn test_kill_process_ends_the_shells_descendants() {
 
     assert_eq!(killed["status"], "killed", "{killed}");
     assert_no_survivor(&marker).await;
+}
+
+/// A caller that gives up on `kill_process` midway still ends the tree.
+#[tokio::test]
+async fn test_abandoned_kill_process_still_ends_the_shells_descendants() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("survivor");
+    let backend = LocalBackend::new(60, 1_048_576);
+    let started = backend
+        .execute_command(&survivor_command(&marker), None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+
+    wait_until_ready(&marker).await;
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        backend.kill_process(session_id),
+    )
+    .await;
+
+    // Windows ends the job at once; Unix is still in its grace period.
+    if cfg!(unix) {
+        assert!(abandoned.is_err(), "kill_process finished within 50 ms");
+    }
+    assert_no_survivor(&marker).await;
+}
+
+/// The shell stays unreaped whilst `kill_process` signals its group, so the
+/// group id cannot pass to an unrelated process meanwhile.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_kill_process_keeps_the_shell_unreaped_until_it_has_signalled() {
+    let backend = std::sync::Arc::new(LocalBackend::new(60, 1_048_576));
+    let started = backend
+        .execute_command("sleep 30; echo unreachable", None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+    let pid = payload["pid"].as_i64().expect("pid") as libc::pid_t;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let killer = {
+        let backend = backend.clone();
+        tokio::spawn(async move { backend.kill_process(&session_id).await })
+    };
+    // Well inside the grace period; the shell ends on SIGTERM.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    // SAFETY: signal 0 only checks that the process id exists.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+
+    let killed = killer.await.unwrap().unwrap();
+    assert_eq!(killed["status"], "killed", "{killed}");
+    assert!(exists, "the shell was reaped before the group was killed");
 }
 
 #[tokio::test]
