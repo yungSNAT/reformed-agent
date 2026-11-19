@@ -338,9 +338,15 @@ impl PlatformAdapter for WebhookAdapter {
             self.config.port, self.config.path
         );
 
-        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
-            .parse()
-            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address: {e}")))?;
+        // Resolves names and bare IPv6 literals, which `"{host}:{port}"` parsing rejects.
+        let host = self.config.host.as_str();
+        let addr = tokio::net::lookup_host((host, self.config.port))
+            .await
+            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address {host}: {e}")))?
+            .next()
+            .ok_or_else(|| {
+                GatewayError::ConnectionFailed(format!("Invalid address {host}: no address"))
+            })?;
 
         let config = self.config.clone();
         let outbound_queue = self.outbound_queue.clone();
@@ -996,6 +1002,27 @@ mod tests {
             routes: BTreeMap::new(),
         };
         WebhookAdapter::validate_auth_safety(&config).unwrap();
+    }
+
+    /// The documented loopback hosts start, not only `127.0.0.1`.
+    #[tokio::test]
+    async fn loopback_host_names_start() {
+        for host in ["127.0.0.1", "localhost", "::1"] {
+            let adapter = WebhookAdapter::new(WebhookConfig {
+                host: host.into(),
+                port: 0,
+                path: "/webhook".into(),
+                secret: INSECURE_NO_AUTH.into(),
+                rate_limit: default_webhook_rate_limit(),
+                max_body_bytes: default_webhook_max_body_bytes(),
+                routes: BTreeMap::new(),
+            });
+            adapter
+                .start()
+                .await
+                .unwrap_or_else(|e| panic!("{host}: {e}"));
+            adapter.stop().await.unwrap();
+        }
     }
 
     fn config_with_route_secret(host: &str, route_secret: &str) -> WebhookConfig {
