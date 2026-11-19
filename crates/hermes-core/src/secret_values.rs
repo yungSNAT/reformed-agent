@@ -54,8 +54,9 @@ static REGISTERED: LazyLock<RwLock<Vec<(String, String)>>> =
 /// `PGPASSWORD`), or is `PASSWD`, `PASSPHRASE`, `CREDENTIAL`, `CREDENTIALS` or
 /// `PAT` (a personal access token), or the last word is `PASS`, `AUTH`,
 /// `AUTHORIZATION`, `COOKIE` or, after another word, `PWD`. It does not count
-/// when the last word is `PATH`, `FILE`, `DIR`, `ENV`, `URL`, `ID` or
-/// `ENDPOINT`, which name where a secret is kept or which one it is, or for
+/// when the last word is `PATH`, `FILE`, `DIR`, `ENV`, `URL`, `ID`,
+/// `ENDPOINT`, `TYPE`, `SECONDS` or `STDOUT`, which name where a secret is
+/// kept, which one it is or a setting about it, or for
 /// names that hold identifiers: Git's indexed `GIT_CONFIG_KEY_<n>` option
 /// names and `HERMES_SESSION_KEY`, the gateway session.
 pub fn is_secret_name(name: &str) -> bool {
@@ -75,7 +76,16 @@ pub fn is_secret_name(name: &str) -> bool {
     if names_an_identifier
         || matches!(
             last.as_str(),
-            "PATH" | "FILE" | "DIR" | "ENV" | "URL" | "ID" | "ENDPOINT"
+            "PATH"
+                | "FILE"
+                | "DIR"
+                | "ENV"
+                | "URL"
+                | "ID"
+                | "ENDPOINT"
+                | "TYPE"
+                | "SECONDS"
+                | "STDOUT"
         )
     {
         return false;
@@ -115,18 +125,31 @@ fn is_secret_value(value: &str) -> bool {
             .any(|placeholder| value.eq_ignore_ascii_case(placeholder))
 }
 
-/// Adds `value` to `known` as reported by `label`, with the credential of a
-/// `Bearer` or `Basic` value without its scheme too, since a model would send
-/// the token alone. Values too short or plain to be secrets, and values
-/// already known, are skipped.
+/// Adds `value` to `known` as reported by `label`. A `Bearer` or `Basic`
+/// value under an authorisation name (last word `AUTHORIZATION` or `AUTH`)
+/// counts only through its credential, which is added without the scheme too,
+/// since a model would send the token alone. Values too short or plain to be
+/// secrets, and values already known, are skipped.
 fn add_value(known: &mut Vec<(String, String)>, label: &str, value: &str) {
     let value = value.trim();
-    let bare = ["Bearer ", "Basic "].iter().find_map(|scheme| {
-        value
-            .get(..scheme.len())
-            .filter(|head| head.eq_ignore_ascii_case(scheme))
-            .map(|_| value[scheme.len()..].trim())
-    });
+    let authorisation = label
+        .rsplit(|c: char| !c.is_ascii_alphanumeric())
+        .find(|word| !word.is_empty())
+        .is_some_and(|last| {
+            last.eq_ignore_ascii_case("AUTHORIZATION") || last.eq_ignore_ascii_case("AUTH")
+        });
+    let bare = ["Bearer ", "Basic "]
+        .iter()
+        .filter(|_| authorisation)
+        .find_map(|scheme| {
+            value
+                .get(..scheme.len())
+                .filter(|head| head.eq_ignore_ascii_case(scheme))
+                .map(|_| value[scheme.len()..].trim())
+        });
+    if bare.is_some_and(|credential| !is_secret_value(credential)) {
+        return;
+    }
     for form in std::iter::once(value).chain(bare) {
         if is_secret_value(form) && !known.iter().any(|(_, seen)| seen == form) {
             known.push((label.to_string(), form.to_string()));
