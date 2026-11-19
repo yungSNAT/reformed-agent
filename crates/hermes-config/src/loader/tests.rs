@@ -756,3 +756,23 @@ include!("tests/managed_overlays.rs");
 include!("tests/user_config_patch.rs");
 
 include!("tests/env_overrides.rs");
+
+#[cfg(unix)]
+#[test]
+fn atomic_write_accepts_a_file_name_that_is_not_utf8() {
+    use std::os::unix::ffi::OsStrExt;
+    let dir = tempfile::tempdir().unwrap();
+    let target = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"store-\xff.json"));
+    let link = dir
+        .path()
+        .join(std::ffi::OsStr::from_bytes(b"link-\xfe.json"));
+    std::os::unix::fs::symlink(&target, &link).unwrap();
+
+    atomic_write_bytes(&target, b"direct").unwrap();
+    assert_eq!(std::fs::read(&target).unwrap(), b"direct");
+    atomic_write_bytes(&link, b"linked").unwrap();
+    assert!(link.is_symlink(), "the link was replaced by a regular file");
+    assert_eq!(std::fs::read(&target).unwrap(), b"linked");
+}

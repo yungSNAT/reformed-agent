@@ -564,6 +564,29 @@ mod tests {
         assert!(real.read_to_string().unwrap().contains("Kept in dotfiles."));
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_creates_the_missing_folder_of_a_linked_memory_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("not-yet").join("MEMORY.md");
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend
+            .add("memory", "Kept in a new folder.")
+            .await
+            .unwrap();
+
+        assert!(link.is_symlink(), "the memory link was replaced");
+        assert!(real
+            .read_to_string()
+            .unwrap()
+            .contains("Kept in a new folder."));
+    }
+
     #[tokio::test]
     async fn add_blocks_memory_prompt_injection() {
         let temp = tempfile::tempdir().unwrap();

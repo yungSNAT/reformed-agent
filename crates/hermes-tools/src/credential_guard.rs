@@ -839,6 +839,7 @@ mod tests {
             "auth/google_oauth.json",
             "auth/new-store.json",
             "mcp_auth.json",
+            "hub_token",
         ] {
             assert!(denied(&hermes_home.join(rel)), "{rel} was writable");
         }
@@ -864,6 +865,47 @@ mod tests {
 
         assert!(is_write_denied_with_roots(
             &link.join("tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        // `..` after a linked folder is taken where the link leads.
+        std::fs::create_dir_all(hermes_home.join("skills")).expect("skills dir");
+        let into_home = tmp.path().join("shortcut");
+        std::os::unix::fs::symlink(hermes_home.join("skills"), &into_home).expect("link");
+        assert!(is_write_denied_with_roots(
+            &into_home.join("../auth/tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &into_home.join("../authority.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_store_file_linked_out_of_the_auth_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::fs::write(vault.join("custom.dat"), "{}").expect("store");
+        std::os::unix::fs::symlink(
+            vault.join("custom.dat"),
+            hermes_home.join("auth/tokens.json"),
+        )
+        .expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("custom.dat"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
             None,
             Some(&hermes_home)
         ));
