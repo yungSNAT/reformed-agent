@@ -1445,6 +1445,66 @@ mod tests {
         );
     }
 
+    fn path_entries(env: &HashMap<String, String>) -> Vec<&String> {
+        env.iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value)
+            .collect()
+    }
+
+    #[test]
+    fn stdio_child_inherits_path_and_no_other_hermes_variable() {
+        let transport = StdioTransport::new("echo", &[], &HashMap::new(), false);
+        let env = transport.effective_child_env(McpSandboxProfile::Balanced);
+
+        let parent_path = std::env::var("PATH").expect("the test runs with a PATH");
+        assert_eq!(path_entries(&env), vec![&parent_path]);
+    }
+
+    #[test]
+    fn stdio_child_configured_path_replaces_the_inherited_one() {
+        let mut configured = HashMap::new();
+        configured.insert("PATH".to_string(), "/configured/bin".to_string());
+        let transport = StdioTransport::new("echo", &[], &configured, false);
+        let env = transport.effective_child_env(McpSandboxProfile::Balanced);
+
+        assert_eq!(path_entries(&env), vec!["/configured/bin"]);
+    }
+
+    /// `npx` is `npx.cmd` on Windows, which Rust's `Command` does not find by
+    /// its bare name; the script also reports the `SystemRoot` it was given.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn stdio_transport_starts_a_cmd_script_named_without_its_extension() {
+        let bin = tempfile::tempdir().unwrap();
+        let marker = bin.path().join("started.txt");
+        std::fs::write(
+            bin.path().join("hermes-mcp-probe.cmd"),
+            format!("@echo %SystemRoot%> \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        let mut configured = HashMap::new();
+        configured.insert("PATH".to_string(), bin.path().display().to_string());
+        let mut transport = StdioTransport::new("hermes-mcp-probe", &[], &configured, false);
+
+        transport.start().await.expect("start the .cmd server");
+        let mut written = None;
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                written = Some(text);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        transport.close().await.unwrap();
+
+        let written = written.expect("the .cmd server ran");
+        assert!(
+            !written.trim().is_empty() && !written.contains('%'),
+            "the server had no SystemRoot: {written:?}"
+        );
+    }
+
     #[test]
     fn test_http_transport_new() {
         let transport = HttpTransport::new("http://localhost:8080/mcp", None);
