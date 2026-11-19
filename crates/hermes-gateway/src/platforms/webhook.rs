@@ -1018,11 +1018,12 @@ mod tests {
         WebhookAdapter::validate_auth_safety(&loopback).unwrap();
     }
 
-    /// A blank secret is an HMAC key anyone knows, so it is refused on every bind.
+    /// A blank secret, or a Svix `whsec_` secret encoding a blank key, is an HMAC key anyone
+    /// knows, so it is refused on every bind.
     #[test]
     fn blank_secret_is_refused() {
         for host in ["0.0.0.0", "127.0.0.1"] {
-            for secret in ["", "  "] {
+            for secret in ["", "  ", "whsec_", "whsec_ICAg"] {
                 let route = config_with_route_secret(host, secret);
                 let err = WebhookAdapter::validate_auth_safety(&route).unwrap_err();
                 assert!(err.to_string().contains("'open'"), "{err}");
@@ -1032,6 +1033,8 @@ mod tests {
                 assert!(WebhookAdapter::validate_auth_safety(&global).is_err());
             }
         }
+        let svix = config_with_route_secret("0.0.0.0", "whsec_YWdlbnRtYWlsLXNlY3JldA==");
+        WebhookAdapter::validate_auth_safety(&svix).unwrap();
     }
 
     #[test]
@@ -1254,31 +1257,51 @@ mod tests {
         reply
     }
 
-    /// Polling the outbound queue drains it, so it needs the global secret on every bind.
-    #[tokio::test]
-    async fn outbound_poll_needs_the_global_secret() {
-        let config = config_with_route_secret("0.0.0.0", "route-secret");
-        let queue = Arc::new(RwLock::new(VecDeque::from([OutboundMessage {
+    fn queue_of_one() -> Arc<RwLock<VecDeque<OutboundMessage>>> {
+        Arc::new(RwLock::new(VecDeque::from([OutboundMessage {
             platform: None,
             chat_id: "chat-1".into(),
             text: "reply".into(),
-        }])));
-        let poll = |headers: &str| format!("GET /webhook/outbound HTTP/1.1\r\n{headers}\r\n");
+        }])))
+    }
 
-        for headers in [
-            String::new(),
-            "X-Webhook-Signature: 00\r\n".to_string(),
-            format!("X-Webhook-Signature: {}\r\n", sign("route-secret", b"")),
-        ] {
-            let reply = request_reply(&config, queue.clone(), &poll(&headers)).await;
-            assert!(reply.starts_with("HTTP/1.1 403"), "{headers}: {reply}");
-            assert_eq!(queue.read().await.len(), 1, "{headers}: queue kept");
+    fn poll(headers: &str) -> String {
+        format!("GET /webhook/outbound HTTP/1.1\r\n{headers}\r\n")
+    }
+
+    /// Polling the outbound queue drains it, so it needs the global secret on every bind.
+    #[tokio::test]
+    async fn outbound_poll_needs_the_global_secret() {
+        for host in ["0.0.0.0", "127.0.0.1"] {
+            let config = config_with_route_secret(host, "route-secret");
+            let queue = queue_of_one();
+            for headers in [
+                String::new(),
+                "X-Webhook-Signature: 00\r\n".to_string(),
+                format!("X-Webhook-Signature: {}\r\n", sign("route-secret", b"")),
+            ] {
+                let reply = request_reply(&config, queue.clone(), &poll(&headers)).await;
+                assert!(reply.starts_with("HTTP/1.1 403"), "{host} {headers}: {reply}");
+                assert_eq!(queue.read().await.len(), 1, "{host} {headers}: queue kept");
+            }
+
+            let signed = format!("X-Webhook-Signature: {}\r\n", sign("global-secret", b""));
+            let reply = request_reply(&config, queue.clone(), &poll(&signed)).await;
+            assert!(reply.starts_with("HTTP/1.1 200"), "{host}: {reply}");
+            assert!(reply.contains(r#""text":"reply""#), "{host}: {reply}");
+            assert!(queue.read().await.is_empty(), "{host}");
         }
+    }
 
-        let signed = format!("X-Webhook-Signature: {}\r\n", sign("global-secret", b""));
-        let reply = request_reply(&config, queue.clone(), &poll(&signed)).await;
+    /// A loopback test bind on the INSECURE_NO_AUTH global secret polls without a signature.
+    #[tokio::test]
+    async fn outbound_poll_on_a_loopback_sentinel_bind_needs_no_signature() {
+        let mut config = config_with_route_secret("127.0.0.1", "route-secret");
+        config.secret = INSECURE_NO_AUTH.into();
+        WebhookAdapter::validate_auth_safety(&config).unwrap();
+        let queue = queue_of_one();
+        let reply = request_reply(&config, queue.clone(), &poll("")).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
-        assert!(reply.contains(r#""text":"reply""#), "{reply}");
         assert!(queue.read().await.is_empty());
     }
 
