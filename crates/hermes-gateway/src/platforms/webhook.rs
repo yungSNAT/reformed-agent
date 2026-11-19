@@ -1031,11 +1031,13 @@ mod tests {
     }
 
     /// A blank secret, or a Svix `whsec_` secret encoding a blank key, is an HMAC key anyone
-    /// knows, so it is refused on every bind.
+    /// knows, so it is refused on every bind. HMAC pads a short key with zero bytes, so an
+    /// all-NUL key signs as the empty key does.
     #[test]
     fn blank_secret_is_refused() {
+        assert_eq!(sign("\0", b"{}"), sign("", b"{}"));
         for host in ["0.0.0.0", "127.0.0.1"] {
-            for secret in ["", "  ", "whsec_", "whsec_ICAg"] {
+            for secret in ["", "  ", "\0", "whsec_", "whsec_ICAg", "whsec_AA=="] {
                 let route = config_with_route_secret(host, secret);
                 let err = WebhookAdapter::validate_auth_safety(&route).unwrap_err();
                 assert!(err.to_string().contains("'open'"), "{err}");
@@ -1047,6 +1049,29 @@ mod tests {
         }
         let svix = config_with_route_secret("0.0.0.0", "whsec_YWdlbnRtYWlsLXNlY3JldA==");
         WebhookAdapter::validate_auth_safety(&svix).unwrap();
+    }
+
+    /// Secrets that only look like a blank Svix key start, and sign with their own bytes.
+    #[test]
+    fn whsec_lookalike_secrets_start() {
+        let lookalikes = [" whsec_", "whsec_!!"];
+        for host in ["0.0.0.0", "127.0.0.1"] {
+            for secret in lookalikes {
+                let route = config_with_route_secret(host, secret);
+                WebhookAdapter::validate_auth_safety(&route).unwrap();
+                let mut global = config_with_route_secret(host, "route-secret");
+                global.secret = secret.into();
+                WebhookAdapter::validate_auth_safety(&global).unwrap();
+            }
+        }
+        for secret in lookalikes {
+            let signature = sign(secret, b"{}");
+            let headers = HashMap::from([("x-webhook-signature".to_string(), signature)]);
+            assert!(
+                WebhookAdapter::validate_signature(&headers, b"{}", secret),
+                "{secret}"
+            );
+        }
     }
 
     #[test]
