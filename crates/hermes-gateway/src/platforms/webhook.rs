@@ -242,9 +242,11 @@ impl WebhookAdapter {
 /// whose base64 key (see `verify_svix_signature`) decodes to nothing but whitespace.
 fn is_blank_secret(secret: &str) -> bool {
     let secret = secret.trim();
-    let svix_key = secret
-        .strip_prefix("whsec_")
-        .and_then(|encoded| base64::engine::general_purpose::STANDARD.decode(encoded).ok());
+    let svix_key = secret.strip_prefix("whsec_").and_then(|encoded| {
+        base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .ok()
+    });
     secret.is_empty() || svix_key.is_some_and(|key| key.iter().all(u8::is_ascii_whitespace))
 }
 
@@ -1291,7 +1293,10 @@ mod tests {
                 format!("X-Webhook-Signature: {}\r\n", sign("route-secret", b"")),
             ] {
                 let reply = request_reply(&config, queue.clone(), &poll(&headers)).await;
-                assert!(reply.starts_with("HTTP/1.1 403"), "{host} {headers}: {reply}");
+                assert!(
+                    reply.starts_with("HTTP/1.1 403"),
+                    "{host} {headers}: {reply}"
+                );
                 assert_eq!(queue.read().await.len(), 1, "{host} {headers}: queue kept");
             }
 
