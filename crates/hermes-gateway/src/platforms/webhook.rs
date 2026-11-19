@@ -239,15 +239,16 @@ impl WebhookAdapter {
 }
 
 /// True for a secret that gives a key anyone can guess: blank, or a Svix `whsec_` secret
-/// whose base64 key (see `verify_svix_signature`) decodes to nothing but whitespace.
+/// whose base64 key (decoded as `verify_svix_signature` does) is blank. HMAC pads a short
+/// key with zero bytes, so NUL counts as blank.
 fn is_blank_secret(secret: &str) -> bool {
-    let secret = secret.trim();
+    let blank = |key: &[u8]| key.iter().all(|&b| b == 0 || b.is_ascii_whitespace());
     let svix_key = secret.strip_prefix("whsec_").and_then(|encoded| {
         base64::engine::general_purpose::STANDARD
             .decode(encoded)
             .ok()
     });
-    secret.is_empty() || svix_key.is_some_and(|key| key.iter().all(u8::is_ascii_whitespace))
+    secret.trim().is_empty() || blank(secret.as_bytes()) || svix_key.is_some_and(|key| blank(&key))
 }
 
 fn is_loopback_host(host: &str) -> bool {
