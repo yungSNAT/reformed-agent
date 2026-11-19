@@ -1006,4 +1006,20 @@ mod tests {
         assert_eq!(tc[0].id, "fc_1");
         assert_eq!(tc[0].function.name, "read_file");
     }
+
+    #[test]
+    fn codex_replace_credential_reaches_clones_and_skips_pools() {
+        let provider = CodexProvider::new("old-token");
+        let clone = provider.clone();
+        assert_eq!(provider.active_credential().as_deref(), Some("old-token"));
+        assert!(provider.replace_credential("new-token"));
+        assert_eq!(clone.active_credential().as_deref(), Some("new-token"));
+        assert_eq!(clone.effective_api_key(), "new-token");
+
+        let pooled = CodexProvider::new("old-token")
+            .with_credential_pool(Arc::new(CredentialPool::new(vec!["pool-key".to_string()])));
+        assert_eq!(pooled.active_credential(), None);
+        assert!(!pooled.replace_credential("new-token"));
+        assert_eq!(pooled.effective_api_key(), "pool-key");
+    }
 }
