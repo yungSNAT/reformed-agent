@@ -139,14 +139,25 @@ async fn a_lock_and_socket_left_by_a_dead_owner_are_replaced() {
     assert_eq!(identify(&home)["result"]["instance_id"], runtime.instance_id());
 }
 
+/// As upstream, the runtime still starts (its messaging side needs no ticket), but its socket
+/// mints nothing and ensure names the repair.
 #[tokio::test]
-async fn a_home_other_users_can_write_is_refused() {
+async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
     let (_dir, home) = private_home();
-    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o777)).unwrap();
-    let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
-    let err = local::start(&home, chat).await.err().expect("refused");
-    assert!(err.contains("writable"), "{err}");
-    assert!(!home.join("gateway.lock").exists());
+    let runtime = start(&home).await;
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o775)).unwrap();
+    assert_eq!(identify(&home)["ok"], true);
+    let reply = control(&home, ticket_request(&home, runtime.instance_id(), "interactive"));
+    assert_eq!(reply["ok"], false, "{reply}");
+    let probe = home.clone();
+    let (verdict, text, code) =
+        tokio::task::spawn_blocking(move || ensure(&probe, Duration::from_secs(2), never_spawned()))
+            .await
+            .unwrap();
+    assert_eq!(code, 7, "{text}");
+    assert_eq!(verdict["reason_code"], "unsafe_control_permissions");
+    assert!(verdict["detail"].as_str().unwrap().contains("chmod"), "{text}");
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o700)).unwrap();
 }
 
 #[tokio::test]
