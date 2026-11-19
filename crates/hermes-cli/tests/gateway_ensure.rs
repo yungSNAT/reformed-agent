@@ -223,6 +223,35 @@ fn status_and_restart_keep_the_owners_lock_and_one_owner() {
     assert!(!alive(old), "the old owner is gone");
 }
 
+/// A run that cannot own the home must leave the owner's pid file alone, even when the file names
+/// a dead pid: removing it would leave a ready owner that `gateway stop` cannot find.
+#[test]
+fn a_run_refused_the_lock_leaves_the_pid_file() {
+    let (_dir, home) = private_root();
+    let _owner = Owner(home.clone());
+    let first = hermes(&home, &["gateway", "ensure", "--json"]);
+    let ready = verdict(&first);
+    assert_eq!(first.status.code(), Some(0), "{ready}");
+    let pid_file = home.join("gateway.pid");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !pid_file.exists() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    // As a second run sees it when it reads the pid file before the owner rewrites it.
+    let mut gone = Command::new("true").spawn().unwrap();
+    let dead = gone.id();
+    gone.wait().unwrap();
+    std::fs::write(&pid_file, format!("{dead}\n")).unwrap();
+
+    let second = hermes(&home, &["gateway", "run"]);
+    assert!(!second.status.success(), "the second run was refused");
+    assert_eq!(
+        std::fs::read_to_string(&pid_file).unwrap().trim(),
+        dead.to_string(),
+        "the refused run left the pid file"
+    );
+}
+
 #[test]
 fn profile_selects_the_named_profile_home_or_the_root_for_default() {
     let (_dir, root) = private_root();
