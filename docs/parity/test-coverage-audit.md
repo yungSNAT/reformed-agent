@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-19T05:40:24.951817+00:00`
+Generated: `2026-11-19T08:18:49.922256+00:00`
 
 ## Gate
 
@@ -13,13 +13,13 @@ Generated: `2026-11-19T05:40:24.951817+00:00`
 | Metric | Value |
 | --- | ---: |
 | `tracked_behavior_rows` | 511 |
-| `covered_behavior_rows` | 32 |
-| `tracked_behavior_coverage_ratio` | 0.0626 |
-| `rust_test_files` | 482 |
-| `rust_test_functions` | 8836 |
+| `covered_behavior_rows` | 33 |
+| `tracked_behavior_coverage_ratio` | 0.0646 |
+| `rust_test_files` | 486 |
+| `rust_test_functions` | 8874 |
 | `coverage_manifest_entries` | 501 |
-| `coverage_manifest_entries_with_valid_rust_tests` | 22 |
-| `coverage_manifest_deferred_entries` | 142 |
+| `coverage_manifest_entries_with_valid_rust_tests` | 23 |
+| `coverage_manifest_deferred_entries` | 141 |
 | `coverage_manifest_not_rechecked_entries` | 337 |
 | `missing_rust_test_refs` | 0 |
 | `queue_pending` | 0 |
@@ -32,7 +32,7 @@ Generated: `2026-11-19T05:40:24.951817+00:00`
 | Manifest | Entries | Valid Rust-test entries | Deferred, not covered | Not rechecked at the pin | Referenced Rust tests | Missing refs |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
 | `docs/parity/python-test-suite-coverage.json` | 177 | 0 | 46 | 131 | 105 | 0 |
-| `docs/parity/hermes-cli-test-coverage.json` | 147 | 0 | 37 | 110 | 89 | 0 |
+| `docs/parity/hermes-cli-test-coverage.json` | 147 | 1 | 36 | 110 | 98 | 0 |
 | `docs/parity/ui-tui-source-coverage.json` | 177 | 22 | 59 | 96 | 68 | 0 |
 
 ## Test Intent Domains
@@ -41,11 +41,11 @@ Generated: `2026-11-19T05:40:24.951817+00:00`
 | --- | --- | ---: | ---: |
 | `gateway-platform-behavior` | `direct_rust_test` | 25 | 22 |
 | `tool-runtime-behavior` | `direct_rust_test` | 132 | 108 |
-| `cli-command-surface` | `direct_rust_test` | 189 | 56 |
+| `cli-command-surface` | `direct_rust_test` | 189 | 58 |
 | `agent-loop-and-runtime` | `direct_rust_test` | 114 | 79 |
 | `acp-protocol-and-transport` | `direct_rust_test` | 21 | 15 |
-| `skills-management-contract` | `direct_rust_test` | 78 | 22 |
-| `cron-and-scheduler-runtime` | `direct_rust_test` | 80 | 22 |
+| `skills-management-contract` | `direct_rust_test` | 78 | 24 |
+| `cron-and-scheduler-runtime` | `direct_rust_test` | 80 | 24 |
 | `memory-plugin-integration` | `direct_rust_test` | 12 | 12 |
 | `environment-lifecycle-contract` | `direct_rust_test` | 16 | 11 |
 | `tool-call-parser-contract` | `direct_rust_test` | 3 | 3 |

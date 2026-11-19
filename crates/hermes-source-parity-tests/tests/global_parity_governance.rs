@@ -457,7 +457,7 @@ fn assert_deferred_row_is_explained(source: &str, row: &Value) {
 const DEFERRED_SHARED_DIFF: u64 = 27;
 const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
     ("python-test-suite-coverage.json", 46),
-    ("hermes-cli-test-coverage.json", 37),
+    ("hermes-cli-test-coverage.json", 36),
     ("ui-tui-source-coverage.json", 59),
 ];
 

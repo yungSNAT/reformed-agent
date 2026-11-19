@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-19T16:40:05+11:00",
-  "head_sha": "84e621f83c7f7c6138b6f7adb6b96a1b4e526ff4",
+  "generated_at_utc": "2026-11-19T18:11:58+11:00",
+  "head_sha": "885c69d9de22d25183f12fc444420e1e2ce0462c",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -67,12 +67,12 @@
     {
       "evidence": [
         "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.",
-        "338 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "337 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "ci_jobs": 0,
         "parity_gate_present": true,
-        "rows_not_shown_matching": 338
+        "rows_not_shown_matching": 337
       },
       "state": "in_progress",
       "title": "Tests and CI parity",

@@ -325,19 +325,19 @@ fn extract_marker_paths(text: &str) -> Vec<String> {
 }
 
 async fn count_git_tracked_files(repo_root: &Path) -> Result<usize, AgentError> {
-    let output = tokio::process::Command::new("git")
-        .arg("-C")
-        .arg(repo_root)
-        .arg("ls-files")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null())
-        .suppress_windows_console()
-        .output()
-        .await
-        .map_err(|e| AgentError::Io(format!("git ls-files failed: {}", e)))?;
-    if !output.status.success() {
+    let root = repo_root.to_path_buf();
+    let output = tokio::task::spawn_blocking(move || {
+        hermes_core::git::output_within_timeout(
+            hermes_core::git::read_only_git(&root)?.arg("ls-files"),
+            hermes_core::git::GIT_SNAPSHOT_TIMEOUT,
+        )
+    })
+    .await
+    .map_err(|e| AgentError::Io(format!("git ls-files failed: {}", e)))?;
+    // No count where git cannot run safely, fails or times out.
+    let Some(output) = output.filter(|output| output.status.success()) else {
         return Ok(0);
-    }
+    };
     let count = String::from_utf8_lossy(&output.stdout)
         .lines()
         .filter(|line| !line.trim().is_empty())
@@ -581,4 +581,52 @@ async fn handle_studio_command(app: &mut App, args: &[&str]) -> Result<CommandRe
         ),
     }
     Ok(CommandResult::Handled)
+}
+
+#[cfg(test)]
+mod swarm_git_tests {
+    use super::*;
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    }
+
+    #[tokio::test]
+    async fn tracked_files_are_counted() {
+        let tmp = tempfile::tempdir().unwrap();
+        git(tmp.path(), &["init", "-q"]);
+        std::fs::write(tmp.path().join("a.txt"), "a").unwrap();
+        std::fs::write(tmp.path().join("b.txt"), "b").unwrap();
+        git(tmp.path(), &["add", "a.txt", "b.txt"]);
+        assert_eq!(count_git_tracked_files(tmp.path()).await.unwrap(), 2);
+    }
+
+    /// A config key naming a FIFO makes git wait for a writer that never
+    /// comes; the count must give up on it.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tracked_file_count_gives_up_on_a_git_call_that_hangs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let fifo = tmp.path().join("fifo");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        git(&repo, &["config", "include.path", fifo.to_str().unwrap()]);
+
+        let count = tokio::time::timeout(Duration::from_secs(20), count_git_tracked_files(&repo))
+            .await
+            .expect("the tracked file count hung");
+        assert_eq!(count.unwrap(), 0);
+    }
 }
