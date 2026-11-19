@@ -181,8 +181,18 @@ pub struct AgentActivitySummary {
 
 pub trait ActiveSessionControl: Send + Sync {
     fn interrupt(&self, _message: &str) {}
+    /// Interrupt for a message that redirects the turn: returns the steer the turn accepted
+    /// but has not delivered, instead of dropping it as a stop does.
+    fn redirect(&self, message: &str) -> Option<String> {
+        self.interrupt(message);
+        None
+    }
     fn steer(&self, _message: &str) -> bool {
         false
+    }
+    /// Steer text the turn accepted but never delivered, taken once the turn has ended.
+    fn take_steer(&self) -> Option<String> {
+        None
     }
     fn activity_summary(&self) -> Option<AgentActivitySummary> {
         None
@@ -214,6 +224,8 @@ impl BusyMessageDecision {
 struct ActiveSession {
     control: Option<Arc<dyn ActiveSessionControl>>,
     started_at: Instant,
+    /// The last message passed to the turn as a steer: a leftover goes out as it would have.
+    steered: Option<MessageEvent>,
 }
 
 pub struct BusySessionCoordinator {
@@ -250,6 +262,7 @@ impl BusySessionCoordinator {
             ActiveSession {
                 control,
                 started_at: now,
+                steered: None,
             },
         );
     }
@@ -267,7 +280,22 @@ impl BusySessionCoordinator {
         session_key: &str,
         _outcome: ProcessingOutcome,
     ) -> Option<MessageEvent> {
-        self.active.remove(session_key);
+        // A steer accepted after the turn's last tool result was never delivered: it becomes
+        // the next turn, ahead of anything queued meanwhile, as upstream sends it.
+        if let Some(ActiveSession {
+            control: Some(control),
+            steered: Some(mut event),
+            ..
+        }) = self.active.remove(session_key)
+        {
+            if let Some(text) = control.take_steer() {
+                event.text = text;
+                self.pending
+                    .entry(session_key.to_string())
+                    .or_default()
+                    .push_front(event);
+            }
+        }
         self.busy_ack_ts.remove(session_key);
         self.pop_pending(session_key)
     }
@@ -383,7 +411,17 @@ impl BusySessionCoordinator {
             }
             BusyInputMode::Interrupt => {
                 if let Some(control) = active.control.as_ref() {
-                    control.interrupt(&event.text);
+                    // This message redirects the turn rather than stopping it: a steer the
+                    // turn has not delivered runs first, as upstream keeps it.
+                    if let (Some(text), Some(mut steered)) =
+                        (control.redirect(&event.text), active.steered.clone())
+                    {
+                        steered.text = text;
+                        self.pending
+                            .entry(session_key.to_string())
+                            .or_default()
+                            .push_front(steered);
+                    }
                     self.queue_event(session_key, event);
                     BusyMessageDecision {
                         handled: true,
@@ -415,6 +453,9 @@ impl BusySessionCoordinator {
                     .map(|control| control.steer(&event.text))
                     .unwrap_or(false);
                 if steered {
+                    if let Some(active) = self.active.get_mut(session_key) {
+                        active.steered = Some(event);
+                    }
                     BusyMessageDecision {
                         handled: true,
                         queued: false,
@@ -549,15 +590,27 @@ mod tests {
     struct MockControl {
         interrupts: Mutex<Vec<String>>,
         steer_accepts: bool,
+        leftover_steer: Mutex<Option<String>>,
     }
 
     impl ActiveSessionControl for MockControl {
         fn interrupt(&self, message: &str) {
             self.interrupts.lock().unwrap().push(message.to_string());
+            // As `InterruptController::interrupt` does, an interrupt drops a pending steer.
+            self.leftover_steer.lock().unwrap().take();
+        }
+
+        fn redirect(&self, message: &str) -> Option<String> {
+            self.interrupts.lock().unwrap().push(message.to_string());
+            self.leftover_steer.lock().unwrap().take()
         }
 
         fn steer(&self, _message: &str) -> bool {
             self.steer_accepts
+        }
+
+        fn take_steer(&self) -> Option<String> {
+            self.leftover_steer.lock().unwrap().take()
         }
 
         fn activity_summary(&self) -> Option<AgentActivitySummary> {
@@ -569,6 +622,95 @@ mod tests {
                 seconds_since_activity: Some(0.5),
             })
         }
+    }
+
+    #[test]
+    fn a_steer_the_turn_never_delivered_becomes_the_next_turn() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control.clone()));
+        let steered =
+            coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        assert!(steered.steered);
+        coord.handle_busy_message(&key, event("queued", "10"), BusyInputMode::Queue);
+        // The turn ended before its next tool result, so the agent still holds the steer.
+        *control.leftover_steer.lock().unwrap() = Some("use tabs".to_string());
+
+        let next = coord.finish(&key, ProcessingOutcome::Success).unwrap();
+        assert_eq!(next.text, "use tabs");
+        assert_eq!(next.source, source("10"));
+        assert_eq!(coord.pending(&key).unwrap().text, "queued");
+        assert!(control.leftover_steer.lock().unwrap().is_none());
+    }
+
+    #[test]
+    fn a_message_that_interrupts_keeps_a_steer_the_turn_never_delivered() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control.clone()));
+        coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        // The agent still holds the steer when a message interrupts the turn.
+        *control.leftover_steer.lock().unwrap() = Some("use tabs".to_string());
+        let redirect = coord.handle_busy_message(
+            &key,
+            event("also check the docs", "10"),
+            BusyInputMode::Interrupt,
+        );
+        assert!(redirect.interrupted);
+
+        let next = coord.finish(&key, ProcessingOutcome::Success).unwrap();
+        assert_eq!(next.text, "use tabs");
+        assert_eq!(coord.pending(&key).unwrap().text, "also check the docs");
+        assert_eq!(coord.pending_len(&key), 1);
+    }
+
+    #[test]
+    fn a_steer_after_an_interrupting_message_is_also_sent_once() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control.clone()));
+        coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        *control.leftover_steer.lock().unwrap() = Some("use tabs".to_string());
+        coord.handle_busy_message(
+            &key,
+            event("also check the docs", "10"),
+            BusyInputMode::Interrupt,
+        );
+        // Accepted whilst the interrupted turn winds down, and never delivered.
+        coord.handle_busy_message(&key, event("keep it short", "10"), BusyInputMode::Steer);
+        *control.leftover_steer.lock().unwrap() = Some("keep it short".to_string());
+
+        let mut sent = vec![coord.finish(&key, ProcessingOutcome::Success).unwrap().text];
+        while let Some(next) = coord.pop_pending(&key) {
+            sent.push(next.text);
+        }
+        sent.sort();
+        assert_eq!(sent, ["also check the docs", "keep it short", "use tabs"]);
+    }
+
+    #[test]
+    fn a_delivered_steer_is_not_sent_again() {
+        let mut coord = BusySessionCoordinator::default();
+        let key = build_session_key(&source("10"));
+        let control = Arc::new(MockControl {
+            steer_accepts: true,
+            ..MockControl::default()
+        });
+        coord.mark_active(&key, Some(control));
+        coord.handle_busy_message(&key, event("use tabs", "10"), BusyInputMode::Steer);
+        assert!(coord.finish(&key, ProcessingOutcome::Success).is_none());
     }
 
     #[test]

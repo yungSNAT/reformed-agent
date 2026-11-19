@@ -117,6 +117,64 @@
         );
     }
 
+    #[test]
+    fn acp_queues_a_steer_the_turn_never_delivered_ahead_of_the_queue() {
+        let sessions = hermes_acp::SessionManager::new();
+        let session = sessions.create_session(".");
+        sessions.push_queued_prompt(&session.session_id, "queued meanwhile");
+        let controller = hermes_agent::InterruptController::new();
+        assert!(controller.steer("prefer the simpler fix"));
+
+        requeue_leftover_steer(&controller, &sessions, &session.session_id);
+
+        assert_eq!(
+            sessions
+                .get_session(&session.session_id)
+                .unwrap()
+                .queued_prompts,
+            vec!["prefer the simpler fix", "queued meanwhile"]
+        );
+        assert_eq!(controller.take_steer(), None);
+    }
+
+    #[test]
+    fn acp_refuses_a_steer_that_arrives_after_the_turn_took_its_leftover() {
+        let sessions = hermes_acp::SessionManager::new();
+        let session = sessions.create_session(".");
+        let controller = hermes_agent::InterruptController::new();
+        // A `/steer` that cloned the controller before the turn ended still holds it.
+        let held_by_steer = controller.clone();
+
+        requeue_leftover_steer(&controller, &sessions, &session.session_id);
+
+        assert!(
+            !held_by_steer.steer("prefer the simpler fix"),
+            "a steer no one will deliver was accepted"
+        );
+        assert_eq!(controller.take_steer(), None);
+    }
+
+    #[test]
+    fn acp_cancel_leaves_no_steer_to_queue() {
+        let sessions = hermes_acp::SessionManager::new();
+        let session = sessions.create_session(".");
+        let controller = hermes_agent::InterruptController::new();
+        assert!(controller.steer("prefer the simpler fix"));
+
+        controller.interrupt(None);
+        assert!(
+            !controller.steer("sent after the cancel"),
+            "a steer after the cancel was kept for the stopped turn"
+        );
+        requeue_leftover_steer(&controller, &sessions, &session.session_id);
+
+        assert!(sessions
+            .get_session(&session.session_id)
+            .unwrap()
+            .queued_prompts
+            .is_empty());
+    }
+
     struct CliNoopTool {
         schema: hermes_core::ToolSchema,
     }
