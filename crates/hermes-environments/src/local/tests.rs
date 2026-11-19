@@ -1388,4 +1388,5 @@ async fn diag_kill_process_repeated() {
         let killed = backend.kill_process(&session_id).await;
         assert!(killed.is_ok(), "round {round}: {killed:?}");
     }
+    panic!("DIAG dump");
 }
