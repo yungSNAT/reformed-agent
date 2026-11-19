@@ -35,47 +35,45 @@ impl AgentLoop {
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            messages.push(Message::system(ephemeral));
+            // Sent with the leading system prompt, as upstream sends it, so it
+            // stays in Anthropic's `system` and out of the conversation.
+            let at = messages
+                .iter()
+                .take_while(|m| m.role == hermes_core::types::MessageRole::System)
+                .count();
+            messages.insert(at, Message::system(ephemeral));
         }
         self.apply_prompt_cache_markers(&mut messages);
         messages
     }
 
+    /// Anthropic's 4 cache breakpoints, as upstream's `system_and_3`: the
+    /// system prompt, then the last 3 messages of the conversation, so each
+    /// request in a tool loop reads the prefix the one before it wrote.
     fn apply_prompt_cache_markers(&self, messages: &mut [Message]) {
         use hermes_core::types::{CacheControl, CacheType, MessageRole};
-        if messages.is_empty() {
+        let (provider, _) = self.extract_provider_and_model(self.config.model.as_str());
+        let provider = provider.to_ascii_lowercase();
+        if !(provider.contains("anthropic") || provider.contains("claude")) {
             return;
         }
-        let provider = self
-            .config
-            .provider
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let is_anthropic = provider.contains("anthropic") || provider.contains("claude");
-        if !is_anthropic {
-            return;
-        }
+        let marker = || {
+            Some(CacheControl {
+                cache_type: CacheType::Ephemeral,
+            })
+        };
         for msg in messages.iter_mut() {
-            if msg.role == MessageRole::System {
-                msg.cache_control = Some(CacheControl {
-                    cache_type: CacheType::Persistent,
-                });
-                break;
-            }
+            msg.cache_control = None;
         }
-        let ephemeral_budget = 4;
-        let mut marked = 0;
-        for msg in messages.iter_mut().rev() {
-            if marked >= ephemeral_budget {
-                break;
-            }
-            if msg.role == MessageRole::User || msg.role == MessageRole::Assistant {
-                msg.cache_control = Some(CacheControl {
-                    cache_type: CacheType::Ephemeral,
-                });
-                marked += 1;
-            }
+        let leading_system = messages
+            .iter()
+            .take_while(|m| m.role == MessageRole::System)
+            .count();
+        if leading_system > 0 {
+            messages[0].cache_control = marker();
+        }
+        for msg in messages[leading_system..].iter_mut().rev().take(3) {
+            msg.cache_control = marker();
         }
     }
 

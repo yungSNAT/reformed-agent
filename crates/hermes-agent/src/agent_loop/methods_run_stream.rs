@@ -105,7 +105,11 @@ impl AgentLoop {
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
 
-        let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
+        let mut tool_schemas: Vec<ToolSchema> =
+            tools.unwrap_or_else(|| self.tool_registry.schemas());
+        // A fixed order keeps the cached prompt prefix identical across
+        // processes; registries iterate in hash order.
+        tool_schemas.sort_by(|a, b| a.name.cmp(&b.name));
         // Five finalizer contracts below re-ask for a final answer backed by tool evidence or
         // execution. A turn offered no tools cannot gather any, so its first answer stands; the
         // output-quality rewrite needs no tools and still applies.

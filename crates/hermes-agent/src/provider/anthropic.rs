@@ -36,6 +36,42 @@ fn anthropic_final_usage(start: &UsageStats, delta: &Value) -> UsageStats {
     usage
 }
 
+/// Anthropic's only cache breakpoint type.
+fn anthropic_cache_control() -> Value {
+    serde_json::json!({"type": "ephemeral"})
+}
+
+/// The `system` parameter: the leading system text, as one block carrying a
+/// cache breakpoint when the agent marked a leading system message.
+fn anthropic_system_param(messages: &[Message], system_text: &str) -> Value {
+    let cached = messages
+        .iter()
+        .take_while(|m| m.role == MessageRole::System)
+        .any(|m| m.cache_control.is_some());
+    if cached {
+        serde_json::json!([{
+            "type": "text",
+            "text": system_text,
+            "cache_control": anthropic_cache_control(),
+        }])
+    } else {
+        serde_json::json!(system_text)
+    }
+}
+
+/// Puts the breakpoint on the last block that may carry one: Anthropic
+/// refuses `cache_control` on thinking blocks.
+fn mark_last_cacheable_block(blocks: &mut [Value]) {
+    if let Some(block) = blocks.iter_mut().rev().find(|b| {
+        !matches!(
+            b.get("type").and_then(Value::as_str),
+            Some("thinking" | "redacted_thinking")
+        )
+    }) {
+        block["cache_control"] = anthropic_cache_control();
+    }
+}
+
 /// Anthropic API provider with native Messages API support.
 ///
 /// Uses Anthropic's own message format rather than OpenAI-compatible format:
@@ -340,13 +376,29 @@ impl AnthropicProvider {
 
         for msg in messages {
             match msg.role {
-                MessageRole::System => {
-                    // Anthropic: system goes in a separate `system` parameter
+                MessageRole::System if anthropic_messages.is_empty() => {
+                    // Anthropic: the leading system messages go in the `system` parameter
                     let content = msg.content.as_deref().unwrap_or("");
                     system_text = Some(match system_text {
                         Some(existing) => format!("{existing}\n\n{content}"),
                         None => content.to_string(),
                     });
+                }
+                MessageRole::System => {
+                    // A later system message (memory recall, a retry note) stays
+                    // where it is, as user text: hoisting it into `system` would
+                    // change the prefix every cached request shares.
+                    let mut block = serde_json::json!({
+                        "type": "text",
+                        "text": msg.content.as_deref().unwrap_or(""),
+                    });
+                    if msg.cache_control.is_some() {
+                        block["cache_control"] = anthropic_cache_control();
+                    }
+                    anthropic_messages.push(serde_json::json!({
+                        "role": "user",
+                        "content": [block],
+                    }));
                 }
                 MessageRole::User => {
                     let mut content_blocks = Vec::new();
@@ -363,8 +415,8 @@ impl AnthropicProvider {
                             }
                         } else {
                             let mut block = serde_json::json!({"type": "text", "text": text});
-                            if let Some(ref cc) = msg.cache_control {
-                                block["cache_control"] = serde_json::json!({"type": format!("{:?}", cc.cache_type).to_lowercase()});
+                            if msg.cache_control.is_some() {
+                                block["cache_control"] = anthropic_cache_control();
                             }
                             content_blocks.push(block);
                         }
@@ -382,6 +434,10 @@ impl AnthropicProvider {
                         .map(Self::replay_anthropic_content_blocks)
                         .filter(|blocks| !blocks.is_empty())
                     {
+                        let mut ordered_blocks = ordered_blocks;
+                        if msg.cache_control.is_some() {
+                            mark_last_cacheable_block(&mut ordered_blocks);
+                        }
                         anthropic_messages.push(serde_json::json!({
                             "role": "assistant",
                             "content": ordered_blocks,
@@ -421,6 +477,9 @@ impl AnthropicProvider {
                         }
                     }
                     if !content_blocks.is_empty() {
+                        if msg.cache_control.is_some() {
+                            mark_last_cacheable_block(&mut content_blocks);
+                        }
                         anthropic_messages.push(serde_json::json!({
                             "role": "assistant",
                             "content": content_blocks,
@@ -429,11 +488,15 @@ impl AnthropicProvider {
                 }
                 MessageRole::Tool => {
                     // Anthropic: tool results go as user messages with tool_result content blocks
-                    let content_blocks = vec![serde_json::json!({
+                    let mut block = serde_json::json!({
                         "type": "tool_result",
                         "tool_use_id": msg.tool_call_id.as_deref().unwrap_or(""),
                         "content": msg.content.as_deref().unwrap_or(""),
-                    })];
+                    });
+                    if msg.cache_control.is_some() {
+                        block["cache_control"] = anthropic_cache_control();
+                    }
+                    let content_blocks = vec![block];
                     anthropic_messages.push(serde_json::json!({
                         "role": "user",
                         "content": content_blocks,
@@ -604,7 +667,7 @@ impl LlmProvider for AnthropicProvider {
         });
 
         if let Some(ref sys) = system_text {
-            body["system"] = serde_json::json!(sys);
+            body["system"] = anthropic_system_param(messages, sys);
         }
         if let Some(temp) = temperature {
             body["temperature"] = serde_json::json!(temp);
@@ -676,7 +739,7 @@ impl LlmProvider for AnthropicProvider {
             });
 
             if let Some(ref sys) = system_text {
-                body["system"] = serde_json::json!(sys);
+                body["system"] = anthropic_system_param(&messages, sys);
             }
             if let Some(temp) = temperature {
                 body["temperature"] = serde_json::json!(temp);
