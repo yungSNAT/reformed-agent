@@ -688,6 +688,18 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn a_volume_that_keeps_no_permissions_is_refused() {
+        use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
+        let refused = owner_only::keeps_permissions(0).unwrap_err();
+        assert_eq!(refused.kind(), ErrorKind::Unsupported);
+        assert!(owner_only::keeps_permissions(FILE_PERSISTENT_ACLS).is_ok());
+        // The test folder's volume keeps them, so an image is staged there.
+        let images = tempfile::tempdir().unwrap();
+        assert!(owner_only::require_permissions(images.path()).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn a_new_images_folder_is_owner_only() {
         let home = tempfile::tempdir().unwrap();
         let images = home.path().join("images");

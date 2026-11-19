@@ -1021,6 +1021,10 @@ async fn an_empty_content_base64_gives_way_to_data() {
             .await;
         assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
     }
+    // A blank but not empty one is taken, as upstream's `or` takes it, and refused as missing.
+    let params = json!({"session_id": session, "content_base64": "  ", "data": b64(&png("c"))});
+    let reply = client.call(9, "image.attach_bytes", params).await;
+    assert_eq!(reply["error"]["code"], 4015, "{reply}");
 }
 
 /// A staged image that can no longer be read fails the turn before the model is asked, and
