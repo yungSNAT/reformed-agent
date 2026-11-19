@@ -699,6 +699,15 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     // Validate
     validate_config(&config)?;
 
+    // Literal credentials in the config files are secrets the process now
+    // holds; redaction and the tool registry match them exactly.
+    match serde_json::to_value(&config) {
+        Ok(value) => hermes_core::secret_values::register_json("config", &value),
+        Err(_) => tracing::warn!(
+            "the configuration could not be scanned for secret values; only their shapes are redacted"
+        ),
+    }
+
     Ok(config)
 }
 
