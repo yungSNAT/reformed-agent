@@ -187,6 +187,22 @@ async fn a_lock_and_socket_left_by_a_gone_owner_are_replaced_even_when_its_pid_l
     assert_eq!(lock["pid"], std::process::id());
 }
 
+/// A stopping host withdraws local mode at once (no socket, no state file, so ensure cannot
+/// report it ready after its pid file is gone) but keeps the home until it exits.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_runtime_that_stops_serving_keeps_the_home_until_dropped() {
+    let (_dir, home) = private_home();
+    let mut runtime = start(&home);
+    runtime.stop_serving();
+    assert!(!home.join("gateway.sock").exists());
+    assert!(!home.join("gateway_state.json").exists());
+    assert!(local::lock_held(&home), "the home stays claimed");
+    let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
+    assert!(local::start(&home, chat).is_err(), "a second owner started");
+    drop(runtime);
+    assert!(!local::lock_held(&home));
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
     let (_dir, home) = private_home();
