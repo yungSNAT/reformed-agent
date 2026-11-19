@@ -1,51 +1,51 @@
 # Hermes TUI
 
-React + Ink terminal UI for Hermes. TypeScript owns the screen. Python owns sessions, tools, model calls, and most command logic.
-
-```bash
-hermes --tui
-```
+React + Ink terminal UI for Hermes. TypeScript owns the screen. The Rust desktop gateway (`crates/hermes-desktop-gateway`) owns sessions and model calls.
 
 ## What runs
 
 The client entrypoint is `src/entry.tsx`. It exits early if `stdin` is not a TTY, starts `GatewayClient`, then renders `App`.
 
-`GatewayClient` spawns:
+Unless `HERMES_TUI_GATEWAY_URL` names a gateway to attach to, `GatewayClient` starts the gateway itself:
 
 ```text
-python -m tui_gateway.entry
+hermes-desktop-gateway --host 127.0.0.1 --port 0
 ```
 
-Interpreter resolution order is: `HERMES_PYTHON` → `PYTHON` → `$VIRTUAL_ENV/bin/python` → `./.venv/bin/python` → `./venv/bin/python` → `python3` (or `python` on Windows).
+It looks for the binary in `HERMES_TUI_GATEWAY_BIN`, then `target/release` and `target/debug` in this checkout, then on `PATH`. It gives the gateway a new random token in `HERMES_DASHBOARD_SESSION_TOKEN`, reads the port from the gateway's `HERMES_BACKEND_READY port=<n>` line and connects to `ws://127.0.0.1:<n>/api/ws` with that token. Quitting the TUI stops the gateway.
 
-The transport is newline-delimited JSON-RPC over stdio:
+The transport is JSON-RPC over that WebSocket:
 
 ```text
-ui-tui/src                  tui_gateway/
------------                 -------------
-entry.tsx                   entry.py
-  -> GatewayClient            -> request loop
-  -> App                      -> server.py RPC handlers
+ui-tui/src                  crates/hermes-desktop-gateway
+-----------                 -----------------------------
+entry.tsx                   main.rs
+  -> GatewayClient            -> loopback listener, token check
+  -> App                      -> chat.rs RPC handlers
 
-stdin/stdout: JSON-RPC requests, responses, events
-stderr: captured into an in-memory log ring
+WebSocket: JSON-RPC requests, responses, events
+gateway stdout and stderr: captured into an in-memory log ring
 ```
 
-Malformed stdout lines are treated as protocol noise and surfaced as `gateway.protocol_error`. Stderr lines become `gateway.stderr`. Neither writes directly into the terminal.
+The gateway is a preview: it answers `setup.runtime_check`, `session.create`, `prompt.submit`, `file.attach` and `image.attach_bytes`, and every other method with 'method not found'.
+
+Malformed WebSocket frames are treated as protocol noise and surfaced as `gateway.protocol_error`. Stderr lines become `gateway.stderr`. Neither writes directly into the terminal.
 
 ## Running it
 
-From the repo root, the normal path is:
+Build the gateway once, from the repo root:
 
 ```bash
-hermes --tui
+cargo build --release -p hermes-desktop-gateway
 ```
 
-The CLI expects `ui-tui/node_modules` to exist. If the TUI deps are missing:
+Then install the TUI's dependencies and start it:
 
 ```bash
 cd ui-tui
 npm install
+npm run build --prefix packages/hermes-ink
+npm start
 ```
 
 Local package commands:
@@ -254,7 +254,7 @@ Primary event types the client handles today:
 | `background.complete`    | `{ task_id, text }`                             |
 | `error`                  | `{ message }`                                   |
 | `gateway.stderr`         | synthesized from child stderr                   |
-| `gateway.protocol_error` | synthesized from malformed stdout               |
+| `gateway.protocol_error` | synthesized from malformed WebSocket frames     |
 
 ## Theme model
 
@@ -335,12 +335,11 @@ ui-tui/
     __tests__/           vitest suite
 ```
 
-Related Python side:
+Related Rust side:
 
 ```text
-tui_gateway/
-  entry.py               stdio entrypoint
-  server.py              RPC handlers and session logic
-  render.py              optional rich/ANSI bridge
-  slash_worker.py        persistent HermesCLI subprocess for slash commands
+crates/hermes-desktop-gateway/src/
+  main.rs                loopback listener, token and readiness lines
+  lib.rs                 handshake, origin and token checks, WebSocket loop
+  chat.rs                RPC handlers and session logic
 ```
