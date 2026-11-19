@@ -2,12 +2,10 @@
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
-use std::process::Command;
 
 use async_trait::async_trait;
-use hermes_core::{
-    subprocess::CommandNoWindowExt, tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema,
-};
+use hermes_core::git::{output_within_timeout, read_only_git, GIT_SNAPSHOT_TIMEOUT};
+use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use indexmap::IndexMap;
 use serde_json::{json, Value};
 
@@ -401,9 +399,16 @@ fn git_snapshot(root: &Path) -> Value {
     let Some(git_root) = git_root(root) else {
         return json!({"present": false});
     };
-    let branch = git_output(&git_root, &["branch", "--show-current"]);
-    let head = git_output(&git_root, &["rev-parse", "--short", "HEAD"]);
-    let status = git_output(&git_root, &["status", "--short"]);
+    let branch =
+        git_output(&git_root, &["branch", "--show-current"]).filter(|text| !text.is_empty());
+    let head =
+        git_output(&git_root, &["rev-parse", "--short", "HEAD"]).filter(|text| !text.is_empty());
+    // A submodule has its own config and filter drivers, which the overrides
+    // do not reach: never run status inside its dirty worktree.
+    let status = git_output(
+        &git_root,
+        &["status", "--short", "--ignore-submodules=dirty"],
+    );
     let mut counts: BTreeMap<&'static str, usize> = BTreeMap::new();
     if let Some(status) = status.as_deref() {
         for line in status.lines() {
@@ -425,24 +430,21 @@ fn git_snapshot(root: &Path) -> Value {
         "root": git_root.display().to_string(),
         "branch": branch,
         "head": head,
-        "dirty": !counts.is_empty(),
+        // Unknown when git did not report the status.
+        "dirty": status.is_some().then_some(!counts.is_empty()),
         "statusCounts": counts,
     })
 }
 
+/// The trimmed output of a git command that the repository's own
+/// configuration cannot use to run a program, or `None` when git cannot run
+/// safely, fails or times out.
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
-        .arg("-C")
-        .arg(root)
-        .args(args)
-        .suppress_windows_console()
-        .output()
-        .ok()?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!text.is_empty()).then_some(text)
+    let output = output_within_timeout(read_only_git(root)?.args(args), GIT_SNAPSHOT_TIMEOUT)?;
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn ignored_tree_entry(name: &str, include_hidden: bool) -> bool {
@@ -523,6 +525,7 @@ fn collect_tree(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::process::Command;
 
     #[test]
     fn project_facts_reports_git_and_verify_commands() {
@@ -608,5 +611,125 @@ mod tests {
         assert!(paths.contains(&"src".to_string()));
         assert!(paths.contains(&Path::new("src").join("lib.rs").display().to_string()));
         assert!(!paths.iter().any(|path| path.starts_with("target")));
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    }
+
+    /// A repository at `dir` with `README.md` ("test") committed, and an
+    /// `AGENTS.md` marker so that `dir` is the workspace root even when a
+    /// directory above the temporary folder carries a marker of its own.
+    fn committed_repo(dir: &Path) {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("README.md"), "test").unwrap();
+        std::fs::write(dir.join("AGENTS.md"), "").unwrap();
+        git(dir, &["init", "-q"]);
+        git(dir, &["config", "user.email", "t@example.com"]);
+        git(dir, &["config", "user.name", "T"]);
+        git(dir, &["add", "README.md", "AGENTS.md"]);
+        git(dir, &["commit", "-qm", "init"]);
+    }
+
+    /// A program in `dir` that leaves the returned marker when it runs.
+    #[cfg(unix)]
+    fn marker_program(dir: &Path, name: &str) -> (PathBuf, String) {
+        use std::os::unix::fs::PermissionsExt;
+        let marker = dir.join(format!("{name}-ran"));
+        let program = dir.join(format!("{name}.sh"));
+        std::fs::write(
+            &program,
+            format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+        )
+        .unwrap();
+        std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (marker, program.display().to_string())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_facts_runs_no_program_the_repository_config_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        committed_repo(&repo);
+        let (fsmonitor_ran, fsmonitor) = marker_program(tmp.path(), "fsmonitor");
+        let (filter_ran, filter) = marker_program(tmp.path(), "filter");
+        git(&repo, &["config", "core.fsmonitor", &fsmonitor]);
+        git(&repo, &["config", "filter.croft.clean", &filter]);
+        git(&repo, &["config", "filter.croft.required", "true"]);
+        std::fs::write(repo.join(".gitattributes"), "README.md filter=croft\n").unwrap();
+        // The same size, so status must hash the file through its filter.
+        std::fs::write(repo.join("README.md"), "best").unwrap();
+
+        let facts = project_facts_snapshot(Some(&repo));
+
+        assert_eq!(facts["git"]["present"], true);
+        assert!(
+            !fsmonitor_ran.exists(),
+            "the snapshot ran the repository's core.fsmonitor program"
+        );
+        assert!(
+            !filter_ran.exists(),
+            "the snapshot ran the repository's clean filter"
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn project_facts_runs_no_filter_inside_a_dirty_submodule() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        let source = tmp.path().join("source");
+        committed_repo(&repo);
+        committed_repo(&source);
+        git(
+            &repo,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                source.to_str().unwrap(),
+                "nested",
+            ],
+        );
+        git(&repo, &["commit", "-qm", "add submodule"]);
+        let nested = repo.join("nested");
+        let (filter_ran, filter) = marker_program(tmp.path(), "submodule-filter");
+        git(&nested, &["config", "filter.croft.clean", &filter]);
+        git(&nested, &["config", "filter.croft.required", "true"]);
+        std::fs::write(nested.join(".gitattributes"), "README.md filter=croft\n").unwrap();
+        std::fs::write(nested.join("README.md"), "best").unwrap();
+
+        let facts = project_facts_snapshot(Some(&repo));
+
+        assert_eq!(facts["git"]["present"], true);
+        assert!(
+            !filter_ran.exists(),
+            "the snapshot ran a filter of the submodule"
+        );
+    }
+
+    /// Where git gives no status the snapshot says so rather than reporting
+    /// a clean tree.
+    #[test]
+    fn project_facts_reports_an_unread_status_as_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        committed_repo(&repo);
+        // Git refuses a config it cannot parse, whatever it is asked.
+        std::fs::write(repo.join(".git").join("config"), "[core").unwrap();
+
+        let facts = project_facts_snapshot(Some(&repo));
+
+        assert_eq!(facts["git"]["present"], true);
+        assert_eq!(facts["git"]["head"], Value::Null);
+        assert_eq!(facts["git"]["dirty"], Value::Null);
     }
 }

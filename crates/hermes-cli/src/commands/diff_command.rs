@@ -1,7 +1,7 @@
 //! `/diff`: git changes in the working directory (upstream
 //! `tools/working_diff.py` and the CLI's `_handle_diff_command`).
 //!
-//! Git runs through [`hermes_agent::coding_context::read_only_git`], so the
+//! Git runs through [`hermes_core::git::read_only_git`], so the
 //! repository's own configuration cannot make it run a program, and with
 //! `--no-ext-diff --no-textconv`, so no diff or textconv driver runs either.
 //! Submodules are read only for their recorded commit, as the workspace
@@ -157,14 +157,14 @@ fn git<S: AsRef<OsStr>>(
     args: impl IntoIterator<Item = S>,
     timeout: Duration,
 ) -> Result<Git, String> {
-    let mut cmd: Command = hermes_agent::coding_context::read_only_git(cwd).ok_or_else(|| {
+    let mut cmd: Command = hermes_core::git::read_only_git(cwd).ok_or_else(|| {
         "git could not be run safely here: it is missing, older than 2.39.1, or this repository's configuration could not be read.".to_string()
     })?;
     // `diff.submodule=diff` would start a second diff inside a submodule.
     cmd.args(["-c", "core.quotePath=false", "-c", "diff.submodule=short"])
         .args(args);
     Ok(
-        match hermes_agent::coding_context::output_within_timeout(&mut cmd, timeout) {
+        match hermes_core::git::output_within_timeout(&mut cmd, timeout) {
             Some(output) => Git::Done(output.status.code(), output.stdout),
             None => Git::TimedOut,
         },

@@ -14,7 +14,7 @@ use hermes_intelligence::estimate_tokens_rough;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
-use crate::coding_context::{output_within_timeout, read_only_git};
+use hermes_core::git::{output_within_timeout, read_only_git};
 
 const TRAILING_PUNCTUATION: &str = ",.;!?";
 const SENSITIVE_HOME_DIRS: &[&str] = &[".ssh", ".aws", ".gnupg", ".kube"];

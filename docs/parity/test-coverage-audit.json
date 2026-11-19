@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T07:45:27.632441+00:00",
+  "generated_at_utc": "2026-11-19T08:18:49.922256+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -746,7 +746,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 56,
+      "direct_test_evidence_count": 58,
       "direct_test_evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -765,14 +765,14 @@
         "crates/hermes-cli/src/cli.rs",
         "crates/hermes-cli/src/cli/tests.rs",
         "crates/hermes-cli/src/cloudflare.rs",
+        "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
+        "crates/hermes-cli/src/commands/command_agentic_workflows/swarm_specpatch_studio.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp/memory_setup.rs",
         "crates/hermes-cli/src/commands/command_tests.rs",
         "crates/hermes-cli/src/commands/diff_command.rs",
         "crates/hermes-cli/src/commands/hermes_migrate.rs",
-        "crates/hermes-cli/src/commands/hermes_migrate/tests.rs",
-        "crates/hermes-cli/src/commands/init_command.rs",
-        "crates/hermes-cli/src/commands/mod.rs"
+        "crates/hermes-cli/src/commands/hermes_migrate/tests.rs"
       ],
       "evidence_count": 189,
       "evidence_sample": [
@@ -926,8 +926,10 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 22,
+      "direct_test_evidence_count": 24,
       "direct_test_evidence_sample": [
+        "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
+        "crates/hermes-cli/src/commands/command_agentic_workflows/swarm_specpatch_studio.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp/memory_setup.rs",
         "crates/hermes-cli/src/commands/command_tests.rs",
@@ -989,8 +991,10 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 22,
+      "direct_test_evidence_count": 24,
       "direct_test_evidence_sample": [
+        "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
+        "crates/hermes-cli/src/commands/command_agentic_workflows/swarm_specpatch_studio.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp.rs",
         "crates/hermes-cli/src/commands/command_cli_plugins_memory_mcp/memory_setup.rs",
         "crates/hermes-cli/src/commands/command_tests.rs",
@@ -1176,8 +1180,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 483,
-    "rust_test_functions": 8856,
+    "rust_test_files": 486,
+    "rust_test_functions": 8874,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
