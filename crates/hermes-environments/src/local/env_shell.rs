@@ -629,6 +629,9 @@ fn shell_command(script: &str) -> Result<(TokioCommand, Option<tempfile::TempPat
         let script_error = |e: std::io::Error| {
             AgentError::Io(format!("Failed to write the command to a script file: {e}"))
         };
+        // shortcut: the file takes `%TEMP%`'s permissions and outlives a
+        // crash, so a shared `TEMP` exposes the command to other local
+        // users. The upgrade is a folder with an owner-only ACL.
         let mut file = tempfile::Builder::new()
             .prefix("hermes-command-")
             .suffix(".sh")
