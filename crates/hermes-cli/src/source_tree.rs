@@ -279,10 +279,12 @@ pub(crate) mod tests {
     use super::*;
     use std::cell::RefCell;
 
+    pub(crate) type Hook = Option<Box<dyn Fn(&OsStr)>>;
+
     thread_local! {
         /// Runs between an entry's classing and its open, so a test can
         /// change the entry in between.
-        pub(crate) static BETWEEN: RefCell<Option<Box<dyn Fn(&OsStr)>>> = RefCell::new(None);
+        pub(crate) static BETWEEN: RefCell<Hook> = RefCell::new(None);
     }
 
     #[test]
