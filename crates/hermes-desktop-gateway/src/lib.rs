@@ -12,6 +12,11 @@
 //! them; both need an `Origin` that is absent (no browser), exactly `file://` (the packaged
 //! desktop) or an http(s) origin naming this listener. Each refusal happens before any
 //! session is touched.
+//!
+//! Local mode ([`local`], Unix) serves the same routes to the desktop on this machine. There the
+//! token path is off: the WebSocket upgrade needs a one-use `interactive` ticket in its `ticket`
+//! query and the messages route a one-use `native-http` ticket in `X-Hermes-Gateway-Ticket`, both
+//! minted on the runtime's private control socket, and any `Origin` refuses the request.
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -31,9 +36,13 @@ use tokio::sync::mpsc;
 
 mod attach;
 pub mod chat;
+#[cfg(unix)]
+pub mod local;
+mod tickets;
 
 pub use chat::Chat;
 use chat::{Outgoing, RpcError};
+use tickets::{Purpose, Tickets};
 
 /// The environment variable Hermes Desktop and `hermes serve` use for the session token.
 pub const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
@@ -71,11 +80,24 @@ const LOOPBACK_NAMES: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 /// Header that carries the token on HTTP routes other than the public probes.
 const TOKEN_HEADER: &str = "x-hermes-session-token";
 
+/// Header that carries a local-mode `native-http` ticket (upstream
+/// hermes_cli/dashboard_auth/native_http.py `HEADER`).
+const TICKET_HEADER: &str = "x-hermes-gateway-ticket";
+
 /// Most messages one history request returns.
 const MAX_HISTORY: usize = 1000;
 
+/// How a client proves it may use this gateway.
+enum Auth {
+    /// Remote mode: the session token.
+    Token(String),
+    /// Local mode: one-use tickets from the control socket, and no browser origin.
+    #[cfg_attr(not(unix), allow(dead_code))]
+    Native(Arc<Tickets>),
+}
+
 struct Gateway {
-    token: String,
+    auth: Auth,
     port: u16,
     replay_epoch: String,
     chat: Arc<Chat>,
@@ -97,12 +119,12 @@ pub async fn serve(
     chat: Chat,
 ) -> std::io::Result<()> {
     let port = listener.local_addr()?.port();
-    axum::serve(listener, router(token, port, chat)).await
+    axum::serve(listener, router(Auth::Token(token), port, chat)).await
 }
 
-fn router(token: String, port: u16, chat: Chat) -> Router {
+fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     let gateway = Arc::new(Gateway {
-        token,
+        auth,
         port,
         replay_epoch: uuid::Uuid::new_v4().simple().to_string(),
         chat: Arc::new(chat),
@@ -189,17 +211,50 @@ fn token_matches(given: Option<&str>, token: &str) -> bool {
     bool::from(given.unwrap_or_default().as_bytes().ct_eq(token.as_bytes()))
 }
 
-/// The token check, then the Origin check, as for the WebSocket upgrade.
+/// The credential check, then the Origin check, as for the WebSocket upgrade.
 async fn token_guard(State(gw): State<Arc<Gateway>>, request: Request, next: Next) -> Response {
     let headers = request.headers();
-    let given = headers.get(TOKEN_HEADER).and_then(|v| v.to_str().ok());
-    if !token_matches(given, &gw.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
+    let header = |name: &str| headers.get(name).and_then(|v| v.to_str().ok());
+    match admit(
+        &gw,
+        header(TOKEN_HEADER),
+        header(TICKET_HEADER),
+        Purpose::NativeHttp,
+        headers,
+    ) {
+        Ok(()) => next.run(request).await,
+        Err(status) => status.into_response(),
     }
-    if !origin_allowed(headers, gw.port) {
-        return StatusCode::FORBIDDEN.into_response();
+}
+
+/// 401 without the mode's credential, then 403 for an Origin the mode refuses. A local-mode
+/// ticket is spent when presented, so one refused for its Origin cannot be presented again.
+fn admit(
+    gw: &Gateway,
+    token: Option<&str>,
+    ticket: Option<&str>,
+    purpose: Purpose,
+    headers: &HeaderMap,
+) -> Result<(), StatusCode> {
+    let origin_ok = match &gw.auth {
+        Auth::Token(expected) => {
+            if !token_matches(token, expected) {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            origin_allowed(headers, gw.port)
+        }
+        Auth::Native(tickets) => {
+            if !ticket.is_some_and(|t| tickets.consume(t, purpose)) {
+                return Err(StatusCode::UNAUTHORIZED);
+            }
+            !headers.contains_key(header::ORIGIN)
+        }
+    };
+    if origin_ok {
+        Ok(())
+    } else {
+        Err(StatusCode::FORBIDDEN)
     }
-    next.run(request).await
 }
 
 /// A session's saved user and assistant messages, oldest first: the first `limit` with
@@ -240,11 +295,15 @@ async fn upgrade(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Response {
-    if !token_matches(query.get("token").map(String::as_str), &gw.token) {
-        return StatusCode::UNAUTHORIZED.into_response();
-    }
-    if !origin_allowed(&headers, gw.port) {
-        return StatusCode::FORBIDDEN.into_response();
+    let credential = |name: &str| query.get(name).map(String::as_str);
+    if let Err(status) = admit(
+        &gw,
+        credential("token"),
+        credential("ticket"),
+        Purpose::Interactive,
+        &headers,
+    ) {
+        return status.into_response();
     }
     let epoch = gw.replay_epoch.clone();
     let chat = Arc::clone(&gw.chat);

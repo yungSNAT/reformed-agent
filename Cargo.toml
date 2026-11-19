@@ -45,6 +45,7 @@ hermes-agent = { path = "crates/hermes-agent" }
 hermes-py = { path = "crates/hermes-py" }
 hermes-tools = { path = "crates/hermes-tools" }
 hermes-gateway = { path = "crates/hermes-gateway" }
+hermes-desktop-gateway = { path = "crates/hermes-desktop-gateway" }
 hermes-cli-ui = { path = "crates/hermes-cli-ui" }
 hermes-cli = { path = "crates/hermes-cli" }
 hermes-cron = { path = "crates/hermes-cron" }
