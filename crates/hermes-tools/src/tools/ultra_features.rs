@@ -2497,10 +2497,11 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
 
 /// A tool's `path` made absolute where the local backend would write it
 /// (`local_write_path`), so these tools read, judge and write the file
-/// `write_file` writes, then folded. A `~user` path is kept as written, and
-/// the write rule refuses it.
+/// `write_file` writes. It is not folded: `..` after a symlink is left to the
+/// file system, as `write_file` leaves it. A `~user` path is kept as written,
+/// and the write rule refuses it.
 fn clean_path(path: PathBuf) -> PathBuf {
-    fold_path(crate::credential_guard::local_write_path(&path).unwrap_or(path))
+    crate::credential_guard::local_write_path(&path).unwrap_or(path)
 }
 
 /// `path` with `.` and `..` folded.
