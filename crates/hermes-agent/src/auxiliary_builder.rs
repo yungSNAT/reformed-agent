@@ -667,6 +667,7 @@ mod tests {
         "CLAUDE_CODE_OAUTH_TOKEN",
         "NOUS_API_KEY",
         "GMI_API_KEY",
+        "KILOCODE_API_KEY",
         "TOKENHUB_API_KEY",
         "DEEPINFRA_API_KEY",
         "FIREWORKS_API_KEY",
@@ -888,6 +889,23 @@ mod tests {
             assert_eq!(summary.registered, vec!["kimi"]);
         }
         std::env::remove_var("KIMI_CODING_API_KEY");
+
+        // Kilo Code alone: upstream's default auxiliary model for kilocode.
+        std::env::set_var("KILOCODE_API_KEY", "sk-kilo");
+        {
+            let (client, summary) = build_default_auxiliary_client(AuxiliaryConfig::default());
+            let entries: Vec<(String, String)> = client
+                .chain_entries()
+                .into_iter()
+                .map(|(label, model, _)| (label, model))
+                .collect();
+            assert_eq!(
+                entries,
+                vec![("kilocode".to_string(), "google/gemini-3.6-flash".to_string())]
+            );
+            assert_eq!(summary.registered, vec!["kilocode"]);
+        }
+        std::env::remove_var("KILOCODE_API_KEY");
 
         // Scenario 10: full chain, deterministic order.
         std::env::set_var("OPENROUTER_API_KEY", "sk-or");
