@@ -114,10 +114,21 @@ async fn the_runtime_publishes_its_owner_files_privately_and_removes_them_when_d
         serde_json::from_slice(&std::fs::read(home.join("gateway_state.json")).unwrap()).unwrap();
     assert_eq!(state["gateway_state"], "running");
     assert_eq!(state["pid"], std::process::id());
+    let lock_inode = std::fs::metadata(home.join("gateway.lock")).unwrap().ino();
     drop(runtime);
-    for name in ["gateway.sock", "gateway.lock", "gateway_state.json"] {
+    for name in ["gateway.sock", "gateway_state.json"] {
         assert!(!home.join(name).exists(), "{name} left behind");
     }
+    // The lock file stays, emptied: a stopping owner never unlinks the inode it still locks, so
+    // a new claimant always locks that same inode and waits for it.
+    let lock = std::fs::metadata(home.join("gateway.lock")).unwrap();
+    assert_eq!((lock.ino(), lock.len()), (lock_inode, 0));
+    let next = start_when_free(&home).await;
+    assert_eq!(
+        std::fs::metadata(home.join("gateway.lock")).unwrap().ino(),
+        lock_inode
+    );
+    drop(next);
 }
 
 #[tokio::test(flavor = "multi_thread")]
