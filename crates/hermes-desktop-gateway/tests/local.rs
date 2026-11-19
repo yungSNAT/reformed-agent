@@ -215,8 +215,9 @@ async fn start_when_free(home: &Path) -> LocalRuntime {
     panic!("the lock stayed held for 2 seconds");
 }
 
-/// A planted link must not let the run truncate and overwrite another file (upstream opens the
-/// lock with O_NOFOLLOW and accepts only a regular, single-link file this user owns).
+/// A planted link must not let the run truncate and overwrite another file: a symlink is never
+/// followed, and a hard link is refused where other users can write the home (upstream accepts
+/// only a regular, single-link file this user owns).
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lock_path_that_is_a_link_is_refused_and_its_target_left_alone() {
     let (_dir, home) = private_home();
@@ -228,8 +229,27 @@ async fn a_lock_path_that_is_a_link_is_refused_and_its_target_left_alone() {
     assert!(local::start(&home, chat()).is_err(), "symlink accepted");
     std::fs::remove_file(&lock).unwrap();
     std::fs::hard_link(&target, &lock).unwrap();
-    assert!(local::start(&home, chat()).is_err(), "hard link accepted");
+    std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o770)).unwrap();
+    assert!(
+        local::start(&home, chat()).is_err(),
+        "hard link accepted in a shared home"
+    );
     assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+}
+
+/// Another user who can hard-link the lock from elsewhere raises its link count; in a home only
+/// this user can write, that must not stop the runtime from starting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_hard_link_made_outside_a_private_home_does_not_block_the_claim() {
+    let (_dir, home) = private_home();
+    drop(start(&home));
+    let elsewhere = tempfile::tempdir_in("/tmp").unwrap();
+    std::fs::hard_link(home.join("gateway.lock"), elsewhere.path().join("x")).unwrap();
+    let runtime = start_when_free(&home).await;
+    assert_eq!(
+        identify(&home)["result"]["instance_id"],
+        runtime.instance_id()
+    );
 }
 
 #[test]
