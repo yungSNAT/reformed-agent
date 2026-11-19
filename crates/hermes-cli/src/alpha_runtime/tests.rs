@@ -353,6 +353,60 @@ fn repo_drift_marks_missing_project() {
     assert_eq!(drift.drift_state, "missing-project");
 }
 
+#[cfg(unix)]
+#[test]
+fn repo_drift_runs_no_program_the_repository_config_names() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    ]);
+    let marker = tmp.path().join("fsmonitor-ran");
+    let program = tmp.path().join("fsmonitor.sh");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(&["config", "core.fsmonitor", program.to_str().unwrap()]);
+    std::fs::write(repo.join("new.txt"), "new").unwrap();
+
+    let spec = TradingProjectSpec {
+        id: "croft".to_string(),
+        path: repo.display().to_string(),
+        enabled: true,
+    };
+    let drift = collect_repo_drift(&spec, &TradingDriftBaseline::default());
+
+    assert!(
+        !marker.exists(),
+        "the drift check ran the repository's core.fsmonitor program"
+    );
+    assert!(!drift.git_head.is_empty(), "{drift:?}");
+    assert_eq!(drift.dirty_files, 1, "{drift:?}");
+}
+
 #[test]
 fn objective_profile_and_policy_planes_roundtrip() {
     with_test_hermes_home(|| {
