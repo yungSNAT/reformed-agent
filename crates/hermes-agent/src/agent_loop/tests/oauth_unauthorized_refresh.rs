@@ -272,7 +272,10 @@
         let out = agent
             .collect_stream_llm_response(&user_context(), &[], None, "anthropic:claude-test", None, &|_| {})
             .await;
-        assert!(matches!(out, Err(ref e) if e.to_string().contains("403")), "{out:?}");
+        match out {
+            Err(e) => assert!(e.to_string().contains("403"), "{e}"),
+            Ok(_) => panic!("the stream should fail"),
+        }
 
         assert_eq!(provider.sent_keys(), ["old-access", "old-access"]);
         assert_eq!(token_requests(&server).await, 0);
@@ -289,7 +292,10 @@
             .collect_stream_llm_response(&user_context(), &[], None, "anthropic:claude-test", None, &|_| {})
             .await;
 
-        assert!(matches!(out, Err(ref e) if e.to_string().contains("401")), "{out:?}");
+        match out {
+            Err(e) => assert!(e.to_string().contains("401"), "{e}"),
+            Ok(_) => panic!("the stream should fail"),
+        }
         assert_eq!(provider.sent_keys(), ["old-access", "new-access"]);
         assert_eq!(token_requests(&server).await, 1);
     }
