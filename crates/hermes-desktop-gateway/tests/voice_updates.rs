@@ -43,7 +43,10 @@ async fn voice_live_status_reports_gpt_live_unavailable_and_needs_the_token() {
     assert_eq!(body["ok"], true);
     assert_eq!(body["mode"], "chained");
     assert_eq!(body["available"], false);
-    assert!(body["reason"].as_str().is_some_and(|r| !r.is_empty()), "{body}");
+    assert!(
+        body["reason"].as_str().is_some_and(|r| !r.is_empty()),
+        "{body}"
+    );
     assert_eq!(body["model"], "gpt-live-1");
     assert_eq!(body["voice"], "marin");
 }
@@ -60,7 +63,10 @@ async fn update_check_reports_no_update_it_can_apply_and_needs_the_token() {
     assert_eq!(body["can_apply"], false);
     assert_eq!(body["behind"], Value::Null);
     assert_eq!(body["update_command"], "");
-    assert!(body["message"].as_str().is_some_and(|m| !m.is_empty()), "{body}");
+    assert!(
+        body["message"].as_str().is_some_and(|m| !m.is_empty()),
+        "{body}"
+    );
     assert!(body["install_method"].is_string());
 }
 
