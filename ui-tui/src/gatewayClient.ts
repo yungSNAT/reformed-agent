@@ -1,7 +1,7 @@
 import { type ChildProcess, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
+import { accessSync, constants, statSync } from 'node:fs'
 import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
@@ -42,9 +42,21 @@ const GATEWAY_BIN = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' 
 const GATEWAY_BUILD_HINT =
   'build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN, then restart the TUI'
 
-// On Windows `\tools` passes isAbsolute but names a folder on the current drive.
+// On Windows `\tools` passes isAbsolute but names a folder on the current drive: only a drive
+// root or a UNC share (`\\server\share`) counts. Callers check the joined, normalised path.
 const isRootedPath = (p: string) =>
-  process.platform === 'win32' ? /^([a-z]:[\\/]|[\\/]{2})/i.test(p) : isAbsolute(p)
+  process.platform === 'win32' ? /^([a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(p) : isAbsolute(p)
+
+// A file this process may execute, so a non-executable match does not end the search early.
+const isExecutableFile = (p: string) => {
+  try {
+    accessSync(p, constants.X_OK)
+
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
 
 // Only a rooted path, so spawn never searches the working folder (as Windows does for a bare
 // name) or a relative PATH entry: HERMES_TUI_GATEWAY_BIN, then a build in the checkout this
@@ -58,11 +70,11 @@ const resolveGatewayBinary = (root: string): { bin: string } | { problem: string
       : { problem: `HERMES_TUI_GATEWAY_BIN must be an absolute path, not ${configured}` }
   }
 
-  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(isRootedPath)
+  const pathDirs = (process.env.PATH ?? '').split(delimiter)
 
   const bin = [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
     .map(dir => join(dir, GATEWAY_BIN))
-    .find(p => existsSync(p))
+    .find(p => isRootedPath(p) && isExecutableFile(p))
 
   return bin
     ? { bin }
@@ -242,6 +254,8 @@ export class GatewayClient extends EventEmitter {
       // to dig through `/logs`.  Capped to keep the activity feed
       // readable on slow boots.
       const stderrTail = this.getLogTail(20)
+      // Read before publishing: a listener may restart the transport, and its new child must survive.
+      const unannounced = this.proc && !this.ws ? this.proc : null
 
       this.pushLog(`[startup] timed out waiting for gateway.ready (command=${command}, cwd=${cwd})`)
       this.publish({
@@ -251,8 +265,8 @@ export class GatewayClient extends EventEmitter {
 
       // A spawned gateway that never announced its port is stopped; its exit then rejects
       // the requests waiting for it.
-      if (this.proc && !this.ws) {
-        this.proc.kill()
+      if (unannounced && this.proc === unannounced) {
+        unannounced.kill()
       }
     }, STARTUP_TIMEOUT_MS)
   }

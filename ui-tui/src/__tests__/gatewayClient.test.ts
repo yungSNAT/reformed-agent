@@ -1,9 +1,9 @@
 import type * as ChildProcessModule from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join } from 'node:path'
+import { delimiter, join, parse } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -475,8 +475,8 @@ describe('GatewayClient spawned Rust gateway', () => {
     const project = tempDir('hermes-tui-project-')
 
     mkdirSync(join(project, 'bin'))
-    writeFileSync(join(project, binName), '')
-    writeFileSync(join(project, 'bin', binName), '')
+    writeFileSync(join(project, binName), '', { mode: 0o755 })
+    writeFileSync(join(project, 'bin', binName), '', { mode: 0o755 })
     delete process.env.HERMES_TUI_GATEWAY_BIN
     process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
     process.env.HERMES_CWD = project
@@ -525,7 +525,7 @@ describe('GatewayClient spawned Rust gateway', () => {
   it('runs the gateway from an absolute PATH entry by its full path', () => {
     const bin = tempDir('hermes-tui-bin-')
 
-    writeFileSync(join(bin, binName), '')
+    writeFileSync(join(bin, binName), '', { mode: 0o755 })
     delete process.env.HERMES_TUI_GATEWAY_BIN
     process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
     process.env.PATH = ['relative-dir', bin].join(delimiter)
@@ -679,6 +679,79 @@ describe('GatewayClient spawned Rust gateway', () => {
 
     await expect(req).rejects.toThrow(/closed \(1006\) during connect/)
     expect(child.kill).toHaveBeenCalled()
+  })
+
+  it.skipIf(process.platform === 'win32')('skips a PATH match it cannot execute and keeps searching', () => {
+    const first = tempDir('hermes-tui-noexec-')
+    const second = tempDir('hermes-tui-exec-')
+
+    writeFileSync(join(first, binName), '')
+    chmodSync(join(first, binName), 0o644)
+    writeFileSync(join(second, binName), '', { mode: 0o755 })
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = [first, second].join(delimiter)
+
+    const gw = new GatewayClient()
+
+    gw.start()
+
+    expect(vi.mocked(spawn).mock.calls[0]?.[0]).toBe(join(second, binName))
+    gw.kill()
+  })
+
+  // `///folder` looks like a UNC path but joins to `\folder\...`, a folder on the current drive.
+  it.runIf(process.platform === 'win32')('ignores a PATH entry that normalises to a drive-relative folder', () => {
+    const dir = tempDir('hermes-tui-drive-')
+    const { root } = parse(dir)
+    const cwd = process.cwd()
+
+    writeFileSync(join(dir, binName), '')
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = `//${dir.slice(root.length - 1).replaceAll('\\', '/')}`
+    process.chdir(root)
+
+    try {
+      const gw = new GatewayClient()
+
+      gw.start()
+      gw.drain()
+
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      process.chdir(cwd)
+    }
+  })
+
+  it('keeps the new gateway when a start_timeout listener restarts the client', () => {
+    vi.useFakeTimers()
+
+    try {
+      const replacement = new FakeChild()
+
+      vi.mocked(spawn).mockImplementationOnce((() => replacement) as unknown as typeof spawn)
+
+      const gw = new GatewayClient()
+      let restarted = false
+
+      gw.on('event', ev => {
+        if (ev.type === 'gateway.start_timeout' && !restarted) {
+          restarted = true
+          gw.start()
+        }
+      })
+      gw.start()
+      gw.drain()
+      vi.advanceTimersByTime(15_001)
+
+      expect(restarted).toBe(true)
+      expect(child.kill).toHaveBeenCalled()
+      expect(replacement.kill).not.toHaveBeenCalled()
+      gw.kill()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('stops a gateway that never announces its port, so waiting requests reject', async () => {
