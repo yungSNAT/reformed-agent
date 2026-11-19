@@ -454,7 +454,7 @@ fn assert_deferred_row_is_explained(source: &str, row: &Value) {
 /// Deferred rows allowed at the v0.23.2 pin. Each count must equal the rows left deferred:
 /// a change that resolves rows lowers its number here, and one that raises a number is a
 /// governance change reviewers see in this file.
-const DEFERRED_SHARED_DIFF: u64 = 27;
+const DEFERRED_SHARED_DIFF: u64 = 22;
 const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
     ("python-test-suite-coverage.json", 46),
     ("hermes-cli-test-coverage.json", 37),

@@ -926,13 +926,11 @@
       "ticket": 25
     },
     {
-      "classification": "deferred",
+      "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/gmi/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream builds GMI's User-Agent lazily and adds anthropic/claude-sonnet-5 to its fallback models. Rust's generic provider sends no User-Agent for gmi (crates/hermes-agent/src/provider/generic.rs sends one only for Kimi Code and Fireworks), a gap that predates b51fbc73. Deferred until ported.",
-      "ledger": "R2338",
-      "review_date": "2027-02-18"
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream sends GMI's `HermesAgent/<version>` User-Agent and adds anthropic/claude-sonnet-5 to its 7 fallback models. Rust carries both: crates/hermes-agent/src/provider/generic.rs sends the header for gmi (gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai) and crates/hermes-cli/src/model_switch/curated_models.rs lists the same models (gmi_curated_models_follow_upstreams_fallback_models). The Python plugin stays reference-only."
     },
     {
       "classification": "policy_only",
@@ -942,13 +940,11 @@
       "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "deferred",
+      "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/kilocode/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream changed Kilo Code's default auxiliary model from google/gemini-3-flash-preview to google/gemini-3.6-flash. No Rust code sets a per-provider default auxiliary model for kilocode, and which model this tree uses there was not established. Deferred until checked.",
-      "ledger": "R2338",
-      "review_date": "2027-02-18"
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's default auxiliary model for Kilo Code is google/gemini-3.6-flash. Rust's auxiliary chain registers kilocode with that model when KILOCODE_API_KEY is set (crates/hermes-agent/src/auxiliary_builder.rs; build_default_auxiliary_client_scenarios). The Python plugin stays reference-only."
     },
     {
       "classification": "intentional_divergence",
@@ -979,13 +975,11 @@
       "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "deferred",
+      "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/nvidia/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported.",
-      "ledger": "R2338",
-      "review_date": "2027-02-18"
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. Rust strips both fields for nvidia, and its provider profile and CLI resolve the 3 aliases (crates/hermes-agent/src/provider_profiles.rs; nvidia_tool_messages_drop_name_and_tool_name). The Python plugin stays reference-only."
     },
     {
       "classification": "intentional_divergence",
@@ -1030,13 +1024,11 @@
       "rationale": "Compared b51fbc73 with v0.23.2 with docstrings removed (AST): no code changed; upstream only reflowed arguments onto fewer lines."
     },
     {
-      "classification": "deferred",
+      "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/xai/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported.",
-      "ledger": "R2338",
-      "review_date": "2027-02-18"
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile sends a `Hermes-Agent/<version>` User-Agent. Rust's generic provider sends it for xai (crates/hermes-agent/src/provider/generic.rs; gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai). The Python plugin stays reference-only."
     },
     {
       "classification": "intentional_divergence",
@@ -3883,13 +3875,11 @@
       "ticket": 25
     },
     {
-      "classification": "deferred",
+      "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "tests/providers/test_e2e_wiring.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, the NVIDIA change in row 26. Deferred with it.",
-      "ledger": "R2338",
-      "review_date": "2027-02-18"
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, which crates/hermes-agent/src/provider/tests/direct_providers.rs nvidia_tool_messages_drop_name_and_tool_name ports. The Python test stays reference-only."
     },
     {
       "classification": "intentional_divergence",
