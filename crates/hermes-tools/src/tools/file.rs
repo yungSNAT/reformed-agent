@@ -441,10 +441,25 @@ impl ToolHandler for PatchHandler {
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
-        CredentialGuard::new().check_write_access(Path::new(path), new_string)?;
+        // The path rule judges the file where the backend writes it: a
+        // relative path is taken against the process folder, not
+        // `TERMINAL_CWD`. Name and content rules stay with `write_file`.
+        let absolute = std::path::absolute(path)
+            .map_err(|e| ToolError::InvalidParams(format!("Invalid path '{path}': {e}")))?;
+        if crate::credential_guard::is_write_denied(&absolute) {
+            return Err(ToolError::ExecutionFailed(format!(
+                "Write denied: '{}' is a protected system or credential path",
+                absolute.display()
+            )));
+        }
 
         self.backend
-            .patch_file(path, old_string, new_string, replace_all)
+            .patch_file(
+                &absolute.to_string_lossy(),
+                old_string,
+                new_string,
+                replace_all,
+            )
             .await
     }
 

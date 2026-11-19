@@ -92,6 +92,35 @@ const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".azure",
     ".config/gh",
 ];
+/// The files this fork writes in `auth/`.
+const AUTH_STORE_FILES: &[&str] = &[
+    "tokens.json",
+    "pool.json",
+    "provenance.key",
+    "google_oauth.json",
+];
+
+/// A key for comparing a path with a store: each component folded to lower
+/// case and cut at its first `:`, so the spellings that a case-insensitive
+/// file system (Windows, macOS) or an NTFS stream suffix (`::$DATA`,
+/// `:name`) give the same file match. On a case-sensitive file system this
+/// also denies the few names that differ from a store only in case.
+fn store_key(path: &Path) -> PathBuf {
+    path.components()
+        .map(|component| match component {
+            Component::Normal(name) => {
+                let name = name.to_string_lossy().to_lowercase();
+                match name.split(':').next() {
+                    Some(stem) if !stem.is_empty() => stem.to_string(),
+                    _ => name,
+                }
+                .into()
+            }
+            other => other.as_os_str().to_ascii_lowercase(),
+        })
+        .collect()
+}
+
 /// Credential stores under the active Hermes home, each denied with
 /// everything below it: provider keys (`.env`); the Nous OAuth token
 /// (`auth.json`); the token store, credential pool, provenance key and Gemini
@@ -282,6 +311,20 @@ pub fn is_protected_file(path: &Path) -> bool {
 /// swapped in between is followed. Closing that needs the write itself to
 /// open each component without following links (`openat` with `O_NOFOLLOW`).
 pub fn is_write_denied(path: &Path) -> bool {
+    let safe_root = std::env::var_os("HERMES_WRITE_SAFE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    judge_write(path, safe_root.as_deref())
+}
+
+/// `is_write_denied` without the `HERMES_WRITE_SAFE_ROOT` sandbox, for a
+/// writer outside the file tools that follows a link a model could plant
+/// (the memory tool): the safe root confines the file tools only.
+pub fn is_link_target_write_denied(path: &Path) -> bool {
+    judge_write(path, None)
+}
+
+fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
     let terminal_cwd = std::env::var_os("TERMINAL_CWD").filter(|cwd| !cwd.is_empty());
     let path = match terminal_cwd {
         Some(cwd) if path.is_relative() && !path.to_string_lossy().starts_with('~') => {
@@ -301,10 +344,7 @@ pub fn is_write_denied(path: &Path) -> bool {
         // account's home here instead of disabling the home rules.
         dirs::home_dir().as_deref(),
         Some(hermes_config::hermes_home().as_path()),
-        std::env::var_os("HERMES_WRITE_SAFE_ROOT")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .as_deref(),
+        safe_root,
     )
 }
 
@@ -483,21 +523,30 @@ fn is_expanded_write_denied(
     }
 
     if let Some(hermes_home) = hermes_home {
-        let linked_out_of_auth = std::fs::read_dir(hermes_home.join("auth"))
+        // Each file in `auth/` is a store where it links, too, even to a
+        // file not yet created. The known names are checked as well, as a
+        // folder that can be entered but not listed hides its entries.
+        // shortcut: only `auth/`'s own entries are followed, not deeper ones.
+        let auth = hermes_home.join("auth");
+        let auth_files = std::fs::read_dir(&auth)
             .into_iter()
             .flatten()
             .flatten()
-            .map(|entry| entry.path());
+            .map(|entry| entry.path())
+            .chain(AUTH_STORE_FILES.iter().map(|name| auth.join(name)))
+            .map(|file| hermes_config::resolve_symlink_target(&file));
         let stores = WRITE_DENY_HERMES_HOME_PREFIX
             .iter()
             .map(|store| hermes_home.join(store))
-            .chain(linked_out_of_auth);
+            .chain(auth_files);
+        let form_keys: Vec<PathBuf> = forms.iter().map(|form| store_key(form)).collect();
         for store in stores {
             let store_forms = root_forms(&store);
-            if forms
-                .iter()
-                .any(|form| store_forms.iter().any(|store| form.starts_with(store)))
-            {
+            if form_keys.iter().any(|form| {
+                store_forms
+                    .iter()
+                    .any(|store| form.starts_with(store_key(store)))
+            }) {
                 return true;
             }
         }

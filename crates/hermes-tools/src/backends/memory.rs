@@ -113,7 +113,7 @@ impl FileMemoryBackend {
         // the entries are text the model chose, so the link may not lead into
         // a protected path.
         let target = hermes_config::resolve_symlink_target(path);
-        if crate::credential_guard::is_write_denied(&target) {
+        if target != path && crate::credential_guard::is_link_target_write_denied(&target) {
             return Err(ToolError::ExecutionFailed(format!(
                 "Write denied: memory file '{}' links to the protected path '{}'",
                 path.display(),

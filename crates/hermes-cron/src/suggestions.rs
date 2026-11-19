@@ -259,10 +259,7 @@ impl SuggestionStore {
             uuid::Uuid::new_v4().simple()
         ));
         let write_result = (|| -> Result<(), SuggestionError> {
-            let mut handle = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&tmp)?;
+            let mut handle = create_staged_file(&tmp)?;
             handle.write_all(raw.as_bytes())?;
             handle.flush()?;
             handle.sync_all()?;
@@ -393,6 +390,19 @@ fn with_suggestion_lock<T>(
         .lock()
         .map_err(|_| SuggestionError::Corrupted("suggestions lock poisoned".to_string()))?;
     f()
+}
+
+/// Creates a new staging file, owner-only from the start on Unix: it is staged
+/// in a linked target's folder, which others may be able to read.
+fn create_staged_file(path: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 #[cfg(unix)]
