@@ -183,9 +183,10 @@ async fn connect(home: &Path, runtime: &LocalRuntime) -> (Client, Value) {
 async fn a_ticket_offered_as_the_gateway_subprotocol_opens_the_canonical_wire_once() {
     let (_dir, home, runtime) = start().await;
     let ticket = mint(&home, &runtime);
-    let (mut socket, response) = tokio_tungstenite::connect_async(dial(&runtime, &offered(&ticket)))
-        .await
-        .unwrap();
+    let (mut socket, response) =
+        tokio_tungstenite::connect_async(dial(&runtime, &offered(&ticket)))
+            .await
+            .unwrap();
     // Only the public protocol is selected; the ticket-bearing one is never echoed.
     let selected: Vec<_> = response
         .headers()
@@ -214,7 +215,9 @@ async fn a_ticket_offered_as_the_gateway_subprotocol_opens_the_canonical_wire_on
         panic!("no text frame")
     };
     let ready: Value = serde_json::from_str(&text).unwrap();
-    assert!(ready["params"]["payload"].get("session_authority").is_none());
+    assert!(ready["params"]["payload"]
+        .get("session_authority")
+        .is_none());
 }
 
 #[tokio::test(flavor = "multi_thread")]
@@ -343,7 +346,10 @@ async fn a_canonical_turn_streams_with_its_admission_and_the_session_resumes() {
             json!({"session_id": session, "text": "U2 again", "submission_id": "s-2"}),
         )
         .await;
-    assert_eq!(submitted["result"]["execution_generation"], 2, "{submitted}");
+    assert_eq!(
+        submitted["result"]["execution_generation"], 2,
+        "{submitted}"
+    );
     relaunched.events_until("message.complete").await;
 }
 
@@ -365,7 +371,7 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
             json!({"request_id": "r-2", "source": "gui", "model": "other-model"}),
         )
         .await;
-    assert_eq!(refused["error"]["code"], 4000, "{refused}");
+    assert_eq!(refused["error"]["code"], 4001, "{refused}");
     let refused = client
         .request("session.resume", json!({"session_id": "no-such-session"}))
         .await;
