@@ -27,18 +27,19 @@ const PROCESS_WAIT_OUTPUT_CHARS: usize = 2_000;
 const PROCESS_LOG_DEFAULT_LINES: usize = 200;
 const FOREGROUND_DRAIN_GRACE_MS: u64 = 120;
 
-/// Reaps `child` when its exit could not be seen unreaped, returning the
-/// lock's guard once it has. Each non-blocking check runs under the lock, so
-/// the shell is never reaped whilst `kill_process` signals its group, and the
-/// lock is never held whilst the shell runs.
+/// Reaps a child whose exit could not be seen unreaped, checking with its
+/// non-blocking `try_wait`, and returns the lock's guard once it has.
+/// Each check runs under the lock, so the shell is never reaped whilst
+/// `kill_process` signals its group, and the lock is never held whilst the
+/// shell runs.
 #[cfg(unix)]
 async fn reap_under_lock(
-    child: &mut tokio::process::Child,
     lock: &Arc<AsyncMutex<()>>,
+    mut try_wait: impl FnMut() -> std::io::Result<Option<std::process::ExitStatus>>,
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
     loop {
         let held = lock.clone().lock_owned().await;
-        match child.try_wait() {
+        match try_wait() {
             Ok(Some(_)) | Err(_) => return Some(held),
             Ok(None) => drop(held),
         }
@@ -552,7 +553,7 @@ impl TerminalBackend for LocalBackend {
                     Some(pid) if process_tree::wait_unreaped(pid).await => {
                         Some(signal_lock.lock_owned().await)
                     }
-                    _ => reap_under_lock(&mut child, &signal_lock).await,
+                    _ => reap_under_lock(&signal_lock, || child.try_wait()).await,
                 };
                 #[cfg(not(unix))]
                 drop(signal_lock);

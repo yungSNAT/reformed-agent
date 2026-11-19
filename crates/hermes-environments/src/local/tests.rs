@@ -1184,7 +1184,7 @@ async fn test_an_unseen_exit_is_reaped_only_outside_a_held_signal_lock() {
     let lock = Arc::new(AsyncMutex::new(()));
     let held = lock.clone().lock_owned().await;
     let reaper = tokio::spawn(async move {
-        let guard = reap_under_lock(&mut child, &lock).await;
+        let guard = reap_under_lock(&lock, || child.try_wait()).await;
         (guard.is_some(), child)
     });
 
@@ -1200,6 +1200,25 @@ async fn test_an_unseen_exit_is_reaped_only_outside_a_held_signal_lock() {
     );
     assert!(guarded, "the reap returned without the lock");
     assert!(child.try_wait().unwrap().is_some());
+}
+
+/// A failed check gives the lock back: the child's state is unknown, and the
+/// waiter's blocking reap must not hold up `kill_process`.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_failed_reap_check_releases_the_signal_lock() {
+    let lock = Arc::new(AsyncMutex::new(()));
+
+    let guard = reap_under_lock(&lock, || {
+        Err(std::io::Error::from_raw_os_error(libc::ECHILD))
+    })
+    .await;
+
+    assert!(
+        guard.is_none(),
+        "the reap kept the lock after a failed check"
+    );
+    assert!(lock.try_lock().is_ok(), "the signal lock is still held");
 }
 
 /// The shell stays unreaped whilst `kill_process` signals its group, so the
