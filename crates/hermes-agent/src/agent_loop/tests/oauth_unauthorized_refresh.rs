@@ -475,6 +475,36 @@
     }
 
     #[tokio::test]
+    async fn refresh_waits_while_another_process_holds_the_store_lock() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        // Another process's handle on the lock file beside the store.
+        let holder = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(home.path().join("auth").join("tokens.json.lock"))
+            .expect("lock file");
+        holder.lock().expect("hold the store lock");
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let release = async {
+            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+            let before = token_requests(&server).await;
+            holder.unlock().expect("release the store lock");
+            before
+        };
+        let ctx = user_context();
+        let (result, exchanged_while_held) =
+            tokio::join!(agent.call_llm_with_retry(&ctx, &[], None, None), release);
+
+        assert_eq!(exchanged_while_held, 0);
+        result.expect("the refresh goes ahead once the lock is released");
+        assert_eq!(token_requests(&server).await, 1);
+    }
+
+    #[tokio::test]
     async fn bad_request_whose_text_contains_401_is_not_refreshed() {
         let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
         let provider = UnauthorizedUntilRefreshed::refusing(
