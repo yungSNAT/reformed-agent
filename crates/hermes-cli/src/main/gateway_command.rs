@@ -200,7 +200,7 @@ async fn run_gateway(
                         .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?;
                     if claim.is_none() {
                         eprintln!(
-                            "Desktop local mode is off: {} has no file locks for gateway.lock.",
+                            "Desktop local mode is off: {}/gateway.lock cannot be used safely.",
                             home.display()
                         );
                     }

@@ -194,10 +194,13 @@ fn try_flock(file: &std::fs::File, operation: libc::c_int) -> std::io::Result<bo
     }
 }
 
-/// Opens `gateway.lock` without following a link or blocking on a FIFO, and accepts only a
-/// regular, single-link file this user owns (upstream's rule), so a planted link cannot turn the
-/// record this writes on another file.
-fn open_lock(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
+/// Opens `<home>/gateway.lock` without following a link or blocking on a FIFO, and accepts only
+/// a regular file this user owns, so a planted link cannot turn the record this writes on another
+/// file. A second hard link counts only where other users can write the home: in a private home
+/// only this user can have placed the file, and another user may raise its link count from
+/// elsewhere (upstream refuses any second link).
+fn open_lock(home: &Path, create: bool) -> std::io::Result<std::fs::File> {
+    let path = &home.join(LOCK);
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(create)
@@ -207,9 +210,10 @@ fn open_lock(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
         .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
         .open(path)?;
     let meta = file.metadata()?;
-    if !meta.is_file() || meta.uid() != own_uid() || meta.nlink() != 1 {
+    let shared_home = || check_home(home).is_err();
+    if !meta.is_file() || meta.uid() != own_uid() || (meta.nlink() != 1 && shared_home()) {
         return Err(std::io::Error::other(format!(
-            "{} is not a regular, single-link file owned by this user",
+            "{} is not a regular file owned by this user, with one link in a shared home",
             path.display()
         )));
     }
@@ -219,7 +223,7 @@ fn open_lock(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
 /// True while a runtime holds `<home>/gateway.lock`. A lock that cannot be tested reads as held,
 /// so ensure waits rather than starting a second owner.
 pub fn lock_held(home: &Path) -> bool {
-    match open_lock(&home.join(LOCK), false) {
+    match open_lock(home, false) {
         // A shared lock taken here is released when `file` closes.
         Ok(file) => !matches!(try_flock(&file, libc::LOCK_SH), Ok(true)),
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
@@ -233,12 +237,18 @@ const CLAIM_ATTEMPTS: u32 = 10;
 /// Claims the home: an exclusive `flock` on `<home>/gateway.lock`, held for the runtime's life
 /// and released by the kernel when the process ends, so neither a crash nor a reused pid leaves a
 /// lock that reads as live. The file names the owner's pid, which upstream's e2e census reads.
-/// None when the file system has no `flock` (some network mounts).
+/// None, with a warning, when the lock cannot be used safely: a refused file, or a file system
+/// with no `flock` (some network mounts).
 fn claim_lock(home: &Path) -> Result<Option<std::fs::File>, String> {
     let path = home.join(LOCK);
     for attempt in 1..=CLAIM_ATTEMPTS {
-        let mut file =
-            open_lock(&path, true).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        let mut file = match open_lock(home, true) {
+            Ok(file) => file,
+            Err(e) => {
+                tracing::warn!("cannot use {}: {e}", path.display());
+                return Ok(None);
+            }
+        };
         match try_flock(&file, libc::LOCK_EX) {
             Ok(true) => {}
             Ok(false) if attempt < CLAIM_ATTEMPTS => {
@@ -339,7 +349,7 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
 /// Starts the local runtime for `home`: lock, listener, control socket, then state file.
 pub fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
     let mut runtime = claim(home)?
-        .ok_or_else(|| format!("{} has no file locks for gateway.lock", home.display()))?;
+        .ok_or_else(|| format!("{}/gateway.lock cannot be used safely", home.display()))?;
     runtime.serve(chat)?;
     Ok(runtime)
 }
@@ -347,7 +357,8 @@ pub fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
 /// Claims `home` for one runtime without serving it yet. While claimed and unserved, ensure
 /// waits, so a host can finish starting (say, write the pid file `gateway stop` reads) before
 /// [`LocalRuntime::serve`] makes it ready.
-/// None when the home's file system has no `flock`: the host then runs without local mode.
+/// None when `gateway.lock` cannot be used safely (see the warning logged): the host then runs
+/// without local mode.
 pub fn claim(home: &Path) -> Result<Option<LocalRuntime>, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
