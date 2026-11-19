@@ -25,8 +25,12 @@ type Socket =
 
 const REPLY: [&str; 3] = ["A1 ", "served by ", "the gateway"];
 
-/// A scripted OpenAI-compatible model that streams [`REPLY`].
-async fn complete(Json(_body): Json<Value>) -> axum::response::Response {
+/// A scripted OpenAI-compatible model that streams [`REPLY`], a second later when the prompt
+/// holds `SLOW`.
+async fn complete(Json(body): Json<Value>) -> axum::response::Response {
+    if body.to_string().contains("SLOW") {
+        tokio::time::sleep(Duration::from_secs(1)).await;
+    }
     let mut sse = String::new();
     for piece in REPLY {
         let chunk = json!({"id": "c", "object": "chat.completion.chunk", "model": "mock-model",
@@ -379,4 +383,78 @@ async fn canonical_requests_refuse_another_profile_unknown_sessions_and_launch_o
     // Methods the canonical wire does not serve get JSON-RPC 'method not found'.
     let unknown = client.request("profiles.list", json!({})).await;
     assert_eq!(unknown["error"]["code"], -32601, "{unknown}");
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_refused_request_leaves_the_connection_and_session_usable() {
+    let (_dir, home, runtime) = start().await;
+    let (mut client, _) = connect(&home, &runtime).await;
+    let created = client
+        .request(
+            "session.create",
+            json!({"request_id": "r-1", "source": "gui", "profile": "default"}),
+        )
+        .await;
+    let session = created["result"]["session_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+
+    // Refusals for another profile and an unknown session ...
+    let refused = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U0", "profile": "work"}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], 4001, "{refused}");
+    let refused = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": "no-such-session", "text": "U0"}),
+        )
+        .await;
+    assert_eq!(refused["error"]["code"], 4001, "{refused}");
+
+    // ... then a slow turn, and a prompt sent whilst it runs is refused as busy.
+    let first = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U1 SLOW", "submission_id": "s-1"}),
+        )
+        .await;
+    assert_eq!(first["result"]["execution_generation"], 1, "{first}");
+    let busy = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U2", "submission_id": "s-2"}),
+        )
+        .await;
+    assert_eq!(busy["error"]["code"], 4009, "{busy}");
+    let events = client.events_until("message.complete").await;
+    assert!(events
+        .iter()
+        .all(|e| e["params"]["execution_generation"] == 1));
+    let idle = client.events_until("session.info").await;
+    assert_eq!(idle[0]["params"]["payload"]["running"], false);
+
+    // The corrected retry is generation 2 and streams in full.
+    let retried = client
+        .request(
+            "prompt.submit",
+            json!({"session_id": session, "text": "U2", "submission_id": "s-2"}),
+        )
+        .await;
+    assert_eq!(retried["result"]["execution_generation"], 2, "{retried}");
+    let events = client.events_until("message.complete").await;
+    let done = &events.last().unwrap()["params"];
+    assert_eq!(done["execution_generation"], 2);
+    assert_eq!(done["payload"]["text"], REPLY.concat().as_str());
+    let resumed = client
+        .request(
+            "session.resume",
+            json!({"session_id": session, "omit_messages": true}),
+        )
+        .await;
+    assert_eq!(resumed["result"]["message_count"], 4, "{resumed}");
 }
