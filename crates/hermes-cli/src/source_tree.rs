@@ -77,6 +77,12 @@ impl SourceDir {
                 Err(Errno::NOENT) => return Ok(None),
                 Err(err) => return Err(err.into()),
             }
+            #[cfg(test)]
+            tests::BETWEEN.with(|between| {
+                if let Some(between) = &*between.borrow() {
+                    between(name);
+                }
+            });
             let flags = OFlags::RDONLY
                 | OFlags::NOFOLLOW
                 | OFlags::NONBLOCK
@@ -254,5 +260,37 @@ impl Tree {
             }
         }
         std::fs::rename(&staged, destination)
+    }
+}
+
+#[cfg(all(test, unix))]
+pub(crate) mod tests {
+    use super::*;
+    use std::cell::RefCell;
+
+    thread_local! {
+        /// Runs between an entry's classing and its open, so a test can
+        /// change the entry in between.
+        pub(crate) static BETWEEN: RefCell<Option<Box<dyn Fn(&OsStr)>>> = RefCell::new(None);
+    }
+
+    #[test]
+    fn an_entry_gone_between_its_class_and_its_open_is_an_error_not_none() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("SKILL.md");
+        std::fs::write(&file, "a skill\n").unwrap();
+        let dir = SourceDir::open(tmp.path()).unwrap();
+        BETWEEN.with(|between| {
+            *between.borrow_mut() = Some(Box::new(move |_: &OsStr| {
+                let _ = std::fs::remove_file(&file);
+            }))
+        });
+        let gone = dir.entry("SKILL.md");
+        BETWEEN.with(|between| *between.borrow_mut() = None);
+        let err = gone
+            .err()
+            .expect("an entry gone before its open was taken for none");
+        assert_ne!(err.kind(), io::ErrorKind::NotFound, "{err}");
+        assert!(dir.entry("SKILL.md").unwrap().is_none());
     }
 }
