@@ -58,7 +58,9 @@ impl SourceDir {
         }
     }
 
-    /// The entry `name`, or `None` when there is none.
+    /// The entry `name`, or `None` when there is none. An entry that goes
+    /// away between its classing and its open is an error, not `None`, so it
+    /// is never taken for one that was never there.
     pub(crate) fn entry(&self, name: impl AsRef<OsStr>) -> io::Result<Option<Entry>> {
         let name = name.as_ref();
         #[cfg(unix)]
@@ -90,7 +92,7 @@ impl SourceDir {
                 | OFlags::CLOEXEC;
             let fd = match rustix::fs::openat(&self.fd, name, flags, Mode::empty()) {
                 Ok(fd) => fd,
-                Err(Errno::NOENT) => return Ok(None),
+                Err(Errno::NOENT) => return Err(gone()),
                 // A link refused by O_NOFOLLOW (EMLINK on FreeBSD).
                 Err(Errno::LOOP | Errno::MLINK) => return Ok(Some(Entry::Link)),
                 // A socket swapped in, which cannot be opened.
@@ -118,7 +120,10 @@ impl SourceDir {
             } else if meta.is_dir() {
                 Entry::Dir(Self { path })
             } else if meta.is_file() {
-                Entry::File(File::open(&path)?)
+                Entry::File(File::open(&path).map_err(|err| match err.kind() {
+                    io::ErrorKind::NotFound => gone(),
+                    _ => err,
+                })?)
             } else {
                 Entry::Other
             }))
@@ -148,6 +153,12 @@ impl SourceDir {
         names.sort();
         Ok(names)
     }
+}
+
+/// An entry that went away between its classing and its open. Not of kind
+/// `NotFound`, which callers read as a folder that was never there.
+fn gone() -> io::Error {
+    io::Error::other("it went away while it was read")
 }
 
 /// The bytes of a file entry.
