@@ -3,14 +3,20 @@
     struct UnauthorizedUntilRefreshed {
         key: Mutex<String>,
         accepted: &'static str,
+        refusal: &'static str,
         sent_keys: Mutex<Vec<String>>,
     }
 
     impl UnauthorizedUntilRefreshed {
         fn new(key: &str, accepted: &'static str) -> Arc<Self> {
+            Self::refusing(key, accepted, "API error 401 Unauthorized: invalid x-api-key")
+        }
+
+        fn refusing(key: &str, accepted: &'static str, refusal: &'static str) -> Arc<Self> {
             Arc::new(Self {
                 key: Mutex::new(key.to_string()),
                 accepted,
+                refusal,
                 sent_keys: Mutex::new(Vec::new()),
             })
         }
@@ -21,9 +27,7 @@
             if key == self.accepted {
                 Ok(())
             } else {
-                Err(AgentError::LlmApi(
-                    "API error 401 Unauthorized: invalid x-api-key".to_string(),
-                ))
+                Err(AgentError::LlmApi(self.refusal.to_string()))
             }
         }
 
@@ -247,5 +251,73 @@
 
         assert!(err.to_string().contains("401"), "{err}");
         assert_eq!(provider.sent_keys(), ["old-access", "new-access"]);
+        assert_eq!(token_requests(&server).await, 1);
+    }
+
+    #[tokio::test]
+    async fn forbidden_that_mentions_unauthorized_is_not_refreshed() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let provider = UnauthorizedUntilRefreshed::refusing(
+            "old-access",
+            "new-access",
+            "API error 403 Forbidden: unauthorized",
+        );
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let err = agent
+            .call_llm_with_retry(&user_context(), &[], None, None)
+            .await
+            .expect_err("a 403 keeps its refusal");
+        assert!(err.to_string().contains("403"), "{err}");
+        let out = agent
+            .collect_stream_llm_response(&user_context(), &[], None, "anthropic:claude-test", None, &|_| {})
+            .await;
+        assert!(matches!(out, Err(ref e) if e.to_string().contains("403")), "{out:?}");
+
+        assert_eq!(provider.sent_keys(), ["old-access", "old-access"]);
+        assert_eq!(token_requests(&server).await, 0);
+        assert_eq!(stored_anthropic_token(&home).0, "old-access");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_stream_after_refresh_ends_without_a_second_refresh() {
+        let (_home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "never-accepted");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let out = agent
+            .collect_stream_llm_response(&user_context(), &[], None, "anthropic:claude-test", None, &|_| {})
+            .await;
+
+        assert!(matches!(out, Err(ref e) if e.to_string().contains("401")), "{out:?}");
+        assert_eq!(provider.sent_keys(), ["old-access", "new-access"]);
+        assert_eq!(token_requests(&server).await, 1);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn refreshed_token_that_cannot_be_stored_is_kept_and_stored_later() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let auth_dir = home.path().join("auth");
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o500))
+            .expect("make the auth folder read-only");
+        let result = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("make the auth folder writable again");
+
+        result.expect("the refreshed token is used although it was not stored");
+        assert_eq!(stored_anthropic_token(&home).0, "old-access");
+
+        // The next turn writes the kept credential, without another exchange.
+        agent.refresh_oauth_store_tokens_if_needed().await;
+        assert_eq!(
+            stored_anthropic_token(&home),
+            ("new-access".to_string(), "new-refresh".to_string())
+        );
         assert_eq!(token_requests(&server).await, 1);
     }

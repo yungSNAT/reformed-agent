@@ -267,6 +267,7 @@ impl AgentLoop {
     }
 
     async fn refresh_oauth_store_tokens_if_needed(&self) {
+        self.store_unsaved_oauth_credentials().await;
         // Keep this list explicit so behavior is deterministic and parity-scoped.
         self.refresh_single_oauth_store_token_if_needed("openai")
             .await;
@@ -284,10 +285,10 @@ impl AgentLoop {
         if !self.can_attempt_oauth_refresh(provider_key) {
             return;
         }
-        let Some(mut entries) = self.read_oauth_store().await else {
+        let Some(entries) = self.read_oauth_store().await else {
             return;
         };
-        let Some(current) = entries.get(provider_key).cloned() else {
+        let Some(current) = entries.get(provider_key) else {
             return;
         };
         let Some(expires_at) = current.expires_at else {
@@ -296,8 +297,7 @@ impl AgentLoop {
         if expires_at > Timestamp::now() {
             return;
         }
-        self.refresh_oauth_store_entry(provider_key, &current, &mut entries)
-            .await;
+        self.refresh_oauth_store_entry(provider_key, current).await;
     }
 
     /// After a 401 from `provider`: when it sent the stored OAuth access token
@@ -318,17 +318,17 @@ impl AgentLoop {
         if !self.can_attempt_oauth_refresh(provider_key) {
             return false;
         }
-        let Some(mut entries) = self.read_oauth_store().await else {
+        let Some(entries) = self.read_oauth_store().await else {
             return false;
         };
-        let Some(current) = entries.get(provider_key).cloned() else {
+        let Some(current) = entries.get(provider_key) else {
             return false;
         };
         if current.access_token.trim().is_empty() || current.access_token != active {
             return false;
         }
         let Some(access_token) = self
-            .refresh_oauth_store_entry(provider_key, &current, &mut entries)
+            .refresh_oauth_store_entry(provider_key, current)
             .await
             .filter(|token| !token.trim().is_empty() && *token != active)
         else {
@@ -337,20 +337,62 @@ impl AgentLoop {
         provider.replace_credential(&access_token)
     }
 
+    /// `tokens.json` as it is now, with any credential this loop exchanged
+    /// but could not write in place of its entry.
     async fn read_oauth_store(&self) -> Option<HashMap<String, OAuthStoreCredential>> {
         let raw = tokio::fs::read_to_string(self.auth_tokens_path())
             .await
             .ok()?;
-        serde_json::from_str(&raw).ok()
+        let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
+        if let Ok(unsaved) = self.unsaved_oauth_credentials.lock() {
+            entries.extend(unsaved.iter().map(|(k, v)| (k.clone(), v.clone())));
+        }
+        Some(entries)
     }
 
-    /// Exchanges `current`'s refresh token, stores the new credential in
-    /// `entries` and `tokens.json`, and returns its access token.
+    /// Writes the unsaved credentials into `tokens.json`, read afresh so that
+    /// another writer's entries survive, and forgets those it wrote.
+    async fn store_unsaved_oauth_credentials(&self) {
+        let pending: Vec<String> = match self.unsaved_oauth_credentials.lock() {
+            Ok(unsaved) if !unsaved.is_empty() => unsaved.keys().cloned().collect(),
+            _ => return,
+        };
+        let path = self.auth_tokens_path();
+        let stored = match self.read_oauth_store().await {
+            Some(entries) => match serde_json::to_vec_pretty(&entries) {
+                Ok(content) => write_file_private(&path, &content).await.map(|()| entries),
+                Err(e) => Err(AgentError::Config(e.to_string())),
+            },
+            None => Err(AgentError::Io(format!("{} is unreadable", path.display()))),
+        };
+        match stored {
+            Ok(entries) => {
+                if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
+                    // Keep any exchanged since the read.
+                    for key in pending {
+                        if unsaved.get(&key).map(|c| &c.access_token)
+                            == entries.get(&key).map(|c| &c.access_token)
+                        {
+                            unsaved.remove(&key);
+                        }
+                    }
+                }
+            }
+            Err(e) => tracing::error!(
+                providers = ?pending,
+                error = %e,
+                "refreshed oauth tokens could not be stored; kept in memory and retried each turn"
+            ),
+        }
+    }
+
+    /// Exchanges `current`'s refresh token, stores the new credential and
+    /// returns its access token. A credential that cannot be written stays
+    /// in memory, used in place of its entry, until a later write succeeds.
     async fn refresh_oauth_store_entry(
         &self,
         provider_key: &str,
         current: &OAuthStoreCredential,
-        entries: &mut HashMap<String, OAuthStoreCredential>,
     ) -> Option<String> {
         let refresh_token = current.refresh_token.as_deref()?;
         let (token_url, client_id) = self.oauth_refresh_config(provider_key)?;
@@ -375,22 +417,11 @@ impl AgentLoop {
             }
         };
         let access_token = refreshed.access_token.clone();
-        entries.insert(provider_key.to_string(), refreshed);
+        if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
+            unsaved.insert(provider_key.to_string(), refreshed);
+        }
         self.mark_oauth_refresh_success(provider_key);
-        let Ok(content) = serde_json::to_string_pretty(entries) else {
-            return Some(access_token);
-        };
-        let path = self.auth_tokens_path();
-        if let Some(parent) = path.parent() {
-            let _ = tokio::fs::create_dir_all(parent).await;
-        }
-        if let Err(e) = tokio::fs::write(&path, content).await {
-            tracing::warn!(
-                provider = provider_key,
-                error = %e,
-                "refreshed oauth token could not be stored"
-            );
-        }
+        self.store_unsaved_oauth_credentials().await;
         Some(access_token)
     }
 

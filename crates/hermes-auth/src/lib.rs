@@ -241,7 +241,9 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
     Ok(key)
 }
 
-async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
+/// Writes `content` to `path` through a private temporary file and a rename,
+/// so readers never see a partial file and the result is readable by its owner only.
+pub async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await

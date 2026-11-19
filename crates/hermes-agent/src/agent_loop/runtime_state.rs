@@ -139,10 +139,11 @@ fn maybe_nous_401_diagnostic(
 }
 
 /// A 401: the credential was refused, which a refreshed OAuth token can fix.
-/// A 403 is a refusal of the request itself and is left out.
+/// A 403 is a refusal of the request itself and is left out, whatever its
+/// message says.
 fn is_unauthorized_error(err: &str) -> bool {
     let lower = err.to_ascii_lowercase();
-    lower.contains("401") || lower.contains("unauthorized")
+    !lower.contains("403") && (lower.contains("401") || lower.contains("unauthorized"))
 }
 
 fn classify_error(err: &str) -> ErrorClass {

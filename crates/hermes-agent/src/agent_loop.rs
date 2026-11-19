@@ -15,7 +15,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use hermes_auth::{exchange_refresh_token, OAuth2Endpoints};
+use hermes_auth::{exchange_refresh_token, write_file_private, OAuth2Endpoints};
 use hermes_intelligence::get_model_context_length;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};
