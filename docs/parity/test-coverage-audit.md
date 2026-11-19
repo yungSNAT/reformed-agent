@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-19T01:46:36.914040+00:00`
+Generated: `2026-11-19T03:47:10.445902+00:00`
 
 ## Gate
 
@@ -15,8 +15,8 @@ Generated: `2026-11-19T01:46:36.914040+00:00`
 | `tracked_behavior_rows` | 511 |
 | `covered_behavior_rows` | 32 |
 | `tracked_behavior_coverage_ratio` | 0.0626 |
-| `rust_test_files` | 483 |
-| `rust_test_functions` | 8815 |
+| `rust_test_files` | 482 |
+| `rust_test_functions` | 8833 |
 | `coverage_manifest_entries` | 501 |
 | `coverage_manifest_entries_with_valid_rust_tests` | 22 |
 | `coverage_manifest_deferred_entries` | 142 |
@@ -40,7 +40,7 @@ Generated: `2026-11-19T01:46:36.914040+00:00`
 | Intent | Classification | Evidence files | Direct test evidence |
 | --- | --- | ---: | ---: |
 | `gateway-platform-behavior` | `direct_rust_test` | 25 | 22 |
-| `tool-runtime-behavior` | `direct_rust_test` | 131 | 107 |
+| `tool-runtime-behavior` | `direct_rust_test` | 132 | 108 |
 | `cli-command-surface` | `direct_rust_test` | 189 | 56 |
 | `agent-loop-and-runtime` | `direct_rust_test` | 114 | 79 |
 | `acp-protocol-and-transport` | `direct_rust_test` | 21 | 15 |
