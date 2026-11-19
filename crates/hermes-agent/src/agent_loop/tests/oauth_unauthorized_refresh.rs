@@ -56,12 +56,12 @@
     impl LlmProvider for UnauthorizedUntilRefreshed {
         async fn chat_completion(
             &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
+            _: &[Message],
+            _: &[ToolSchema],
+            _: Option<u32>,
+            _: Option<f64>,
+            _: Option<&str>,
+            _: Option<&serde_json::Value>,
         ) -> Result<hermes_core::LlmResponse, AgentError> {
             self.send()?;
             Ok(hermes_core::LlmResponse {
@@ -74,12 +74,12 @@
 
         fn chat_completion_stream(
             &self,
-            _messages: &[Message],
-            _tools: &[ToolSchema],
-            _max_tokens: Option<u32>,
-            _temperature: Option<f64>,
-            _model: Option<&str>,
-            _extra_body: Option<&serde_json::Value>,
+            _: &[Message],
+            _: &[ToolSchema],
+            _: Option<u32>,
+            _: Option<f64>,
+            _: Option<&str>,
+            _: Option<&serde_json::Value>,
         ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
             let chunks = match self.send() {
                 Ok(()) => vec![
