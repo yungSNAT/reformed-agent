@@ -31,7 +31,7 @@ use hermes_core::{
     StreamChunk, StreamDelta, ToolCall, ToolCallDelta, ToolSchema, UsageStats,
 };
 
-use crate::credential_pool::CredentialPool;
+use crate::credential_pool::{CredentialPool, ReplacedKey};
 use crate::provider_profiles;
 use crate::rate_limit::RateLimitTracker;
 use crate::tool_call_args::arguments_value_to_string;

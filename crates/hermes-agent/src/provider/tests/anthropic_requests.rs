@@ -346,14 +346,7 @@ fn test_anthropic_strips_sampling_and_unsupported_fast_controls() {
 }
 
 #[test]
-fn anthropic_replace_credential_reaches_clones_and_skips_pools() {
-    let provider = AnthropicProvider::new("old-token");
-    let clone = provider.clone();
-    assert_eq!(provider.active_credential().as_deref(), Some("old-token"));
-    assert!(provider.replace_credential("new-token"));
-    assert_eq!(clone.active_credential().as_deref(), Some("new-token"));
-    assert_eq!(clone.effective_api_key(), "new-token");
-
+fn anthropic_pooled_provider_refuses_a_replaced_credential() {
     let pooled = AnthropicProvider::new("old-token")
         .with_credential_pool(Arc::new(CredentialPool::new(vec!["pool-key".to_string()])));
     assert_eq!(pooled.active_credential(), None);

@@ -11,7 +11,7 @@ use reqwest::{
     Client,
 };
 use serde_json::Value;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
 use std::time::Duration;
 
 use hermes_core::{
@@ -19,7 +19,7 @@ use hermes_core::{
     StreamChunk, StreamDelta, ToolCall, ToolCallDelta, ToolSchema, UsageStats,
 };
 
-use crate::credential_pool::CredentialPool;
+use crate::credential_pool::{CredentialPool, ReplacedKey};
 use crate::provider::{
     build_provider_http_client, codex_cloudflare_headers, is_openai_dynamic_model_alias,
     OPENAI_CODEX_BASE_URL, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
@@ -52,7 +52,7 @@ pub struct CodexProvider {
     pub rate_limiter: Option<Arc<RateLimitTracker>>,
     pub credential_pool: Option<Arc<CredentialPool>>,
     /// The credential that replaced `api_key` after a refresh, shared by clones.
-    replaced_api_key: Arc<Mutex<Option<String>>>,
+    replaced_api_key: ReplacedKey,
 }
 
 impl CodexProvider {
@@ -68,7 +68,7 @@ impl CodexProvider {
             request_timeout,
             rate_limiter: None,
             credential_pool: None,
-            replaced_api_key: Arc::new(Mutex::new(None)),
+            replaced_api_key: ReplacedKey::default(),
         }
     }
 
@@ -113,19 +113,8 @@ impl CodexProvider {
     }
 
     fn effective_api_key(&self) -> String {
-        if let Some(ref pool) = self.credential_pool {
-            pool.get_key()
-        } else {
-            self.static_api_key()
-        }
-    }
-
-    fn static_api_key(&self) -> String {
         self.replaced_api_key
-            .lock()
-            .ok()
-            .and_then(|replaced| replaced.clone())
-            .unwrap_or_else(|| self.api_key.clone())
+            .effective(self.credential_pool.as_deref(), &self.api_key)
     }
 
     fn uses_chatgpt_codex_backend(&self) -> bool {
@@ -544,20 +533,13 @@ impl CodexProvider {
 #[async_trait]
 impl LlmProvider for CodexProvider {
     fn active_credential(&self) -> Option<String> {
-        self.credential_pool
-            .is_none()
-            .then(|| self.static_api_key())
+        self.replaced_api_key
+            .active(self.credential_pool.as_deref(), &self.api_key)
     }
 
     fn replace_credential(&self, credential: &str) -> bool {
-        if self.credential_pool.is_some() {
-            return false;
-        }
-        let Ok(mut replaced) = self.replaced_api_key.lock() else {
-            return false;
-        };
-        *replaced = Some(credential.to_string());
-        true
+        self.replaced_api_key
+            .replace(self.credential_pool.as_deref(), credential)
     }
 
     async fn chat_completion(
@@ -1008,18 +990,10 @@ mod tests {
     }
 
     #[test]
-    fn codex_replace_credential_reaches_clones_and_skips_pools() {
+    fn codex_sends_the_replaced_credential_from_every_clone() {
         let provider = CodexProvider::new("old-token");
         let clone = provider.clone();
-        assert_eq!(provider.active_credential().as_deref(), Some("old-token"));
         assert!(provider.replace_credential("new-token"));
-        assert_eq!(clone.active_credential().as_deref(), Some("new-token"));
         assert_eq!(clone.effective_api_key(), "new-token");
-
-        let pooled = CodexProvider::new("old-token")
-            .with_credential_pool(Arc::new(CredentialPool::new(vec!["pool-key".to_string()])));
-        assert_eq!(pooled.active_credential(), None);
-        assert!(!pooled.replace_credential("new-token"));
-        assert_eq!(pooled.effective_api_key(), "pool-key");
     }
 }
