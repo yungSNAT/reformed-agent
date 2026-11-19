@@ -69,6 +69,8 @@ jobs:
           python3 -m py_compile scripts/release_secret_scan.py
       - name: Skill scripts never start programs from the working folder
         run: python3 -m unittest tests/skills/test_skill_program_lookup.py
+      - name: GitNexus proxy listens on loopback and serves only its dist folder
+        run: python3 -m unittest tests/skills/test_gitnexus_proxy.py
       - name: Google Workspace credentials are written owner-only
         run: |
           python3 -m venv "${RUNNER_TEMP:?}/gws"
