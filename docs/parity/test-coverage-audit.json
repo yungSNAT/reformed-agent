@@ -273,10 +273,10 @@
       "path": "docs/parity/python-test-suite-coverage.json",
       "referenced_rust_tests": 105,
       "status_counts": {
-        "covered_by_rust_test_suite_contracts": 131,
-        "deferred_not_covered": 46
+        "deferred_not_covered": 46,
+        "not_rechecked_since_upstream_changed": 131
       },
-      "valid_entries_with_rust_tests": 131
+      "valid_entries_with_rust_tests": 0
     },
     {
       "deferred_entries": [
@@ -436,10 +436,10 @@
       "path": "docs/parity/hermes-cli-test-coverage.json",
       "referenced_rust_tests": 89,
       "status_counts": {
-        "covered_by_rust_contracts": 110,
-        "deferred_not_covered": 37
+        "deferred_not_covered": 37,
+        "not_rechecked_since_upstream_changed": 110
       },
-      "valid_entries_with_rust_tests": 110
+      "valid_entries_with_rust_tests": 0
     },
     {
       "deferred_entries": [
@@ -607,14 +607,15 @@
       "path": "docs/parity/ui-tui-source-coverage.json",
       "referenced_rust_tests": 68,
       "status_counts": {
-        "covered_by_rust_primary_tui_contracts": 118,
-        "deferred_not_covered": 59
+        "covered_by_rust_primary_tui_contracts": 22,
+        "deferred_not_covered": 59,
+        "not_rechecked_since_upstream_changed": 96
       },
-      "valid_entries_with_rust_tests": 118
+      "valid_entries_with_rust_tests": 22
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T00:28:56.646627+00:00",
+  "generated_at_utc": "2026-11-19T00:57:45.904561+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -1166,9 +1167,9 @@
   "summary": {
     "coverage_manifest_deferred_entries": 142,
     "coverage_manifest_entries": 501,
-    "coverage_manifest_entries_with_valid_rust_tests": 359,
+    "coverage_manifest_entries_with_valid_rust_tests": 22,
     "coverage_manifest_not_rechecked_entries": 337,
-    "covered_behavior_rows": 369,
+    "covered_behavior_rows": 32,
     "divergence_errors": 0,
     "divergence_review_overdue": 0,
     "divergence_unowned": 0,
@@ -1180,7 +1181,7 @@
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
-    "tracked_behavior_coverage_ratio": 0.7221,
+    "tracked_behavior_coverage_ratio": 0.0626,
     "tracked_behavior_rows": 511
   }
 }

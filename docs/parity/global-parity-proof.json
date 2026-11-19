@@ -82,7 +82,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.7221,
+        "actual": 0.0626,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-19T00:28:58.159177+00:00",
+  "generated_at_utc": "2026-11-19T00:57:46.936937+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -303,7 +303,7 @@
     "min_deep_problem_solving_superiority_cases": 10.0,
     "min_deep_problem_solving_total_cases": 10.0,
     "min_sota_harness_domain_coverage_ratio": 1.0,
-    "min_test_coverage_tracked_behavior_ratio": 0.7221,
+    "min_test_coverage_tracked_behavior_ratio": 0.0626,
     "min_test_intent_mapping_ratio": 1.0
   },
   "program": {
@@ -344,7 +344,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.7221,
+        "actual": 0.0626,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -550,9 +550,9 @@
     "summary": {
       "coverage_manifest_deferred_entries": 142,
       "coverage_manifest_entries": 501,
-      "coverage_manifest_entries_with_valid_rust_tests": 359,
+      "coverage_manifest_entries_with_valid_rust_tests": 22,
       "coverage_manifest_not_rechecked_entries": 337,
-      "covered_behavior_rows": 369,
+      "covered_behavior_rows": 32,
       "divergence_errors": 0,
       "divergence_review_overdue": 0,
       "divergence_unowned": 0,
@@ -564,7 +564,7 @@
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,
-      "tracked_behavior_coverage_ratio": 0.7221,
+      "tracked_behavior_coverage_ratio": 0.0626,
       "tracked_behavior_rows": 511
     }
   },

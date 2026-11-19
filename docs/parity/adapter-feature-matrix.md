@@ -1,6 +1,6 @@
 # Adapter Feature Matrix
 
-Generated: `2026-11-19T00:28:56.761096+00:00`
+Generated: `2026-11-19T00:57:45.984034+00:00`
 
 | Category | Name | Feature Flag | Status |
 | --- | --- | --- | --- |

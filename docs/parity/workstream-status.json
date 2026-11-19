@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-19T11:28:42+11:00",
-  "head_sha": "7e199088def1fcd87f08df6b00aa6da7507a5fdb",
+  "generated_at_utc": "2026-11-19T11:57:32+11:00",
+  "head_sha": "9212612cb4d0057b84dce4e91245d8f12e312f74",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -25,10 +25,10 @@
         "send_message tool wired to live gateway backend in gateway runtime.",
         "clarify tool wired to channel backend in gateway and stdio backend in CLI runtimes.",
         "cronjob tool wired to live scheduler backend.",
-        "13 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "13 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
-        "deferred_rows": 13,
+        "rows_not_shown_matching": 13,
         "runtime_wiring_functions": 4
       },
       "state": "in_progress",
@@ -53,12 +53,12 @@
       "evidence": [
         "Rust CLI/TUI runtime validated through e2e_cli and gateway e2e smoke tests.",
         "Web/UI upstream trees classified as intentional divergence in Rust-first mode.",
-        "59 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "155 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
-        "deferred_rows": 59,
         "divergence_documented": true,
-        "e2e_cli_tests": 16
+        "e2e_cli_tests": 16,
+        "rows_not_shown_matching": 155
       },
       "state": "in_progress",
       "title": "UX parity",
@@ -67,12 +67,12 @@
     {
       "evidence": [
         "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.",
-        "97 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "338 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "ci_jobs": 0,
-        "deferred_rows": 97,
-        "parity_gate_present": true
+        "parity_gate_present": true,
+        "rows_not_shown_matching": 338
       },
       "state": "in_progress",
       "title": "Tests and CI parity",

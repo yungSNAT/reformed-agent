@@ -1,6 +1,6 @@
 # Workstream Status
 
-- Local HEAD: `7e199088def1fcd87f08df6b00aa6da7507a5fdb`
+- Local HEAD: `9212612cb4d0057b84dce4e91245d8f12e312f74`
 - Upstream: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 
 | Workstream | Title | State |
@@ -26,8 +26,8 @@
 - send_message tool wired to live gateway backend in gateway runtime.
 - clarify tool wired to channel backend in gateway and stdio backend in CLI runtimes.
 - cronjob tool wired to live scheduler backend.
-- 13 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"deferred_rows": 13, "runtime_wiring_functions": 4}`
+- 13 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"rows_not_shown_matching": 13, "runtime_wiring_functions": 4}`
 
 ## WS4 — Skills parity
 
@@ -41,15 +41,15 @@
 - State: **in_progress**
 - Rust CLI/TUI runtime validated through e2e_cli and gateway e2e smoke tests.
 - Web/UI upstream trees classified as intentional divergence in Rust-first mode.
-- 59 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"deferred_rows": 59, "divergence_documented": true, "e2e_cli_tests": 16}`
+- 155 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"divergence_documented": true, "e2e_cli_tests": 16, "rows_not_shown_matching": 155}`
 
 ## WS6 — Tests and CI parity
 
 - State: **in_progress**
 - CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.
-- 97 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"ci_jobs": 0, "deferred_rows": 97, "parity_gate_present": true}`
+- 338 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"ci_jobs": 0, "parity_gate_present": true, "rows_not_shown_matching": 338}`
 
 ## WS7 — Security/secrets/store/webhook parity
 
