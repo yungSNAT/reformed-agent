@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-19T11:02:01.168887+00:00",
+  "generated_at_utc": "2026-11-19T13:35:03.747169+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "206a544047fcb06ffe1a933e58cd894a464817da",
+    "local_sha": "68328d1a7d7dd0e4d8fc7b5fbeffc4285ece48e3",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1634,
+    "commits_ahead": 1639,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1363,
+    "local_patch_unique": 1367,
     "files_only_upstream": 24117,
-    "files_only_local": 2024,
+    "files_only_local": 2029,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27378,
+    "tree_files_changed": 27383,
     "tree_insertions": 4528858,
-    "tree_deletions": 936154
+    "tree_deletions": 939161
   },
   "top_upstream_only": [
     {
@@ -348,7 +348,7 @@
   "top_local_only": [
     {
       "path": "crates/hermes-cli",
-      "count": 198
+      "count": 199
     },
     {
       "path": "skills/creative",
@@ -419,12 +419,12 @@
       "count": 28
     },
     {
-      "path": "plugins/memory",
+      "path": "crates/hermes-core",
       "count": 24
     },
     {
-      "path": "crates/hermes-core",
-      "count": 23
+      "path": "plugins/memory",
+      "count": 24
     },
     {
       "path": "tests/gateway",
@@ -467,6 +467,10 @@
       "count": 12
     },
     {
+      "path": "crates/hermes-desktop-gateway",
+      "count": 11
+    },
+    {
       "path": "tests/acp",
       "count": 11
     },
@@ -500,10 +504,6 @@
     },
     {
       "path": "optional-skills/creative",
-      "count": 9
-    },
-    {
-      "path": "skills/red-teaming",
       "count": 9
     }
   ],
@@ -672,7 +672,7 @@
   "top_unique_to_local": [
     {
       "path": "crates/hermes-cli",
-      "count": 198
+      "count": 199
     },
     {
       "path": "skills/creative",
@@ -743,12 +743,12 @@
       "count": 28
     },
     {
-      "path": "plugins/memory",
+      "path": "crates/hermes-core",
       "count": 24
     },
     {
-      "path": "crates/hermes-core",
-      "count": 23
+      "path": "plugins/memory",
+      "count": 24
     },
     {
       "path": "tests/gateway",
@@ -791,6 +791,10 @@
       "count": 12
     },
     {
+      "path": "crates/hermes-desktop-gateway",
+      "count": 11
+    },
+    {
       "path": "tests/acp",
       "count": 11
     },
@@ -825,10 +829,6 @@
     {
       "path": "optional-skills/creative",
       "count": 9
-    },
-    {
-      "path": "skills/red-teaming",
-      "count": 9
     }
   ],
   "workstream_matrix": [
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 342,
+      "local_only": 346,
       "risk": "critical",
       "effort": "XL"
     },
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 413,
       "shared_different": 0,
-      "local_only": 450,
+      "local_only": 451,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1363,
+    "local_patch_unique": 1367,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
