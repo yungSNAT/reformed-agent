@@ -620,6 +620,7 @@ impl AgentLoop {
             // A replay after an OAuth refresh reuses `target`, the provider that
             // now holds the new token: a rebuilt route could load the old key.
             let result = loop {
+                let sent = target.provider.active_credential();
                 let result = target
                     .provider
                     .chat_completion(
@@ -638,6 +639,7 @@ impl AgentLoop {
                             .refresh_oauth_store_after_unauthorized(
                                 &target.provider_name,
                                 target.provider.as_ref(),
+                                sent.as_deref(),
                             )
                             .await
                         {
@@ -1055,6 +1057,7 @@ impl AgentLoop {
             } else {
                 active_model
             };
+            let sent = target.provider.active_credential();
             let mut stream = target.provider.chat_completion_stream(
                 &api_messages,
                 tool_schemas,
@@ -1070,6 +1073,9 @@ impl AgentLoop {
             let mut last_usage: Option<UsageStats> = None;
             let mut finish_reason: Option<String> = None;
             let mut deltas_were_sent = false;
+            // Any chunk, thinking and tool-call deltas included, may already
+            // have reached the caller: after one, a 401 is not replayed.
+            let mut chunk_received = false;
             let mut stream_scrubber = StreamingContextScrubber::new();
 
             loop {
@@ -1113,9 +1119,12 @@ impl AgentLoop {
                 };
 
                 let chunk = match chunk_result {
-                    Ok(chunk) => chunk,
+                    Ok(chunk) => {
+                        chunk_received = true;
+                        chunk
+                    }
                     Err(err) => {
-                        if !deltas_were_sent
+                        if !chunk_received
                             && !unauthorized_refresh_tried
                             && is_unauthorized_error(&err.to_string())
                         {
@@ -1124,6 +1133,7 @@ impl AgentLoop {
                                 .refresh_oauth_store_after_unauthorized(
                                     &target.provider_name,
                                     target.provider.as_ref(),
+                                    sent.as_deref(),
                                 )
                                 .await
                             {

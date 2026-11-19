@@ -139,11 +139,12 @@ fn maybe_nous_401_diagnostic(
 }
 
 /// A 401: the credential was refused, which a refreshed OAuth token can fix.
-/// A 403 is a refusal of the request itself and is left out, whatever its
-/// message says.
+/// Read from the status the providers write after `API error `, so another
+/// status whose body mentions 401 or 'unauthorized' is left out.
 fn is_unauthorized_error(err: &str) -> bool {
-    let lower = err.to_ascii_lowercase();
-    !lower.contains("403") && (lower.contains("401") || lower.contains("unauthorized"))
+    const PREFIX: &str = "API error ";
+    err.find(PREFIX)
+        .is_some_and(|at| err[at + PREFIX.len()..].starts_with("401 "))
 }
 
 fn classify_error(err: &str) -> ErrorClass {

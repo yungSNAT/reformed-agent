@@ -87,6 +87,24 @@ struct OAuthStoreCredential {
     expires_at: Option<Timestamp>,
 }
 
+/// By store path and provider key: a credential exchanged but not yet
+/// written, with the entry it replaced.
+type UnsavedOAuthCredentials =
+    BTreeMap<(PathBuf, String), (OAuthStoreCredential, OAuthStoreCredential)>;
+
+/// OAuth credentials exchanged in this process but not yet written to their
+/// `tokens.json`. A rotating exchange spends the stored refresh token, so
+/// these are the only copy until a write succeeds.
+static UNSAVED_OAUTH_CREDENTIALS: Mutex<UnsavedOAuthCredentials> = Mutex::new(BTreeMap::new());
+
+/// Held across each read, exchange and write of `tokens.json`, so that loops
+/// running at once exchange one refresh token once.
+/// shortcut: in this process only; another process writing the store (the
+/// CLI's login) can still race a read and its rename. Upgrade: an advisory
+/// lock file taken by every writer.
+static OAUTH_STORE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 const MEMORY_GUIDANCE: &str = "You have persistent memory across sessions. Save durable facts using the memory tool: user preferences, environment details, tool quirks, and stable conventions. Memory is injected into every turn, so keep it compact and focused on facts that will still matter later. Prioritize what reduces future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to memory.";
 
 const SESSION_SEARCH_GUIDANCE: &str = "When the user references something from a past conversation or you suspect relevant cross-session context exists, use session_search to recall it before asking them to repeat themselves.";
