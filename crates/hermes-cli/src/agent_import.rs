@@ -2052,6 +2052,32 @@ enabled = false
         assert!(!home.join("skills/codex-imports/piped").exists());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_named_as_a_memory_or_a_skill_marker_is_an_error_not_skipped() {
+        use super::fifo_fixture::make_fifo;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/odd")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        make_fifo(&codex.join("memories/notes.md"));
+        make_fifo(&codex.join("skills/odd/SKILL.md"));
+
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        for expected in ["error        memories/notes.md: ", "error        skill odd: "] {
+            assert!(text.contains(expected), "missing {expected:?} in\n{text}");
+        }
+    }
+
     #[test]
     fn a_copy_that_fails_part_way_leaves_nothing_behind() {
         use crate::source_tree::{Node, Tree};
