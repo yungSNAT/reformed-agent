@@ -337,6 +337,9 @@ impl ToolRegistry {
             return Self::tool_policy_error(name, &policy_decision);
         }
         maybe_log_audit(name, &policy_decision);
+        if let Some(refusal) = secret_argument_refusal(&effective_params) {
+            return refusal;
+        }
 
         // Use tokio to run the async handler
         let result = tokio::task::block_in_place(|| {
@@ -346,6 +349,7 @@ impl ToolRegistry {
 
         let output = match result {
             Ok(output) => {
+                let output = hermes_core::secret_values::mask(&output);
                 self.disk_cleanup_auto
                     .post_tool_call_success(name, &effective_params, &output);
                 let filtered = rtk_filter.filter_and_log(
@@ -358,7 +362,7 @@ impl ToolRegistry {
                 Self::tool_result(&truncate_to_chars(&filtered, max_chars))
             }
             Err(e) => {
-                let err_text = e.to_string();
+                let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,
                     &effective_params,
@@ -410,9 +414,13 @@ impl ToolRegistry {
             return Self::tool_policy_error(name, &policy_decision);
         }
         maybe_log_audit(name, &policy_decision);
+        if let Some(refusal) = secret_argument_refusal(&effective_params) {
+            return refusal;
+        }
 
         let output = match handler.execute(effective_params.clone()).await {
             Ok(output) => {
+                let output = hermes_core::secret_values::mask(&output);
                 self.disk_cleanup_auto
                     .post_tool_call_success(name, &effective_params, &output);
                 let filtered = rtk_filter.filter_and_log(
@@ -425,7 +433,7 @@ impl ToolRegistry {
                 Self::tool_result(&truncate_to_chars(&filtered, max_chars))
             }
             Err(e) => {
-                let err_text = e.to_string();
+                let err_text = hermes_core::secret_values::mask(&e.to_string()).into_owned();
                 let filtered = rtk_filter.filter_and_log(
                     name,
                     &effective_params,
@@ -696,6 +704,19 @@ impl Default for ToolRegistry {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The error a call gets when its arguments carry a loaded secret value
+/// (`hermes_core::secret_values`), naming where the secret came from but not
+/// the value. A model that has seen a secret must not send it anywhere: a
+/// command, request or message the arguments describe could carry it out.
+fn secret_argument_refusal(params: &Value) -> Option<String> {
+    let source = hermes_core::secret_values::find_in_json(params)?;
+    Some(ToolRegistry::tool_error(&format!(
+        "Refused: the arguments contain the value of {source}, a loaded secret. \
+         A tool call may not carry a secret value; the tool that needs the \
+         credential reads it itself."
+    )))
 }
 
 /// Simplified info about a tool entry (no handler, for inspection).

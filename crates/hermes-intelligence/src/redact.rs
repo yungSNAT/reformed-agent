@@ -331,7 +331,7 @@ fn redact_builtin_text(text: &str) -> String {
         return String::new();
     }
 
-    let mut result = text.to_string();
+    let mut result = hermes_core::secret_values::mask(text).into_owned();
 
     result = PREFIX_RE
         .replace_all(&result, |caps: &regex::Captures<'_>| {

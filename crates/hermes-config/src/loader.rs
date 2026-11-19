@@ -699,6 +699,12 @@ pub fn load_config(home_dir: Option<&str>) -> Result<GatewayConfig, ConfigError>
     // Validate
     validate_config(&config)?;
 
+    // Literal credentials in the config files are secrets the process now
+    // holds; redaction and the tool registry match them exactly.
+    if let Ok(value) = serde_json::to_value(&config) {
+        hermes_core::secret_values::register_json("config", &value);
+    }
+
     Ok(config)
 }
 
