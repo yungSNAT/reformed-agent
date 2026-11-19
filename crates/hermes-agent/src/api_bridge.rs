@@ -11,7 +11,7 @@ use reqwest::{
     Client,
 };
 use serde_json::Value;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use hermes_core::{
@@ -51,6 +51,8 @@ pub struct CodexProvider {
     request_timeout: Option<Duration>,
     pub rate_limiter: Option<Arc<RateLimitTracker>>,
     pub credential_pool: Option<Arc<CredentialPool>>,
+    /// The credential that replaced `api_key` after a refresh, shared by clones.
+    replaced_api_key: Arc<Mutex<Option<String>>>,
 }
 
 impl CodexProvider {
@@ -66,6 +68,7 @@ impl CodexProvider {
             request_timeout,
             rate_limiter: None,
             credential_pool: None,
+            replaced_api_key: Arc::new(Mutex::new(None)),
         }
     }
 
@@ -113,8 +116,16 @@ impl CodexProvider {
         if let Some(ref pool) = self.credential_pool {
             pool.get_key()
         } else {
-            self.api_key.clone()
+            self.static_api_key()
         }
+    }
+
+    fn static_api_key(&self) -> String {
+        self.replaced_api_key
+            .lock()
+            .ok()
+            .and_then(|replaced| replaced.clone())
+            .unwrap_or_else(|| self.api_key.clone())
     }
 
     fn uses_chatgpt_codex_backend(&self) -> bool {
@@ -532,6 +543,23 @@ impl CodexProvider {
 
 #[async_trait]
 impl LlmProvider for CodexProvider {
+    fn active_credential(&self) -> Option<String> {
+        self.credential_pool
+            .is_none()
+            .then(|| self.static_api_key())
+    }
+
+    fn replace_credential(&self, credential: &str) -> bool {
+        if self.credential_pool.is_some() {
+            return false;
+        }
+        let Ok(mut replaced) = self.replaced_api_key.lock() else {
+            return false;
+        };
+        *replaced = Some(credential.to_string());
+        true
+    }
+
     async fn chat_completion(
         &self,
         messages: &[Message],

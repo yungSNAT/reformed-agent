@@ -234,8 +234,9 @@ impl AgentLoop {
             })
     }
 
-    fn resolve_oauth_store_api_key(&self, provider: &str) -> Option<String> {
-        let provider_key = match provider {
+    /// The `tokens.json` entry that holds `provider`'s OAuth credential.
+    fn oauth_store_provider_key(provider: &str) -> Option<&'static str> {
+        Some(match provider {
             "openai" => "openai",
             "openai-codex" | "codex" => "openai-codex",
             "nous" => "nous",
@@ -243,7 +244,11 @@ impl AgentLoop {
             "anthropic" | "claude" | "claude-code" => "anthropic",
             "google-gemini-cli" | "gemini-cli" | "gemini-oauth" => "google-gemini-cli",
             _ => return None,
-        };
+        })
+    }
+
+    fn resolve_oauth_store_api_key(&self, provider: &str) -> Option<String> {
+        let provider_key = Self::oauth_store_provider_key(provider)?;
         let path = self.auth_tokens_path();
         let raw = std::fs::read_to_string(path).ok()?;
         let entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
@@ -279,14 +284,8 @@ impl AgentLoop {
         if !self.can_attempt_oauth_refresh(provider_key) {
             return;
         }
-        let path = self.auth_tokens_path();
-        let raw = match tokio::fs::read_to_string(&path).await {
-            Ok(v) => v,
-            Err(_) => return,
-        };
-        let mut entries: HashMap<String, OAuthStoreCredential> = match serde_json::from_str(&raw) {
-            Ok(v) => v,
-            Err(_) => return,
+        let Some(mut entries) = self.read_oauth_store().await else {
+            return;
         };
         let Some(current) = entries.get(provider_key).cloned() else {
             return;
@@ -297,18 +296,70 @@ impl AgentLoop {
         if expires_at > Timestamp::now() {
             return;
         }
-        let Some(refresh_token) = current.refresh_token.clone() else {
-            return;
+        self.refresh_oauth_store_entry(provider_key, &current, &mut entries)
+            .await;
+    }
+
+    /// After a 401 from `provider`: when it sent the stored OAuth access token
+    /// for `provider_name`, exchanges that token's refresh token once, stores
+    /// the result and makes `provider` send the new token. Returns whether the
+    /// request should be sent again.
+    async fn refresh_oauth_store_after_unauthorized(
+        &self,
+        provider_name: &str,
+        provider: &dyn LlmProvider,
+    ) -> bool {
+        let Some(active) = provider.active_credential() else {
+            return false;
         };
-        let Some((token_url, client_id)) = self.oauth_refresh_config(provider_key) else {
-            return;
+        let Some(provider_key) = Self::oauth_store_provider_key(provider_name) else {
+            return false;
         };
+        if !self.can_attempt_oauth_refresh(provider_key) {
+            return false;
+        }
+        let Some(mut entries) = self.read_oauth_store().await else {
+            return false;
+        };
+        let Some(current) = entries.get(provider_key).cloned() else {
+            return false;
+        };
+        if current.access_token.trim().is_empty() || current.access_token != active {
+            return false;
+        }
+        let Some(access_token) = self
+            .refresh_oauth_store_entry(provider_key, &current, &mut entries)
+            .await
+            .filter(|token| !token.trim().is_empty() && *token != active)
+        else {
+            return false;
+        };
+        provider.replace_credential(&access_token)
+    }
+
+    async fn read_oauth_store(&self) -> Option<HashMap<String, OAuthStoreCredential>> {
+        let raw = tokio::fs::read_to_string(self.auth_tokens_path())
+            .await
+            .ok()?;
+        serde_json::from_str(&raw).ok()
+    }
+
+    /// Exchanges `current`'s refresh token, stores the new credential in
+    /// `entries` and `tokens.json`, and returns its access token.
+    async fn refresh_oauth_store_entry(
+        &self,
+        provider_key: &str,
+        current: &OAuthStoreCredential,
+        entries: &mut HashMap<String, OAuthStoreCredential>,
+    ) -> Option<String> {
+        let refresh_token = current.refresh_token.as_deref()?;
+        let (token_url, client_id) = self.oauth_refresh_config(provider_key)?;
         let refreshed = match self
             .exchange_oauth_refresh_token(
                 provider_key,
                 token_url.as_str(),
                 client_id.as_str(),
-                refresh_token.as_str(),
+                refresh_token,
             )
             .await
         {
@@ -320,19 +371,27 @@ impl AgentLoop {
                     error = %e,
                     "oauth token refresh failed for runtime provider"
                 );
-                return;
+                return None;
             }
         };
+        let access_token = refreshed.access_token.clone();
         entries.insert(provider_key.to_string(), refreshed);
-        let Ok(content) = serde_json::to_string_pretty(&entries) else {
-            self.mark_oauth_refresh_success(provider_key);
-            return;
+        self.mark_oauth_refresh_success(provider_key);
+        let Ok(content) = serde_json::to_string_pretty(entries) else {
+            return Some(access_token);
         };
+        let path = self.auth_tokens_path();
         if let Some(parent) = path.parent() {
             let _ = tokio::fs::create_dir_all(parent).await;
         }
-        let _ = tokio::fs::write(path, content).await;
-        self.mark_oauth_refresh_success(provider_key);
+        if let Err(e) = tokio::fs::write(&path, content).await {
+            tracing::warn!(
+                provider = provider_key,
+                error = %e,
+                "refreshed oauth token could not be stored"
+            );
+        }
+        Some(access_token)
     }
 
     fn oauth_refresh_config(&self, provider_key: &str) -> Option<(String, String)> {
