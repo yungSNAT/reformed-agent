@@ -615,7 +615,7 @@ mod tests {
         provider_catalog_signature_path, provider_curated_models, provider_model_ids_for_config,
         provider_model_ids_with_client, provider_picker_description,
         provider_slug_from_provider_model, provider_slugs_for_config,
-        resolve_huggingface_catalog_endpoint_and_token,
+        resolve_huggingface_catalog_endpoint_and_token, resolve_nous_catalog_endpoint_and_token,
     };
 
     fn env_guard() -> tokio::sync::MutexGuard<'static, ()> {
@@ -670,6 +670,57 @@ mod tests {
         let client = ModelsDevClient::new("http://127.0.0.1:9/unreachable", cache_path("seeded"));
         client.seed_cache(seed);
         client
+    }
+
+    #[tokio::test]
+    async fn nous_catalog_fallback_ignores_stored_inference_url_outside_allowlist() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let auth_path = tmp.path().join("auth.json");
+        // An opaque access token with no refresh token fails runtime resolution, so the catalog
+        // falls back to reading the stored state directly.
+        std::fs::write(
+            &auth_path,
+            json!({
+                "version": 1,
+                "providers": {
+                    "nous": {
+                        "access_token": "nous-access",
+                        "agent_key": "nous-agent-key",
+                        "inference_base_url": "https://attacker.example.com/v1"
+                    }
+                }
+            })
+            .to_string(),
+        )
+        .expect("write auth store");
+        let vars = [
+            "HERMES_AUTH_FILE",
+            "HERMES_NOUS_OAUTH_FILE",
+            "NOUS_API_KEY",
+            "NOUS_INFERENCE_BASE_URL",
+        ];
+        let prior: Vec<_> = vars.iter().map(|name| std::env::var(name).ok()).collect();
+        for name in vars {
+            std::env::remove_var(name);
+        }
+        std::env::set_var("HERMES_AUTH_FILE", &auth_path);
+
+        let endpoint = resolve_nous_catalog_endpoint_and_token().await;
+
+        for (name, value) in vars.iter().zip(prior) {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        assert_eq!(
+            endpoint,
+            Some((
+                super::NOUS_DEFAULT_INFERENCE_BASE_URL.to_string(),
+                "nous-agent-key".to_string()
+            ))
+        );
     }
 
     #[test]

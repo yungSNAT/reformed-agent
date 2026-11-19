@@ -1006,3 +1006,266 @@ async fn resolve_qwen_runtime_credentials_reads_qwen_cli_auth_file() {
     std::env::remove_var("HERMES_QWEN_CLI_AUTH_FILE");
     std::env::remove_var("HERMES_QWEN_BASE_URL");
 }
+
+/// Sets or removes environment variables for one test and restores them on drop.
+struct ScopedNousEnv(Vec<(&'static str, Option<String>)>);
+
+impl ScopedNousEnv {
+    fn new(auth_file: &Path, inference_override: Option<&str>) -> Self {
+        let vars: [(&'static str, Option<String>); 5] = [
+            (
+                "HERMES_AUTH_FILE",
+                Some(auth_file.to_string_lossy().to_string()),
+            ),
+            ("HERMES_NOUS_OAUTH_FILE", None),
+            (
+                "NOUS_INFERENCE_BASE_URL",
+                inference_override.map(str::to_string),
+            ),
+            ("HERMES_PORTAL_BASE_URL", None),
+            ("NOUS_PORTAL_BASE_URL", None),
+        ];
+        let prior = vars
+            .iter()
+            .map(|(name, _)| (*name, std::env::var(name).ok()))
+            .collect();
+        for (name, value) in vars {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+        Self(prior)
+    }
+}
+
+impl Drop for ScopedNousEnv {
+    fn drop(&mut self) {
+        for (name, value) in &self.0 {
+            match value {
+                Some(value) => std::env::set_var(name, value),
+                None => std::env::remove_var(name),
+            }
+        }
+    }
+}
+
+/// A Nous Portal stub on 127.0.0.1: the device-code endpoint approves at once and the token
+/// endpoint answers `token_body`. Returns the portal base URL.
+async fn spawn_nous_portal_stub(token_body: String) -> String {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind portal stub");
+    let addr = listener.local_addr().expect("portal stub addr");
+    let device_body = serde_json::json!({
+        "device_code": "dev",
+        "user_code": "ABCD-1234",
+        "verification_uri_complete": "https://portal.example/device?code=ABCD",
+        "expires_in": 600,
+        "interval": 1,
+    })
+    .to_string();
+    tokio::spawn(async move {
+        while let Ok((mut stream, _peer)) = listener.accept().await {
+            // Read the whole request before answering so the close does not reset the client.
+            let mut request = Vec::new();
+            let mut buf = [0_u8; 4096];
+            while let Ok(n) = stream.read(&mut buf).await {
+                if n == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buf[..n]);
+                let text = String::from_utf8_lossy(&request);
+                if let Some(end) = text.find("\r\n\r\n") {
+                    let length = text[..end]
+                        .lines()
+                        .find_map(|line| {
+                            let (name, value) = line.split_once(':')?;
+                            if name.eq_ignore_ascii_case("content-length") {
+                                value.trim().parse::<usize>().ok()
+                            } else {
+                                None
+                            }
+                        })
+                        .unwrap_or(0);
+                    if request.len() >= end + 4 + length {
+                        break;
+                    }
+                }
+            }
+            let body = if request.starts_with(b"POST /api/oauth/device/code ") {
+                &device_body
+            } else {
+                &token_body
+            };
+            let response = format!(
+                "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            let _ = stream.write_all(response.as_bytes()).await;
+        }
+    });
+    format!("http://{addr}")
+}
+
+fn nous_token_body(portal_inference_url: &str) -> String {
+    serde_json::json!({
+        "access_token": nous_test_jwt(3600, Value::String(NOUS_INFERENCE_INVOKE_SCOPE.to_string())),
+        "refresh_token": "refreshed",
+        "scope": NOUS_INFERENCE_INVOKE_SCOPE,
+        "expires_in": 3600,
+        "inference_base_url": portal_inference_url,
+    })
+    .to_string()
+}
+
+async fn nous_device_login_with_portal_inference_url(
+    portal_inference_url: &str,
+    inference_override: Option<&str>,
+) -> NousAuthState {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _env = ScopedNousEnv::new(&tmp.path().join("auth.json"), inference_override);
+    let portal = spawn_nous_portal_stub(nous_token_body(portal_inference_url)).await;
+    login_nous_device_code(NousDeviceCodeOptions {
+        portal_base_url: Some(portal),
+        open_browser: false,
+        ..NousDeviceCodeOptions::default()
+    })
+    .await
+    .expect("device login")
+}
+
+#[tokio::test]
+async fn nous_device_login_refuses_portal_inference_url_outside_allowlist() {
+    let _guard = test_env_lock::lock_async().await;
+    let state =
+        nous_device_login_with_portal_inference_url("https://attacker.example.com/v1", None).await;
+    assert_eq!(state.inference_base_url, DEFAULT_NOUS_INFERENCE_URL);
+}
+
+#[tokio::test]
+async fn nous_device_login_refuses_non_https_portal_inference_url() {
+    let _guard = test_env_lock::lock_async().await;
+    let state = nous_device_login_with_portal_inference_url(
+        "http://inference-api.nousresearch.com/v1",
+        None,
+    )
+    .await;
+    assert_eq!(state.inference_base_url, DEFAULT_NOUS_INFERENCE_URL);
+}
+
+#[tokio::test]
+async fn nous_device_login_keeps_allowlisted_portal_inference_url() {
+    let _guard = test_env_lock::lock_async().await;
+    let state = nous_device_login_with_portal_inference_url(
+        "https://inference-api.nousresearch.com/v2/",
+        None,
+    )
+    .await;
+    assert_eq!(
+        state.inference_base_url,
+        "https://inference-api.nousresearch.com/v2"
+    );
+}
+
+#[tokio::test]
+async fn nous_device_login_keeps_inference_host_named_by_operator_override() {
+    let _guard = test_env_lock::lock_async().await;
+    let state = nous_device_login_with_portal_inference_url(
+        "https://inference.staging.example.com/v2",
+        Some("https://inference.staging.example.com/v1"),
+    )
+    .await;
+    assert_eq!(
+        state.inference_base_url,
+        "https://inference.staging.example.com/v2"
+    );
+}
+
+#[tokio::test]
+async fn nous_refresh_refuses_portal_inference_url_outside_allowlist() {
+    let _guard = test_env_lock::lock_async().await;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let _env = ScopedNousEnv::new(&tmp.path().join("auth.json"), None);
+    let mut state = nous_test_state(nous_test_jwt(
+        900,
+        Value::String(NOUS_INFERENCE_INVOKE_SCOPE.to_string()),
+    ));
+    state.portal_base_url =
+        spawn_nous_portal_stub(nous_token_body("https://attacker.example.com/v1")).await;
+    save_nous_auth_state(&state).expect("save nous state");
+
+    let resolved = resolve_nous_runtime_credentials(
+        true,
+        true,
+        NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+        DEFAULT_NOUS_AGENT_KEY_MIN_TTL_SECONDS,
+    )
+    .await
+    .expect("refresh nous runtime credentials");
+    assert_eq!(resolved.refresh_token.as_deref(), Some("refreshed"));
+    assert_eq!(resolved.base_url, DEFAULT_NOUS_INFERENCE_URL);
+    let saved = read_provider_auth_state("nous")
+        .expect("read saved state")
+        .expect("saved state");
+    assert_eq!(
+        saved.get("inference_base_url").and_then(Value::as_str),
+        Some(DEFAULT_NOUS_INFERENCE_URL)
+    );
+}
+
+#[tokio::test]
+async fn nous_runtime_credentials_heal_stored_inference_url_outside_allowlist() {
+    let _guard = test_env_lock::lock_async().await;
+    for stored in [
+        "https://attacker.example.com/v1",
+        "http://inference-api.nousresearch.com/v1",
+        "https://inference-api.nousresearch.com.attacker.example/v1",
+        "https://inference-api.nousresearch.com@attacker.example.com/v1",
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedNousEnv::new(&tmp.path().join("auth.json"), None);
+        let mut state = nous_test_state(nous_test_jwt(
+            900,
+            Value::String(NOUS_INFERENCE_INVOKE_SCOPE.to_string()),
+        ));
+        state.inference_base_url = stored.to_string();
+        save_nous_auth_state(&state).expect("save nous state");
+
+        let resolved = resolve_nous_runtime_credentials(
+            false,
+            true,
+            NOUS_ACCESS_TOKEN_REFRESH_SKEW_SECONDS,
+            DEFAULT_NOUS_AGENT_KEY_MIN_TTL_SECONDS,
+        )
+        .await
+        .expect("resolve nous runtime credentials");
+        assert_eq!(resolved.base_url, DEFAULT_NOUS_INFERENCE_URL, "{stored}");
+    }
+}
+
+#[test]
+fn read_nous_auth_state_heals_stored_portal_url_outside_allowlist() {
+    let _guard = test_env_lock::lock();
+    for (stored, expected) in [
+        ("http://portal.nousresearch.com", DEFAULT_NOUS_PORTAL_URL),
+        ("https://api.nousresearch.com", DEFAULT_NOUS_PORTAL_URL),
+        ("https://attacker.example.com", DEFAULT_NOUS_PORTAL_URL),
+        ("http://127.0.0.1:8080/", "http://127.0.0.1:8080"),
+        ("https://portal.nousresearch.com/", DEFAULT_NOUS_PORTAL_URL),
+    ] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _env = ScopedNousEnv::new(&tmp.path().join("auth.json"), None);
+        let mut state = nous_test_state("nous-access".to_string());
+        state.agent_key = Some("nous-agent-key".to_string());
+        state.portal_base_url = stored.to_string();
+        save_nous_auth_state(&state).expect("save nous state");
+
+        let read = read_nous_auth_state()
+            .expect("read nous state")
+            .expect("nous state");
+        assert_eq!(read.portal_base_url, expected, "{stored}");
+    }
+}
