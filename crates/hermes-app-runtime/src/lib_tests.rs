@@ -343,6 +343,18 @@ mod tests {
     }
 
     #[test]
+    fn test_build_agent_config_native_image_input_forces_vision() {
+        let mut cfg = GatewayConfig::default();
+        let model = "nous:moonshotai/kimi-k2.6";
+        assert!(build_agent_config(&cfg, model).extra_body.is_none());
+        cfg.agent.image_input_mode = Some("auto".to_string());
+        assert!(build_agent_config(&cfg, model).extra_body.is_none());
+        cfg.agent.image_input_mode = Some(" Native ".to_string());
+        let body = build_agent_config(&cfg, model).extra_body.expect("extra body");
+        assert_eq!(body["supports_vision"], true);
+    }
+
+    #[test]
     fn test_build_agent_config_infers_provider_for_bare_model() {
         let mut cfg = GatewayConfig {
             model: Some("claude-opus-4-6".to_string()),

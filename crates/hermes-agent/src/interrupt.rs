@@ -39,6 +39,10 @@ pub struct InterruptController {
     /// Steer text the model has not seen yet, several steers joined by
     /// newlines.
     pending_steer: Arc<Mutex<Option<String>>>,
+    /// Set by a stop and by [`Self::take_leftover_steer`], reset by
+    /// [`Self::clear_interrupt`]; read and written under `pending_steer`'s
+    /// lock, so no steer lands after either.
+    steer_closed: Arc<AtomicBool>,
 }
 
 impl InterruptController {
@@ -49,26 +53,49 @@ impl InterruptController {
             redirect_message: Arc::new(Mutex::new(None)),
             notify: Arc::new(tokio::sync::Notify::new()),
             pending_steer: Arc::new(Mutex::new(None)),
+            steer_closed: Arc::new(AtomicBool::new(false)),
         }
     }
 
     /// Queue guidance for the model without stopping the turn. The agent
     /// loop delivers it with the turn's latest tool result before its next
-    /// model call. One still pending when a run ends stays here for
-    /// [`Self::take_steer`]; the ACP server and the gateway make a controller
-    /// per turn, so today they drop it. Returns `false` for blank text.
+    /// model call. One still pending when a run ends stays here: the gateway
+    /// takes it with [`Self::take_steer`] and the ACP server with
+    /// [`Self::take_leftover_steer`], and each sends it as the next turn. A
+    /// delivered steer reaches the model as written: `@file:`, `@folder:`,
+    /// `@diff`, `@git` and `@url:` references in it are not expanded, as
+    /// upstream's `/steer` hands its text to the agent unchanged. A leftover
+    /// runs as an ordinary turn, so its references are expanded. Returns
+    /// `false` for blank text, after a stop, or once the leftover has been
+    /// taken.
     pub fn steer(&self, text: &str) -> bool {
         let text = text.trim();
         if text.is_empty() {
             return false;
         }
         if let Ok(mut guard) = self.pending_steer.lock() {
+            if self.steer_closed.load(Ordering::Acquire) {
+                return false;
+            }
             *guard = Some(match guard.take() {
                 Some(earlier) => format!("{earlier}\n{text}"),
                 None => text.to_string(),
             });
         }
         true
+    }
+
+    /// Take the steer a finished run never delivered, and refuse any later
+    /// steer, so a caller still holding a clone of this controller sees
+    /// `false` and queues its text instead of leaving it here unread.
+    pub fn take_leftover_steer(&self) -> Option<String> {
+        self.close_steers()
+    }
+
+    fn close_steers(&self) -> Option<String> {
+        let mut guard = self.pending_steer.lock().ok()?;
+        self.steer_closed.store(true, Ordering::Release);
+        guard.take()
     }
 
     /// Take the steer text the model has not seen yet.
@@ -80,8 +107,12 @@ impl InterruptController {
     }
 
     /// Put back steer text taken but not delivered, ahead of any sent since.
+    /// After a stop it is dropped, as a steer pending at the stop is.
     pub(crate) fn restore_steer(&self, text: String) {
         if let Ok(mut guard) = self.pending_steer.lock() {
+            if self.steer_closed.load(Ordering::Acquire) {
+                return;
+            }
             *guard = Some(match guard.take() {
                 Some(later) => format!("{text}\n{later}"),
                 None => text,
@@ -94,12 +125,29 @@ impl InterruptController {
     /// Optionally provide a redirect message (e.g. new user input that
     /// should be processed instead of continuing the current tool chain).
     ///
-    /// A pending steer is dropped: it was meant for a turn that now stops.
+    /// A pending steer is dropped, as is one the loop puts back later, and
+    /// steers are refused until [`Self::clear_interrupt`]: they were meant
+    /// for a turn that now stops.
     pub fn interrupt(&self, message: Option<String>) {
+        self.close_steers();
+        self.raise(message);
+    }
+
+    /// Interrupt for a message that redirects the turn rather than stopping
+    /// it: the pending steer is returned instead of dropped, so the caller
+    /// can send it ahead of the message. A steer the loop restores or a
+    /// caller sends after this stays for [`Self::take_steer`]; steers are
+    /// not refused.
+    pub fn redirect(&self, message: String) -> Option<String> {
+        let steer = self.take_steer();
+        self.raise(Some(message));
+        steer
+    }
+
+    fn raise(&self, message: Option<String>) {
         if let Ok(mut guard) = self.redirect_message.lock() {
             *guard = message;
         }
-        self.take_steer();
         // Set the flag AFTER storing the message so readers always see
         // a consistent (flag=true, message=Some) pair.
         self.flag.store(true, Ordering::Release);
@@ -122,8 +170,11 @@ impl InterruptController {
         }
     }
 
-    /// Clear any pending interrupt request.
+    /// Clear any pending interrupt request, and accept steers again.
     pub fn clear_interrupt(&self) {
+        if let Ok(_guard) = self.pending_steer.lock() {
+            self.steer_closed.store(false, Ordering::Release);
+        }
         self.flag.store(false, Ordering::Release);
         if let Ok(mut guard) = self.redirect_message.lock() {
             *guard = None;
@@ -231,6 +282,45 @@ mod tests {
         ctrl.steer("too late");
         ctrl.interrupt(None);
         assert_eq!(ctrl.take_steer(), None);
+    }
+
+    #[test]
+    fn a_stop_drops_a_steer_the_loop_puts_back_after_it() {
+        let ctrl = InterruptController::new();
+        ctrl.steer("too late");
+        let held_by_loop = ctrl.take_steer().expect("pending steer");
+        ctrl.interrupt(None);
+        ctrl.restore_steer(held_by_loop);
+        assert_eq!(ctrl.take_steer(), None);
+    }
+
+    #[test]
+    fn a_stop_refuses_steers_until_the_interrupt_is_cleared() {
+        let ctrl = InterruptController::new();
+        ctrl.interrupt(None);
+        assert!(!ctrl.steer("after the stop"));
+        ctrl.clear_interrupt();
+        assert!(ctrl.steer("next turn"));
+        assert_eq!(ctrl.take_steer().as_deref(), Some("next turn"));
+    }
+
+    #[test]
+    fn a_redirect_returns_the_pending_steer_and_keeps_one_restored_after_it() {
+        let ctrl = InterruptController::new();
+        ctrl.steer("use tabs");
+        assert_eq!(
+            ctrl.redirect("new input".into()).as_deref(),
+            Some("use tabs")
+        );
+        assert!(ctrl.is_interrupted());
+
+        // The loop had taken this steer and puts it back once interrupted.
+        let ctrl = InterruptController::new();
+        ctrl.steer("use tabs");
+        let held_by_loop = ctrl.take_steer().expect("pending steer");
+        assert_eq!(ctrl.redirect("new input".into()), None);
+        ctrl.restore_steer(held_by_loop);
+        assert_eq!(ctrl.take_steer().as_deref(), Some("use tabs"));
     }
 
     #[test]

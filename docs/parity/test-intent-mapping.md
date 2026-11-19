@@ -1,18 +1,18 @@
 # Test Intent Mapping
 
-Generated: `2026-11-10T12:06:11.586644+00:00`
+Generated: `2026-11-19T01:46:33.566882+00:00`
 
 | Intent | Mapped | Evidence Count |
 | --- | --- | ---: |
 | `gateway-platform-behavior` | yes | 25 |
-| `tool-runtime-behavior` | yes | 125 |
-| `cli-command-surface` | yes | 179 |
-| `agent-loop-and-runtime` | yes | 109 |
+| `tool-runtime-behavior` | yes | 131 |
+| `cli-command-surface` | yes | 189 |
+| `agent-loop-and-runtime` | yes | 114 |
 | `acp-protocol-and-transport` | yes | 21 |
-| `skills-management-contract` | yes | 70 |
-| `cron-and-scheduler-runtime` | yes | 72 |
+| `skills-management-contract` | yes | 78 |
+| `cron-and-scheduler-runtime` | yes | 80 |
 | `memory-plugin-integration` | yes | 12 |
-| `environment-lifecycle-contract` | yes | 15 |
+| `environment-lifecycle-contract` | yes | 16 |
 | `tool-call-parser-contract` | yes | 3 |
 
 - Mapping ratio: `10` / `10` = `1.0`.

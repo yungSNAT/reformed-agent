@@ -55,6 +55,7 @@ CLASSIFICATION_TO_STATUS = {
     "policy_only": "cleared_non_runtime",
     "intentional_divergence": "cleared_intentional_divergence",
     "functional": "pending_review",
+    "deferred": "deferred_review",
 }
 
 
@@ -151,6 +152,8 @@ def action_for(classification: str, rust_requirement: str) -> str:
         return "No runtime implementation; keep rationale current."
     if classification == "intentional_divergence":
         return "No vendoring; verify approved divergence remains current."
+    if classification == "deferred":
+        return "Review against upstream by the review date; see the rationale and ledger line."
     if classification == "functional":
         if rust_requirement == "rust_equivalent_or_contract_test_required":
             return "Map upstream test intent to Rust/Python contract coverage; add missing regression tests."
@@ -197,9 +200,13 @@ def build_ledger(
                 if classification in {"branding_only", "policy_only"}
                 else "approved_divergence"
                 if classification == "intentional_divergence"
+                else "deferred"
+                if classification == "deferred"
                 else "unknown",
                 "rust_requirement": rust_requirement,
-                "existing_coverage": "claimed_by_shared_diff_classification"
+                "existing_coverage": "not_established"
+                if classification == "deferred"
+                else "claimed_by_shared_diff_classification"
                 if matched
                 else "unclaimed",
                 "owner": str(matched.get("owner", "")) if matched else "",
@@ -209,6 +216,10 @@ def build_ledger(
                 "upstream_blob": upstream_tree[path],
             }
         )
+        if classification == "deferred":
+            entries[-1].update(
+                {field: str(matched.get(field, "")) for field in ("rationale", "ledger", "review_date")}
+            )
 
     by_status = Counter(str(entry["status"]) for entry in entries)
     by_classification = Counter(str(entry["classification"]) for entry in entries)
@@ -227,6 +238,7 @@ def build_ledger(
             "total_shared_different": len(entries),
             "pending_classification": by_status.get("pending_classification", 0),
             "pending_review": by_status.get("pending_review", 0),
+            "deferred_review": by_status.get("deferred_review", 0),
             "cleared_non_runtime": by_status.get("cleared_non_runtime", 0),
             "cleared_intentional_divergence": by_status.get(
                 "cleared_intentional_divergence", 0
@@ -252,6 +264,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
         f"- Total shared-different paths: `{summary['total_shared_different']}`",
         f"- Pending classification: `{summary['pending_classification']}`",
         f"- Pending functional review: `{summary['pending_review']}`",
+        f"- Deferred review (counted, not cleared): `{summary['deferred_review']}`",
         f"- Cleared non-runtime: `{summary['cleared_non_runtime']}`",
         f"- Cleared intentional divergence: `{summary['cleared_intentional_divergence']}`",
         "",
@@ -295,6 +308,23 @@ def render_markdown(payload: dict[str, Any]) -> str:
     )
     for key, value in prefix_counts.most_common():
         lines.append(f"| `{key}` | {value} |")
+    lines.extend(
+        [
+            "",
+            "## Deferred",
+            "",
+            "Not yet shown to match in Rust; each row is counted and has a review date.",
+            "",
+            "| Path | Review date | Ledger | Reason |",
+            "| --- | --- | --- | --- |",
+        ]
+    )
+    for entry in payload["entries"]:
+        if entry["status"] == "deferred_review":
+            lines.append(
+                f"| `{entry['path']}` | {entry['review_date']} | {entry['ledger']} "
+                f"| {entry['rationale']} |"
+            )
     return "\n".join(lines) + "\n"
 
 

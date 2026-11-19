@@ -48,13 +48,20 @@ fn test_coverage_audit_gate_passes() {
         Some(0),
         "test coverage audit must have zero missing Rust test refs"
     );
-    let ratio = payload["summary"]["tracked_behavior_coverage_ratio"]
-        .as_f64()
-        .expect("tracked_behavior_coverage_ratio should be number");
-    assert!(
-        ratio >= 1.0,
-        "tracked behavior coverage ratio below gate: {}",
-        ratio
+    // Every tracked row is covered, deferred or not rechecked at the pin; the last 2 are
+    // counted and ratcheted by the deferred and not-rechecked tests below.
+    let summary = &payload["summary"];
+    let count = |key: &str| {
+        summary[key]
+            .as_u64()
+            .unwrap_or_else(|| panic!("{key} should be integer"))
+    };
+    assert_eq!(
+        count("covered_behavior_rows")
+            + count("coverage_manifest_deferred_entries")
+            + count("coverage_manifest_not_rechecked_entries"),
+        count("tracked_behavior_rows"),
+        "every tracked behaviour row must be covered, deferred or counted as not rechecked"
     );
     let rust_tests = payload["summary"]["rust_test_functions"]
         .as_u64()
@@ -371,7 +378,10 @@ fn test_exact_file_functional_classifications_are_current_shared_diffs() {
         .as_array()
         .expect("classification items should be array");
     for item in class_items {
-        if item["classification"].as_str() != Some("functional") {
+        if !matches!(
+            item["classification"].as_str(),
+            Some("functional" | "deferred")
+        ) {
             continue;
         }
         let path = item["path"].as_str().expect("path should be string");
@@ -417,5 +427,209 @@ fn test_shared_diff_backlog_has_no_pending_entries() {
         pending.is_empty(),
         "shared-diff backlog has pending entries: {}",
         pending.join(", ")
+    );
+}
+
+/// Each deferred row says why, names its ticket and ledger line, and has a review date.
+fn assert_deferred_row_is_explained(source: &str, row: &Value) {
+    let path = row["path"].as_str().unwrap_or("<no path>");
+    for field in ["rationale", "ledger"] {
+        assert!(
+            !row[field].as_str().unwrap_or_default().trim().is_empty(),
+            "{source}: deferred row {path} needs a {field}"
+        );
+    }
+    assert!(
+        row["ticket"].as_u64().is_some()
+            || !row["ticket"].as_str().unwrap_or_default().trim().is_empty(),
+        "{source}: deferred row {path} needs a ticket"
+    );
+    let date = regex::Regex::new(r"^\d{4}-\d{2}-\d{2}$").expect("date pattern");
+    assert!(
+        date.is_match(row["review_date"].as_str().unwrap_or_default()),
+        "{source}: deferred row {path} needs a review_date as YYYY-MM-DD"
+    );
+}
+
+/// Deferred rows allowed at the v0.23.2 pin. Each count must equal the rows left deferred:
+/// a change that resolves rows lowers its number here, and one that raises a number is a
+/// governance change reviewers see in this file.
+const DEFERRED_SHARED_DIFF: u64 = 27;
+const DEFERRED_MANIFEST_ROWS: [(&str, u64); 3] = [
+    ("python-test-suite-coverage.json", 46),
+    ("hermes-cli-test-coverage.json", 37),
+    ("ui-tui-source-coverage.json", 59),
+];
+
+#[test]
+fn test_deferred_rows_are_explained_and_match_the_ratchet() {
+    let classification = read_json("docs/parity/shared-different-classification.json");
+    for item in classification["items"].as_array().expect("items") {
+        if item["classification"].as_str() == Some("deferred") {
+            assert_deferred_row_is_explained("shared-different-classification.json", item);
+        }
+    }
+    let backlog = read_json("docs/parity/shared-diff-backlog.json");
+    let deferred = backlog["entries"]
+        .as_array()
+        .expect("entries should be array")
+        .iter()
+        .filter(|entry| entry["status"].as_str() == Some("deferred_review"))
+        .count() as u64;
+    assert_eq!(
+        backlog["summary"]["deferred_review"].as_u64(),
+        Some(deferred),
+        "backlog summary deferred_review must count the deferred entries"
+    );
+    assert_eq!(
+        deferred, DEFERRED_SHARED_DIFF,
+        "deferred shared-diff rows must equal DEFERRED_SHARED_DIFF"
+    );
+
+    for (name, allowed) in DEFERRED_MANIFEST_ROWS {
+        let manifest = read_json(&format!("docs/parity/{name}"));
+        let rows: Vec<&Value> = manifest["entries"]
+            .as_array()
+            .expect("entries should be array")
+            .iter()
+            .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+            .collect();
+        for row in &rows {
+            assert_deferred_row_is_explained(name, row);
+        }
+        assert_eq!(
+            manifest["summary"]["deferred_paths"].as_u64(),
+            Some(rows.len() as u64),
+            "{name}: summary deferred_paths must count the deferred rows"
+        );
+        assert_eq!(
+            rows.len() as u64,
+            allowed,
+            "{name}: deferred rows must equal DEFERRED_MANIFEST_ROWS"
+        );
+    }
+}
+
+/// Covered manifest rows whose upstream file changed after the row was judged, so the
+/// coverage they cite was not rechecked at the pin. Each carries `not_rechecked_at_pin`;
+/// a recheck removes the field and lowers its number here. A re-pin's review sets the field:
+/// nothing here detects a covered row whose upstream file changes after that.
+const NOT_RECHECKED_MANIFEST_ROWS: [(&str, u64); 3] = [
+    ("python-test-suite-coverage.json", 131),
+    ("hermes-cli-test-coverage.json", 110),
+    ("ui-tui-source-coverage.json", 96),
+];
+
+#[test]
+fn test_rows_not_rechecked_at_the_pin_are_counted_and_match_the_ratchet() {
+    let pin = std::fs::read_to_string(repo_root().join("docs/parity/upstream-reference.txt"))
+        .expect("upstream-reference.txt");
+    for (name, allowed) in NOT_RECHECKED_MANIFEST_ROWS {
+        let manifest = read_json(&format!("docs/parity/{name}"));
+        let rows: Vec<&Value> = manifest["entries"]
+            .as_array()
+            .expect("entries should be array")
+            .iter()
+            .filter(|entry| !entry["not_rechecked_at_pin"].is_null())
+            .collect();
+        for row in &rows {
+            let path = row["path"].as_str().unwrap_or("<no path>");
+            assert_eq!(
+                row["not_rechecked_at_pin"].as_str(),
+                Some(pin.trim()),
+                "{name}: {path} must name the current pin"
+            );
+            assert_eq!(
+                row["status"].as_str(),
+                Some("not_rechecked_since_upstream_changed"),
+                "{name}: {path} must not read as covered"
+            );
+            assert!(
+                row["rationale"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .starts_with("Not rechecked at "),
+                "{name}: {path} rationale must say it was not rechecked"
+            );
+        }
+        assert_eq!(
+            manifest["summary"]["not_rechecked_paths"].as_u64(),
+            Some(rows.len() as u64),
+            "{name}: summary not_rechecked_paths must count the rows"
+        );
+        assert_eq!(
+            rows.len() as u64,
+            allowed,
+            "{name}: rows not rechecked must equal NOT_RECHECKED_MANIFEST_ROWS"
+        );
+    }
+}
+
+/// Rows not shown matching hold the release gate: deferred shared-diff rows, manifest rows
+/// not rechecked at the pin, and deferred rows past their review date. The last also fails
+/// the CI profile, which the daily Parity Audit checks.
+#[test]
+fn test_release_gate_holds_rows_not_shown_matching() {
+    let thresholds = read_json("docs/parity/global-parity-thresholds.json");
+    let proof = read_json("docs/parity/global-parity-proof.json");
+    let backlog = read_json("docs/parity/shared-diff-backlog.json");
+    let audit = read_json("docs/parity/test-coverage-audit.json");
+    let today = &proof["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc")[..10];
+    let mut overdue = read_json("docs/parity/shared-different-classification.json")["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["classification"].as_str() == Some("deferred"))
+        .filter(|item| item["review_date"].as_str().expect("review_date") < today)
+        .count();
+    for manifest in audit["coverage_manifests"]
+        .as_array()
+        .expect("coverage_manifests")
+    {
+        let manifest = read_json(manifest["path"].as_str().expect("manifest path"));
+        overdue += manifest["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+            .filter(|entry| entry["review_date"].as_str().expect("review_date") < today)
+            .count();
+    }
+    let expected = [
+        (
+            "max_shared_diff_deferred_rows",
+            backlog["summary"]["deferred_review"]
+                .as_f64()
+                .expect("deferred_review"),
+        ),
+        (
+            "max_test_coverage_not_rechecked_rows",
+            audit["summary"]["coverage_manifest_not_rechecked_entries"]
+                .as_f64()
+                .expect("coverage_manifest_not_rechecked_entries"),
+        ),
+        ("max_deferred_review_overdue", overdue as f64),
+    ];
+    let checks = proof["release_gate"]["checks"].as_array().expect("checks");
+    for (metric, actual) in expected {
+        assert_eq!(
+            thresholds["release_thresholds"]["metric_thresholds"][metric].as_f64(),
+            Some(0.0),
+            "{metric} must have a release threshold of 0"
+        );
+        let check = checks
+            .iter()
+            .find(|check| check["metric"].as_str() == Some(metric))
+            .unwrap_or_else(|| panic!("release gate has no {metric} check"));
+        assert_eq!(check["actual"].as_f64(), Some(actual), "{metric}");
+        let status = if actual > 0.0 { "fail" } else { "pass" };
+        assert_eq!(check["status"].as_str(), Some(status), "{metric}");
+    }
+    assert_eq!(
+        thresholds["ci_thresholds"]["max_deferred_review_overdue"].as_f64(),
+        Some(0.0),
+        "an overdue deferred row must fail the daily audit"
     );
 }

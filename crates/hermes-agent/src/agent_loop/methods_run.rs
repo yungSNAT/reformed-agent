@@ -1,21 +1,48 @@
 impl AgentLoop {
-    /// Expands `@file:`, `@folder:`, `@diff` and `@git` references in user messages, confined
-    /// to the working folder, for `run` and `run_stream` alike.
+    /// Expands `@file:`, `@folder:`, `@diff` and `@git` references in the user message that
+    /// opens this turn, confined to the working folder, for `run` and `run_stream` alike.
+    /// Earlier messages stay as the history holds them: text an earlier expansion attached
+    /// can itself name a file. In an ACP prompt's parts, only the text parts are expanded.
     async fn expand_context_references(&self, messages: &mut [Message]) {
+        let Some(msg) = messages.iter_mut().rfind(|m| m.role == MessageRole::User) else {
+            return;
+        };
+        let Some(content) = msg.content.clone() else {
+            return;
+        };
         let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         let context_length = get_model_context_length(&self.config.model);
-        for msg in messages.iter_mut() {
-            if msg.role != MessageRole::User {
-                continue;
+        let expand = |text: String| {
+            let cwd = cwd.clone();
+            async move {
+                let result =
+                    preprocess_context_references_async(&text, &cwd, context_length, None).await;
+                (result.expanded && result.message != text).then_some(result.message)
             }
-            let Some(content) = msg.content.clone() else {
-                continue;
-            };
-            let result =
-                preprocess_context_references_async(&content, &cwd, context_length, None).await;
-            if result.expanded && result.message != content {
-                msg.content = Some(result.message);
+        };
+        if let Some(mut parts) = crate::provider::parse_acp_multimodal_parts(&content) {
+            let mut changed = false;
+            for part in &mut parts {
+                if part["type"] != "text" {
+                    continue;
+                }
+                let Some(text) = part["text"].as_str() else {
+                    continue;
+                };
+                if let Some(expanded) = expand(text.to_string()).await {
+                    part["text"] = Value::String(expanded);
+                    changed = true;
+                }
             }
+            if changed {
+                msg.content = Some(format!(
+                    "{}{}",
+                    crate::provider::ACP_MULTIMODAL_PREFIX,
+                    Value::Array(parts)
+                ));
+            }
+        } else if let Some(expanded) = expand(content).await {
+            msg.content = Some(expanded);
         }
     }
 
