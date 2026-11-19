@@ -11,7 +11,7 @@
       "message": "docs/parity/python-test-suite-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered"
     },
     {
-      "count": 36,
+      "count": 37,
       "kind": "coverage_manifest_deferred",
       "message": "docs/parity/hermes-cli-test-coverage.json has rows deferred without Rust test coverage"
     },
@@ -284,6 +284,7 @@
         "tests/hermes_cli/test_anthropic_provider_persistence.py",
         "tests/hermes_cli/test_apply_model_switch_result_context.py",
         "tests/hermes_cli/test_at_context_completion_filter.py",
+        "tests/hermes_cli/test_auth_nous_provider.py",
         "tests/hermes_cli/test_auth_toctou_file_modes.py",
         "tests/hermes_cli/test_chat_skills_flag.py",
         "tests/hermes_cli/test_config_env_refs.py",
@@ -433,13 +434,12 @@
         "tests/hermes_cli/test_webhook_cli.py"
       ],
       "path": "docs/parity/hermes-cli-test-coverage.json",
-      "referenced_rust_tests": 98,
+      "referenced_rust_tests": 89,
       "status_counts": {
-        "covered_by_rust_contracts": 1,
-        "deferred_not_covered": 36,
+        "deferred_not_covered": 37,
         "not_rechecked_since_upstream_changed": 110
       },
-      "valid_entries_with_rust_tests": 1
+      "valid_entries_with_rust_tests": 0
     },
     {
       "deferred_entries": [
@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T03:30:25.775542+00:00",
+  "generated_at_utc": "2026-11-19T04:31:29.090149+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -1165,23 +1165,23 @@
     "upstream_missing_queue": "docs/parity/upstream-missing-queue.json"
   },
   "summary": {
-    "coverage_manifest_deferred_entries": 141,
+    "coverage_manifest_deferred_entries": 142,
     "coverage_manifest_entries": 501,
-    "coverage_manifest_entries_with_valid_rust_tests": 23,
+    "coverage_manifest_entries_with_valid_rust_tests": 22,
     "coverage_manifest_not_rechecked_entries": 337,
-    "covered_behavior_rows": 33,
+    "covered_behavior_rows": 32,
     "divergence_errors": 0,
     "divergence_review_overdue": 0,
     "divergence_unowned": 0,
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 484,
-    "rust_test_functions": 8856,
+    "rust_test_files": 483,
+    "rust_test_functions": 8841,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
-    "tracked_behavior_coverage_ratio": 0.0646,
+    "tracked_behavior_coverage_ratio": 0.0626,
     "tracked_behavior_rows": 511
   }
 }

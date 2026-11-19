@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "71305205ce15b079a3ce14977bae9fecf4e872c8",
+      "local_blob": "8d281ede2965c365d0c85ed08bdca2cf226aa5e7",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -20816,7 +20816,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "d7678ba49f85808d52dcf1ee319421eadc1baf58",
+      "local_blob": "ce3ef25f1b127d959a2545610f072f78c36948a4",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/user-guide/messaging/webhooks.md",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-19T03:30:27.786413+00:00",
+  "generated_at_utc": "2026-11-19T04:31:29.775350+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "978168409a4afa0c648e66d56a99e85a861dd058",
+    "local_sha": "7a8a4b352f155d5f3827c720fe219a1b6cf6f7d2",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
