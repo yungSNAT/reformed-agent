@@ -1,6 +1,6 @@
 # Shared-Different Backlog
 
-Generated: `2026-11-18T23:38:17.530346+00:00`
+Generated: `2026-11-19T00:07:29.919782+00:00`
 
 ## Summary
 
@@ -41,7 +41,7 @@ Generated: `2026-11-18T23:38:17.530346+00:00`
 
 ## Deferred
 
-Not reviewed against upstream yet; each row is counted and has a review date.
+Not yet shown to match in Rust; each row is counted and has a review date.
 
 | Path | Review date | Ledger | Reason |
 | --- | --- | --- | --- |
@@ -57,7 +57,7 @@ Not reviewed against upstream yet; each row is counted and has a review date.
 | `plugins/model-providers/nvidia/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported. |
 | `plugins/model-providers/xai/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported. |
 | `plugins/platforms/discord/voice_mixer.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream refactored its Discord voice mixer (child names and the speech flag removed, the mixer now a discord.AudioSource, ffmpeg resolution added). This tree's Rust mixer (crates/hermes-gateway/src/voice_mixer.rs) ports the b51fbc73 design; whether the mixing behaviour changed was not established. Deferred until compared. |
-| `plugins/platforms/teams/plugin.yaml` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs) and none of the others. Deferred until ported. |
+| `plugins/platforms/teams/plugin.yaml` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs, crates/hermes-tools/src/teams_pipeline/graph_backend.rs), and neither TEAMS_HOST nor TEAMS_REQUIRE_MENTION. Deferred until ported. |
 | `tests/gateway/test_complete_path_at_filter.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added 7 path-completion cases (remote-backend completion, leading slash, fuzzy matching outside a git repository) and removed 10. No Rust test for these completion cases was found. Deferred until compared. |
 | `tests/gateway/test_goal_max_turns_config.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added test_goal_command_slow_db_init_still_persists. Whether the Rust /goal command persists when the session database is slow to open was not established. Deferred until compared. |
 | `tests/gateway/test_notice_delivery.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream removed 2 test cases in its suite-wide pruning (39975613) and added none, and the kept case now expects a private notice's thread metadata to carry the author's user_id (upstream's per-turn identity stamp). No Rust code matches notice_delivery or private_notice under crates/, so the private notice path was not compared. Deferred until compared with the Rust gateway's notice delivery. |

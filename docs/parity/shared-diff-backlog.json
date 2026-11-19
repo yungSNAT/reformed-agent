@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "482a7c29f915ec3ff6e14ca8d1b5a253e88364d7",
+      "local_blob": "5f2b50df74b88cd138552961ae7553860ff8d03f",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -3811,7 +3811,7 @@
       "necessity": "deferred",
       "owner": "yungSNAT",
       "path": "plugins/platforms/teams/plugin.yaml",
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs) and none of the others. Deferred until ported.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs, crates/hermes-tools/src/teams_pipeline/graph_backend.rs), and neither TEAMS_HOST nor TEAMS_REQUIRE_MENTION. Deferred until ported.",
       "review_date": "2027-02-18",
       "rust_requirement": "rust_native_runtime_parity_required_if_needed",
       "status": "deferred_review",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-18T23:38:17.530346+00:00",
+  "generated_at_utc": "2026-11-19T00:07:29.919782+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "7521e6a72be24f8996bd62757eeb1eafee153f7f",
+    "local_sha": "d75111720c5c2fabf1844c67f0fe16596f6e723e",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },

@@ -1,14 +1,14 @@
 # Parity Dashboard
 
-_Generated from source artifacts: `2026-11-18T23:38:18.439998+00:00`_
+_Generated from source artifacts: `2026-11-19T00:07:30.733980+00:00`_
 
 ## Snapshot
 
 - Upstream target: `upstream/parity-reference` @ `ae2a81ccc00e9b7c06301523e5bb09608397149c`
-- Workstream snapshot generated: `2026-11-19T10:37:43+11:00`
-- Parity matrix generated: `2026-11-18T23:38:12.035165+00:00`
-- Queue snapshot generated: `2026-11-18T23:38:18.186789+00:00`
-- Proof snapshot generated: `2026-11-18T23:38:18.439998+00:00`
+- Workstream snapshot generated: `2026-11-19T11:07:12+11:00`
+- Parity matrix generated: `2026-11-19T00:07:24.857183+00:00`
+- Queue snapshot generated: `2026-11-19T00:07:30.518171+00:00`
+- Proof snapshot generated: `2026-11-19T00:07:30.733980+00:00`
 
 ## Gate Status
 
@@ -18,7 +18,7 @@ _Generated from source artifacts: `2026-11-18T23:38:18.439998+00:00`_
 - SOTA harness matrix: **PASS**
 - Behavioral similarity diff: **PASS**
 - Deep problem-solving diff: **PASS**
-- Release gate failures: min_test_coverage_tracked_behavior_ratio (actual=0.728, limit=1.0)
+- Release gate failures: min_test_coverage_tracked_behavior_ratio (actual=0.728, limit=1.0); max_shared_diff_deferred_rows (actual=27.0, limit=0); max_test_coverage_not_rechecked_rows (actual=340.0, limit=0)
 - CI gate failures: max_files_only_upstream (actual=24117.0, limit=2600); min_test_coverage_tracked_behavior_ratio (actual=0.728, limit=1.0)
 - CI gate warnings: none
 
@@ -29,7 +29,7 @@ _Generated from source artifacts: `2026-11-18T23:38:18.439998+00:00`_
 | Tracked behavior rows | 511 |
 | Covered behavior rows | 372 |
 | Tracked behavior coverage ratio | 0.7280 |
-| Rust test functions | 8785 |
+| Rust test functions | 8787 |
 | Missing Rust test refs | 0 |
 | Critical gaps | 0 |
 
@@ -84,10 +84,10 @@ _Generated from source artifacts: `2026-11-18T23:38:18.439998+00:00`_
 | Metric | Value |
 | --- | ---: |
 | commits_behind | 1 |
-| commits_ahead | 1623 |
+| commits_ahead | 1626 |
 | upstream_patch_missing | 1 |
 | upstream_patch_represented | 0 |
-| local_patch_unique | 1352 |
+| local_patch_unique | 1355 |
 | files_only_upstream | 24117 |
 | files_only_local | 2021 |
 | files_shared_identical | 565 |

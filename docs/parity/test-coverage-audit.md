@@ -1,12 +1,12 @@
 # Test Coverage Audit
 
-Generated: `2026-11-18T23:38:16.631516+00:00`
+Generated: `2026-11-19T00:07:29.103154+00:00`
 
 ## Gate
 
 - Audit gate: **PASS**
 - Critical gaps: `0`
-- Advisory gaps: `6`
+- Advisory gaps: `9`
 
 ## Summary
 
@@ -16,10 +16,11 @@ Generated: `2026-11-18T23:38:16.631516+00:00`
 | `covered_behavior_rows` | 372 |
 | `tracked_behavior_coverage_ratio` | 0.728 |
 | `rust_test_files` | 483 |
-| `rust_test_functions` | 8785 |
+| `rust_test_functions` | 8787 |
 | `coverage_manifest_entries` | 501 |
 | `coverage_manifest_entries_with_valid_rust_tests` | 362 |
 | `coverage_manifest_deferred_entries` | 139 |
+| `coverage_manifest_not_rechecked_entries` | 340 |
 | `missing_rust_test_refs` | 0 |
 | `queue_pending` | 0 |
 | `queue_total` | 1 |
@@ -28,11 +29,11 @@ Generated: `2026-11-18T23:38:16.631516+00:00`
 
 ## Coverage Manifests
 
-| Manifest | Entries | Valid Rust-test entries | Deferred, not covered | Referenced Rust tests | Missing refs |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `docs/parity/python-test-suite-coverage.json` | 177 | 133 | 44 | 109 | 0 |
-| `docs/parity/hermes-cli-test-coverage.json` | 147 | 111 | 36 | 89 | 0 |
-| `docs/parity/ui-tui-source-coverage.json` | 177 | 118 | 59 | 68 | 0 |
+| Manifest | Entries | Valid Rust-test entries | Deferred, not covered | Not rechecked at the pin | Referenced Rust tests | Missing refs |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| `docs/parity/python-test-suite-coverage.json` | 177 | 133 | 44 | 133 | 109 | 0 |
+| `docs/parity/hermes-cli-test-coverage.json` | 147 | 111 | 36 | 111 | 89 | 0 |
+| `docs/parity/ui-tui-source-coverage.json` | 177 | 118 | 59 | 96 | 68 | 0 |
 
 ## Test Intent Domains
 
@@ -56,8 +57,11 @@ Generated: `2026-11-18T23:38:16.631516+00:00`
 ## Advisory Gaps
 
 - `coverage_manifest_deferred`: docs/parity/python-test-suite-coverage.json has rows deferred without Rust test coverage
+- `coverage_manifest_not_rechecked`: docs/parity/python-test-suite-coverage.json has covered rows not rechecked since upstream changed their files
 - `coverage_manifest_deferred`: docs/parity/hermes-cli-test-coverage.json has rows deferred without Rust test coverage
+- `coverage_manifest_not_rechecked`: docs/parity/hermes-cli-test-coverage.json has covered rows not rechecked since upstream changed their files
 - `coverage_manifest_deferred`: docs/parity/ui-tui-source-coverage.json has rows deferred without Rust test coverage
+- `coverage_manifest_not_rechecked`: docs/parity/ui-tui-source-coverage.json has covered rows not rechecked since upstream changed their files
 - `nonzero_tree_drift`: max_commits_behind remains nonzero in parity matrix
 - `nonzero_tree_drift`: max_upstream_patch_missing remains nonzero in parity matrix
 - `nonzero_tree_drift`: max_files_only_upstream remains nonzero in parity matrix

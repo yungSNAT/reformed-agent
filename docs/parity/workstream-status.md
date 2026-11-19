@@ -1,6 +1,6 @@
 # Workstream Status
 
-- Local HEAD: `7521e6a72be24f8996bd62757eeb1eafee153f7f`
+- Local HEAD: `d75111720c5c2fabf1844c67f0fe16596f6e723e`
 - Upstream: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 
 | Workstream | Title | State |
