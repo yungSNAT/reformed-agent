@@ -202,10 +202,14 @@ fn is_windows_env_key(key: &str) -> bool {
 
 fn is_inherited_env_key(key: &str) -> bool {
     // Windows variable names are case-insensitive, and `Path` is the usual
-    // spelling there.
+    // spelling there. A sensitive name such as `XDG_SESSION_COOKIE` is never
+    // inherited, whatever the profile.
     let upper = key.to_ascii_uppercase();
     let name = if cfg!(windows) { upper.as_str() } else { key };
-    INHERITED_ENV_KEYS.contains(&name) || is_windows_env_key(key) || name.starts_with("XDG_")
+    !is_sensitive_env_key(key)
+        && (INHERITED_ENV_KEYS.contains(&name)
+            || is_windows_env_key(key)
+            || name.starts_with("XDG_"))
 }
 
 /// A server's environment before sanitising: the inherited variables, then
@@ -1578,6 +1582,13 @@ mod tests {
             foreign.is_empty(),
             "variables outside the inherited set: {foreign:?}"
         );
+    }
+
+    #[test]
+    fn stdio_child_inherits_no_sensitive_name() {
+        assert!(is_inherited_env_key("XDG_CONFIG_HOME"));
+        assert!(!is_inherited_env_key("XDG_SESSION_COOKIE"));
+        assert!(!is_inherited_env_key("XDG_SESSION_ID"));
     }
 
     #[test]

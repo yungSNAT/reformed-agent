@@ -58,7 +58,11 @@ impl ProcessTree {
     /// a terminal read has stopped so they receive it.
     pub(super) fn terminate(&self) -> io::Result<()> {
         self.signal(libc::SIGTERM)?;
-        self.signal(libc::SIGCONT)
+        // The group may already have ended on SIGTERM.
+        match self.signal(libc::SIGCONT) {
+            Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+            result => result,
+        }
     }
 
     /// Stops every process in the tree (SIGKILL).
