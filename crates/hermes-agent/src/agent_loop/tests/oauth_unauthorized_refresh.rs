@@ -327,3 +327,37 @@
         );
         assert_eq!(token_requests(&server).await, 1);
     }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn kept_token_gives_way_to_one_another_writer_stored() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let (home, _server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let auth_dir = home.path().join("auth");
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o500))
+            .expect("make the auth folder read-only");
+        let result = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
+        // Another process stores its own refreshed credential.
+        let later = serde_json::json!({
+            "anthropic": {
+                "provider": "anthropic",
+                "access_token": "other-access",
+                "refresh_token": "other-refresh",
+                "expires_at": "2199-01-01T00:00:00Z"
+            }
+        });
+        std::fs::write(auth_dir.join("tokens.json"), later.to_string()).expect("other writer");
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("make the auth folder writable again");
+        result.expect("the refreshed token is used although it was not stored");
+
+        agent.refresh_oauth_store_tokens_if_needed().await;
+        assert_eq!(
+            stored_anthropic_token(&home),
+            ("other-access".to_string(), "other-refresh".to_string())
+        );
+    }

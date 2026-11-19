@@ -344,8 +344,15 @@ impl AgentLoop {
             .await
             .ok()?;
         let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
-        if let Ok(unsaved) = self.unsaved_oauth_credentials.lock() {
-            entries.extend(unsaved.iter().map(|(k, v)| (k.clone(), v.clone())));
+        if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
+            // An entry another writer changed since the exchange replaces the
+            // kept credential.
+            unsaved.retain(|key, (replaced, kept)| {
+                entries.get(key).is_none_or(|stored| {
+                    stored.access_token == *replaced || stored.access_token == kept.access_token
+                })
+            });
+            entries.extend(unsaved.iter().map(|(k, (_, v))| (k.clone(), v.clone())));
         }
         Some(entries)
     }
@@ -370,7 +377,7 @@ impl AgentLoop {
                 if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
                     // Keep any exchanged since the read.
                     for key in pending {
-                        if unsaved.get(&key).map(|c| &c.access_token)
+                        if unsaved.get(&key).map(|(_, c)| &c.access_token)
                             == entries.get(&key).map(|c| &c.access_token)
                         {
                             unsaved.remove(&key);
@@ -418,7 +425,10 @@ impl AgentLoop {
         };
         let access_token = refreshed.access_token.clone();
         if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
-            unsaved.insert(provider_key.to_string(), refreshed);
+            unsaved.insert(
+                provider_key.to_string(),
+                (current.access_token.clone(), refreshed),
+            );
         }
         self.mark_oauth_refresh_success(provider_key);
         self.store_unsaved_oauth_credentials().await;

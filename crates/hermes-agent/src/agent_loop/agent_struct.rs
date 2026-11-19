@@ -23,8 +23,9 @@ pub struct AgentLoop {
     oauth_refresh_backoff: Arc<Mutex<HashMap<String, Instant>>>,
     /// OAuth credentials exchanged but not yet written to `tokens.json`. A
     /// rotating exchange spends the stored refresh token, so these are the
-    /// only copy until a write succeeds.
-    unsaved_oauth_credentials: Arc<Mutex<HashMap<String, OAuthStoreCredential>>>,
+    /// only copy until a write succeeds. Each is kept with the access token
+    /// it replaced.
+    unsaved_oauth_credentials: Arc<Mutex<HashMap<String, (String, OAuthStoreCredential)>>>,
     /// Optional in-process sub-agent orchestrator. When set, `delegate_task`
     /// tool calls are executed by the orchestrator (spawn/timeout/cancel/
     /// lineage) instead of simply returning a signal envelope.
