@@ -478,7 +478,7 @@ async fn hash_edit(params: Value) -> Result<String, ToolError> {
     let new_hash = sha256_hex(&edit.content);
     let dry_run = bool_param(&params, "dry_run", false);
     if !dry_run {
-        CredentialGuard::new().check_local_write_access(&path, &edit.content)?;
+        CredentialGuard::new().check_write_access(&path, &edit.content)?;
         tokio::fs::write(&path, &edit.content)
             .await
             .map_err(io_err("write hash_edit file"))?;
@@ -1042,7 +1042,7 @@ fn resolve_conflict_hunk(path: &Path, params: &Value) -> Result<String, ToolErro
     }
     next.push_str(&content[b..]);
     if !dry_run {
-        CredentialGuard::new().check_local_write_access(&conflict.path, &next)?;
+        CredentialGuard::new().check_write_access(&conflict.path, &next)?;
         let backup = conflict.path.with_extension("hermes-conflict-backup");
         let _ = fs::write(backup, &content);
         fs::write(&conflict.path, &next).map_err(io_err("write conflict resolution"))?;
@@ -1286,7 +1286,7 @@ fn rename_symbol(path: &Path, params: &Value, apply: bool) -> Result<String, Too
         let count = re.find_iter(&content).count();
         let next = re.replace_all(&content, replacement).to_string();
         if apply {
-            CredentialGuard::new().check_local_write_access(&file, &next)?;
+            CredentialGuard::new().check_write_access(&file, &next)?;
             fs::write(&file, &next).map_err(io_err("write rename"))?;
         }
         touched.push(json!({"path":file,"replacements":count,"old_hash":sha256_hex(&content),"new_hash":sha256_hex(&next)}));
@@ -1519,7 +1519,7 @@ fn apply_transaction(txn: &PreviewTransaction) -> Result<(), ToolError> {
                 .ok_or_else(|| {
                     ToolError::InvalidParams("file_write requires payload.content".into())
                 })?;
-            CredentialGuard::new().check_local_write_access(&path, content)?;
+            CredentialGuard::new().check_write_access(&path, content)?;
             fs::write(path, content).map_err(io_err("transaction file_write"))
         }
         "content_replace" => {
@@ -1545,7 +1545,7 @@ fn apply_transaction(txn: &PreviewTransaction) -> Result<(), ToolError> {
                 .unwrap_or("");
             let content = fs::read_to_string(&path).map_err(io_err("transaction read"))?;
             let edit = replace_anchor(&content, old, new, false)?;
-            CredentialGuard::new().check_local_write_access(&path, &edit.content)?;
+            CredentialGuard::new().check_write_access(&path, &edit.content)?;
             fs::write(path, edit.content).map_err(io_err("transaction content_replace"))
         }
         other => Err(ToolError::ExecutionFailed(format!(
@@ -1631,7 +1631,7 @@ async fn ast_search(params: Value) -> Result<String, ToolError> {
         }
         if count > 0 {
             if !dry_run {
-                CredentialGuard::new().check_local_write_access(&file, &next)?;
+                CredentialGuard::new().check_write_access(&file, &next)?;
                 tokio::fs::write(&file, &next)
                     .await
                     .map_err(io_err("ast replace"))?;
@@ -2495,7 +2495,16 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
+/// A tool's `path` made absolute where the local backend would write it
+/// (`local_write_path`), so these tools read, judge and write the file
+/// `write_file` writes, then folded. A `~user` path is kept as written, and
+/// the write rule refuses it.
 fn clean_path(path: PathBuf) -> PathBuf {
+    fold_path(crate::credential_guard::local_write_path(&path).unwrap_or(path))
+}
+
+/// `path` with `.` and `..` folded.
+fn fold_path(path: PathBuf) -> PathBuf {
     let mut cleaned = PathBuf::new();
     for component in path.components() {
         match component {
@@ -2515,7 +2524,7 @@ fn clean_path(path: PathBuf) -> PathBuf {
 }
 
 fn clean_join(base: &Path, rel: &str) -> PathBuf {
-    clean_path(base.join(rel))
+    fold_path(base.join(rel))
 }
 
 fn io_err(context: &'static str) -> impl FnOnce(std::io::Error) -> ToolError {

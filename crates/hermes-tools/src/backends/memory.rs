@@ -111,9 +111,12 @@ impl FileMemoryBackend {
         self.ensure_dir().await?;
         // A symlinked memory file keeps its link and the target's mode, but
         // the entries are text the model chose, so the link may not lead into
-        // a protected path.
+        // a protected path. The memory folder can be relative (a relative
+        // `HERMES_HOME`), so the path is made absolute against the process
+        // folder, where it is written, before its target is judged.
+        let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
         let target = hermes_config::resolve_symlink_target(path);
-        if target != path && crate::credential_guard::is_link_target_write_denied(&target) {
+        if target != *path && crate::credential_guard::is_link_target_write_denied(&target) {
             return Err(ToolError::ExecutionFailed(format!(
                 "Write denied: memory file '{}' links to the protected path '{}'",
                 path.display(),

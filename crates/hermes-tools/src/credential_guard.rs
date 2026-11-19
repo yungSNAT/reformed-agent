@@ -132,8 +132,8 @@ fn store_key(path: &Path) -> PathBuf {
 /// everything below it: provider keys (`.env`); the Nous OAuth token
 /// (`auth.json`); the token store, credential pool, provenance key and Gemini
 /// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
-/// hub token (`hub_token`). A file in `auth/` that links elsewhere is denied
-/// where it points, too. `config.yaml` stays writable, as upstream keeps its
+/// hub token (`hub_token`). A store, or a file in `auth/`, that links
+/// elsewhere is denied where it points, too. `config.yaml` stays writable, as upstream keeps its
 /// control files (upstream #45947).
 const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] =
     &[".env", "auth.json", "auth", "mcp_auth.json", "hub_token"];
@@ -287,18 +287,6 @@ impl CredentialGuard {
     }
 }
 
-impl CredentialGuard {
-    /// `check_write_access` for a tool that writes `path` itself, so a
-    /// relative path is judged against the process folder, where it lands,
-    /// not against `TERMINAL_CWD`.
-    pub fn check_local_write_access(&self, path: &Path, content: &str) -> Result<(), ToolError> {
-        let absolute = std::path::absolute(path).map_err(|e| {
-            ToolError::InvalidParams(format!("Invalid path '{}': {e}", path.display()))
-        })?;
-        self.check_write_access(&absolute, content)
-    }
-}
-
 impl Default for CredentialGuard {
     fn default() -> Self {
         Self::new()
@@ -319,9 +307,7 @@ pub fn is_protected_file(path: &Path) -> bool {
 /// file by name. This covers sensitive system files, shell profiles, package
 /// manager credential files, and the active Hermes home's credential stores
 /// (`WRITE_DENY_HERMES_HOME_PREFIX`). The path is
-/// judged where the local backend writes it (`resolve_path` in
-/// hermes-environments): `~` is the `HOME` or `USERPROFILE` value as set, and
-/// another relative path sits under a non-empty `TERMINAL_CWD`.
+/// judged where the local backend writes it (`local_write_path`).
 ///
 /// This guards the file tools only: the terminal tool (redirects, `cp`, `mv`,
 /// `ln`) is outside it, as upstream's rule is defence in depth, not a boundary.
@@ -343,7 +329,13 @@ pub fn is_link_target_write_denied(path: &Path) -> bool {
     judge_write(path, None)
 }
 
-fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
+/// `path` as an absolute path where the local backend writes it
+/// (`resolve_path` in hermes-environments): `~` is the `HOME` or
+/// `USERPROFILE` value as set, another relative path sits under a non-empty
+/// `TERMINAL_CWD`, else under the process folder. A tool that writes a file
+/// itself takes its path from here, so it judges and writes one file. None
+/// for a `~user` path, which `is_write_denied` refuses.
+pub fn local_write_path(path: &Path) -> Option<PathBuf> {
     let terminal_cwd = std::env::var_os("TERMINAL_CWD").filter(|cwd| !cwd.is_empty());
     let path = match terminal_cwd {
         Some(cwd) if path.is_relative() && !path.to_string_lossy().starts_with('~') => {
@@ -354,7 +346,12 @@ fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
     let backend_home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    let Some(path) = expand_home(&path, backend_home.as_deref()) else {
+    let path = expand_home(&path, backend_home.as_deref())?;
+    Some(std::path::absolute(&path).unwrap_or(path))
+}
+
+fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
+    let Some(path) = local_write_path(path) else {
         return true;
     };
     is_expanded_write_denied(
@@ -542,31 +539,35 @@ fn is_expanded_write_denied(
     }
 
     if let Some(hermes_home) = hermes_home {
-        // Each file in `auth/` is a store where it links, too, even to a
-        // file not yet created. The known names are checked as well, as a
-        // folder that can be entered but not listed hides its entries.
+        // Each store, and each file in `auth/`, is a store where it links,
+        // too, even to a file not yet created. The known `auth/` names are
+        // checked as well, as a folder that can be entered but not listed
+        // hides its entries.
         // shortcut: only `auth/`'s own entries are followed, not deeper ones.
         let auth = hermes_home.join("auth");
-        let auth_files = std::fs::read_dir(&auth)
-            .into_iter()
-            .flatten()
-            .flatten()
-            .map(|entry| entry.path())
-            .chain(AUTH_STORE_FILES.iter().map(|name| auth.join(name)))
-            .map(|file| hermes_config::resolve_symlink_target(&file));
         let stores = WRITE_DENY_HERMES_HOME_PREFIX
             .iter()
             .map(|store| hermes_home.join(store))
-            .chain(auth_files);
+            .chain(
+                std::fs::read_dir(&auth)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.path()),
+            )
+            .chain(AUTH_STORE_FILES.iter().map(|name| auth.join(name)))
+            .flat_map(|store| {
+                let target = hermes_config::resolve_symlink_target(&store);
+                let linked = (target != store).then_some(target);
+                std::iter::once(store).chain(linked)
+            });
         let form_keys: Vec<PathBuf> = forms.iter().map(|form| store_key(form)).collect();
         for store in stores {
-            let store_forms = root_forms(&store);
-            if form_keys.iter().any(|form| {
-                store_forms
-                    .iter()
-                    .any(|store| form.starts_with(store_key(store)))
-            }) {
-                return true;
+            for store_form in root_forms(&store) {
+                let store_form = store_key(&store_form);
+                if form_keys.iter().any(|form| form.starts_with(&store_form)) {
+                    return true;
+                }
             }
         }
     }
