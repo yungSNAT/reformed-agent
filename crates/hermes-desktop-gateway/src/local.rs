@@ -71,18 +71,24 @@ impl LocalRuntime {
     pub fn instance_id(&self) -> &str {
         &self.instance_id
     }
+
+    /// Withdraws local mode: stops serving and removes the socket and state file, so ensure
+    /// cannot report a stopping host ready, whilst the home stays claimed until this drops.
+    pub fn stop_serving(&mut self) {
+        for task in self.tasks.drain(..) {
+            task.abort();
+        }
+        for (path, identity) in self.files.drain(..).rev() {
+            if file_identity(&path).ok() == Some(identity) {
+                let _ = std::fs::remove_file(&path);
+            }
+        }
+    }
 }
 
 impl Drop for LocalRuntime {
     fn drop(&mut self) {
-        for task in &self.tasks {
-            task.abort();
-        }
-        for (path, identity) in self.files.iter().rev() {
-            if file_identity(path).ok() == Some(*identity) {
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        self.stop_serving();
         // The lock file stays, emptied of its pid: unlinking the inode this still locks would let
         // a new claimant lock a fresh one at the path whilst this process still runs. The lock
         // itself is released after this returns.

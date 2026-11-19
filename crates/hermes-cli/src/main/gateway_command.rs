@@ -1023,7 +1023,15 @@ async fn run_gateway(
             }
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
-            gateway_shutdown_signal().await?;
+            let stopping = gateway_shutdown_signal().await;
+            // Withdraw local mode before the slower shutdown below, whilst keeping the home
+            // claimed until exit: the pid file goes next, and ensure must not report ready an
+            // owner that `gateway stop` can no longer find.
+            #[cfg(unix)]
+            if let Some(runtime) = desktop.as_mut() {
+                runtime.stop_serving();
+            }
+            stopping?;
 
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
