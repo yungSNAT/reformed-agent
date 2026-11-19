@@ -31,7 +31,10 @@ const FOREGROUND_DRAIN_GRACE_MS: u64 = 120;
 /// non-blocking `try_wait`, and returns the lock's guard once it has.
 /// Each check runs under the lock, so the shell is never reaped whilst
 /// `kill_process` signals its group, and the lock is never held whilst the
-/// shell runs.
+/// shell runs. A failed check returns `None` with the lock released: the
+/// child's state is then unknown (`waitpid` gives ECHILD, for example), and
+/// the caller's reap without the lock reopens the group-id reuse window on
+/// that error path only.
 #[cfg(unix)]
 async fn reap_under_lock(
     lock: &Arc<AsyncMutex<()>>,
@@ -40,7 +43,8 @@ async fn reap_under_lock(
     loop {
         let held = lock.clone().lock_owned().await;
         match try_wait() {
-            Ok(Some(_)) | Err(_) => return Some(held),
+            Ok(Some(_)) => return Some(held),
+            Err(_) => return None,
             Ok(None) => drop(held),
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
