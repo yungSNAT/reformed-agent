@@ -581,6 +581,25 @@ mod tests {
         path
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn write_directory_through_a_symlink_keeps_the_link() {
+        let tmp = tempdir().expect("tmp");
+        let real = tmp.path().join("dotfiles").join("channel_directory.json");
+        std::fs::create_dir_all(real.parent().unwrap()).expect("dotfiles dir");
+        let link = tmp.path().join("channel_directory.json");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        let snapshot = ChannelDirectorySnapshot {
+            updated_at: Some("2026-01-01T00:00:00".into()),
+            platforms: BTreeMap::new(),
+        };
+
+        write_directory_atomic(&link, &snapshot).expect("write directory");
+
+        assert!(link.is_symlink(), "the directory link was replaced");
+        assert_eq!(load_directory_from(&real), snapshot);
+    }
+
     #[test]
     fn load_directory_missing_and_corrupt_are_empty() {
         let tmp = tempdir().expect("tmp");

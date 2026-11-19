@@ -197,6 +197,25 @@ mod tests {
         }
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn owner_only_atomic_write_keeps_a_symlinked_config() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let real = tmp.path().join("dotfiles").join("honcho.json");
+        fs::create_dir_all(real.parent().expect("parent")).expect("dotfiles dir");
+        fs::write(&real, "{}").expect("seed");
+        let link = tmp.path().join("honcho.json");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+
+        write_owner_only_atomic(&link, &json!({"api_key": "new"})).expect("write config");
+
+        assert!(link.is_symlink(), "the config link was replaced");
+        assert!(fs::read_to_string(&real).expect("read").contains("new"));
+        let mode = fs::metadata(&real).expect("metadata").permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     #[test]
     fn default_home_matches_ultra_home_precedence() {
         let _guard = TEST_ENV_LOCK.lock().expect("env lock");

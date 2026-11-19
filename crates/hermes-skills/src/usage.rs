@@ -521,6 +521,25 @@ mod tests {
         dir
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_usage_through_a_symlink_keeps_the_link() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let real = dir.path().join("dotfiles").join("usage.json");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = usage_file(&skills);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut data = BTreeMap::new();
+        data.insert("skill-a".to_string(), SkillUsageRecord::default());
+
+        save_usage(&skills, &data).unwrap();
+
+        assert!(link.is_symlink(), "the usage link was replaced");
+        assert!(fs::read_to_string(&real).unwrap().contains("skill-a"));
+    }
+
     #[test]
     fn save_load_and_missing_defaults() {
         let dir = tempdir().unwrap();

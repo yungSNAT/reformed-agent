@@ -1269,3 +1269,60 @@ fn test_route_learning_malformed_file_is_safe_fallback() {
         "malformed state must fall back cleanly"
     );
 }
+
+#[cfg(unix)]
+#[test]
+fn test_route_learning_writes_through_a_symlinked_state_file() {
+    use futures::stream::BoxStream;
+
+    struct DummyProvider;
+    #[async_trait::async_trait]
+    impl LlmProvider for DummyProvider {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant("dummy"),
+                usage: None,
+                model: "dummy".into(),
+                finish_reason: Some("stop".into()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+            futures::stream::empty().boxed()
+        }
+    }
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cfg = AgentConfig {
+        hermes_home: Some(tmp.path().join("home").to_string_lossy().to_string()),
+        ..AgentConfig::default()
+    };
+    let link = route_learning_state_path(&cfg);
+    let real = tmp.path().join("dotfiles").join("route-learning.json");
+    std::fs::create_dir_all(link.parent().expect("parent")).expect("logs dir");
+    std::fs::create_dir_all(real.parent().expect("parent")).expect("dotfiles dir");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+
+    let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), Arc::new(DummyProvider));
+    agent.update_route_learning(None, Some("openai:gpt-4o"), 1200, true);
+
+    assert!(link.is_symlink(), "the state link was replaced");
+    let saved = std::fs::read_to_string(&real).expect("target written");
+    assert!(saved.contains("openai:gpt-4o"));
+}

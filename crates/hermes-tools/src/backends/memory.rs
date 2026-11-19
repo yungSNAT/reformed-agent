@@ -544,6 +544,24 @@ mod tests {
         assert_eq!(path.read_to_string().unwrap(), drift);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_writes_through_a_symlinked_memory_file_and_keeps_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("dotfiles").join("MEMORY.md");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend.add("memory", "Kept in dotfiles.").await.unwrap();
+
+        assert!(link.is_symlink(), "the memory link was replaced");
+        assert!(real.read_to_string().unwrap().contains("Kept in dotfiles."));
+    }
+
     #[tokio::test]
     async fn add_blocks_memory_prompt_injection() {
         let temp = tempfile::tempdir().unwrap();

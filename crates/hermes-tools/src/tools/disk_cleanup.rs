@@ -1008,6 +1008,26 @@ mod tests {
         assert_eq!(cleaner.guess_category(&output), Some("cron-output"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn save_tracked_through_a_symlink_keeps_the_link() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let link = cleaner.tracked_file();
+        let real = tmp.path().join("dotfiles").join("tracked.json");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        fs::write(&real, "[]
+").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let item = stale_item(&tmp.path().join("old.log"), "temp", 3);
+
+        cleaner.save_tracked(std::slice::from_ref(&item)).unwrap();
+
+        assert!(link.is_symlink(), "the tracked link was replaced");
+        assert!(fs::read_to_string(&real).unwrap().contains("old.log"));
+    }
+
     fn stale_item(path: &Path, category: &str, size: u64) -> TrackedItem {
         TrackedItem {
             path: path.to_string_lossy().to_string(),

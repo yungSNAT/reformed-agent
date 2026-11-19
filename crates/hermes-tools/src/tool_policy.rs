@@ -1223,4 +1223,23 @@ mod tests {
         let loaded = load_tool_policy_counters(&path).expect("load counters");
         assert_eq!(loaded, counters);
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn tool_policy_counters_write_through_a_symlink_and_keep_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let real = tmp.path().join("dotfiles").join("tool-policy-counters.json");
+        std::fs::create_dir_all(real.parent().expect("parent")).expect("dotfiles dir");
+        let link = tmp.path().join("tool-policy-counters.json");
+        std::os::unix::fs::symlink(&real, &link).expect("link");
+        let counters = ToolPolicyCounters {
+            allow: 7,
+            ..ToolPolicyCounters::default()
+        };
+
+        persist_tool_policy_counters(&link, &counters).expect("persist counters");
+
+        assert!(link.is_symlink(), "the counters link was replaced");
+        assert_eq!(load_tool_policy_counters(&real), Some(counters));
+    }
 }

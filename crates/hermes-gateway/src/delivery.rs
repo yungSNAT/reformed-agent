@@ -1111,6 +1111,21 @@ mod tests {
         assert!(!reloaded.is_dead("telegram", "123"));
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn dead_target_registry_writes_through_a_symlink_and_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("dotfiles").join("dead_targets.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = tmp.path().join("dead_targets.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(DeadTargetRegistry::with_path(&link).mark_dead("telegram", "123", "forbidden"));
+
+        assert!(link.is_symlink(), "the registry link was replaced");
+        assert!(DeadTargetRegistry::with_path(&real).is_dead("telegram", "123"));
+    }
+
     #[test]
     fn dead_target_registry_corrupt_store_degrades_to_empty() {
         let tmp = tempfile::tempdir().unwrap();

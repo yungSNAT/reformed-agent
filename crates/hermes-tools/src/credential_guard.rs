@@ -811,6 +811,47 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_protects_the_credential_stores_under_the_hermes_home() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+
+        for rel in [
+            "auth",
+            "auth/tokens.json",
+            "auth/pool.json",
+            "auth/provenance.key",
+            "auth/google_oauth.json",
+            "auth/new-store.json",
+            "mcp_auth.json",
+        ] {
+            assert!(denied(&hermes_home.join(rel)), "{rel} was writable");
+        }
+        // Control files stay writable, as upstream keeps them (#45947).
+        for rel in ["auth.json", "config.yaml", "mcp_servers.json", "authority.md"] {
+            assert!(!denied(&hermes_home.join(rel)), "{rel} was denied");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_link_into_the_hermes_auth_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let link = tmp.path().join("innocent");
+        std::os::unix::fs::symlink(hermes_home.join("auth"), &link).expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &link.join("tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
     fn write_deny_expands_tilde_against_home_root() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");

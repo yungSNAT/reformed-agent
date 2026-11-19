@@ -437,6 +437,25 @@ mod tests {
         (store, dir)
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_symlinked_store_keeps_the_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = temp_store();
+        let real = dir.path().join("dotfiles").join("suggestions.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real, store.path()).unwrap();
+
+        store.seed_catalog_suggestions().expect("seed");
+
+        assert!(store.path().is_symlink(), "the store link was replaced");
+        let saved = std::fs::read_to_string(&real).expect("target written");
+        assert!(saved.contains("suggestions"));
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     #[test]
     fn catalog_seed_lists_pending_and_is_idempotent() {
         let (store, _dir) = temp_store();
