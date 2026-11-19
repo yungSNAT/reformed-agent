@@ -310,11 +310,17 @@
         let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
         let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
 
+        // Neither a write in place nor a new file beside it can succeed.
+        let store = auth_dir.join("tokens.json");
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o400))
+            .expect("make the store read-only");
         std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o500))
             .expect("make the auth folder read-only");
         let result = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
         std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
             .expect("make the auth folder writable again");
+        std::fs::set_permissions(&store, std::fs::Permissions::from_mode(0o600))
+            .expect("make the store writable again");
 
         result.expect("the refreshed token is used although it was not stored");
         assert_eq!(stored_anthropic_token(&home).0, "old-access");
