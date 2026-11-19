@@ -32,6 +32,34 @@ pub(super) fn spawn(cmd: &mut Command) -> io::Result<(Child, ProcessTree)> {
     ))
 }
 
+/// Waits until the child `pid` has exited, without reaping it, so its
+/// process id, and the group id it leads, cannot be reused until the caller
+/// reaps it.
+#[cfg(unix)]
+pub(super) async fn wait_unreaped(pid: u32) {
+    use tokio::signal::unix::{signal, SignalKind};
+
+    // Listening before the first check means no exit is missed.
+    let Ok(mut exits) = signal(SignalKind::child()) else {
+        return;
+    };
+    loop {
+        // SAFETY: an all-zero siginfo_t is a valid value.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+        // SAFETY: waitid writes only into `info`, and WNOWAIT leaves the
+        // child unreaped.
+        let rc = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
+        // SAFETY: waitid filled `info` (or left it zeroed under WNOHANG).
+        if rc != 0 || unsafe { info.si_pid() } != 0 {
+            return;
+        }
+        if exits.recv().await.is_none() {
+            return;
+        }
+    }
+}
+
 /// Spawns `cmd` as the root of a new process tree. The child starts
 /// suspended and runs only once it is in the job, so no descendant can start
 /// outside it.

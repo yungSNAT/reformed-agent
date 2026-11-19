@@ -38,6 +38,9 @@ struct ProcessSession {
     command: String,
     pid: Option<u32>,
     tree: Arc<ProcessTree>,
+    /// Held whilst the tree is signalled; on Unix the waiter reaps the shell
+    /// only under it, so the group id stays reserved until the last signal.
+    signal_lock: Arc<AsyncMutex<()>>,
     started_at: u64,
     status: Arc<Mutex<ProcessStatus>>,
     output: Arc<Mutex<String>>,
@@ -490,12 +493,14 @@ impl TerminalBackend for LocalBackend {
             let output = Arc::new(Mutex::new(String::new()));
             let status = Arc::new(Mutex::new(ProcessStatus::default()));
             let stdin = Arc::new(AsyncMutex::new(child.stdin.take()));
+            let signal_lock = Arc::new(AsyncMutex::new(()));
             let max_output_chars = self.max_process_output_chars();
             let session = ProcessSession {
                 id: session_id.clone(),
                 command: rewritten_command.clone(),
                 pid,
                 tree: Arc::new(tree),
+                signal_lock: signal_lock.clone(),
                 started_at: Self::now_unix_ts(),
                 status: status.clone(),
                 output: output.clone(),
@@ -521,6 +526,15 @@ impl TerminalBackend for LocalBackend {
 
             tokio::spawn(async move {
                 let _script_file = script_file;
+                #[cfg(unix)]
+                let _signalling = {
+                    if let Some(pid) = pid {
+                        process_tree::wait_unreaped(pid).await;
+                    }
+                    signal_lock.lock_owned().await
+                };
+                #[cfg(not(unix))]
+                drop(signal_lock);
                 match child.wait().await {
                     Ok(exit) => {
                         let mut guard = status.lock().unwrap_or_else(|e| e.into_inner());
@@ -876,15 +890,39 @@ impl TerminalBackend for LocalBackend {
                 "exit_code": status.exit_code
             }));
         }
-        session.tree.terminate().map_err(|e| {
-            AgentError::Io(format!("Failed to terminate process {session_id}: {e}"))
-        })?;
-        // A descendant that ignores SIGTERM is killed after the grace; the
-        // group may already be gone by then.
-        #[cfg(unix)]
-        {
-            tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
-            let _ = session.tree.kill();
+        // A task of its own, so a caller that gives up midway still has the
+        // tree ended. A descendant that ignores SIGTERM is killed after the
+        // grace.
+        let ending = {
+            let tree = session.tree.clone();
+            let status = session.status.clone();
+            let signal_lock = session.signal_lock.clone();
+            tokio::spawn(async move {
+                let _signalling = signal_lock.lock().await;
+                if status.lock().unwrap_or_else(|e| e.into_inner()).exited {
+                    return Ok(false);
+                }
+                tree.terminate()?;
+                #[cfg(unix)]
+                {
+                    tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
+                    let _ = tree.kill();
+                }
+                Ok::<_, std::io::Error>(true)
+            })
+        };
+        let signalled = ending
+            .await
+            .map_err(|e| AgentError::Io(format!("Failed to terminate process {session_id}: {e}")))?
+            .map_err(|e| {
+                AgentError::Io(format!("Failed to terminate process {session_id}: {e}"))
+            })?;
+        if !signalled {
+            let status = Self::read_status_snapshot(&session);
+            return Ok(json!({
+                "status": "already_exited",
+                "exit_code": status.exit_code
+            }));
         }
 
         {

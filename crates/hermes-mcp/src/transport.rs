@@ -232,7 +232,9 @@ fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<Str
 /// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`. A bare
 /// name is looked up on the server's own `PATH` through its `PATHEXT`,
 /// keeping only the kinds `Command` can start (not `.js` or `.vbs`) and only
-/// absolute entries, so a file planted in the working folder cannot run.
+/// absolute entries, so a file planted in the working folder cannot run. A
+/// bare name not found that way is refused: `Command`'s own search would take
+/// an `.exe` from the parent's `PATH` or the folder Hermes runs from.
 fn program_for(command: &str, env: &HashMap<String, String>) -> std::io::Result<PathBuf> {
     #[cfg(windows)]
     if !command.contains(['/', '\\']) {
@@ -268,6 +270,10 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> std::io::Result<
                 }
             }
         }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found on the server's PATH with an extension from its PATHEXT",
+        ));
     }
     #[cfg(not(windows))]
     let _ = env;
