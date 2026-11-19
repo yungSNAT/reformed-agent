@@ -247,6 +247,7 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
             vec![command.to_string()]
         } else {
             var("PATHEXT")
+                .filter(|exts| !exts.is_empty())
                 .unwrap_or(".COM;.EXE;.BAT;.CMD")
                 .split(';')
                 .filter_map(|ext| ext.strip_prefix('.'))
@@ -255,7 +256,7 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
                 .collect()
         };
         let dirs = std::env::split_paths(var("PATH").unwrap_or_default());
-        for dir in dirs {
+        for dir in dirs.filter(|dir| dir.is_absolute()) {
             for candidate in &candidates {
                 let path = dir.join(candidate);
                 if path.is_file() {
