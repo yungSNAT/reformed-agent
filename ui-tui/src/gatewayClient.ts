@@ -2,7 +2,7 @@ import { type ChildProcess, spawn } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
 import { existsSync } from 'node:fs'
-import { resolve } from 'node:path'
+import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { GatewayEvent } from './gatewayTypes.js'
@@ -39,11 +39,26 @@ const GATEWAY_TOKEN_ENV = 'HERMES_DASHBOARD_SESSION_TOKEN'
 const GATEWAY_READY_RE = /^HERMES_BACKEND_READY port=(\d+)$/
 const GATEWAY_BIN = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' : 'hermes-desktop-gateway'
 
-// HERMES_TUI_GATEWAY_BIN, then a build in this checkout, then PATH.
-const resolveGatewayBinary = (root: string) =>
-  process.env.HERMES_TUI_GATEWAY_BIN?.trim() ||
-  ['release', 'debug'].map(profile => resolve(root, 'target', profile, GATEWAY_BIN)).find(p => existsSync(p)) ||
-  GATEWAY_BIN
+const GATEWAY_BUILD_HINT = 'build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN'
+
+// An absolute path, so spawn never searches the working folder (as Windows does for a bare
+// name) or a relative PATH entry: HERMES_TUI_GATEWAY_BIN, then a build in the checkout this
+// client runs from (root), then the absolute PATH entries. Null when none has it.
+const resolveGatewayBinary = (root: string) => {
+  const configured = process.env.HERMES_TUI_GATEWAY_BIN?.trim()
+
+  if (configured) {
+    return resolve(configured)
+  }
+
+  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(dir => isAbsolute(dir))
+
+  return (
+    [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
+      .map(dir => join(dir, GATEWAY_BIN))
+      .find(p => existsSync(p)) ?? null
+  )
+}
 
 const asGatewayEvent = (value: unknown): GatewayEvent | null =>
   value && typeof value === 'object' && !Array.isArray(value) && typeof (value as { type?: unknown }).type === 'string'
@@ -310,6 +325,20 @@ export class GatewayClient extends EventEmitter {
   // which reaches the child through its environment, never its arguments.
   private startSpawnedGateway(root: string) {
     const bin = resolveGatewayBinary(root)
+
+    if (!bin) {
+      const line = `[spawn] ${GATEWAY_BIN} not found in ${resolve(root, 'target')} or on PATH (${GATEWAY_BUILD_HINT})`
+      const missing = Promise.reject(new Error(`${GATEWAY_BIN} not found`))
+
+      missing.catch(() => {})
+      this.wsConnectPromise = missing
+      this.pushLog(line)
+      this.publish({ type: 'gateway.stderr', payload: { line } })
+      this.handleTransportExit(1, `${GATEWAY_BIN} not found`)
+
+      return
+    }
+
     const cwd = process.env.HERMES_CWD || root
     const token = randomBytes(32).toString('hex')
     const env = { ...process.env, [GATEWAY_TOKEN_ENV]: token }
@@ -368,8 +397,7 @@ export class GatewayClient extends EventEmitter {
         return
       }
 
-      const missing = (err as NodeJS.ErrnoException).code === 'ENOENT'
-      const hint = missing ? ' (build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN)' : ''
+      const hint = (err as NodeJS.ErrnoException).code === 'ENOENT' ? ` (${GATEWAY_BUILD_HINT})` : ''
       const line = `[spawn] ${err.message}${hint}`
 
       this.pushLog(line)

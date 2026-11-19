@@ -1,9 +1,9 @@
 import type * as ChildProcessModule from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { delimiter, join, resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -417,10 +417,30 @@ describe('GatewayClient spawned Rust gateway', () => {
   const saved = new Map<string, string | undefined>()
   let child: FakeChild
 
+  const binName = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' : 'hermes-desktop-gateway'
+  const scratch: string[] = []
+
+  const tempDir = (prefix: string) => {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+
+    scratch.push(dir)
+
+    return dir
+  }
+
   beforeEach(() => {
-    for (const name of ['HERMES_TUI_GATEWAY_URL', 'HERMES_TUI_SIDECAR_URL', 'HERMES_TUI_GATEWAY_BIN']) {
+    for (const name of [
+      'HERMES_TUI_GATEWAY_URL',
+      'HERMES_TUI_SIDECAR_URL',
+      'HERMES_TUI_GATEWAY_BIN',
+      'HERMES_PYTHON_SRC_ROOT',
+      'HERMES_CWD',
+      'PATH'
+    ]) {
       saved.set(name, process.env[name])
-      delete process.env[name]
+      if (name !== 'PATH') {
+        delete process.env[name]
+      }
     }
 
     process.env.HERMES_TUI_GATEWAY_BIN = '/opt/hermes/hermes-desktop-gateway'
@@ -439,9 +459,61 @@ describe('GatewayClient spawned Rust gateway', () => {
       }
     }
 
-    vi.mocked(spawn).mockClear()
+    // Drops an unused mockImplementationOnce and restores the real spawn.
+    vi.mocked(spawn).mockReset()
     FakeWebSocket.reset()
     globalThis.WebSocket = originalWebSocket
+
+    for (const dir of scratch.splice(0)) {
+      rmSync(dir, { force: true, recursive: true })
+    }
+  })
+
+  it('never runs a gateway found through a relative PATH entry or the working folder', () => {
+    const project = tempDir('hermes-tui-project-')
+
+    mkdirSync(join(project, 'bin'))
+    writeFileSync(join(project, binName), '')
+    writeFileSync(join(project, 'bin', binName), '')
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.HERMES_CWD = project
+    process.env.PATH = ['.', 'bin', ''].join(delimiter)
+
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => {
+      if (ev.type === 'gateway.stderr' && typeof ev.payload?.line === 'string') {
+        lines.push(ev.payload.line)
+      }
+    })
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(lines.join('\n')).toContain('not found')
+    expect(lines.join('\n')).toContain('cargo build --release -p hermes-desktop-gateway')
+    expect(exits).toEqual([1])
+  })
+
+  it('runs the gateway from an absolute PATH entry by its full path', () => {
+    const bin = tempDir('hermes-tui-bin-')
+
+    writeFileSync(join(bin, binName), '')
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = ['relative-dir', bin].join(delimiter)
+
+    const gw = new GatewayClient()
+
+    gw.start()
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(spawn).mock.calls[0]?.[0]).toBe(join(bin, binName))
+    gw.kill()
   })
 
   it('starts the Rust gateway and attaches with the token it gave it', async () => {
@@ -457,7 +529,7 @@ describe('GatewayClient spawned Rust gateway', () => {
       { env: Record<string, string> }
     ]
 
-    expect(command).toBe('/opt/hermes/hermes-desktop-gateway')
+    expect(command).toBe(resolve('/opt/hermes/hermes-desktop-gateway'))
     expect(args).toEqual(['--host', '127.0.0.1', '--port', '0'])
 
     const token = options.env.HERMES_DASHBOARD_SESSION_TOKEN ?? ''
