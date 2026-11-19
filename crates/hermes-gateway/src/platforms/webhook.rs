@@ -1017,7 +1017,10 @@ mod tests {
                 max_body_bytes: default_webhook_max_body_bytes(),
                 routes: BTreeMap::new(),
             });
-            adapter.start().await.unwrap_or_else(|e| panic!("{host}: {e}"));
+            adapter
+                .start()
+                .await
+                .unwrap_or_else(|e| panic!("{host}: {e}"));
             adapter.stop().await.unwrap();
         }
     }
