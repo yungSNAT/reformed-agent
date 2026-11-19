@@ -1584,6 +1584,8 @@ mod tests {
             format!("@echo %SystemRoot%> \"{}\"\r\n", marker.display()),
         )
         .unwrap();
+        // Node installs an extensionless shell script beside `npx.cmd`.
+        std::fs::write(bin.path().join("hermes-mcp-probe"), "#!/bin/sh\n").unwrap();
         let mut configured = HashMap::new();
         configured.insert("PATH".to_string(), bin.path().display().to_string());
         let mut transport = StdioTransport::new("hermes-mcp-probe", &[], &configured, false);

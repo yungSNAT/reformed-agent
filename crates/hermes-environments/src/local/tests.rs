@@ -1053,13 +1053,27 @@ fn scrubbing_survives_a_variable_that_is_not_utf8() {
     ));
 }
 
-/// A command whose inner shell, a grandchild of the backend's shell, writes
-/// `marker` after 4 seconds. The trailing `echo` stops the outer shell from
-/// replacing itself with the inner one.
+/// A command whose inner shell, a grandchild of the backend's shell,
+/// ignores SIGTERM, writes `<marker>.ready` once running and `marker` after
+/// 4 seconds. The trailing `echo` stops the outer shell from replacing
+/// itself with the inner one.
 fn survivor_command(marker: &Path) -> String {
     // Forward slashes, which both a native and an MSYS shell read.
     let marker = marker.to_string_lossy().replace('\\', "/");
-    format!("sh -c 'sleep 4; echo survived > \"{marker}\"'; echo unreachable")
+    format!(
+        "sh -c 'trap \"\" TERM; echo > \"{marker}.ready\"; sleep 4; echo survived > \"{marker}\"'; echo unreachable"
+    )
+}
+
+async fn wait_until_ready(marker: &Path) {
+    let ready = marker.with_extension("ready");
+    for _ in 0..100 {
+        if ready.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the inner shell never started: {}", ready.display());
 }
 
 async fn assert_no_survivor(marker: &Path) {
@@ -1100,7 +1114,7 @@ async fn test_cancelled_command_ends_the_shells_descendants() {
         })
     };
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_until_ready(&marker).await;
     task.abort();
     let _ = task.await;
     assert_no_survivor(&marker).await;
@@ -1118,11 +1132,34 @@ async fn test_kill_process_ends_the_shells_descendants() {
     let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
     let session_id = payload["session_id"].as_str().expect("session_id");
 
-    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+    wait_until_ready(&marker).await;
     let killed = backend.kill_process(session_id).await.unwrap();
 
     assert_eq!(killed["status"], "killed", "{killed}");
     assert_no_survivor(&marker).await;
+}
+
+#[tokio::test]
+async fn test_finished_command_leaves_its_background_child_running() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("alive");
+    let shell_marker = marker.to_string_lossy().replace('\\', "/");
+    let command = format!("sh -c 'sleep 1; echo alive > \"{shell_marker}\"' & echo started");
+    let backend = LocalBackend::new(30, 1_048_576);
+
+    let output = backend
+        .execute_command(&command, None, None, false, false)
+        .await
+        .unwrap();
+
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    for _ in 0..100 {
+        if marker.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the background child of a finished command was ended");
 }
 
 /// CreateProcess refuses a command line over 32,767 UTF-16 units. Linux
