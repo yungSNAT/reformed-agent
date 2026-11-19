@@ -176,14 +176,29 @@ async fn run_gateway(
                 cleanup_stale_gateway_metadata(&pid_path);
             }
 
-            // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`).
+            // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`). Its
+            // failure stops the run, as upstream's does, so 2 runs never share a home; a home too
+            // deep for a socket path runs without it, as before.
             #[cfg(unix)]
-            let desktop = hermes_desktop_gateway::local::start(
-                &hermes_state_root(&cli),
-                hermes_desktop_gateway::Chat::new(config.clone()),
-            )
-            .await
-            .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?;
+            let desktop = {
+                let home = hermes_state_root(&cli);
+                if hermes_desktop_gateway::local::control_socket_fits(&home) {
+                    Some(
+                        hermes_desktop_gateway::local::start(
+                            &home,
+                            hermes_desktop_gateway::Chat::new(config.clone()),
+                        )
+                        .await
+                        .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?,
+                    )
+                } else {
+                    eprintln!(
+                        "Desktop local mode is off: the control socket path under {} is too long for a Unix socket.",
+                        home.display()
+                    );
+                    None
+                }
+            };
 
             if !enabled.is_empty() {
                 println!(

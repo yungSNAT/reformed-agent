@@ -9,12 +9,16 @@
 //! mints tickets only for a peer with this process's uid, in a home no other user can write;
 //! ensure refuses such a home too, so neither side trusts a socket another user could replace.
 //!
-//! shortcut: one profile a process (no multiplexer), no long-path socket pointer (a home whose
-//! socket path is over 103 bytes refuses to start), no restart drain or update fence, no code
-//! identity (`code_sha` null, which the desktop attaches to as-is), and Unix only (upstream's
-//! Windows named pipe with its SID checks is not ported). Upgrade path: upstream's modules above.
+//! shortcut: one profile a process (no multiplexer); no long-path socket pointer (where the
+//! socket path would pass 103 bytes, `gateway run` runs without local mode and ensure answers
+//! `control_path_too_long`); tickets only for the socket and REST routes this gateway serves (not
+//! upstream's `native-profile-create` and `native-profile-registry`: it serves no profile
+//! routes); no restart drain or update fence; no code identity (`code_sha` null, which the
+//! desktop attaches to as-is); Unix only (upstream's Windows named pipe with its SID checks is
+//! not ported). Upgrade path: upstream's modules above.
 
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -50,6 +54,8 @@ pub struct LocalRuntime {
     /// owner wrote since is left alone.
     files: Vec<(PathBuf, (u64, u64))>,
     tasks: Vec<tokio::task::JoinHandle<()>>,
+    /// The `flock` on `gateway.lock`, released when this closes, after the files go.
+    _lock: std::fs::File,
 }
 
 impl LocalRuntime {
@@ -67,7 +73,8 @@ impl Drop for LocalRuntime {
         for task in &self.tasks {
             task.abort();
         }
-        // The lock goes last: while it is held, a concurrent ensure waits instead of starting.
+        // The lock file goes last, and the lock itself after this returns: while it is held, a
+        // concurrent ensure waits instead of starting.
         for (path, identity) in self.files.iter().rev() {
             if file_identity(path).ok() == Some(*identity) {
                 let _ = std::fs::remove_file(path);
@@ -115,43 +122,6 @@ fn check_home(home: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// The process start time Linux records (field 22 of `/proc/<pid>/stat`), which tells a live
-/// owner from a later process that reused its pid. None elsewhere or when unreadable.
-fn start_time(pid: u32) -> Option<u64> {
-    let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).ok()?;
-    // The command name may hold spaces and parentheses; the fields follow its last ')'.
-    stat.rsplit_once(')')?
-        .1
-        .split_whitespace()
-        .nth(19)?
-        .parse()
-        .ok()
-}
-
-fn pid_alive(pid: u32) -> bool {
-    let Ok(pid) = libc::pid_t::try_from(pid) else {
-        return false;
-    };
-    // SAFETY: signal 0 only checks that the process exists and may be signalled.
-    pid > 0
-        && (unsafe { libc::kill(pid, 0) } == 0
-            || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM))
-}
-
-/// The pid of the live process `<home>/gateway.lock` names: alive, and with the start time the
-/// lock recorded when it recorded one.
-fn lock_owner(home: &Path) -> Option<u32> {
-    let raw = std::fs::read(home.join(LOCK)).ok()?;
-    let lock: Value = serde_json::from_slice(&raw).ok()?;
-    let pid = u32::try_from(lock.get("pid")?.as_u64()?).ok()?;
-    let recorded = lock.get("start_time").and_then(Value::as_u64);
-    let same_process = match (recorded, start_time(pid)) {
-        (Some(recorded), Some(live)) => recorded == live,
-        _ => true,
-    };
-    (pid_alive(pid) && same_process).then_some(pid)
-}
-
 /// Creates `path` with mode 0600 and `contents`; fails if it exists.
 fn create_private(path: &Path, contents: &[u8]) -> std::io::Result<(u64, u64)> {
     let mut file = std::fs::OpenOptions::new()
@@ -164,49 +134,87 @@ fn create_private(path: &Path, contents: &[u8]) -> std::io::Result<(u64, u64)> {
     Ok((file.metadata()?.dev(), file.metadata()?.ino()))
 }
 
-/// Claims the home's lock; a lock whose owner is gone is replaced once.
-fn claim_lock(home: &Path) -> Result<(PathBuf, (u64, u64)), String> {
+/// Tries a non-blocking `flock` of `operation` (`LOCK_EX` or `LOCK_SH`) on `file`.
+fn try_flock(file: &std::fs::File, operation: libc::c_int) -> bool {
+    // SAFETY: flock on a descriptor `file` keeps open; LOCK_NB makes it return at once.
+    unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) == 0 }
+}
+
+/// True while a runtime holds `<home>/gateway.lock`. A lock that cannot be tested reads as held,
+/// so ensure waits rather than starting a second owner.
+fn lock_held(home: &Path) -> bool {
+    match std::fs::File::open(home.join(LOCK)) {
+        // A shared lock taken here is released when `file` closes.
+        Ok(file) => !try_flock(&file, libc::LOCK_SH),
+        Err(e) => e.kind() != std::io::ErrorKind::NotFound,
+    }
+}
+
+/// Claims the home: an exclusive `flock` on `<home>/gateway.lock`, held for the runtime's life
+/// and released by the kernel when the process ends, so neither a crash nor a reused pid leaves a
+/// lock that reads as live. The file names the owner's pid, which upstream's e2e census reads.
+fn claim_lock(home: &Path) -> Result<(std::fs::File, PathBuf, (u64, u64)), String> {
     let path = home.join(LOCK);
-    let pid = std::process::id();
-    let record = json!({
-        "pid": pid,
-        "start_time": start_time(pid),
-        "kind": "hermes-gateway",
-        "hermes_home": home,
-    })
-    .to_string();
     for _ in 0..2 {
-        match create_private(&path, record.as_bytes()) {
-            Ok(identity) => return Ok((path, identity)),
-            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
-                if let Some(owner) = lock_owner(home) {
-                    return Err(format!(
-                        "a gateway is already running for {} (pid {owner}, {})",
-                        home.display(),
-                        path.display()
-                    ));
-                }
-                let _ = std::fs::remove_file(&path);
-            }
-            Err(err) => return Err(format!("cannot create {}: {err}", path.display())),
+        let mut file = std::fs::OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .mode(0o600)
+            .open(&path)
+            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        if !try_flock(&file, libc::LOCK_EX) {
+            let mut record = String::new();
+            let _ = file.read_to_string(&mut record);
+            let pid = serde_json::from_str::<Value>(&record)
+                .ok()
+                .and_then(|r| r["pid"].as_u64());
+            return Err(format!(
+                "a gateway is already running for {}{}",
+                home.display(),
+                pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
+            ));
         }
+        let meta = file
+            .metadata()
+            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+        let identity = (meta.dev(), meta.ino());
+        // A stopping owner may have removed the file this opened: lock the one at the path.
+        if file_identity(&path).ok() != Some(identity) {
+            continue;
+        }
+        let record =
+            json!({"pid": std::process::id(), "kind": "hermes-gateway", "hermes_home": home});
+        file.set_len(0)
+            .and_then(|()| file.write_all(record.to_string().as_bytes()))
+            .and_then(|()| file.sync_all())
+            .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
+        return Ok((file, path, identity));
     }
     Err(format!(
-        "cannot claim {}: another gateway is starting",
+        "cannot claim {}: it was replaced while claiming",
         path.display()
     ))
+}
+
+/// Whether `home`'s control socket path fits a Unix socket address (see [`MAX_SOCKET_PATH`]).
+pub fn control_socket_fits(home: &Path) -> bool {
+    let home = std::fs::canonicalize(home).unwrap_or_else(|_| home.to_path_buf());
+    staging_socket(&home, "000000").as_os_str().len() <= MAX_SOCKET_PATH
+}
+
+/// Where the control socket is bound before it moves into place: the longest path this binds.
+fn staging_socket(home: &Path, tag: &str) -> PathBuf {
+    home.join(format!(".g{tag}")).join(SOCKET)
 }
 
 /// Binds the control socket in a fresh private folder, makes it 0600 and moves it into place, so
 /// it is never reachable with looser permissions, and a stale socket or link there is replaced.
 fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), String> {
     let target = home.join(SOCKET);
-    // Short: the staged path is the longest this binds.
-    let staging = home.join(format!(
-        ".g{}",
-        &uuid::Uuid::new_v4().simple().to_string()[..6]
-    ));
-    let staged = staging.join(SOCKET);
+    let staged = staging_socket(home, &uuid::Uuid::new_v4().simple().to_string()[..6]);
+    let staging = staged.parent().unwrap_or(home).to_path_buf();
     if staged.as_os_str().len() > MAX_SOCKET_PATH {
         return Err(format!(
             "the control socket path {} is longer than {MAX_SOCKET_PATH} bytes; use a shorter HERMES_HOME",
@@ -247,11 +255,13 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
 pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
+    let (lock, lock_path, lock_identity) = claim_lock(&home)?;
     let mut runtime = LocalRuntime {
         api_origin: String::new(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
-        files: vec![claim_lock(&home)?],
+        files: vec![(lock_path, lock_identity)],
         tasks: Vec::new(),
+        _lock: lock,
     };
     let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
         .await
@@ -504,6 +514,16 @@ pub fn ensure(home: &Path, timeout: Duration, mut command: Command) -> Verdict {
             return Verdict::refused("inaccessible", "invalid_home", Some(format!("{e}")));
         }
     };
+    if !control_socket_fits(&home) {
+        return Verdict::refused(
+            "inaccessible",
+            "control_path_too_long",
+            Some(format!(
+                "the control socket path under {} would be longer than {MAX_SOCKET_PATH} bytes; use a shorter HERMES_HOME",
+                home.display()
+            )),
+        );
+    }
     let mut started: Option<(std::process::Child, PathBuf, u64)> = None;
     let mut delay = Duration::from_millis(25);
     loop {
@@ -599,7 +619,7 @@ fn discover(home: &Path) -> Discovery {
     }
     let path = home.join(SOCKET);
     let waiting = || {
-        if lock_owner(home).is_some() {
+        if lock_held(home) {
             Discovery::Starting
         } else {
             Discovery::Absent
