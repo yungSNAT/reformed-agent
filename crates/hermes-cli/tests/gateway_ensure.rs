@@ -3,7 +3,7 @@
 //! upstream's verdict, exit codes and `gateway run` owner (hermes_cli/gateway_runtime_cli.py).
 #![cfg(unix)]
 
-use std::os::unix::fs::PermissionsExt;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::time::{Duration, Instant};
@@ -33,10 +33,15 @@ fn verdict(output: &Output) -> Value {
     serde_json::from_str(&stdout).unwrap_or_else(|e| panic!("{e}: {stdout:?}"))
 }
 
+/// The pid `gateway.lock` names; none while it is empty (between owners).
+fn lock_record_pid(home: &Path) -> Option<u32> {
+    let raw = std::fs::read(home.join("gateway.lock")).ok()?;
+    let lock: Value = serde_json::from_slice(&raw).ok()?;
+    u32::try_from(lock["pid"].as_u64()?).ok()
+}
+
 fn lock_pid(home: &Path) -> u32 {
-    let lock: Value =
-        serde_json::from_slice(&std::fs::read(home.join("gateway.lock")).unwrap()).unwrap();
-    lock["pid"].as_u64().unwrap() as u32
+    lock_record_pid(home).expect("gateway.lock names an owner")
 }
 
 fn alive(pid: u32) -> bool {
@@ -181,6 +186,43 @@ fn gateway_run_in_a_home_too_deep_for_a_socket_runs_without_local_mode() {
     assert!(!home.join("gateway.lock").exists());
 }
 
+/// `status` and `restart` must leave the lock inode a live owner holds: a new inode would let a
+/// second owner claim the home whilst the first still runs.
+#[test]
+fn status_and_restart_keep_the_owners_lock_and_one_owner() {
+    let (_dir, home) = private_root();
+    let _owner = Owner(home.clone());
+    let first = hermes(&home, &["gateway", "ensure", "--json"]);
+    let ready = verdict(&first);
+    assert_eq!(first.status.code(), Some(0), "{ready}");
+    let old = lock_pid(&home);
+    let inode = || std::fs::metadata(home.join("gateway.lock")).unwrap().ino();
+    let before = inode();
+
+    assert!(hermes(&home, &["gateway", "status"]).status.success());
+    assert_eq!(inode(), before, "status kept the lock");
+    assert!(alive(old));
+
+    let mut restart = Command::new(cargo_bin("hermes"))
+        .env("HERMES_HOME", &home)
+        .args(["gateway", "restart"])
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while lock_record_pid(&home) != Some(restart.id()) && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(100));
+    }
+    let owner = lock_record_pid(&home);
+    let _ = restart.kill();
+    let _ = restart.wait();
+    assert_eq!(owner, Some(restart.id()), "the restarted run owns the home");
+    assert_eq!(inode(), before, "restart kept the lock inode");
+    assert!(!alive(old), "the old owner is gone");
+}
+
 #[test]
 fn profile_selects_the_named_profile_home_or_the_root_for_default() {
     let (_dir, root) = private_root();
@@ -239,7 +281,7 @@ fn a_missing_or_invalid_profile_is_refused_before_anything_runs() {
 #[test]
 fn an_unusable_timeout_is_an_invalid_invocation() {
     let (_dir, home) = private_root();
-    for timeout in ["soon", "-1", "nan"] {
+    for timeout in ["soon", "-1", "nan", "1e20"] {
         let output = hermes(
             &home,
             &["gateway", "ensure", "--json", "--timeout", timeout],

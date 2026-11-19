@@ -149,16 +149,18 @@ fn looks_like_gateway_process_includes_gateway_script_pattern() {
 }
 
 #[test]
-fn cleanup_stale_gateway_metadata_removes_pid_and_lock_files() {
+fn cleanup_stale_gateway_metadata_removes_the_pid_file_and_keeps_the_lock() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let pid_path = tmp.path().join("gateway.pid");
-    let lock_path = gateway_lock_path_for_pid_path(&pid_path);
+    // The local runtime's flock on gateway.lock decides ownership; unlinking it would let a
+    // second owner lock a fresh inode whilst the first still runs.
+    let lock_path = tmp.path().join("gateway.lock");
     std::fs::write(&pid_path, "999999\n").expect("write pid");
     std::fs::write(&lock_path, "{\"pid\":999999}").expect("write lock");
 
     cleanup_stale_gateway_metadata(&pid_path);
     assert!(!pid_path.exists());
-    assert!(!lock_path.exists());
+    assert!(lock_path.exists());
 }
 
 #[test]

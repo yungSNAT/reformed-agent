@@ -26,10 +26,10 @@ fn private_home() -> (tempfile::TempDir, PathBuf) {
     (dir, home)
 }
 
-async fn start(home: &Path) -> LocalRuntime {
+fn start(home: &Path) -> LocalRuntime {
     // These tests make no turns, so the chat needs no model.
     let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
-    local::start(home, chat).await.expect("the runtime starts")
+    local::start(home, chat).expect("the runtime starts")
 }
 
 /// One request line to the control socket and its one reply line, as the desktop sends them. It
@@ -75,7 +75,7 @@ async fn refused_status(request: tungstenite::handshake::client::Request) -> u16
 #[tokio::test(flavor = "multi_thread")]
 async fn identify_names_a_ready_session_authority_runtime_for_this_home() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let reply = identify(&home);
     assert_eq!(reply["ok"], true, "{reply}");
     assert_eq!(reply["protocol"], 1);
@@ -104,7 +104,7 @@ async fn identify_names_a_ready_session_authority_runtime_for_this_home() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_runtime_publishes_its_owner_files_privately_and_removes_them_when_dropped() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let socket = std::fs::symlink_metadata(home.join("gateway.sock")).unwrap();
     assert_eq!(socket.mode() & 0o777, 0o600);
     let lock: Value =
@@ -134,9 +134,9 @@ async fn the_runtime_publishes_its_owner_files_privately_and_removes_them_when_d
 #[tokio::test(flavor = "multi_thread")]
 async fn a_second_runtime_for_the_same_home_is_refused() {
     let (_dir, home) = private_home();
-    let _runtime = start(&home).await;
+    let _runtime = start(&home);
     let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
-    let err = local::start(&home, chat).await.err().expect("refused");
+    let err = local::start(&home, chat).err().expect("refused");
     assert!(err.contains("already"), "{err}");
 }
 
@@ -161,10 +161,13 @@ fn hold_lock(home: &Path) -> std::fs::File {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_lock_and_socket_left_by_a_gone_owner_are_replaced_even_when_its_pid_lives() {
     let (_dir, home) = private_home();
-    let mut unrelated = Command::new("sleep").arg("30").spawn().unwrap();
+    let mut unrelated = tokio::process::Command::new("sleep")
+        .arg("30")
+        .spawn()
+        .unwrap();
     std::fs::write(
         home.join("gateway.lock"),
-        format!("{{\"pid\": {}}}", unrelated.id()),
+        format!("{{\"pid\": {}}}", unrelated.id().unwrap()),
     )
     .unwrap();
     let stale = std::os::unix::net::UnixListener::bind(home.join("gateway.sock")).unwrap();
@@ -172,10 +175,8 @@ async fn a_lock_and_socket_left_by_a_gone_owner_are_replaced_even_when_its_pid_l
     let started = local::start(
         &home,
         hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default()),
-    )
-    .await;
-    unrelated.kill().unwrap();
-    unrelated.wait().unwrap();
+    );
+    unrelated.kill().await.unwrap();
     let runtime = started.expect("the runtime starts");
     assert_eq!(
         identify(&home)["result"]["instance_id"],
@@ -191,7 +192,7 @@ async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
     let (_dir, home) = private_home();
     let held = hold_lock(&home);
     let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
-    let err = local::start(&home, chat).await.err().expect("refused");
+    let err = local::start(&home, chat).err().expect("refused");
     assert!(err.contains("already"), "{err}");
     drop(held);
     drop(start_when_free(&home).await);
@@ -203,7 +204,7 @@ async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
 async fn start_when_free(home: &Path) -> LocalRuntime {
     for _ in 0..100 {
         let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
-        match local::start(home, chat).await {
+        match local::start(home, chat) {
             Ok(runtime) => return runtime,
             Err(err) if err.contains("already") => {
                 tokio::time::sleep(Duration::from_millis(20)).await
@@ -212,6 +213,23 @@ async fn start_when_free(home: &Path) -> LocalRuntime {
         }
     }
     panic!("the lock stayed held for 2 seconds");
+}
+
+/// A planted link must not let the run truncate and overwrite another file (upstream opens the
+/// lock with O_NOFOLLOW and accepts only a regular, single-link file this user owns).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_lock_path_that_is_a_link_is_refused_and_its_target_left_alone() {
+    let (_dir, home) = private_home();
+    let target = home.join("precious");
+    std::fs::write(&target, "keep").unwrap();
+    let lock = home.join("gateway.lock");
+    std::os::unix::fs::symlink(&target, &lock).unwrap();
+    let chat = || hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
+    assert!(local::start(&home, chat()).is_err(), "symlink accepted");
+    std::fs::remove_file(&lock).unwrap();
+    std::fs::hard_link(&target, &lock).unwrap();
+    assert!(local::start(&home, chat()).is_err(), "hard link accepted");
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
 }
 
 #[test]
@@ -234,7 +252,7 @@ fn a_home_too_deep_for_a_socket_path_is_named_and_not_started() {
 #[tokio::test(flavor = "multi_thread")]
 async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     std::fs::set_permissions(&home, std::fs::Permissions::from_mode(0o775)).unwrap();
     assert_eq!(identify(&home)["ok"], true);
     let reply = control(
@@ -260,7 +278,7 @@ async fn a_home_other_users_can_write_mints_no_tickets_and_ensure_refuses_it() {
 #[tokio::test(flavor = "multi_thread")]
 async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let origin = runtime.api_origin().to_string();
     let reply = control(
         &home,
@@ -327,7 +345,7 @@ async fn an_interactive_ticket_opens_the_socket_once_and_without_an_origin_only(
 #[tokio::test(flavor = "multi_thread")]
 async fn rest_needs_a_one_use_native_http_ticket_and_no_origin() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let url = format!("{}/api/sessions/none/messages", runtime.api_origin());
     let client = reqwest::Client::new();
     let get = |ticket: Option<&str>, origin: Option<&str>| {
@@ -359,7 +377,7 @@ async fn rest_needs_a_one_use_native_http_ticket_and_no_origin() {
 #[tokio::test(flavor = "multi_thread")]
 async fn session_ticket_refuses_anything_but_upstreams_exact_request() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let instance = runtime.instance_id().to_string();
     let home_text = home.to_str().unwrap().to_string();
     let good = ticket_request(&home, &instance, "interactive");
@@ -460,7 +478,7 @@ fn never_spawned() -> Command {
 #[tokio::test(flavor = "multi_thread")]
 async fn ensure_reports_a_running_owner_in_upstreams_verdict_shape() {
     let (_dir, home) = private_home();
-    let runtime = start(&home).await;
+    let runtime = start(&home);
     let probe = home.clone();
     let (verdict, text, code) = tokio::task::spawn_blocking(move || {
         ensure(&probe, Duration::from_secs(5), never_spawned())
