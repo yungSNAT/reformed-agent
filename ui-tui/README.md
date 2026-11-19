@@ -12,7 +12,9 @@ Unless `HERMES_TUI_GATEWAY_URL` names a gateway to attach to, `GatewayClient` st
 hermes-desktop-gateway --host 127.0.0.1 --port 0
 ```
 
-It looks for the binary in `HERMES_TUI_GATEWAY_BIN`, then in `target/release` and `target/debug` of the checkout the TUI runs from, then in the absolute `PATH` entries, and starts it by its full path, never from the working folder or a relative `PATH` entry. It gives the gateway a new random token in `HERMES_DASHBOARD_SESSION_TOKEN`, reads the port from the gateway's `HERMES_BACKEND_READY port=<n>` line and connects to `ws://127.0.0.1:<n>/api/ws` with that token. Quitting the TUI stops the gateway.
+It looks for the binary in `HERMES_TUI_GATEWAY_BIN` (an absolute path), then in `target/release` and `target/debug` of the checkout the TUI runs from, then in the absolute `PATH` entries, and starts it by its full path, never from the working folder or a relative `PATH` entry. It gives the gateway a new random token in `HERMES_DASHBOARD_SESSION_TOKEN`, reads the port from the gateway's `HERMES_BACKEND_READY port=<n>` line and connects to `ws://127.0.0.1:<n>/api/ws` with that token. Quitting the TUI stops the gateway.
+
+With `NODE_USE_ENV_PROXY=1` and a proxy set, add `127.0.0.1` to `NO_PROXY`: otherwise the connection, token included, goes to the proxy.
 
 The transport is JSON-RPC over that WebSocket:
 

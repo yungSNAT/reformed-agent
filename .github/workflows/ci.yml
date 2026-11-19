@@ -205,4 +205,4 @@ jobs:
         run: |
           npm ci --ignore-scripts
           npm run build --prefix packages/hermes-ink
-          npx vitest run src/__tests__/gatewayClient.test.ts
+          npm test -- src/__tests__/gatewayClient.test.ts

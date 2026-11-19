@@ -39,25 +39,33 @@ const GATEWAY_TOKEN_ENV = 'HERMES_DASHBOARD_SESSION_TOKEN'
 const GATEWAY_READY_RE = /^HERMES_BACKEND_READY port=(\d+)$/
 const GATEWAY_BIN = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' : 'hermes-desktop-gateway'
 
-const GATEWAY_BUILD_HINT = 'build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN'
+const GATEWAY_BUILD_HINT =
+  'build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN, then restart the TUI'
 
-// An absolute path, so spawn never searches the working folder (as Windows does for a bare
+// On Windows `\tools` passes isAbsolute but names a folder on the current drive.
+const isRootedPath = (p: string) =>
+  process.platform === 'win32' ? /^([a-z]:[\\/]|[\\/]{2})/i.test(p) : isAbsolute(p)
+
+// Only a rooted path, so spawn never searches the working folder (as Windows does for a bare
 // name) or a relative PATH entry: HERMES_TUI_GATEWAY_BIN, then a build in the checkout this
-// client runs from (root), then the absolute PATH entries. Null when none has it.
-const resolveGatewayBinary = (root: string) => {
+// client runs from (root, never the working folder), then the rooted PATH entries.
+const resolveGatewayBinary = (root: string): { bin: string } | { problem: string } => {
   const configured = process.env.HERMES_TUI_GATEWAY_BIN?.trim()
 
   if (configured) {
-    return resolve(configured)
+    return isRootedPath(configured)
+      ? { bin: configured }
+      : { problem: `HERMES_TUI_GATEWAY_BIN must be an absolute path, not ${configured}` }
   }
 
-  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(dir => isAbsolute(dir))
+  const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(isRootedPath)
+  const bin = [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
+    .map(dir => join(dir, GATEWAY_BIN))
+    .find(p => existsSync(p))
 
-  return (
-    [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
-      .map(dir => join(dir, GATEWAY_BIN))
-      .find(p => existsSync(p)) ?? null
-  )
+  return bin
+    ? { bin }
+    : { problem: `${GATEWAY_BIN} not found in ${resolve(root, 'target')} or on PATH (${GATEWAY_BUILD_HINT})` }
 }
 
 const asGatewayEvent = (value: unknown): GatewayEvent | null =>
@@ -239,6 +247,12 @@ export class GatewayClient extends EventEmitter {
         type: 'gateway.start_timeout',
         payload: { command, cwd, stderr_tail: stderrTail }
       })
+
+      // A spawned gateway that never announced its port is stopped; its exit then rejects
+      // the requests waiting for it.
+      if (this.proc && !this.ws) {
+        this.proc.kill()
+      }
     }, STARTUP_TIMEOUT_MS)
   }
 
@@ -324,21 +338,22 @@ export class GatewayClient extends EventEmitter {
   // Starts the Rust gateway on a free loopback port and attaches to it with a token made here,
   // which reaches the child through its environment, never its arguments.
   private startSpawnedGateway(root: string) {
-    const bin = resolveGatewayBinary(root)
+    const found = resolveGatewayBinary(root)
 
-    if (!bin) {
-      const line = `[spawn] ${GATEWAY_BIN} not found in ${resolve(root, 'target')} or on PATH (${GATEWAY_BUILD_HINT})`
-      const missing = Promise.reject(new Error(`${GATEWAY_BIN} not found`))
+    if ('problem' in found) {
+      const line = `[spawn] ${found.problem}`
+      const missing = Promise.reject(new Error(found.problem))
 
       missing.catch(() => {})
       this.wsConnectPromise = missing
       this.pushLog(line)
       this.publish({ type: 'gateway.stderr', payload: { line } })
-      this.handleTransportExit(1, `${GATEWAY_BIN} not found`)
+      this.handleTransportExit(1, found.problem)
 
       return
     }
 
+    const { bin } = found
     const cwd = process.env.HERMES_CWD || root
     const token = randomBytes(32).toString('hex')
     const env = { ...process.env, [GATEWAY_TOKEN_ENV]: token }
@@ -502,6 +517,13 @@ export class GatewayClient extends EventEmitter {
 
         this.ws = null
         this.wsConnectPromise = null
+
+        // A gateway this client spawned is stopped with its socket; dropping the reference
+        // first makes its later exit event a stale one, so the exit is reported once.
+        const proc = this.proc
+
+        this.proc = null
+        proc?.kill()
         this.handleTransportExit(ev.code, `gateway websocket closed${ev.code ? ` (${ev.code})` : ''}`)
       })
       ws.addEventListener('error', () => {

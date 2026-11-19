@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { delimiter, join, resolve } from 'node:path'
+import { delimiter, join } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -413,6 +413,7 @@ class FakeChild extends EventEmitter {
 }
 
 describe('GatewayClient spawned Rust gateway', () => {
+  const configuredBin = join(tmpdir(), 'hermes', 'hermes-desktop-gateway')
   const originalWebSocket = globalThis.WebSocket
   const saved = new Map<string, string | undefined>()
   let child: FakeChild
@@ -443,7 +444,7 @@ describe('GatewayClient spawned Rust gateway', () => {
       }
     }
 
-    process.env.HERMES_TUI_GATEWAY_BIN = '/opt/hermes/hermes-desktop-gateway'
+    process.env.HERMES_TUI_GATEWAY_BIN = configuredBin
     child = new FakeChild()
     vi.mocked(spawn).mockImplementationOnce((() => child) as unknown as typeof spawn)
     FakeWebSocket.reset()
@@ -499,6 +500,27 @@ describe('GatewayClient spawned Rust gateway', () => {
     expect(exits).toEqual([1])
   })
 
+  it('refuses a relative HERMES_TUI_GATEWAY_BIN instead of resolving it in the working folder', () => {
+    process.env.HERMES_TUI_GATEWAY_BIN = binName
+
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => {
+      if (ev.type === 'gateway.stderr' && typeof ev.payload?.line === 'string') {
+        lines.push(ev.payload.line)
+      }
+    })
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(lines.join('\n')).toContain('HERMES_TUI_GATEWAY_BIN must be an absolute path')
+    expect(exits).toEqual([1])
+  })
+
   it('runs the gateway from an absolute PATH entry by its full path', () => {
     const bin = tempDir('hermes-tui-bin-')
 
@@ -529,7 +551,7 @@ describe('GatewayClient spawned Rust gateway', () => {
       { env: Record<string, string> }
     ]
 
-    expect(command).toBe(resolve('/opt/hermes/hermes-desktop-gateway'))
+    expect(command).toBe(configuredBin)
     expect(args).toEqual(['--host', '127.0.0.1', '--port', '0'])
 
     const token = options.env.HERMES_DASHBOARD_SESSION_TOKEN ?? ''
@@ -594,7 +616,7 @@ describe('GatewayClient spawned Rust gateway', () => {
 
     const req = gw.request('setup.runtime_check')
 
-    child.emit('error', Object.assign(new Error('spawn /opt/hermes/hermes-desktop-gateway ENOENT'), { code: 'ENOENT' }))
+    child.emit('error', Object.assign(new Error(`spawn ${configuredBin} ENOENT`), { code: 'ENOENT' }))
 
     await expect(req).rejects.toThrow(/ENOENT/)
     expect(lines.join('\n')).toContain('cargo build --release -p hermes-desktop-gateway')
@@ -619,6 +641,71 @@ describe('GatewayClient spawned Rust gateway', () => {
     socket.close(1006)
 
     expect(exits).toEqual([0])
+  })
+
+  it('stops the gateway and reports one exit when the socket closes before the gateway exits', async () => {
+    const gw = new GatewayClient()
+    const exits: Array<null | number> = []
+
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+    child.stdout.write('HERMES_BACKEND_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const socket = FakeWebSocket.instances[0]!
+
+    socket.open()
+    socket.close(1011)
+    expect(child.kill).toHaveBeenCalled()
+    child.exitCode = 0
+    child.emit('exit', 0)
+
+    expect(exits).toEqual([1011])
+  })
+
+  it('rejects a waiting request and stops the gateway when the socket fails to connect', async () => {
+    const gw = new GatewayClient()
+
+    gw.start()
+    gw.drain()
+
+    const req = gw.request('setup.runtime_check')
+
+    child.stdout.write('HERMES_BACKEND_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    FakeWebSocket.instances[0]!.close(1006)
+
+    await expect(req).rejects.toThrow(/closed \(1006\) during connect/)
+    expect(child.kill).toHaveBeenCalled()
+  })
+
+  it('stops a gateway that never announces its port, so waiting requests reject', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const gw = new GatewayClient()
+      const events: string[] = []
+
+      gw.on('event', ev => events.push(ev.type))
+      gw.start()
+      gw.drain()
+
+      const req = gw.request('setup.runtime_check')
+      const outcome = req.then(
+        () => 'resolved',
+        (err: Error) => err.message
+      )
+
+      vi.advanceTimersByTime(15_001)
+      expect(events).toContain('gateway.start_timeout')
+      expect(child.kill).toHaveBeenCalled()
+      child.exitCode = null
+      child.emit('exit', null)
+      await expect(outcome).resolves.toMatch(/gateway exited/)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
