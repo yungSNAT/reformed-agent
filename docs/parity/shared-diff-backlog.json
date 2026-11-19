@@ -16931,7 +16931,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui/src",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "77fcd55d7633e7cb366d0754ae7ec7a0cccf05b8",
+      "local_blob": "fe36af29a8074cce9a1c0f2353694d62a126820c",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/src/__tests__/gatewayClient.test.ts",
@@ -18266,7 +18266,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui/src",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "fe0077beb2612a33678492f910b7fdb9683d7581",
+      "local_blob": "1c076bee9b6ab382484e8793ec752bbc0f9224f7",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/src/gatewayClient.ts",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-19T09:59:08.773791+00:00",
+  "generated_at_utc": "2026-11-19T11:02:03.459342+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "a5d05f9921a61bab64654fa7d795b48094e92fa0",
+    "local_sha": "206a544047fcb06ffe1a933e58cd894a464817da",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
