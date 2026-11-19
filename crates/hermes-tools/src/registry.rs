@@ -712,6 +712,8 @@ impl Default for ToolRegistry {
 /// command, request or message the arguments describe could carry it out.
 fn secret_argument_refusal(params: &Value) -> Option<String> {
     let source = hermes_core::secret_values::find_in_json(params)?;
+    // A variable's name can hold its own value.
+    let source = hermes_core::secret_values::mask(&source);
     Some(ToolRegistry::tool_error(&format!(
         "Refused: the arguments contain the value of {source}, a loaded secret. \
          A tool call may not carry a secret value; the tool that needs the \

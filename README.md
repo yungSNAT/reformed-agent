@@ -494,6 +494,7 @@ OpenHuman runbooks and matrices:
 - Policy-controlled tool execution modes: `off`, `audit`, `simulate`, `enforce`
 - Tool policy presets: `strict`, `balanced`, `dev`, `relaxed`
 - Sensitive field redaction in traces/log surfaces
+- Loaded secret values are matched exactly, whatever their shape. A loaded secret is the value of an environment variable whose name names a credential (`*_API_KEY`, `*_TOKEN`, `*_SECRET`, `*PASSWORD`, `*_PASS`, `*_AUTH`, `Authorization` and similar; not `*_PATH`, `*_FILE`, `*_URL` or `*_ID`), whether it came from the profile's `.env`, a vault or the shell, or a credential-named value in `config.yaml`. Values under 8 characters, short words, paths, `${VAR}` references and documented placeholders such as `not-needed` or `lm-studio` do not count. Tool output and redacted text show `***` in place of the value, so a file read through a tool shows `***` and writing it back whole would store `***`. A tool call whose arguments contain the value is refused, naming the variable or config key but not the value. There is no allow-list: to use such a value in a tool call on purpose, rename or unset the variable, or move the value out of the credential-named key. Encoded or split copies are not matched, and tokens held only in the auth stores are covered by shape redaction alone.
 - Guardrails for path traversal, unsafe file ops, and runtime boundary violations
 
 Operator runtime overrides (env):

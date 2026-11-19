@@ -9,7 +9,13 @@
 //!
 //! shortcut: only the exact text is matched. A copy that was encoded (base64,
 //! percent-encoding of reserved characters) or split across arguments is not
-//! found; catching those needs a decoder per encoding.
+//! found; catching those needs a decoder per encoding. Tokens held only in the
+//! auth stores (the token store, credential pool and OAuth files) are not
+//! known here; pattern redaction alone covers them.
+//!
+//! Other credential-name rules serve other purposes: the import filter in
+//! `hermes-cli` (`agent_import.rs`), the gateway's agent cache key and the
+//! redactor's key sets in `hermes-intelligence`.
 
 use std::borrow::Cow;
 use std::sync::{LazyLock, PoisonError, RwLock};
@@ -24,6 +30,16 @@ const MIN_SECRET_CHARS: usize = 8;
 /// `required` or `disabled` under a credential-named key is a setting.
 const MIN_LETTERS_ONLY_CHARS: usize = 16;
 
+/// Keys that local OpenAI-compatible servers document as throwaway values,
+/// compared without case. They appear in ordinary paths and commands.
+const PLACEHOLDER_VALUES: &[&str] = &[
+    "not-needed",
+    "lm-studio",
+    "no-key-required",
+    "sk-no-key-required",
+    "dummy-key",
+];
+
 /// What masked text shows in place of a secret value.
 pub const MASK: &str = "***";
 
@@ -32,13 +48,16 @@ pub const MASK: &str = "***";
 static REGISTERED: LazyLock<RwLock<Vec<(String, String)>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
-/// Whether a variable or field name names a credential: one of its words is
-/// `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIAL`, `CREDENTIALS` or `PAT` (a
-/// personal access token), or ends
-/// with `KEY`, `TOKEN` or `SECRET` (`APIKEY` too), and its last word is not
-/// `PATH`, `FILE`, `DIR`, `ENV`, `URL` or `ID`, which name where a secret is
-/// kept or which one it is, not the secret. Words are split on anything but
-/// ASCII letters and digits; case is ignored.
+/// Whether a variable or field name names a credential. Words are split on
+/// anything but ASCII letters and digits; case is ignored. A name counts when
+/// a word ends with `KEY`, `TOKEN`, `SECRET` or `PASSWORD` (`APIKEY`,
+/// `PGPASSWORD`), or is `PASSWD`, `PASSPHRASE`, `CREDENTIAL`, `CREDENTIALS` or
+/// `PAT` (a personal access token), or the last word is `PASS`, `AUTH`,
+/// `AUTHORIZATION`, `COOKIE` or, after another word, `PWD`. It does not count
+/// when the last word is `PATH`, `FILE`, `DIR`, `ENV`, `URL`, `ID` or
+/// `ENDPOINT`, which name where a secret is kept or which one it is, or for
+/// names that hold identifiers: Git's indexed `GIT_CONFIG_KEY_<n>` option
+/// names and `HERMES_SESSION_KEY`, the gateway session.
 pub fn is_secret_name(name: &str) -> bool {
     let words: Vec<String> = name
         .split(|c: char| !c.is_ascii_alphanumeric())
@@ -48,24 +67,34 @@ pub fn is_secret_name(name: &str) -> bool {
     let Some(last) = words.last() else {
         return false;
     };
-    if matches!(
-        last.as_str(),
-        "PATH" | "FILE" | "DIR" | "ENV" | "URL" | "ID"
-    ) {
+    let joined = words.join("_");
+    let names_an_identifier = joined == "HERMES_SESSION_KEY"
+        || joined
+            .strip_prefix("GIT_CONFIG_KEY_")
+            .is_some_and(|index| index.bytes().all(|b| b.is_ascii_digit()));
+    if names_an_identifier
+        || matches!(
+            last.as_str(),
+            "PATH" | "FILE" | "DIR" | "ENV" | "URL" | "ID" | "ENDPOINT"
+        )
+    {
         return false;
     }
-    words.iter().any(|word| {
-        matches!(
-            word.as_str(),
-            "PASSWORD" | "PASSWD" | "PASSPHRASE" | "CREDENTIAL" | "CREDENTIALS" | "PAT"
-        ) || ["KEY", "TOKEN", "SECRET"]
-            .iter()
-            .any(|suffix| word.ends_with(suffix))
-    })
+    matches!(last.as_str(), "PASS" | "AUTH" | "AUTHORIZATION" | "COOKIE")
+        || (last == "PWD" && words.len() > 1)
+        || words.iter().any(|word| {
+            matches!(
+                word.as_str(),
+                "PASSWD" | "PASSPHRASE" | "CREDENTIAL" | "CREDENTIALS" | "PAT"
+            ) || ["KEY", "TOKEN", "SECRET", "PASSWORD"]
+                .iter()
+                .any(|suffix| word.ends_with(suffix))
+        })
 }
 
 /// Whether a value under a credential name is worth matching: long enough,
-/// not only a short word, and not a path or a `${VAR}` reference.
+/// not only a short word, not a documented placeholder, and not a path or a
+/// `${VAR}` reference.
 fn is_secret_value(value: &str) -> bool {
     let chars = value.chars().count();
     let letters_only = value.chars().all(|c| c.is_ascii_alphabetic());
@@ -81,23 +110,39 @@ fn is_secret_value(value: &str) -> bool {
         && (!letters_only || chars >= MIN_LETTERS_ONLY_CHARS)
         && !is_path
         && !value.starts_with("${")
+        && !PLACEHOLDER_VALUES
+            .iter()
+            .any(|placeholder| value.eq_ignore_ascii_case(placeholder))
+}
+
+/// Adds `value` to `known` as reported by `label`, with the credential of a
+/// `Bearer` or `Basic` value without its scheme too, since a model would send
+/// the token alone. Values too short or plain to be secrets, and values
+/// already known, are skipped.
+fn add_value(known: &mut Vec<(String, String)>, label: &str, value: &str) {
+    let value = value.trim();
+    let bare = ["Bearer ", "Basic "].iter().find_map(|scheme| {
+        value
+            .get(..scheme.len())
+            .filter(|head| head.eq_ignore_ascii_case(scheme))
+            .map(|_| value[scheme.len()..].trim())
+    });
+    for form in std::iter::once(value).chain(bare) {
+        if is_secret_value(form) && !known.iter().any(|(_, seen)| seen == form) {
+            known.push((label.to_string(), form.to_string()));
+        }
+    }
 }
 
 /// Records `value` as a secret reported as `label`, unless it is too short or
 /// plain to be one.
 pub fn register(label: &str, value: &str) {
-    let value = value.trim();
-    if !is_secret_value(value) {
-        return;
-    }
     let mut registered = REGISTERED.write().unwrap_or_else(PoisonError::into_inner);
-    if !registered.iter().any(|(_, known)| known == value) {
-        registered.push((label.to_string(), value.to_string()));
-    }
+    add_value(&mut registered, label, value);
 }
 
-/// Registers every string held under a credential-named key anywhere in
-/// `value`, each labelled with its dotted path from `prefix`.
+/// Registers every string or number held under a credential-named key
+/// anywhere in `value`, each labelled with its dotted path from `prefix`.
 pub fn register_json(prefix: &str, value: &Value) {
     match value {
         Value::Object(map) => {
@@ -105,6 +150,9 @@ pub fn register_json(prefix: &str, value: &Value) {
                 let label = format!("{prefix}.{key}");
                 match item {
                     Value::String(text) if is_secret_name(key) => register(&label, text),
+                    Value::Number(number) if is_secret_name(key) => {
+                        register(&label, &number.to_string())
+                    }
                     _ => register_json(&label, item),
                 }
             }
@@ -121,12 +169,14 @@ pub fn register_json(prefix: &str, value: &Value) {
 /// The secrets known now, longest value first, so a value holding another is
 /// masked whole.
 fn known() -> Vec<(String, String)> {
-    let mut known: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(name, value)| Some((name.into_string().ok()?, value.into_string().ok()?)))
-        .filter(|(name, _)| is_secret_name(name))
-        .map(|(name, value)| (name, value.trim().to_string()))
-        .filter(|(_, value)| is_secret_value(value))
-        .collect();
+    let mut known = Vec::new();
+    for (name, value) in std::env::vars_os() {
+        if let (Ok(name), Ok(value)) = (name.into_string(), value.into_string()) {
+            if is_secret_name(&name) {
+                add_value(&mut known, &name, &value);
+            }
+        }
+    }
     known.extend(
         REGISTERED
             .read()
@@ -151,11 +201,13 @@ fn find_with(known: &[(String, String)], text: &str) -> Option<String> {
         .map(|(label, _)| label.clone())
 }
 
-/// The label of a secret value that any string or key in `value` contains.
+/// The label of a secret value that any string, number or key in `value`
+/// contains.
 pub fn find_in_json(value: &Value) -> Option<String> {
     fn walk(known: &[(String, String)], value: &Value) -> Option<String> {
         match value {
             Value::String(text) => find_with(known, text),
+            Value::Number(number) => find_with(known, &number.to_string()),
             Value::Array(items) => items.iter().find_map(|item| walk(known, item)),
             Value::Object(map) => map
                 .iter()
