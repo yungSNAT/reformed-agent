@@ -43,21 +43,11 @@ pub(super) async fn wait_unreaped(pid: u32) -> bool {
     // listener the check is repeated every 100 ms.
     let mut exits = signal(SignalKind::child()).ok();
     loop {
-        // SAFETY: an all-zero siginfo_t is a valid value.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
-        // SAFETY: waitid writes only into `info`, and WNOWAIT leaves the
-        // child unreaped.
-        let rc = unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) };
-        if rc != 0 {
-            if io::Error::last_os_error().kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return false;
-        }
-        // SAFETY: waitid filled `info` (or left it zeroed under WNOHANG).
-        if unsafe { info.si_pid() } != 0 {
-            return true;
+        match has_exited_unreaped(pid) {
+            Ok(true) => return true,
+            Ok(false) => {}
+            Err(err) if err.kind() == io::ErrorKind::Interrupted => continue,
+            Err(_) => return false,
         }
         if let Some(listener) = exits.as_mut() {
             if listener.recv().await.is_none() {
@@ -67,6 +57,23 @@ pub(super) async fn wait_unreaped(pid: u32) -> bool {
             tokio::time::sleep(std::time::Duration::from_millis(100)).await;
         }
     }
+}
+
+/// Whether the child `pid` has exited, checked without waiting or reaping.
+/// A function of its own because `siginfo_t` is not `Send` on macOS, so it
+/// must not live across an await.
+#[cfg(unix)]
+fn has_exited_unreaped(pid: u32) -> io::Result<bool> {
+    // SAFETY: an all-zero siginfo_t is a valid value.
+    let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+    let flags = libc::WEXITED | libc::WNOHANG | libc::WNOWAIT;
+    // SAFETY: waitid writes only into `info`, and WNOWAIT leaves the child
+    // unreaped.
+    if unsafe { libc::waitid(libc::P_PID, pid as libc::id_t, &mut info, flags) } != 0 {
+        return Err(io::Error::last_os_error());
+    }
+    // SAFETY: waitid filled `info`, or left it zeroed under WNOHANG.
+    Ok(unsafe { info.si_pid() } != 0)
 }
 
 /// Spawns `cmd` as the root of a new process tree. The child starts
