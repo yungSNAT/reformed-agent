@@ -20,7 +20,8 @@
     "guard_test": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
     "coverage_kind": "rust_test_suite_contract_or_documented_divergence",
     "rust_only_runtime": true,
-    "deferred_paths": 44
+    "deferred_paths": 44,
+    "not_rechecked_paths": 133
   },
   "entries": [
     {
@@ -114,7 +115,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_auxiliary_client_anthropic_custom.py",
@@ -192,7 +194,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_context_references.py",
@@ -255,7 +258,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_credential_pool_routing.py",
@@ -287,7 +291,8 @@
       ],
       "status": "covered_by_rust_test_suite_contracts",
       "coverage_kind": "rust_contract_or_documented_divergence",
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime."
+      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_crossloop_client_cache.py",
@@ -350,7 +355,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_curator.py",
@@ -413,7 +419,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_curator_activity.py",
@@ -491,7 +498,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_curator_classification.py",
@@ -554,7 +562,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_curator_reports.py",
@@ -617,7 +626,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_direct_provider_url_detection.py",
@@ -711,7 +721,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_external_skills_dirs_cache.py",
@@ -775,7 +786,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_gemini_free_tier_gate.py",
@@ -838,7 +850,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_gemini_native_adapter.py",
@@ -901,7 +914,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_gemini_schema.py",
@@ -956,7 +970,8 @@
           "file": "crates/hermes-agent/src/provider/tests/profile_sanitization.rs",
           "name": "native_gemini_tool_schemas_keep_to_the_gemini_subset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_i18n.py",
@@ -1019,7 +1034,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_image_gen_registry.py",
@@ -1097,7 +1113,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_kimi_coding_anthropic_thinking.py",
@@ -1175,7 +1192,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_memory_provider.py",
@@ -1239,7 +1257,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_memory_session_switch.py",
@@ -1303,7 +1322,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_memory_user_id.py",
@@ -1367,7 +1387,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_minimax_auxiliary_url.py",
@@ -1445,7 +1466,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_model_metadata_local_ctx.py",
@@ -1509,7 +1531,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_nous_rate_guard.py",
@@ -1587,7 +1610,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_openrouter_response_cache.py",
@@ -1680,7 +1704,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_shell_hooks_consent.py",
@@ -1743,7 +1768,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_skill_commands_reload.py",
@@ -1806,7 +1832,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_subagent_stop_hook.py",
@@ -1844,7 +1871,8 @@
           "file": "crates/hermes-tools/src/tts_streaming/sanitizer.rs",
           "name": "think_stripper_handles_split_opening_tag"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/test_unsupported_parameter_retry.py",
@@ -1867,7 +1895,8 @@
           "file": "crates/hermes-intelligence/src/auxiliary/client.rs",
           "name": "unsupported_temperature_retries_same_provider_without_temperature"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/transports/test_chat_completions.py",
@@ -1930,7 +1959,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/transports/test_codex_transport.py",
@@ -1993,7 +2023,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/transports/test_transport.py",
@@ -2056,7 +2087,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/agent/transports/test_types.py",
@@ -2119,7 +2151,8 @@
           "file": "crates/hermes-agent/src/provider.rs",
           "name": "test_openrouter_parse_response_with_reasoning"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/conftest.py",
@@ -2182,7 +2215,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/e2e/conftest.py",
@@ -2245,7 +2279,8 @@
           "file": "crates/hermes-gateway/src/gateway.rs",
           "name": "gateway_runtime_state_is_injected_into_agent_messages"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/e2e/test_platform_commands.py",
@@ -2323,7 +2358,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/image_gen/test_openai_codex_provider.py",
@@ -2388,7 +2424,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/image_gen/test_openai_provider.py",
@@ -2453,7 +2490,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/image_gen/test_xai_provider.py",
@@ -2518,7 +2556,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_achievements_plugin.py",
@@ -2582,7 +2621,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_disk_cleanup_plugin.py",
@@ -2646,7 +2686,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_google_meet_audio.py",
@@ -2710,7 +2751,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_google_meet_node.py",
@@ -2774,7 +2816,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_google_meet_plugin.py",
@@ -2838,7 +2881,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_google_meet_realtime.py",
@@ -2902,7 +2946,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_kanban_dashboard_plugin.py",
@@ -2967,7 +3012,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_retaindb_plugin.py",
@@ -3031,7 +3077,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/plugins/test_teams_pipeline_plugin.py",
@@ -3096,7 +3143,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/run_interrupt_test.py",
@@ -3190,7 +3238,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/skills/test_google_workspace_credential_files.py",
@@ -3255,7 +3304,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/skills/test_memento_cards.py",
@@ -3319,7 +3369,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/skills/test_telephony_skill.py",
@@ -3384,7 +3435,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/skills/test_youtube_quiz.py",
@@ -3448,7 +3500,8 @@
           "file": "crates/hermes-tools/src/tools/skill_utils.rs",
           "name": "test_discover_skills_recurses_categories_and_skips_hidden_dependency_dirs"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_batch_runner_checkpoint.py",
@@ -3511,7 +3564,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_get_tool_definitions_cache_isolation.py",
@@ -3574,7 +3628,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_hermes_bootstrap.py",
@@ -3637,7 +3692,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_hermes_constants.py",
@@ -3700,7 +3756,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_hermes_home_profile_warning.py",
@@ -3778,7 +3835,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_ipv4_preference.py",
@@ -3841,7 +3899,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_model_tools_async_bridge.py",
@@ -3905,7 +3964,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_packaging_metadata.py",
@@ -3969,7 +4029,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_project_metadata.py",
@@ -4032,7 +4093,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_trajectory_compressor.py",
@@ -4095,7 +4157,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/test_trajectory_compressor_async.py",
@@ -4158,7 +4221,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_new_session_persists_startup_stub_snapshot"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_accretion_caps.py",
@@ -4221,7 +4285,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_ansi_strip.py",
@@ -4252,7 +4317,8 @@
           "file": "crates/hermes-tools/src/tools/terminal.rs",
           "name": "format_command_output_strips_terminal_escapes"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_browser_cdp_override.py",
@@ -4315,7 +4381,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_browser_cdp_tool.py",
@@ -4351,7 +4418,8 @@
           "file": "crates/hermes-tools/src/backends/browser.rs",
           "name": "browser_cdp_timeout_path_surfaces_endpoint_and_hints"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_browser_cleanup.py",
@@ -4417,7 +4485,8 @@
           "file": "crates/hermes-tools/src/backends/browser.rs",
           "name": "browser_cloud_fallback_response_preserves_local_success_with_metadata"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_browser_lightpanda.py",
@@ -4495,7 +4564,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_browser_supervisor_healthcheck.py",
@@ -4573,7 +4643,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_checkpoint_manager.py",
@@ -4636,7 +4707,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_clipboard.py",
@@ -4699,7 +4771,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_code_execution_modes.py",
@@ -4763,7 +4836,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_code_execution_windows_env.py",
@@ -4827,7 +4901,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_computer_use.py",
@@ -4890,7 +4965,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_credential_pool_env_fallback.py",
@@ -4953,7 +5029,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_daytona_environment.py",
@@ -5016,7 +5093,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_debug_helpers.py",
@@ -5094,7 +5172,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_delegate_composite_toolsets.py",
@@ -5157,7 +5236,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_delegate_subagent_timeout_diagnostic.py",
@@ -5220,7 +5300,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_delegate_toolset_scope.py",
@@ -5283,7 +5364,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_discord_tool.py",
@@ -5346,7 +5428,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_docker_environment.py",
@@ -5410,7 +5493,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_docker_find.py",
@@ -5489,7 +5573,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_file_staleness.py",
@@ -5508,7 +5593,8 @@
           "file": "crates/hermes-tools/src/tools/file.rs",
           "name": "internal_read_status_write_guard_is_status_dominated_only"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_file_state_registry.py",
@@ -5547,7 +5633,8 @@
           "file": "crates/hermes-environments/src/file_sync.rs",
           "name": "atomic_write_text_replaces_existing_file_and_cleans_temp"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_file_sync_back.py",
@@ -5611,7 +5698,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_file_tools_live.py",
@@ -5675,7 +5763,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_image_generation.py",
@@ -5738,7 +5827,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_image_generation_env.py",
@@ -5802,7 +5892,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_image_generation_plugin_dispatch.py",
@@ -5821,7 +5912,8 @@
           "file": "crates/hermes-tools/src/backends/image_gen/fal_managed_tests.rs",
           "name": "selected_image_provider_reads_env_and_config"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_init_session_cwd_respect.py",
@@ -5899,7 +5991,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_kanban_tools.py",
@@ -5963,7 +6056,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_local_env_cwd_recovery.py",
@@ -5986,7 +6080,8 @@
           "file": "crates/hermes-tools/src/tools/terminal.rs",
           "name": "test_terminal_handler_execute"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_managed_modal_environment.py",
@@ -6050,7 +6145,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_managed_tool_gateway.py",
@@ -6114,7 +6210,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_cancelled_error_propagation.py",
@@ -6178,7 +6275,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_circuit_breaker.py",
@@ -6241,7 +6339,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_dynamic_discovery.py",
@@ -6274,7 +6373,8 @@
       ],
       "status": "covered_by_rust_test_suite_contracts",
       "coverage_kind": "rust_contract_or_documented_divergence",
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime."
+      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_empty_error_message.py",
@@ -6338,7 +6438,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_image_content.py",
@@ -6403,7 +6504,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_oauth.py",
@@ -6467,7 +6569,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_oauth_bidirectional.py",
@@ -6576,7 +6679,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_reconnect_signal.py",
@@ -6670,7 +6774,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_structured_content.py",
@@ -6734,7 +6839,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_tool.py",
@@ -6798,7 +6904,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_tool_401_handling.py",
@@ -6877,7 +6984,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_tool_session_expired.py",
@@ -6941,7 +7049,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_utility_capability_gating.py",
@@ -7005,7 +7114,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_memory_tool_schema.py",
@@ -7068,7 +7178,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_microsoft_graph_auth.py",
@@ -7162,7 +7273,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_modal_sandbox_fixes.py",
@@ -7226,7 +7338,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_modal_snapshot_isolation.py",
@@ -7304,7 +7417,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_osv_check.py",
@@ -7367,7 +7481,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_parse_env_var.py",
@@ -7445,7 +7560,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_read_loop_detection.py",
@@ -7508,7 +7624,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_shared_container_task_id.py",
@@ -7571,7 +7688,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_slash_confirm.py",
@@ -7650,7 +7768,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_ssh_environment.py",
@@ -7728,7 +7847,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_terminal_exit_semantics.py",
@@ -7821,7 +7941,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_terminal_timeout_output.py",
@@ -7899,7 +8020,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_terminal_tool_pty_fallback.py",
@@ -7992,7 +8114,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_tool_backend_helpers.py",
@@ -8055,7 +8178,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_tts_gemini.py",
@@ -8118,7 +8242,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_tts_mistral.py",
@@ -8141,7 +8266,8 @@
           "file": "crates/hermes-tools/src/backends/tts.rs",
           "name": "tts_provider_resolution_treats_null_and_missing_as_default"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_vercel_sandbox_environment.py",
@@ -8219,7 +8345,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_windows_native_support.py",
@@ -8282,7 +8409,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_zombie_process_cleanup.py",
@@ -8345,7 +8473,8 @@
           "file": "crates/hermes-tools/tests/upstream_core_tool_contracts.rs",
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tui_gateway/test_entry_sys_path.py",
@@ -8410,7 +8539,8 @@
           "file": "crates/hermes-gateway/tests/contract_primary_platforms.rs",
           "name": "contract_reconnect_watcher_restarts_offline_primary_adapter"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tui_gateway/test_goal_command.py",
@@ -8475,7 +8605,8 @@
           "file": "crates/hermes-gateway/tests/contract_primary_platforms.rs",
           "name": "contract_reconnect_watcher_restarts_offline_primary_adapter"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tui_gateway/test_make_agent_provider.py",
@@ -8538,7 +8669,8 @@
           "file": "crates/hermes-gateway/tests/contract_primary_platforms.rs",
           "name": "contract_reconnect_watcher_restarts_offline_primary_adapter"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tui_gateway/test_protocol.py",
@@ -8603,7 +8735,8 @@
           "file": "crates/hermes-gateway/tests/contract_primary_platforms.rs",
           "name": "contract_reconnect_watcher_restarts_offline_primary_adapter"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tui_gateway/test_review_summary_callback.py",
@@ -8668,7 +8801,8 @@
           "file": "crates/hermes-gateway/tests/contract_primary_platforms.rs",
           "name": "contract_reconnect_watcher_restarts_offline_primary_adapter"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/website/test_generate_skill_docs.py",

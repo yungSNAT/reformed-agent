@@ -311,7 +311,7 @@ def render_markdown(payload: dict[str, Any]) -> str:
             "",
             "## Deferred",
             "",
-            "Not reviewed against upstream yet; each row is counted and has a review date.",
+            "Not yet shown to match in Rust; each row is counted and has a review date.",
             "",
             "| Path | Review date | Ledger | Reason |",
             "| --- | --- | --- | --- |",

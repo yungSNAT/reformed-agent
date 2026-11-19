@@ -9,7 +9,8 @@
     "guard_test": "crates/hermes-source-parity-tests/tests/ui_tui_source_coverage_contract.rs",
     "rust_primary_tui": "crates/hermes-cli/src/tui.rs",
     "rust_only_runtime": true,
-    "deferred_paths": 59
+    "deferred_paths": 59,
+    "not_rechecked_paths": 96
   },
   "entries": [
     {
@@ -62,7 +63,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/eslint.config.mjs",
@@ -167,7 +169,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/index.d.ts",
@@ -228,7 +231,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/package.json",
@@ -290,7 +294,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/entry-exports.ts",
@@ -351,7 +356,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/colorize.test.ts",
@@ -405,7 +411,8 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/packages"
+      "classification_path": "ui-tui/packages",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/colorize.ts",
@@ -581,7 +588,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/Link.tsx",
@@ -705,7 +713,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/Text.test.ts",
@@ -735,7 +744,8 @@
           "name": "test_default_mouse_enabled_respects_env_override"
         }
       ],
-      "classification_path": "ui-tui/packages"
+      "classification_path": "ui-tui/packages",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/components/Text.tsx",
@@ -895,7 +905,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/hit-test.ts",
@@ -1033,7 +1044,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/log-update.test.ts",
@@ -1094,7 +1106,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/log-update.ts",
@@ -1155,7 +1168,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/output.ts",
@@ -1232,7 +1246,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/parse-keypress.ts",
@@ -1294,7 +1309,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/reconciler.ts",
@@ -1385,7 +1401,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/root.ts",
@@ -1630,7 +1647,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/osc.ts",
@@ -1692,7 +1710,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/parser.ts",
@@ -1768,7 +1787,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/packages/hermes-ink/src/ink/termio/types.ts",
@@ -1922,7 +1942,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_placeholder_shows_when_empty"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/clipboard.test.ts",
@@ -1958,7 +1979,8 @@
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "promoted_paste_command_uses_test_clipboard_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/createGatewayEventHandler.test.ts",
@@ -2010,7 +2032,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/createSlashHandler.test.ts",
@@ -2070,7 +2093,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/details.test.ts",
@@ -2273,7 +2297,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/markdown.test.ts",
@@ -2329,7 +2354,8 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/mathUnicode.test.ts",
@@ -2359,7 +2385,8 @@
           "name": "test_default_mouse_enabled_respects_env_override"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/messages.test.ts",
@@ -2418,7 +2445,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/platform.test.ts",
@@ -2448,7 +2476,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/reasoning.test.ts",
@@ -2567,7 +2596,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/streamingMarkdown.test.ts",
@@ -2644,7 +2674,8 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/terminalModes.test.ts",
@@ -2673,7 +2704,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/terminalParity.test.ts",
@@ -2707,7 +2739,8 @@
           "file": "crates/hermes-cli/src/tui/tests.rs",
           "name": "test_insert_newline_at_cursor_updates_input_and_cursor"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/text.test.ts",
@@ -2734,7 +2767,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/textInputLineNav.test.ts",
@@ -2809,7 +2843,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/textInputRightClick.test.ts",
@@ -2884,7 +2919,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/theme.test.ts",
@@ -2938,7 +2974,8 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/turnStore.test.ts",
@@ -3043,7 +3080,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/useInputHandlers.test.ts",
@@ -3103,7 +3141,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/useQueue.test.ts",
@@ -3170,7 +3209,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/useVirtualHistoryHeights.test.ts",
@@ -3239,7 +3279,8 @@
           "name": "test_transcript_wrap_width_caps_at_80"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/virtualHeights.test.ts",
@@ -3291,7 +3332,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/virtualHistoryOffsetCache.test.ts",
@@ -3343,7 +3385,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/__tests__/wheelAccel.test.ts",
@@ -3410,7 +3453,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/createSlashHandler.ts",
@@ -3470,7 +3514,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/delegationStore.ts",
@@ -3527,7 +3572,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/overlayStore.ts",
@@ -3587,7 +3633,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/scroll.ts",
@@ -3677,7 +3724,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/slash/commands/debug.ts",
@@ -3752,7 +3800,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/slash/commands/session.ts",
@@ -3812,7 +3861,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/slash/commands/setup.ts",
@@ -3888,7 +3938,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/slash/types.ts",
@@ -3963,7 +4014,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/turnController.ts",
@@ -4007,7 +4059,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_stream_chunk_has_progress_for_extra_only_events"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/uiStore.ts",
@@ -4067,7 +4120,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useComposerState.ts",
@@ -4127,7 +4181,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useConfigSync.ts",
@@ -4187,7 +4242,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useInputHandlers.ts",
@@ -4247,7 +4303,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useMainApp.ts",
@@ -4307,7 +4364,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useSessionLifecycle.ts",
@@ -4359,7 +4417,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/app/useSubmission.ts",
@@ -4388,7 +4447,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/banner.ts",
@@ -4500,7 +4560,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appChrome.tsx",
@@ -4560,7 +4621,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appLayout.tsx",
@@ -4620,7 +4682,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/appOverlays.tsx",
@@ -4680,7 +4743,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/branding.tsx",
@@ -4732,7 +4796,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/helpHint.tsx",
@@ -4784,7 +4849,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/markdown.tsx",
@@ -4840,7 +4906,8 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/maskedPrompt.tsx",
@@ -4911,7 +4978,8 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/modelPicker.tsx",
@@ -4971,7 +5039,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/prompts.tsx",
@@ -5031,7 +5100,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/queuedMessages.tsx",
@@ -5090,7 +5160,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/streamingMarkdown.tsx",
@@ -5146,7 +5217,8 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/textInput.tsx",
@@ -5206,7 +5278,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/thinking.tsx",
@@ -5267,7 +5340,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/components/todoPanel.tsx",
@@ -5334,7 +5408,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/config/limits.ts",
@@ -5386,7 +5461,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_activity_ring_buffer_caps_size"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/config/timing.ts",
@@ -5424,7 +5500,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_stream_lane_budget_throughput_profile_expands"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/content/faces.ts",
@@ -5514,7 +5591,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/content/placeholders.ts",
@@ -5603,7 +5681,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/domain/usage.ts",
@@ -5670,7 +5749,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_status_message_style_critical_for_error"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/gatewayClient.ts",
@@ -5722,7 +5802,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/hooks/useCompletion.ts",
@@ -5784,7 +5865,8 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/hooks/useInputHistory.ts",
@@ -5866,7 +5948,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/clipboard.ts",
@@ -5902,7 +5985,8 @@
           "file": "crates/hermes-cli/src/commands.rs",
           "name": "promoted_paste_command_uses_test_clipboard_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/editor.test.ts",
@@ -6016,7 +6100,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/forceTruecolor.ts",
@@ -6166,7 +6251,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/liveProgress.test.ts",
@@ -6328,7 +6414,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/platform.ts",
@@ -6358,7 +6445,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/reasoning.ts",
@@ -6454,7 +6542,8 @@
           "file": "crates/hermes-acp/src/handler.rs",
           "name": "test_prompt_slash_command"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/subagentTree.ts",
@@ -6516,7 +6605,8 @@
           "name": "app_reset_session_invokes_session_lifecycle_hooks"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/syntax.ts",
@@ -6561,7 +6651,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/terminalParity.ts",
@@ -6620,7 +6711,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/text.ts",
@@ -6676,7 +6768,8 @@
           "file": "crates/hermes-gateway/src/markdown_split.rs",
           "name": "test_split_markdown_long_code_block_keeps_balanced_fences"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/lib/todo.test.ts",
@@ -6773,7 +6866,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_transcript_wrap_width_caps_at_80"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/theme.ts",
@@ -6827,7 +6921,8 @@
           "name": "test_activity_ring_buffer_caps_size"
         }
       ],
-      "classification_path": "ui-tui/src"
+      "classification_path": "ui-tui/src",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/types.ts",
@@ -6854,7 +6949,8 @@
           "file": "crates/hermes-cli/src/app.rs",
           "name": "test_default_mouse_enabled_respects_env_override"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/src/types/hermes-ink.d.ts",
@@ -6914,7 +7010,8 @@
           "file": "crates/hermes-cli/src/tui.rs",
           "name": "test_jump_to_oldest_sets_unbounded_offset"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "ui-tui/tsconfig.build.json",

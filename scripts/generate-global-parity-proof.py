@@ -260,6 +260,12 @@ def main() -> int:
         help="Shared-different classification JSON file",
     )
     parser.add_argument(
+        "--shared-diff-backlog",
+        default="docs/parity/shared-diff-backlog.json",
+        type=Path,
+        help="Shared-diff backlog JSON file",
+    )
+    parser.add_argument(
         "--divergence-validation",
         default="docs/parity/divergence-validation.json",
         type=Path,
@@ -318,6 +324,7 @@ def main() -> int:
     intents = load_json((repo_root / args.intent_mapping).resolve())
     adapters = load_json((repo_root / args.adapter_matrix).resolve())
     shared_diff = load_json((repo_root / args.shared_diff_classification).resolve())
+    shared_backlog = load_json((repo_root / args.shared_diff_backlog).resolve())
     divergence = load_json((repo_root / args.divergence_validation).resolve())
     patch_queue = load_json((repo_root / args.patch_queue).resolve())
     test_coverage = load_json((repo_root / args.test_coverage_audit).resolve())
@@ -341,6 +348,14 @@ def main() -> int:
     ws_states = ws.get("states", {})
     shared_diff_items = {str(i.get("path", "")) for i in shared_diff.get("items", [])}
     parity_shared = {str(i.get("path", "")) for i in parity.get("top_shared_different", [])}
+
+    # Deferred rows past their review date: shared-diff classification items and manifest entries.
+    today = dt.datetime.now(dt.timezone.utc).date().isoformat()
+    deferred_rows = [i for i in shared_diff["items"] if i["classification"] == "deferred"]
+    for manifest in test_coverage["coverage_manifests"]:
+        entries = load_json((repo_root / manifest["path"]).resolve())["entries"]
+        deferred_rows += [e for e in entries if e["status"] == "deferred_not_covered"]
+    deferred_overdue = sum(1 for row in deferred_rows if row["review_date"] < today)
 
     gpar_completion = {
         "GPAR-01": float(intent_summary.get("mapping_ratio", 0.0)) >= 0.9,
@@ -379,6 +394,13 @@ def main() -> int:
             - test_coverage_summary["covered_behavior_rows"]
             - test_coverage_summary["coverage_manifest_deferred_entries"]
         ),
+        # Rows not shown matching: deferred shared-diff rows, covered manifest rows whose
+        # upstream file changed after they were judged, and deferred rows past review.
+        "max_shared_diff_deferred_rows": float(shared_backlog["summary"]["deferred_review"]),
+        "max_test_coverage_not_rechecked_rows": float(
+            test_coverage_summary["coverage_manifest_not_rechecked_entries"]
+        ),
+        "max_deferred_review_overdue": float(deferred_overdue),
         "max_test_coverage_missing_rust_refs": float(
             test_coverage_summary.get("missing_rust_test_refs", 0)
         ),

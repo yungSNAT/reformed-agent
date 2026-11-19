@@ -185,6 +185,7 @@ def validate_manifest_refs(
 ) -> dict[str, Any]:
     missing_test_arrays: list[str] = []
     deferred: list[str] = []
+    not_rechecked: list[str] = []
     missing_refs: list[dict[str, str]] = []
     status_counts: Counter[str] = Counter()
     referenced_tests: set[tuple[str, str]] = set()
@@ -195,6 +196,9 @@ def validate_manifest_refs(
         path = str(entry.get("path", "unknown"))
         status_counts[str(entry.get("status", "unknown"))] += 1
         rust_tests = entry.get("rust_tests")
+        # Covered when judged, but upstream changed the file afterwards and the row was not rechecked.
+        if entry.get("not_rechecked_at_pin"):
+            not_rechecked.append(path)
         if entry.get("status") == "deferred_not_covered" and rust_tests == []:
             deferred.append(path)
             continue
@@ -219,6 +223,7 @@ def validate_manifest_refs(
         "valid_entries_with_rust_tests": valid_entries,
         "missing_rust_tests_entries": missing_test_arrays,
         "deferred_entries": deferred,
+        "not_rechecked_entries": not_rechecked,
         "missing_rust_test_refs": missing_refs,
         "referenced_rust_tests": len(referenced_tests),
         "status_counts": dict(sorted(status_counts.items())),
@@ -264,6 +269,7 @@ def render_md(payload: dict[str, Any]) -> str:
         "coverage_manifest_entries",
         "coverage_manifest_entries_with_valid_rust_tests",
         "coverage_manifest_deferred_entries",
+        "coverage_manifest_not_rechecked_entries",
         "missing_rust_test_refs",
         "queue_pending",
         "queue_total",
@@ -276,14 +282,15 @@ def render_md(payload: dict[str, Any]) -> str:
     lines.append("")
     lines.append(
         "| Manifest | Entries | Valid Rust-test entries | Deferred, not covered "
-        "| Referenced Rust tests | Missing refs |"
+        "| Not rechecked at the pin | Referenced Rust tests | Missing refs |"
     )
-    lines.append("| --- | ---: | ---: | ---: | ---: | ---: |")
+    lines.append("| --- | ---: | ---: | ---: | ---: | ---: | ---: |")
     for manifest in payload["coverage_manifests"]:
         lines.append(
             f"| `{manifest['path']}` | {manifest['entries']} | "
             f"{manifest['valid_entries_with_rust_tests']} | "
             f"{len(manifest['deferred_entries'])} | "
+            f"{len(manifest['not_rechecked_entries'])} | "
             f"{manifest['referenced_rust_tests']} | "
             f"{len(manifest['missing_rust_test_refs'])} |"
         )
@@ -444,6 +451,14 @@ def main() -> int:
                     count=len(manifest["deferred_entries"]),
                 )
             )
+        if manifest["not_rechecked_entries"]:
+            advisory_gaps.append(
+                advisory(
+                    "coverage_manifest_not_rechecked",
+                    f"{manifest['path']} has covered rows not rechecked since upstream changed their files",
+                    count=len(manifest["not_rechecked_entries"]),
+                )
+            )
         if manifest["missing_rust_test_refs"]:
             critical_gaps.append(
                 critical_gap(
@@ -498,6 +513,7 @@ def main() -> int:
     manifest_entries_valid = sum(int(row["valid_entries_with_rust_tests"]) for row in manifest_rows)
     missing_refs = sum(len(row["missing_rust_test_refs"]) for row in manifest_rows)
     manifest_deferred = sum(len(row["deferred_entries"]) for row in manifest_rows)
+    manifest_not_rechecked = sum(len(row["not_rechecked_entries"]) for row in manifest_rows)
     tracked_rows = len(intent_rows) + manifest_entries
     covered_rows = sum(1 for row in intent_rows if row["mapped"]) + manifest_entries_valid
     coverage_ratio = covered_rows / tracked_rows if tracked_rows else 0.0
@@ -511,6 +527,7 @@ def main() -> int:
         "coverage_manifest_entries": manifest_entries,
         "coverage_manifest_entries_with_valid_rust_tests": manifest_entries_valid,
         "coverage_manifest_deferred_entries": manifest_deferred,
+        "coverage_manifest_not_rechecked_entries": manifest_not_rechecked,
         "missing_rust_test_refs": missing_refs,
         "queue_pending": queue_pending,
         "queue_total": int(queue_summary.get("total_commits", 0) or 0),

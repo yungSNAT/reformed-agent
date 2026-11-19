@@ -26,7 +26,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_ai_gateway_models.py",
@@ -85,7 +86,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -129,7 +131,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_anthropic_provider_persistence.py",
@@ -194,7 +197,8 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -221,7 +225,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_at_context_completion_filter.py",
@@ -280,7 +285,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -319,7 +325,8 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -363,7 +370,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -407,7 +415,8 @@
           "name": "cli_parse_profile"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -451,7 +460,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -495,7 +505,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_auth_toctou_file_modes.py",
@@ -545,7 +556,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -588,7 +600,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -619,7 +632,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -647,7 +661,8 @@
           "name": "e2e_replay_suite_provider_auth_gateway_and_deterministic_manifest"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -678,7 +693,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_chat_skills_flag.py",
@@ -728,7 +744,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -759,7 +776,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -790,7 +808,8 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -833,7 +852,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -876,7 +896,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -903,7 +924,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -938,7 +960,8 @@
           "name": "test_tui_state_completions_update"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -973,7 +996,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_config_env_refs.py",
@@ -1023,7 +1047,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_container_aware_cli.py",
@@ -1073,7 +1098,8 @@
           "name": "api_jobs_endpoint_crud_filters_and_actions"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1100,7 +1126,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_curator_recent_run_notice.py",
@@ -1203,7 +1230,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1242,7 +1270,8 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1273,7 +1302,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1300,7 +1330,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_destructive_slash_confirm_gate.py",
@@ -1338,7 +1369,8 @@
           "file": "crates/hermes-agent/src/smart_model_routing.rs",
           "name": "detect_api_mode_rejects_host_suffix_and_path_false_positives"
         }
-      ]
+      ],
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_determine_api_mode_hostname.py",
@@ -1414,7 +1446,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1458,7 +1491,8 @@
           "name": "capture_debug_log_snapshot_preserves_boundary_line"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_doctor_dedicated_provider_skip.py",
@@ -1515,7 +1549,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1554,7 +1589,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1585,7 +1621,8 @@
           "name": "gateway_reload_mcp_and_status_reflect_runtime_state"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1616,7 +1653,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1655,7 +1693,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1694,7 +1733,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_gemini_free_tier_setup_block.py",
@@ -1736,7 +1776,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1775,7 +1816,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1802,7 +1844,8 @@
           "name": "apply_env_overrides_respects_ignore_rules_flags"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1829,7 +1872,8 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1864,7 +1908,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1899,7 +1944,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1934,7 +1980,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -1969,7 +2016,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2004,7 +2052,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2039,7 +2088,8 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2058,7 +2108,8 @@
           "name": "kanban_claim_completion_archive_is_idempotent_under_reclaim_like_replay"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_kanban_specify_db.py",
@@ -2104,7 +2155,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2135,7 +2187,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2170,7 +2223,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2205,7 +2259,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2249,7 +2304,8 @@
           "name": "browser_tool_surface_exposes_current_commands_without_legacy_close"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_model_picker_viewport.py",
@@ -2307,7 +2363,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2330,7 +2387,8 @@
           "name": "model_meets_requirements_checks_tools_vision_reasoning_and_context"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2373,7 +2431,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_model_switch_opencode_anthropic.py",
@@ -2446,7 +2505,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2485,7 +2545,8 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_nous_hermes_non_agentic.py",
@@ -2539,7 +2600,8 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2583,7 +2645,8 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2626,7 +2689,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_openai_codex_model_validation_fallback.py",
@@ -2699,7 +2763,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_opencode_go_validation_fallback.py",
@@ -2757,7 +2822,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2788,7 +2854,8 @@
           "name": "local_skill_markdown_resolves_by_name_and_relative_path"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_pin_kanban_board_env.py",
@@ -2834,7 +2901,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2865,7 +2933,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2896,7 +2965,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -2927,7 +2997,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_post_setup_gating.py",
@@ -2977,7 +3048,8 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3021,7 +3093,8 @@
           "name": "cli_parse_profile"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3056,7 +3129,8 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3095,7 +3169,8 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3139,7 +3214,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3174,7 +3250,8 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3217,7 +3294,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_redact_config_bridge.py",
@@ -3293,7 +3371,8 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3320,7 +3399,8 @@
           "name": "cli_sessions_confirmation_treats_eof_or_empty_input_as_cancelled"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3355,7 +3435,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_setup_agent_settings.py",
@@ -3405,7 +3486,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3440,7 +3522,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3484,7 +3567,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3519,7 +3603,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3554,7 +3639,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3598,7 +3684,8 @@
           "name": "setup_provider_defaults_are_unique_and_include_nous"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3642,7 +3729,8 @@
           "name": "local_backend_exposes_terminal_and_terminal_backed_file_tools"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3673,7 +3761,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3717,7 +3806,8 @@
           "name": "local_backend_exposes_terminal_and_terminal_backed_file_tools"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3748,7 +3838,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3779,7 +3870,8 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3806,7 +3898,8 @@
           "name": "slack_mention_patterns_env_fallback_splits_mixed_csv_and_newlines"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_startup_plugin_gating.py",
@@ -3852,7 +3945,8 @@
           "name": "gateway_status_updates_use_platform_status_api"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3896,7 +3990,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_teams_pipeline_plugin_cli.py",
@@ -3946,7 +4041,8 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -3981,7 +4077,8 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4016,7 +4113,8 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4060,7 +4158,8 @@
           "name": "browser_tool_surface_exposes_current_commands_without_legacy_close"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4083,7 +4182,8 @@
           "name": "tools_config_disabled_removes_even_if_platform_enables"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4118,7 +4218,8 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4149,7 +4250,8 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4180,7 +4282,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4212,7 +4315,8 @@
           "name": "test_build_agent_config_maps_named_custom_runtime_provider"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4243,7 +4347,8 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4287,7 +4392,8 @@
           "name": "cli_parse_doctor_with_flags"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4330,7 +4436,8 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/hermes_cli/test_voice_wrapper.py",
@@ -4384,7 +4491,8 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4423,7 +4531,8 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4462,7 +4571,8 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4501,7 +4611,8 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts"
+      "status": "covered_by_rust_contracts",
+      "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     }
   ],
   "generated_at_utc": "2026-06-02T22:34:52.298760+00:00",
@@ -4512,6 +4623,7 @@
     "guard_test": "crates/hermes-source-parity-tests/tests/hermes_cli_test_coverage_contract.rs",
     "provider_api_mode_bridge_added": true,
     "required_backlog_classification_path": "tests/hermes_cli",
-    "deferred_paths": 36
+    "deferred_paths": 36,
+    "not_rechecked_paths": 111
   }
 }

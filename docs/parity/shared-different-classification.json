@@ -1213,7 +1213,7 @@
       "owner": "yungSNAT",
       "path": "plugins/platforms/teams/plugin.yaml",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs) and none of the others. Deferred until ported.",
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs, crates/hermes-tools/src/teams_pipeline/graph_backend.rs), and neither TEAMS_HOST nor TEAMS_REQUIRE_MENTION. Deferred until ported.",
       "ledger": "R2338",
       "review_date": "2027-02-18"
     },
@@ -2013,7 +2013,7 @@
       "owner": "yungSNAT",
       "path": "tests/cron/test_rewrite_skill_refs.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 cases in its test purges (6b81590c, aedc6ccc) and gave one remaining job a prompt, because a job with a blank prompt and no skills is now refused at creation (350fb975). Rust already refuses a blank prompt without a script (crates/hermes-cron/src/job.rs CronJob::validate, test_validate_empty_prompt)."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream removed 5 cases in its test purges (6b81590c, aedc6ccc) and gave one remaining job a prompt, because a job with a blank prompt and no skills is now refused at creation (350fb975). Rust already refuses a blank prompt without a script, and is stricter: it refuses one even when skills are set (crates/hermes-cron/src/job.rs CronJob::validate, test_validate_empty_prompt)."
     },
     {
       "classification": "intentional_divergence",
@@ -4344,7 +4344,7 @@
       "owner": "yungSNAT",
       "path": "tests/skills/test_google_workspace_setup_permissions.py",
       "ticket": 3524,
-      "rationale": "Upstream's v0.23.2 test, taken in PR #162 with its platform marker replaced by a POSIX skipif, because this tree's suite has no conftest that defines the marker. CI runs it against the skill's Python scripts (ci.yml, 'Google Workspace credential files')."
+      "rationale": "Upstream's v0.23.2 test, taken in PR #162 with its platform marker replaced by a POSIX skipif, because this tree's suite has no conftest that defines the marker. CI runs it against the skill's Python scripts (ci.yml, 'Google Workspace credentials are written owner-only')."
     },
     {
       "classification": "intentional_divergence",
