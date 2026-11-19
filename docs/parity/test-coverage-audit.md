@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-19T00:57:45.904561+00:00`
+Generated: `2026-11-19T01:21:45.308518+00:00`
 
 ## Gate
 
@@ -57,11 +57,11 @@ Generated: `2026-11-19T00:57:45.904561+00:00`
 ## Advisory Gaps
 
 - `coverage_manifest_deferred`: docs/parity/python-test-suite-coverage.json has rows deferred without Rust test coverage
-- `coverage_manifest_not_rechecked`: docs/parity/python-test-suite-coverage.json has covered rows not rechecked since upstream changed their files
+- `coverage_manifest_not_rechecked`: docs/parity/python-test-suite-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered
 - `coverage_manifest_deferred`: docs/parity/hermes-cli-test-coverage.json has rows deferred without Rust test coverage
-- `coverage_manifest_not_rechecked`: docs/parity/hermes-cli-test-coverage.json has covered rows not rechecked since upstream changed their files
+- `coverage_manifest_not_rechecked`: docs/parity/hermes-cli-test-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered
 - `coverage_manifest_deferred`: docs/parity/ui-tui-source-coverage.json has rows deferred without Rust test coverage
-- `coverage_manifest_not_rechecked`: docs/parity/ui-tui-source-coverage.json has covered rows not rechecked since upstream changed their files
+- `coverage_manifest_not_rechecked`: docs/parity/ui-tui-source-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered
 - `nonzero_tree_drift`: max_commits_behind remains nonzero in parity matrix
 - `nonzero_tree_drift`: max_upstream_patch_missing remains nonzero in parity matrix
 - `nonzero_tree_drift`: max_files_only_upstream remains nonzero in parity matrix

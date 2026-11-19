@@ -8,7 +8,7 @@
     {
       "count": 131,
       "kind": "coverage_manifest_not_rechecked",
-      "message": "docs/parity/python-test-suite-coverage.json has covered rows not rechecked since upstream changed their files"
+      "message": "docs/parity/python-test-suite-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered"
     },
     {
       "count": 37,
@@ -18,7 +18,7 @@
     {
       "count": 110,
       "kind": "coverage_manifest_not_rechecked",
-      "message": "docs/parity/hermes-cli-test-coverage.json has covered rows not rechecked since upstream changed their files"
+      "message": "docs/parity/hermes-cli-test-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered"
     },
     {
       "count": 59,
@@ -28,7 +28,7 @@
     {
       "count": 96,
       "kind": "coverage_manifest_not_rechecked",
-      "message": "docs/parity/ui-tui-source-coverage.json has covered rows not rechecked since upstream changed their files"
+      "message": "docs/parity/ui-tui-source-coverage.json has rows whose upstream file changed after their Rust tests were cited, so they do not count as covered"
     },
     {
       "kind": "nonzero_tree_drift",
@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T00:57:45.904561+00:00",
+  "generated_at_utc": "2026-11-19T01:21:45.308518+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
