@@ -1253,6 +1253,59 @@ async fn test_kill_process_keeps_the_shell_unreaped_until_it_has_signalled() {
     assert!(exists, "the shell was reaped before the group was killed");
 }
 
+/// A group whose only member is the exited, still unreaped shell can be
+/// signalled, as `kill_process` does after the shell ends on SIGTERM.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_group_left_with_only_its_unreaped_shell_can_be_signalled() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let terminated = tree.terminate();
+    let killed = tree.kill();
+    child.wait().await.unwrap();
+
+    assert!(terminated.is_ok(), "terminate: {terminated:?}");
+    assert!(killed.is_ok(), "kill: {killed:?}");
+}
+
+/// macOS answers EPERM both for a group of zombies and for one whose live
+/// members refused the signal; only the first counts as signalled.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn test_a_live_member_is_not_taken_for_a_zombie() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("sleep 30 & exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let with_live_member = process_tree::group_has_exited(pid as libc::pid_t);
+    tree.kill().unwrap();
+    let mut after_kill = false;
+    for _ in 0..50 {
+        after_kill = process_tree::group_has_exited(pid as libc::pid_t);
+        if after_kill {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    child.wait().await.unwrap();
+
+    assert!(
+        !with_live_member,
+        "a live member was taken for one that has ended"
+    );
+    assert!(after_kill, "the group was not seen as ended");
+}
+
 #[tokio::test]
 async fn test_finished_command_leaves_its_background_child_running() {
     let dir = tempdir().unwrap();
