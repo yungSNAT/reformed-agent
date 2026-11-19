@@ -507,3 +507,117 @@ fn test_deferred_rows_are_explained_and_match_the_ratchet() {
         );
     }
 }
+
+/// Covered manifest rows whose upstream file changed after the row was judged, so the
+/// coverage they cite was not rechecked at the pin. Each carries `not_rechecked_at_pin`;
+/// a recheck removes the field and lowers its number here.
+const NOT_RECHECKED_MANIFEST_ROWS: [(&str, u64); 3] = [
+    ("python-test-suite-coverage.json", 133),
+    ("hermes-cli-test-coverage.json", 111),
+    ("ui-tui-source-coverage.json", 96),
+];
+
+#[test]
+fn test_rows_not_rechecked_at_the_pin_are_counted_and_match_the_ratchet() {
+    let pin = std::fs::read_to_string(repo_root().join("docs/parity/upstream-reference.txt"))
+        .expect("upstream-reference.txt");
+    for (name, allowed) in NOT_RECHECKED_MANIFEST_ROWS {
+        let manifest = read_json(&format!("docs/parity/{name}"));
+        let rows: Vec<&Value> = manifest["entries"]
+            .as_array()
+            .expect("entries should be array")
+            .iter()
+            .filter(|entry| !entry["not_rechecked_at_pin"].is_null())
+            .collect();
+        for row in &rows {
+            let path = row["path"].as_str().unwrap_or("<no path>");
+            assert_eq!(
+                row["not_rechecked_at_pin"].as_str(),
+                Some(pin.trim()),
+                "{name}: {path} must name the current pin"
+            );
+            assert_ne!(
+                row["status"].as_str(),
+                Some("deferred_not_covered"),
+                "{name}: {path} is deferred, so it has no coverage to recheck"
+            );
+        }
+        assert_eq!(
+            manifest["summary"]["not_rechecked_paths"].as_u64(),
+            Some(rows.len() as u64),
+            "{name}: summary not_rechecked_paths must count the rows"
+        );
+        assert_eq!(
+            rows.len() as u64,
+            allowed,
+            "{name}: rows not rechecked must equal NOT_RECHECKED_MANIFEST_ROWS"
+        );
+    }
+}
+
+/// Rows not shown matching hold the release gate: deferred shared-diff rows, manifest rows
+/// not rechecked at the pin, and deferred rows past their review date. The last also fails
+/// the CI profile, which the daily Parity Audit checks.
+#[test]
+fn test_release_gate_holds_rows_not_shown_matching() {
+    let thresholds = read_json("docs/parity/global-parity-thresholds.json");
+    let proof = read_json("docs/parity/global-parity-proof.json");
+    let backlog = read_json("docs/parity/shared-diff-backlog.json");
+    let audit = read_json("docs/parity/test-coverage-audit.json");
+    let today = &proof["generated_at_utc"]
+        .as_str()
+        .expect("generated_at_utc")[..10];
+    let mut overdue = read_json("docs/parity/shared-different-classification.json")["items"]
+        .as_array()
+        .expect("items")
+        .iter()
+        .filter(|item| item["classification"].as_str() == Some("deferred"))
+        .filter(|item| item["review_date"].as_str().expect("review_date") < today)
+        .count();
+    for manifest in audit["coverage_manifests"]
+        .as_array()
+        .expect("coverage_manifests")
+    {
+        let manifest = read_json(manifest["path"].as_str().expect("manifest path"));
+        overdue += manifest["entries"]
+            .as_array()
+            .expect("entries")
+            .iter()
+            .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+            .filter(|entry| entry["review_date"].as_str().expect("review_date") < today)
+            .count();
+    }
+    let expected = [
+        (
+            "max_shared_diff_deferred_rows",
+            backlog["summary"]["deferred_review"]
+                .as_f64()
+                .expect("deferred_review"),
+        ),
+        (
+            "max_test_coverage_not_rechecked_rows",
+            audit["summary"]["coverage_manifest_not_rechecked_entries"]
+                .as_f64()
+                .expect("coverage_manifest_not_rechecked_entries"),
+        ),
+        ("max_deferred_review_overdue", overdue as f64),
+    ];
+    let checks = proof["release_gate"]["checks"].as_array().expect("checks");
+    for (metric, actual) in expected {
+        assert_eq!(
+            thresholds["release_thresholds"]["metric_thresholds"][metric].as_f64(),
+            Some(0.0),
+            "{metric} must have a release threshold of 0"
+        );
+        let check = checks
+            .iter()
+            .find(|check| check["metric"].as_str() == Some(metric))
+            .unwrap_or_else(|| panic!("release gate has no {metric} check"));
+        assert_eq!(check["actual"].as_f64(), Some(actual), "{metric}");
+    }
+    assert_eq!(
+        thresholds["ci_thresholds"]["max_deferred_review_overdue"].as_f64(),
+        Some(0.0),
+        "an overdue deferred row must fail the daily audit"
+    );
+}
