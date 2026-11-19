@@ -583,7 +583,7 @@ impl AgentLoop {
         let model = route
             .map(|r| r.model.as_str())
             .unwrap_or(self.config.model.as_str());
-        let (inferred_provider, model_name) = self.extract_provider_and_model(model);
+        let (inferred_provider, _) = self.extract_provider_and_model(model);
         let route_provider_hint = route
             .and_then(|r| r.provider.as_deref())
             .map(str::trim)
