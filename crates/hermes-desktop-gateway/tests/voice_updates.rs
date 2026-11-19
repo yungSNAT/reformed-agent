@@ -40,7 +40,8 @@ async fn voice_live_status_stays_unrouted_so_the_desktop_hides_its_engine_picker
     // the chained engine on offer; a 404 makes it treat the backend as predating voice modes.
     let addr = start().await;
     let path = "/api/audio/voice-live/status?profile=default";
-    assert_eq!(get(addr, path, None).await.0, 404);
+    // Without the token the guard answers first, as for any unknown path.
+    assert_eq!(get(addr, path, None).await.0, 401);
     assert_eq!(get(addr, path, Some(TOKEN)).await.0, 404);
 }
 
