@@ -16181,7 +16181,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "01ed845da44825229fd40eda5a532bda9cf864e9",
+      "local_blob": "b32c494431074e06c1c1857193013473d17a2618",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/README.md",
@@ -16931,7 +16931,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui/src",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "c3c9838e3bbf78e0b610a8f94625afbbfc730192",
+      "local_blob": "77fcd55d7633e7cb366d0754ae7ec7a0cccf05b8",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/src/__tests__/gatewayClient.test.ts",
@@ -18251,7 +18251,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui/src",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "31111d54686a530c80a682db3665ac08375af120",
+      "local_blob": "6bb557c7838a2efce58d5c9720cb7b20396ce942",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/src/entry.tsx",
@@ -18266,7 +18266,7 @@
       "classification": "intentional_divergence",
       "classification_path": "ui-tui/src",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "7e4f1b8eafdc0bcd007d8e81388711551046166c",
+      "local_blob": "fe0077beb2612a33678492f910b7fdb9683d7581",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "ui-tui/src/gatewayClient.ts",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-19T09:10:44.181462+00:00",
+  "generated_at_utc": "2026-11-19T09:59:08.773791+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "abf2a62c316c0d56ddc0fc9298c2650fff67ef7d",
+    "local_sha": "a5d05f9921a61bab64654fa7d795b48094e92fa0",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
