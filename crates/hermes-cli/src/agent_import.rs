@@ -814,9 +814,16 @@ pub(crate) fn list_dir(dir: &Path) -> std::io::Result<Vec<PathBuf>> {
 }
 
 /// Opens the file `path` for reading as `File::open` does, but never blocks
-/// on a FIFO or device: on Unix it is opened non-blocking, and anything but a
-/// regular file is refused once open.
+/// on a FIFO or device: anything but a regular file is refused before it is
+/// opened, as opening some devices can block or act on them, and again once
+/// open, as the entry can change in between; on Unix it is opened
+/// non-blocking, so a FIFO swapped in meanwhile cannot block the read.
 pub(crate) fn open_regular(path: &Path) -> std::io::Result<std::fs::File> {
+    let not_regular =
+        || std::io::Error::new(std::io::ErrorKind::InvalidInput, "it is not a regular file");
+    if !std::fs::metadata(path)?.is_file() {
+        return Err(not_regular());
+    }
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -825,10 +832,7 @@ pub(crate) fn open_regular(path: &Path) -> std::io::Result<std::fs::File> {
     if file.metadata()?.is_file() {
         Ok(file)
     } else {
-        Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidInput,
-            "it is not a regular file",
-        ))
+        Err(not_regular())
     }
 }
 
