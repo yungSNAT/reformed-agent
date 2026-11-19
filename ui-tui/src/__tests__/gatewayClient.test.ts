@@ -1,6 +1,21 @@
+import type * as ChildProcessModule from 'node:child_process'
+import { spawn } from 'node:child_process'
+import { EventEmitter } from 'node:events'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { delimiter, join, parse } from 'node:path'
+import { PassThrough } from 'node:stream'
+
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { GatewayClient } from '../gatewayClient.js'
+
+// Real spawn unless a test replaces it with mockImplementationOnce.
+vi.mock('node:child_process', async importOriginal => {
+  const actual = await importOriginal<typeof ChildProcessModule>()
+
+  return { ...actual, spawn: vi.fn(actual.spawn) }
+})
 
 interface ListenerEntry {
   callback: (event: any) => void
@@ -383,4 +398,443 @@ describe('GatewayClient websocket attach mode', () => {
 
     gw.kill()
   })
+})
+
+class FakeChild extends EventEmitter {
+  stdout = new PassThrough()
+  stderr = new PassThrough()
+  exitCode: null | number = null
+  killed = false
+  kill = vi.fn(() => {
+    this.killed = true
+
+    return true
+  })
+}
+
+describe('GatewayClient spawned Rust gateway', () => {
+  const configuredBin = join(tmpdir(), 'hermes', 'hermes-desktop-gateway')
+  const originalWebSocket = globalThis.WebSocket
+  const saved = new Map<string, string | undefined>()
+  let child: FakeChild
+
+  const binName = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' : 'hermes-desktop-gateway'
+  const scratch: string[] = []
+
+  const tempDir = (prefix: string) => {
+    const dir = mkdtempSync(join(tmpdir(), prefix))
+
+    scratch.push(dir)
+
+    return dir
+  }
+
+  beforeEach(() => {
+    for (const name of [
+      'HERMES_TUI_GATEWAY_URL',
+      'HERMES_TUI_SIDECAR_URL',
+      'HERMES_TUI_GATEWAY_BIN',
+      'HERMES_PYTHON_SRC_ROOT',
+      'HERMES_CWD',
+      'PATH'
+    ]) {
+      saved.set(name, process.env[name])
+
+      if (name !== 'PATH') {
+        delete process.env[name]
+      }
+    }
+
+    process.env.HERMES_TUI_GATEWAY_BIN = configuredBin
+    child = new FakeChild()
+    vi.mocked(spawn).mockImplementationOnce((() => child) as unknown as typeof spawn)
+    FakeWebSocket.reset()
+    ;(globalThis as { WebSocket?: unknown }).WebSocket = FakeWebSocket as unknown as typeof WebSocket
+  })
+
+  afterEach(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) {
+        delete process.env[name]
+      } else {
+        process.env[name] = value
+      }
+    }
+
+    // Drops an unused mockImplementationOnce and restores the real spawn.
+    vi.mocked(spawn).mockReset()
+    FakeWebSocket.reset()
+    globalThis.WebSocket = originalWebSocket
+
+    for (const dir of scratch.splice(0)) {
+      rmSync(dir, { force: true, recursive: true })
+    }
+  })
+
+  it('never runs a gateway found through a relative PATH entry or the working folder', () => {
+    const project = tempDir('hermes-tui-project-')
+
+    mkdirSync(join(project, 'bin'))
+    writeFileSync(join(project, binName), '', { mode: 0o755 })
+    writeFileSync(join(project, 'bin', binName), '', { mode: 0o755 })
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.HERMES_CWD = project
+    process.env.PATH = ['.', 'bin', ''].join(delimiter)
+
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => {
+      if (ev.type === 'gateway.stderr' && typeof ev.payload?.line === 'string') {
+        lines.push(ev.payload.line)
+      }
+    })
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(lines.join('\n')).toContain('not found')
+    expect(lines.join('\n')).toContain('cargo build --release -p hermes-desktop-gateway')
+    expect(exits).toEqual([1])
+  })
+
+  it('refuses a relative HERMES_TUI_GATEWAY_BIN instead of resolving it in the working folder', () => {
+    process.env.HERMES_TUI_GATEWAY_BIN = binName
+
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => {
+      if (ev.type === 'gateway.stderr' && typeof ev.payload?.line === 'string') {
+        lines.push(ev.payload.line)
+      }
+    })
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    expect(spawn).not.toHaveBeenCalled()
+    expect(lines.join('\n')).toContain('HERMES_TUI_GATEWAY_BIN must be an absolute path')
+    expect(exits).toEqual([1])
+  })
+
+  it('runs the gateway from an absolute PATH entry by its full path', () => {
+    const bin = tempDir('hermes-tui-bin-')
+
+    writeFileSync(join(bin, binName), '', { mode: 0o755 })
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = ['relative-dir', bin].join(delimiter)
+
+    const gw = new GatewayClient()
+
+    gw.start()
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+    expect(vi.mocked(spawn).mock.calls[0]?.[0]).toBe(join(bin, binName))
+    gw.kill()
+  })
+
+  it('starts the Rust gateway and attaches with the token it gave it', async () => {
+    const gw = new GatewayClient()
+
+    gw.start()
+
+    expect(spawn).toHaveBeenCalledTimes(1)
+
+    const [command, args, options] = vi.mocked(spawn).mock.calls[0] as unknown as [
+      string,
+      string[],
+      { env: Record<string, string> }
+    ]
+
+    expect(command).toBe(configuredBin)
+    expect(args).toEqual(['--host', '127.0.0.1', '--port', '0'])
+
+    const token = options.env.HERMES_DASHBOARD_SESSION_TOKEN ?? ''
+
+    expect(token).toMatch(/^[0-9a-f]{64}$/)
+
+    const req = gw.request<{ ok: boolean }>('setup.runtime_check')
+
+    child.stdout.write('HERMES_BACKEND_READY port=41234\nHERMES_DASHBOARD_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const socket = FakeWebSocket.instances[0]!
+
+    expect(socket.url).toBe(`ws://127.0.0.1:41234/api/ws?token=${token}`)
+    socket.open()
+    await vi.waitFor(() => expect(socket.sent).toHaveLength(1))
+
+    const frame = JSON.parse(socket.sent[0] ?? '{}') as { id: string; method: string }
+
+    expect(frame.method).toBe('setup.runtime_check')
+    socket.message(JSON.stringify({ id: frame.id, jsonrpc: '2.0', result: { ok: true } }))
+    await expect(req).resolves.toEqual({ ok: true })
+    expect(gw.getLogTail(50)).not.toContain(token)
+
+    gw.kill()
+    expect(child.kill).toHaveBeenCalled()
+  })
+
+  it('rejects requests and reports one exit when the gateway exits before it is ready', async () => {
+    const gw = new GatewayClient()
+    const exits: Array<null | number> = []
+
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    const req = gw.request('setup.runtime_check')
+
+    child.stderr.write('cannot load the Hermes config: bad yaml\n')
+    child.exitCode = 1
+    child.emit('exit', 1)
+
+    await expect(req).rejects.toThrow(/gateway exited/)
+    expect(exits).toEqual([1])
+    await vi.waitFor(() => expect(gw.getLogTail(5)).toContain('cannot load the Hermes config'))
+    expect(FakeWebSocket.instances).toHaveLength(0)
+  })
+
+  it('says how to build the gateway when its binary is missing', async () => {
+    const gw = new GatewayClient()
+    const lines: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => {
+      if (ev.type === 'gateway.stderr' && typeof ev.payload?.line === 'string') {
+        lines.push(ev.payload.line)
+      }
+    })
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    const req = gw.request('setup.runtime_check')
+
+    child.emit('error', Object.assign(new Error(`spawn ${configuredBin} ENOENT`), { code: 'ENOENT' }))
+
+    await expect(req).rejects.toThrow(/ENOENT/)
+    expect(lines.join('\n')).toContain('cargo build --release -p hermes-desktop-gateway')
+    expect(exits).toEqual([1])
+  })
+
+  it('reports one exit when the gateway exits after attaching', async () => {
+    const gw = new GatewayClient()
+    const exits: Array<null | number> = []
+
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+    child.stdout.write('HERMES_BACKEND_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const socket = FakeWebSocket.instances[0]!
+
+    socket.open()
+    child.exitCode = 0
+    child.emit('exit', 0)
+    socket.close(1006)
+
+    expect(exits).toEqual([0])
+  })
+
+  it('stops the gateway and reports one exit when the socket closes before the gateway exits', async () => {
+    const gw = new GatewayClient()
+    const exits: Array<null | number> = []
+
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+    child.stdout.write('HERMES_BACKEND_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+
+    const socket = FakeWebSocket.instances[0]!
+
+    socket.open()
+    socket.close(1011)
+    expect(child.kill).toHaveBeenCalled()
+    child.exitCode = 0
+    child.emit('exit', 0)
+
+    expect(exits).toEqual([1011])
+  })
+
+  it('rejects a waiting request and stops the gateway when the socket fails to connect', async () => {
+    const gw = new GatewayClient()
+
+    gw.start()
+    gw.drain()
+
+    const req = gw.request('setup.runtime_check')
+
+    child.stdout.write('HERMES_BACKEND_READY port=41234\n')
+    await vi.waitFor(() => expect(FakeWebSocket.instances).toHaveLength(1))
+    FakeWebSocket.instances[0]!.close(1006)
+
+    await expect(req).rejects.toThrow(/closed \(1006\) during connect/)
+    expect(child.kill).toHaveBeenCalled()
+  })
+
+  it.skipIf(process.platform === 'win32')('skips a PATH match it cannot execute and keeps searching', () => {
+    const first = tempDir('hermes-tui-noexec-')
+    const second = tempDir('hermes-tui-exec-')
+
+    writeFileSync(join(first, binName), '')
+    chmodSync(join(first, binName), 0o644)
+    writeFileSync(join(second, binName), '', { mode: 0o755 })
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = [first, second].join(delimiter)
+
+    const gw = new GatewayClient()
+
+    gw.start()
+
+    expect(vi.mocked(spawn).mock.calls[0]?.[0]).toBe(join(second, binName))
+    gw.kill()
+  })
+
+  // `///folder` looks like a UNC path but joins to `\folder\...`, a folder on the current drive.
+  it.runIf(process.platform === 'win32')('ignores a PATH entry that normalises to a drive-relative folder', () => {
+    const dir = tempDir('hermes-tui-drive-')
+    const { root } = parse(dir)
+    const cwd = process.cwd()
+
+    writeFileSync(join(dir, binName), '')
+    delete process.env.HERMES_TUI_GATEWAY_BIN
+    process.env.HERMES_PYTHON_SRC_ROOT = tempDir('hermes-tui-root-')
+    process.env.PATH = `//${dir.slice(root.length - 1).replaceAll('\\', '/')}`
+    process.chdir(root)
+
+    try {
+      const gw = new GatewayClient()
+
+      gw.start()
+      gw.drain()
+
+      expect(spawn).not.toHaveBeenCalled()
+    } finally {
+      process.chdir(cwd)
+    }
+  })
+
+  it('keeps the new gateway when a start_timeout listener restarts the client', () => {
+    vi.useFakeTimers()
+
+    try {
+      const replacement = new FakeChild()
+
+      vi.mocked(spawn).mockImplementationOnce((() => replacement) as unknown as typeof spawn)
+
+      const gw = new GatewayClient()
+      let restarted = false
+
+      gw.on('event', ev => {
+        if (ev.type === 'gateway.start_timeout' && !restarted) {
+          restarted = true
+          gw.start()
+        }
+      })
+      gw.start()
+      gw.drain()
+      vi.advanceTimersByTime(15_001)
+
+      expect(restarted).toBe(true)
+      expect(child.kill).toHaveBeenCalled()
+      expect(replacement.kill).not.toHaveBeenCalled()
+      gw.kill()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('stops a gateway that never announces its port, so waiting requests reject', async () => {
+    vi.useFakeTimers()
+
+    try {
+      const gw = new GatewayClient()
+      const events: string[] = []
+
+      gw.on('event', ev => events.push(ev.type))
+      gw.start()
+      gw.drain()
+
+      const req = gw.request('setup.runtime_check')
+
+      const outcome = req.then(
+        () => 'resolved',
+        (err: Error) => err.message
+      )
+
+      vi.advanceTimersByTime(15_001)
+      expect(events).toContain('gateway.start_timeout')
+      expect(child.kill).toHaveBeenCalled()
+      child.exitCode = null
+      child.emit('exit', null)
+      await expect(outcome).resolves.toMatch(/gateway exited/)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})
+
+// Runs against a built gateway: HERMES_TUI_GATEWAY_IT_BIN=<path to hermes-desktop-gateway>.
+const realGateway = process.env.HERMES_TUI_GATEWAY_IT_BIN?.trim()
+
+describe.skipIf(!realGateway)('GatewayClient with the real Rust gateway', () => {
+  const saved = new Map<string, string | undefined>()
+  let home = ''
+
+  beforeEach(() => {
+    for (const name of ['HERMES_TUI_GATEWAY_URL', 'HERMES_TUI_SIDECAR_URL', 'HERMES_TUI_GATEWAY_BIN', 'HERMES_HOME']) {
+      saved.set(name, process.env[name])
+      delete process.env[name]
+    }
+
+    home = mkdtempSync(join(tmpdir(), 'hermes-tui-it-'))
+    process.env.HERMES_HOME = home
+    process.env.HERMES_TUI_GATEWAY_BIN = realGateway
+  })
+
+  afterEach(() => {
+    for (const [name, value] of saved) {
+      if (value === undefined) {
+        delete process.env[name]
+      } else {
+        process.env[name] = value
+      }
+    }
+
+    rmSync(home, { force: true, recursive: true })
+  })
+
+  it('starts the gateway, receives gateway.ready and answers a request', async () => {
+    expect(existsSync(realGateway!)).toBe(true)
+
+    const gw = new GatewayClient()
+    const events: string[] = []
+    const exits: Array<null | number> = []
+
+    gw.on('event', ev => events.push(ev.type))
+    gw.on('exit', code => exits.push(code))
+    gw.start()
+    gw.drain()
+
+    const check = await gw.request<{ ok: boolean }>('setup.runtime_check')
+
+    expect(typeof check.ok).toBe('boolean')
+    expect(events).toContain('gateway.ready')
+
+    gw.kill()
+    await vi.waitFor(() => expect(exits).toHaveLength(1), { timeout: 10_000 })
+    // The gateway was given its token, so it writes nothing to stderr, and the socket this
+    // client closed on kill() is not reported as a transport error.
+    expect(events).not.toContain('gateway.stderr')
+  }, 30_000)
 })

@@ -1,6 +1,6 @@
 # Workstream Status
 
-- Local HEAD: `6442532c4640f6f14892f894aba6bdf27ad8d8cd`
+- Local HEAD: `345bdec7d0fa01178695185e322fedaa5ca11aaf`
 - Upstream: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 
 | Workstream | Title | State |
@@ -26,8 +26,8 @@
 - send_message tool wired to live gateway backend in gateway runtime.
 - clarify tool wired to channel backend in gateway and stdio backend in CLI runtimes.
 - cronjob tool wired to live scheduler backend.
-- 9 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"rows_not_shown_matching": 9, "runtime_wiring_functions": 4}`
+- 13 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"rows_not_shown_matching": 13, "runtime_wiring_functions": 4}`
 
 ## WS4 — Skills parity
 
@@ -48,8 +48,8 @@
 
 - State: **in_progress**
 - CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.
-- 336 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
-- Metrics: `{"ci_jobs": 0, "parity_gate_present": true, "rows_not_shown_matching": 336}`
+- 337 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests).
+- Metrics: `{"ci_jobs": 0, "parity_gate_present": true, "rows_not_shown_matching": 337}`
 
 ## WS7 — Security/secrets/store/webhook parity
 
