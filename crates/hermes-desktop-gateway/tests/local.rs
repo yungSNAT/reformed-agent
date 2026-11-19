@@ -183,8 +183,24 @@ async fn a_held_lock_refuses_a_runtime_and_a_dropped_runtime_frees_it() {
     let err = local::start(&home, chat).await.err().expect("refused");
     assert!(err.contains("already"), "{err}");
     drop(held);
-    drop(start(&home).await);
-    drop(start(&home).await);
+    drop(start_when_free(&home).await);
+    drop(start_when_free(&home).await);
+}
+
+/// Starts a runtime once the lock is free. A child another test forks shares this process's open
+/// descriptors until it execs, so a lock can outlive its holder here by a moment.
+async fn start_when_free(home: &Path) -> LocalRuntime {
+    for _ in 0..100 {
+        let chat = hermes_desktop_gateway::Chat::new(hermes_config::GatewayConfig::default());
+        match local::start(home, chat).await {
+            Ok(runtime) => return runtime,
+            Err(err) if err.contains("already") => {
+                tokio::time::sleep(Duration::from_millis(20)).await
+            }
+            Err(err) => panic!("{err}"),
+        }
+    }
+    panic!("the lock stayed held for 2 seconds");
 }
 
 #[test]
@@ -506,9 +522,10 @@ fn ensure_answers_starting_at_its_deadline_and_starts_one_owner_only() {
 }
 
 #[test]
-fn ensure_waits_for_a_live_lock_holder_instead_of_starting_another() {
+fn ensure_waits_for_a_claimed_home_instead_of_starting_another() {
     let (_dir, home) = private_home();
-    let _held = hold_lock(&home);
+    // Claimed and not yet served, as `gateway run` holds it until its pid file is written.
+    let _claimed = local::claim(&home).unwrap();
     let (verdict, text, code) = ensure(&home, Duration::from_millis(500), never_spawned());
     assert_eq!(code, 5, "{text}");
     assert_eq!(verdict["state"], "starting");

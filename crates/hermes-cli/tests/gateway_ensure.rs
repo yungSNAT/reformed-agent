@@ -171,11 +171,12 @@ fn gateway_run_in_a_home_too_deep_for_a_socket_runs_without_local_mode() {
     while !pid_file.exists() && run.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
     }
-    let running = run.try_wait().unwrap().is_none();
+    // Read before the kill: a stopping gateway removes its pid file.
+    let ready = run.try_wait().unwrap().is_none() && pid_file.exists();
     let _ = Command::new("kill").arg(run.id().to_string()).status();
     let output = run.wait_with_output().unwrap();
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(running && pid_file.exists(), "{stderr}");
+    assert!(ready, "{stderr}");
     assert!(stderr.contains("Desktop local mode is off"), "{stderr}");
     assert!(!home.join("gateway.lock").exists());
 }
