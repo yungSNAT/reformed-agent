@@ -567,11 +567,13 @@ impl HermesAcpHandler {
                 }
                 let state = self.session_manager.get_session(session_id)?;
                 if state.phase == SessionPhase::Active {
-                    self.session_manager.push_queued_prompt(session_id, args);
+                    // A steer the running turn takes is delivered by it, or queued by the
+                    // executor when the turn ends first; only one it does not take is queued here.
                     let steered = match self.prompt_executor.as_ref() {
                         Some(executor) => match executor.steer_prompt(&state, args) {
                             Ok(steered) => steered,
                             Err(err) => {
+                                self.session_manager.push_queued_prompt(session_id, args);
                                 return Some(format!(
                                     "Steer failed; queued prompt for the next turn: {err}"
                                 ));
@@ -582,6 +584,7 @@ impl HermesAcpHandler {
                     if steered {
                         Some("Steered the active ACP session.".to_string())
                     } else {
+                        self.session_manager.push_queued_prompt(session_id, args);
                         Some("Queued prompt for the next turn.".to_string())
                     }
                 } else {

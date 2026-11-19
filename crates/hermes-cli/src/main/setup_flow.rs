@@ -16,7 +16,7 @@ fn discover_setup_env_sources() -> Vec<PathBuf> {
         candidates.push(home.join("Projects/hermes-agent/.env"));
         candidates.push(home.join("Documents/Projects/hermes-agent-python/.env"));
     }
-    if let Some(claw_dir) = hermes_cli::claw_migrate::find_openclaw_dir(None) {
+    if let Ok(Some(claw_dir)) = hermes_cli::claw_migrate::find_openclaw_dir(None) {
         candidates.push(claw_dir.join(".env"));
     }
     if let Ok(cwd) = std::env::current_dir() {

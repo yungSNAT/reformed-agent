@@ -8,7 +8,7 @@
 
 use std::path::{Component, Path};
 
-use hermes_core::time::{parse_rfc3339, utc_civil};
+use hermes_core::time::{parse_rfc3339, parse_rfc3339_parts, utc_civil};
 use hermes_cron::{CronJob, DeliverConfig, JobStatus, ModelConfig};
 use jiff::{RoundMode, Timestamp, TimestampRound, Unit};
 use serde_json::{Map, Value};
@@ -134,12 +134,16 @@ pub(super) fn convert(
             if completed > 0 {
                 return Err("it has finished".into());
             }
-            let at = schedule
+            let (civil, offset) = schedule
                 .get("run_at")
                 .and_then(Value::as_str)
-                .and_then(parse_rfc3339)
-                .and_then(whole_second)
+                .and_then(parse_rfc3339_parts)
                 .ok_or("its one-off time is not a time with a zone")?;
+            let at = offset
+                .to_timestamp(civil)
+                .ok()
+                .and_then(whole_second)
+                .ok_or("its one-off time is after the latest time Reformed can schedule")?;
             if at <= now {
                 return Err("its one-off time has passed".into());
             }

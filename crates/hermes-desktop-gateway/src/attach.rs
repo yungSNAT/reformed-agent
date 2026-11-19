@@ -54,7 +54,7 @@ fn stage_within(
         return Err(format!("attachment larger than {limit} bytes"));
     }
     let dir = attachments_folder(workspace)?;
-    let (path, file) = create_new(&dir, &file_name(name))?;
+    let (path, file) = create_new(&dir, &file_name(name), false)?;
     if let Err(e) = decode_into(payload, file) {
         let _ = fs::remove_file(&path);
         return Err(e);
@@ -69,6 +69,114 @@ fn stage_within(
         name,
         ref_path,
     })
+}
+
+/// Largest image `image.attach_bytes` takes, decoded, as upstream (`_ATTACH_BYTES_MAX_BYTES`
+/// in tui_gateway/prompt_attachments.py).
+pub(crate) const MAX_IMAGE_BYTES: usize = 25 << 20;
+
+/// Why an image was not staged, with upstream's error code for each.
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum ImageError {
+    /// 4017: not valid base64, or empty.
+    Invalid(String),
+    /// 4018: larger than [`MAX_IMAGE_BYTES`].
+    TooLarge,
+    /// 4016: not a PNG, JPEG, GIF, WebP or BMP image.
+    Unsupported,
+    /// 5027: the file could not be written.
+    Write(String),
+}
+
+/// A staged image: where it is, its media type and size.
+pub(crate) struct StagedImage {
+    pub(crate) path: PathBuf,
+    pub(crate) mime: &'static str,
+    pub(crate) bytes: usize,
+}
+
+/// Writes the image `payload` (base64, bare or as a `data:` URL) holds to a new file in
+/// `images`, made if absent. The bytes decide the type and the name's extension; the client's
+/// name and hints are not used, so it cannot choose where or as what the file lands. Nothing
+/// is written for a payload that is refused.
+///
+/// The folder (when made) and the file are owner-only, whatever the permissions around them.
+pub(crate) fn stage_image(images: &Path, payload: &str) -> Result<StagedImage, ImageError> {
+    let payload = base64_payload(payload).ok_or_else(|| ImageError::Invalid(INVALID.into()))?;
+    if decoded_len(payload) > MAX_IMAGE_BYTES {
+        return Err(ImageError::TooLarge);
+    }
+    let compact: Vec<u8> = payload
+        .bytes()
+        .filter(|b| !b.is_ascii_whitespace())
+        .collect();
+    let data = base64::engine::general_purpose::STANDARD
+        .decode(compact)
+        .map_err(|_| ImageError::Invalid("data is not valid base64".into()))?;
+    if data.is_empty() {
+        return Err(ImageError::Invalid("image is empty".into()));
+    }
+    let (ext, mime) = image_kind(&data).ok_or(ImageError::Unsupported)?;
+    private_folder(images).map_err(ImageError::Write)?;
+    let name = format!("upload_{}.{ext}", uuid::Uuid::new_v4().simple());
+    // Owner-only, as upstream's mkstemp on Unix, whatever the folder allows.
+    let (path, mut file) = create_new(images, &name, true).map_err(ImageError::Write)?;
+    if let Err(e) = file.write_all(&data) {
+        let _ = fs::remove_file(&path);
+        return Err(ImageError::Write(format!("cannot write the image: {e}")));
+    }
+    Ok(StagedImage {
+        path,
+        mime,
+        bytes: data.len(),
+    })
+}
+
+/// Extension and media type from an image's first bytes.
+fn image_kind(data: &[u8]) -> Option<(&'static str, &'static str)> {
+    if data.starts_with(&[0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a]) {
+        Some(("png", "image/png"))
+    } else if data.starts_with(&[0xff, 0xd8, 0xff]) {
+        Some(("jpg", "image/jpeg"))
+    } else if data.starts_with(b"GIF87a") || data.starts_with(b"GIF89a") {
+        Some(("gif", "image/gif"))
+    } else if data.starts_with(b"RIFF") && data.get(8..12) == Some(b"WEBP".as_slice()) {
+        Some(("webp", "image/webp"))
+    } else if data.starts_with(b"BM") {
+        Some(("bmp", "image/bmp"))
+    } else {
+        None
+    }
+}
+
+/// Creates `dir` and its parents, `dir` itself owner-only when made, and refuses it when it is a
+/// link or a file, or on Windows when its volume keeps no file permissions.
+fn private_folder(dir: &Path) -> Result<(), String> {
+    #[cfg(not(windows))]
+    let made = {
+        let mut builder = fs::DirBuilder::new();
+        builder.recursive(true);
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        builder.create(dir)
+    };
+    #[cfg(windows)]
+    let made = dir
+        .parent()
+        .map_or(Ok(()), fs::create_dir_all)
+        .and_then(|()| match owner_only::create_dir(dir) {
+            Err(e) if e.kind() == ErrorKind::AlreadyExists => Ok(()),
+            made => made,
+        });
+    made.map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    // `symlink_metadata` describes a link (a Windows junction included), not its target.
+    if !fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir()) {
+        return Err(format!("{} is not a folder", dir.display()));
+    }
+    #[cfg(windows)]
+    owner_only::require_permissions(dir)
+        .map_err(|e| format!("cannot keep {} owner-only: {e}", dir.display()))?;
+    Ok(())
 }
 
 /// The base64 text of a `data:<type>[;<param>=<value>]...;base64,<data>` URL, or of bare base64
@@ -144,10 +252,23 @@ fn attachments_folder(workspace: &Path) -> Result<PathBuf, String> {
 }
 
 /// Creates a new file in `dir` named `name`, or `<stem>-2<ext>` and so on when it is taken.
-fn create_new(dir: &Path, name: &str) -> Result<(PathBuf, File), String> {
+/// A `private` file is owner-only (mode 0600 on Unix, `owner_only` on Windows); any other
+/// takes mode 0666 before the umask on Unix and the folder's permissions on Windows.
+fn create_new(dir: &Path, name: &str, private: bool) -> Result<(PathBuf, File), String> {
     let (stem, ext) = match name.rfind('.') {
         Some(dot) if dot > 0 => name.split_at(dot),
         _ => (name, ""),
+    };
+    let mut options = OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, if private { 0o600 } else { 0o666 });
+    let open = |path: &Path| {
+        #[cfg(windows)]
+        if private {
+            return owner_only::create_new(path);
+        }
+        options.open(path)
     };
     let mut candidate = name.to_string();
     for n in 2u64.. {
@@ -155,7 +276,7 @@ fn create_new(dir: &Path, name: &str) -> Result<(PathBuf, File), String> {
         // Any existing entry, a dangling link included, takes the name: Windows' create-new
         // follows a dangling link and would create its target.
         if fs::symlink_metadata(&path).is_err() {
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
+            match open(&path) {
                 Ok(file) => return Ok((path, file)),
                 Err(e) if e.kind() == ErrorKind::AlreadyExists => {}
                 Err(e) => return Err(format!("cannot create {}: {e}", path.display())),
@@ -195,6 +316,145 @@ fn file_name(name: &str) -> String {
         return "attachment".to_string();
     }
     safe
+}
+
+/// Windows creation with a protected security descriptor, so nothing is inherited from the
+/// folders above: full access for the owner, SYSTEM and administrators only, as hermes-cli's
+/// `create_private_profile` makes profile folders.
+#[cfg(windows)]
+mod owner_only {
+    use std::fs::{File, OpenOptions};
+    use std::io;
+    use std::os::windows::ffi::OsStrExt;
+    use std::os::windows::fs::OpenOptionsExt;
+    use std::os::windows::io::{AsRawHandle, FromRawHandle};
+    use std::path::Path;
+    use std::ptr::null_mut;
+
+    use windows_sys::Win32::Foundation::{LocalFree, GENERIC_WRITE, INVALID_HANDLE_VALUE};
+    use windows_sys::Win32::Security::Authorization::{
+        ConvertStringSecurityDescriptorToSecurityDescriptorW, SDDL_REVISION_1,
+    };
+    use windows_sys::Win32::Security::SECURITY_ATTRIBUTES;
+    use windows_sys::Win32::Storage::FileSystem::{
+        CreateDirectoryW, CreateFileW, GetVolumeInformationByHandleW, CREATE_NEW,
+        FILE_ATTRIBUTE_NORMAL, FILE_FLAG_BACKUP_SEMANTICS, FILE_SHARE_DELETE, FILE_SHARE_READ,
+        FILE_SHARE_WRITE,
+    };
+    use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
+
+    /// Protected, and inherited by what a folder holds.
+    const OWNER_ONLY: &str = "D:P(A;OICI;FA;;;OW)(A;OICI;FA;;;SY)(A;OICI;FA;;;BA)";
+
+    /// Refuses `dir` when its volume keeps no security descriptors (FAT32 or exFAT, say), where
+    /// the creates below would succeed without protecting anything.
+    pub(super) fn require_permissions(dir: &Path) -> io::Result<()> {
+        let folder = OpenOptions::new()
+            .access_mode(0)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS)
+            .open(dir)?;
+        let mut flags = 0;
+        // The handle and the flags buffer remain valid for the call.
+        let read = unsafe {
+            GetVolumeInformationByHandleW(
+                folder.as_raw_handle(),
+                null_mut(),
+                0,
+                null_mut(),
+                null_mut(),
+                &mut flags,
+                null_mut(),
+                0,
+            )
+        };
+        if read == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        keeps_permissions(flags)
+    }
+
+    pub(super) fn keeps_permissions(volume_flags: u32) -> io::Result<()> {
+        if volume_flags & FILE_PERSISTENT_ACLS == 0 {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "the volume keeps no file permissions",
+            ));
+        }
+        Ok(())
+    }
+
+    pub(super) fn create_dir(path: &Path) -> io::Result<()> {
+        let name = wide(path)?;
+        with_owner_only(|security| {
+            // The name and attributes remain valid for the synchronous call.
+            if unsafe { CreateDirectoryW(name.as_ptr(), security) } == 0 {
+                return Err(io::Error::last_os_error());
+            }
+            Ok(())
+        })
+    }
+
+    /// A new file open for writing, as `OpenOptions::new().write(true).create_new(true)`.
+    pub(super) fn create_new(path: &Path) -> io::Result<File> {
+        let name = wide(path)?;
+        with_owner_only(|security| {
+            let share = FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE;
+            // The name and attributes remain valid for the synchronous call.
+            let handle = unsafe {
+                CreateFileW(
+                    name.as_ptr(),
+                    GENERIC_WRITE,
+                    share,
+                    security,
+                    CREATE_NEW,
+                    FILE_ATTRIBUTE_NORMAL,
+                    null_mut(),
+                )
+            };
+            if handle == INVALID_HANDLE_VALUE {
+                return Err(io::Error::last_os_error());
+            }
+            // The handle is new, valid and owned by nothing else.
+            Ok(unsafe { File::from_raw_handle(handle) })
+        })
+    }
+
+    fn with_owner_only<T>(
+        create: impl FnOnce(&SECURITY_ATTRIBUTES) -> io::Result<T>,
+    ) -> io::Result<T> {
+        let sddl: Vec<u16> = OWNER_ONLY.encode_utf16().chain([0]).collect();
+        let mut descriptor = null_mut();
+        // The input is NUL-terminated and the output lives until `LocalFree` below.
+        let converted = unsafe {
+            ConvertStringSecurityDescriptorToSecurityDescriptorW(
+                sddl.as_ptr(),
+                SDDL_REVISION_1,
+                &mut descriptor,
+                null_mut(),
+            )
+        };
+        if converted == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let security = SECURITY_ATTRIBUTES {
+            nLength: size_of::<SECURITY_ATTRIBUTES>() as u32,
+            lpSecurityDescriptor: descriptor,
+            bInheritHandle: 0,
+        };
+        let created = create(&security);
+        // The descriptor was allocated by the conversion above.
+        unsafe { LocalFree(descriptor) };
+        created
+    }
+
+    fn wide(path: &Path) -> io::Result<Vec<u16>> {
+        let mut name: Vec<u16> = path.as_os_str().encode_wide().collect();
+        if name.contains(&0) {
+            return Err(io::ErrorKind::InvalidInput.into());
+        }
+        name.push(0);
+        Ok(name)
+    }
 }
 
 #[cfg(test)]
@@ -374,6 +634,136 @@ mod tests {
         symlink(outside.path().join("planted"), dir.join("x.txt")).unwrap();
         let staged = stage(work.path(), "x.txt", "aGk=").unwrap();
         assert_eq!(staged.name, "x-2.txt");
+        assert!(files(outside.path()).is_empty());
+    }
+
+    #[test]
+    fn each_image_kind_is_named_by_its_bytes() {
+        use base64::Engine as _;
+        let images = tempfile::tempdir().unwrap();
+        let mut webp = b"RIFF0000WEBPVP8 ".to_vec();
+        webp.push(1);
+        let cases: [(&[u8], &str, &str); 5] = [
+            (
+                &[0x89, b'P', b'N', b'G', 13, 10, 26, 10, 1],
+                "png",
+                "image/png",
+            ),
+            (&[0xff, 0xd8, 0xff, 0xe0, 1], "jpg", "image/jpeg"),
+            (b"GIF89a1", "gif", "image/gif"),
+            (&webp, "webp", "image/webp"),
+            (b"BM1234", "bmp", "image/bmp"),
+        ];
+        for (bytes, ext, mime) in cases {
+            let payload = base64::engine::general_purpose::STANDARD.encode(bytes);
+            let staged = stage_image(images.path(), &payload).unwrap();
+            assert_eq!(staged.path.extension().unwrap(), ext);
+            assert_eq!(staged.mime, mime);
+            assert_eq!(fs::read(&staged.path).unwrap(), bytes);
+        }
+        // A data URL's type is ignored too: the bytes decide.
+        let staged = stage_image(images.path(), "data:image/png;base64,R0lGODlhMQ==").unwrap();
+        assert_eq!(staged.mime, "image/gif");
+    }
+
+    #[test]
+    fn a_refused_image_leaves_no_file() {
+        use base64::Engine as _;
+        let images = tempfile::tempdir().unwrap();
+        let dir = images.path().join("images");
+        let text = base64::engine::general_purpose::STANDARD.encode("hello");
+        assert_eq!(
+            stage_image(&dir, &text).err(),
+            Some(ImageError::Unsupported)
+        );
+        assert!(matches!(
+            stage_image(&dir, "!!"),
+            Err(ImageError::Invalid(_))
+        ));
+        assert!(matches!(
+            stage_image(&dir, "data:image/png,x"),
+            Err(ImageError::Invalid(_))
+        ));
+        // Over the limit by its length alone, so nothing is decoded or made.
+        let large = "A".repeat((MAX_IMAGE_BYTES / 3 + 1) * 4);
+        assert_eq!(stage_image(&dir, &large).err(), Some(ImageError::TooLarge));
+        assert!(!dir.exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_image_is_owner_only_in_an_existing_open_folder() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let images = tempfile::tempdir().unwrap();
+        fs::set_permissions(images.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let staged = stage_image(images.path(), "iVBORw0KGgoB").unwrap();
+        let mode = fs::metadata(&staged.path).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_staged_image_is_owner_only_in_an_existing_open_folder() {
+        let icacls = |path: &Path, grant: &[&str]| {
+            let out = std::process::Command::new("icacls")
+                .arg(path)
+                .args(grant)
+                .output()
+                .unwrap();
+            assert!(out.status.success(), "icacls {}", path.display());
+            String::from_utf8_lossy(&out.stdout).into_owned()
+        };
+        let images = tempfile::tempdir().unwrap();
+        // Everyone (S-1-1-0) may read whatever the folder holds.
+        icacls(images.path(), &["/grant", "*S-1-1-0:(OI)(CI)R"]);
+        let plain = images.path().join("plain.txt");
+        fs::write(&plain, "x").unwrap();
+        assert!(
+            icacls(&plain, &[]).contains("Everyone"),
+            "the folder is open"
+        );
+
+        let staged = stage_image(images.path(), "iVBORw0KGgoB").unwrap();
+        let acl = icacls(&staged.path, &[]);
+        assert!(!acl.contains("Everyone") && !acl.contains("(I)"), "{acl}");
+        assert_eq!(fs::read(&staged.path).unwrap(), b"\x89PNG\r\n\x1a\n\x01");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_volume_that_keeps_no_permissions_is_refused() {
+        use windows_sys::Win32::System::SystemServices::FILE_PERSISTENT_ACLS;
+        let refused = owner_only::keeps_permissions(0).unwrap_err();
+        assert_eq!(refused.kind(), ErrorKind::Unsupported);
+        assert!(owner_only::keeps_permissions(FILE_PERSISTENT_ACLS).is_ok());
+        // The test folder's volume keeps them, so an image is staged there.
+        let images = tempfile::tempdir().unwrap();
+        assert!(owner_only::require_permissions(images.path()).is_ok());
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_new_images_folder_is_owner_only() {
+        let home = tempfile::tempdir().unwrap();
+        let images = home.path().join("images");
+        stage_image(&images, "iVBORw0KGgoB").unwrap();
+        let out = std::process::Command::new("icacls")
+            .arg(&images)
+            .output()
+            .unwrap();
+        let acl = String::from_utf8_lossy(&out.stdout);
+        assert!(out.status.success() && !acl.contains("(I)"), "{acl}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_linked_images_folder_is_refused() {
+        let outside = tempfile::tempdir().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let link = home.path().join("images");
+        std::os::unix::fs::symlink(outside.path(), &link).unwrap();
+        let png = "iVBORw0KGgoB";
+        assert!(matches!(stage_image(&link, png), Err(ImageError::Write(_))));
         assert!(files(outside.path()).is_empty());
     }
 }

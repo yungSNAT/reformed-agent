@@ -1196,6 +1196,77 @@
     }
 
     #[tokio::test]
+    async fn a_call_that_falls_back_from_its_route_asks_the_primary_for_its_own_model() {
+        use futures::stream::BoxStream;
+
+        struct EchoProvider {
+            seen_models: Arc<std::sync::Mutex<Vec<String>>>,
+        }
+
+        #[async_trait::async_trait]
+        impl LlmProvider for EchoProvider {
+            async fn chat_completion(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> Result<hermes_core::LlmResponse, AgentError> {
+                let model = model.unwrap_or_default().to_string();
+                self.seen_models
+                    .lock()
+                    .expect("seen model lock")
+                    .push(model.clone());
+                // A server labels its reply with the model it was asked for.
+                Ok(hermes_core::LlmResponse {
+                    message: Message::assistant("ok"),
+                    usage: None,
+                    model,
+                    finish_reason: Some("stop".to_string()),
+                })
+            }
+
+            fn chat_completion_stream(
+                &self,
+                _messages: &[Message],
+                _tools: &[ToolSchema],
+                _max_tokens: Option<u32>,
+                _temperature: Option<f64>,
+                _model: Option<&str>,
+                _extra_body: Option<&serde_json::Value>,
+            ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+                futures::stream::empty().boxed()
+            }
+        }
+
+        let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        let provider = Arc::new(EchoProvider {
+            seen_models: seen_models.clone(),
+        });
+        let cfg = AgentConfig {
+            model: "primary-model".to_string(),
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
+        // A provider with no key and no local endpoint: the route cannot be built.
+        let mut route = agent.turn_route_cost_guard("routed-model".to_string());
+        route.provider = Some("no-such-provider-for-this-test".to_string());
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::system("system"));
+        ctx.add_message(Message::user("run"));
+
+        let resp = agent
+            .call_llm_with_retry_inner(&ctx, &[], Some(&route), None)
+            .await
+            .expect("the primary should answer");
+
+        assert_eq!(*seen_models.lock().expect("seen model lock"), ["primary-model"]);
+        assert_eq!(resp.model, "primary-model");
+    }
+
+    #[tokio::test]
     async fn stream_mid_tool_call_silent_retry_recovers_tool_call() {
         let provider = Arc::new(StreamRetryProvider::new(
             StreamRetryScenario::RecoverOnSecondAttempt,

@@ -135,8 +135,16 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
     );
     let provider_extra_body = provider_config.and_then(|cfg| cfg.extra_body.clone());
     let max_tokens = configured_agent_max_tokens(provider_config);
-    let extra_body =
+    let mut extra_body =
         merge_service_tier_extra_body(provider_extra_body, config.agent.normalized_service_tier());
+    if config.agent.native_image_input() {
+        // The provider strips `supports_vision` from the request and sends image parts.
+        extra_body = Some(with_extra_body_field(
+            extra_body,
+            "supports_vision",
+            Value::Bool(true),
+        ));
+    }
     let skip_memory_env = std::env::var("HERMES_SKIP_MEMORY")
         .ok()
         .map(|v| matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"))
@@ -263,6 +271,15 @@ fn merge_service_tier_extra_body(
     else {
         return extra_body;
     };
+    Some(with_extra_body_field(
+        extra_body,
+        "service_tier",
+        Value::String(service_tier),
+    ))
+}
+
+/// `extra_body` with `key` set; a non-object body moves under `extra_body`.
+fn with_extra_body_field(extra_body: Option<Value>, key: &str, value: Value) -> Value {
     let mut map = match extra_body {
         Some(Value::Object(map)) => map,
         Some(other) => {
@@ -272,8 +289,8 @@ fn merge_service_tier_extra_body(
         }
         None => serde_json::Map::new(),
     };
-    map.insert("service_tier".to_string(), Value::String(service_tier));
-    Some(Value::Object(map))
+    map.insert(key.to_string(), value);
+    Value::Object(map)
 }
 
 pub fn resolve_cli_chat_provider_model_with(
