@@ -2073,6 +2073,7 @@ enabled = false
         let home = root.path().join("home");
         std::fs::create_dir_all(codex.join("memories")).unwrap();
         std::fs::create_dir_all(codex.join("skills/odd")).unwrap();
+        std::fs::create_dir_all(codex.join("skills/nested/SKILL.md")).unwrap();
         std::fs::create_dir_all(&home).unwrap();
         make_fifo(&codex.join("memories/notes.md"));
         make_fifo(&codex.join("skills/odd/SKILL.md"));
@@ -2088,9 +2089,45 @@ enabled = false
         for expected in [
             "error        memories/notes.md: ",
             "error        skill odd: ",
+            "error        skill nested: ",
         ] {
             assert!(text.contains(expected), "missing {expected:?} in\n{text}");
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_memory_gone_between_its_listing_and_its_read_is_an_error() {
+        use crate::source_tree::tests::BETWEEN;
+        let root = tempfile::tempdir().expect("temp root");
+        let codex = root.path().join(".codex");
+        let home = root.path().join("home");
+        std::fs::create_dir_all(codex.join("memories")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        let notes = codex.join("memories/notes.md");
+        std::fs::write(&notes, "a note\n").unwrap();
+        BETWEEN.with(|between| {
+            *between.borrow_mut() = Some(Box::new(move |name: &std::ffi::OsStr| {
+                if name == "notes.md" {
+                    let _ = std::fs::remove_file(&notes);
+                }
+            }))
+        });
+        let report = import_agent(&AgentImportRequest {
+            agent: SourceAgent::Codex,
+            source: &codex,
+            home: &home,
+            apply: true,
+        });
+        BETWEEN.with(|between| *between.borrow_mut() = None);
+        let text = report.lines.join("\n");
+        assert!(report.failed, "{text}");
+        assert!(
+            report.lines.iter().any(|line| line.starts_with("error ")
+                && line.contains("memories")
+                && line.contains("it went away while it was read")),
+            "missing the gone memory in\n{text}"
+        );
     }
 
     #[test]
