@@ -1274,6 +1274,35 @@ async fn test_a_group_left_with_only_its_unreaped_shell_can_be_signalled() {
     assert!(killed.is_ok(), "kill: {killed:?}");
 }
 
+/// macOS answers EPERM both for a group of zombies and for one whose live
+/// members refused the signal; only the first counts as signalled.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn test_a_live_member_is_not_taken_for_a_zombie() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("sleep 30 & exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let with_live_member = process_tree::only_zombies_in_group(pid as libc::pid_t);
+    tree.kill().unwrap();
+    let mut after_kill = false;
+    for _ in 0..50 {
+        after_kill = process_tree::only_zombies_in_group(pid as libc::pid_t);
+        if after_kill {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    child.wait().await.unwrap();
+
+    assert!(!with_live_member, "a live member was taken for a zombie");
+    assert!(after_kill, "the group was not seen as zombies only");
+}
+
 #[tokio::test]
 async fn test_finished_command_leaves_its_background_child_running() {
     let dir = tempdir().unwrap();

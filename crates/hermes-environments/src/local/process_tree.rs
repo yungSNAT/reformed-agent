@@ -122,19 +122,62 @@ impl ProcessTree {
         }
         let err = io::Error::last_os_error();
         // macOS leaves zombies out when it signals a group and answers EPERM
-        // when no other member could be signalled; Linux counts a zombie as
-        // signalled. The leader is this process's child, kept unreaped until
-        // the last signal, so once it has exited Linux would have succeeded
-        // here, and so does this. As on Linux, a live member that refused the
-        // signal alongside it then goes unreported.
+        // when it signalled nobody, where Linux counts a zombie as signalled.
+        // The leader stays unreaped until the last signal, so a group whose
+        // members have all exited gets EPERM there.
         #[cfg(target_os = "macos")]
-        if err.raw_os_error() == Some(libc::EPERM)
-            && matches!(has_exited_unreaped(self.pgid as u32), Ok(true))
-        {
+        if err.raw_os_error() == Some(libc::EPERM) && only_zombies_in_group(self.pgid) {
             return Ok(());
         }
         Err(err)
     }
+}
+
+/// Whether every process left in group `pgid` has exited. False when the
+/// group cannot be listed or a member's state cannot be read (another user's
+/// process, for one), so a live member that refused a signal is never taken
+/// for a zombie.
+#[cfg(target_os = "macos")]
+pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
+    use std::mem::size_of;
+
+    let mut pids: Vec<libc::pid_t> = vec![0; 16];
+    let count = loop {
+        let bytes = (pids.len() * size_of::<libc::pid_t>()) as libc::c_int;
+        // SAFETY: `pids` holds `bytes` bytes and the call writes at most
+        // that many. The listing includes zombies.
+        let written = unsafe { libc::proc_listpgrppids(pgid, pids.as_mut_ptr().cast(), bytes) };
+        if written <= 0 {
+            return false;
+        }
+        let count = written as usize / size_of::<libc::pid_t>();
+        if count < pids.len() {
+            break count;
+        }
+        pids.resize(pids.len() * 2, 0);
+    };
+    pids[..count].iter().all(|&pid| {
+        // SAFETY: an all-zero proc_bsdinfo is a valid value.
+        let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+        // SAFETY: the call writes at most `size` bytes into `info`; the
+        // argument 1 asks it to describe a zombie too.
+        let written = unsafe {
+            libc::proc_pidinfo(
+                pid,
+                libc::PROC_PIDTBSDINFO,
+                1,
+                (&mut info as *mut libc::proc_bsdinfo).cast(),
+                size,
+            )
+        };
+        if written == size {
+            info.pbi_status == libc::SZOMB
+        } else {
+            // A member reaped since the listing has gone.
+            written == 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
+        }
+    })
 }
 
 #[cfg(windows)]
