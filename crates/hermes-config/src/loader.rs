@@ -47,14 +47,14 @@ fn target_parent(path: &Path) -> &Path {
 
 fn atomic_temp_path(path: &Path) -> Result<PathBuf, ConfigError> {
     let parent = target_parent(path);
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            ConfigError::ParseError(format!("invalid config path: {}", path.display()))
-        })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        ConfigError::ParseError(format!("invalid config path: {}", path.display()))
+    })?;
     let nonce = ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    Ok(parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), nonce)))
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(format!(".tmp.{}.{}", std::process::id(), nonce));
+    Ok(parent.join(temp_name))
 }
 
 /// The file an atomic write to `path` must replace.

@@ -94,10 +94,12 @@ const WRITE_DENY_HOME_PREFIX: &[&str] = &[
 ];
 /// Credential stores under the active Hermes home, each denied with
 /// everything below it: provider keys (`.env`); the token store, credential
-/// pool, provenance key and Gemini OAuth file (`auth/`); and MCP server tokens
-/// (`mcp_auth.json`). `auth.json` and `config.yaml` stay writable, as upstream
+/// pool, provenance key and Gemini OAuth file (`auth/`); MCP server tokens
+/// (`mcp_auth.json`) and the skills hub token (`hub_token`). A file in `auth/`
+/// that links elsewhere is denied where it points, too. `auth.json` and
+/// `config.yaml` stay writable, as upstream
 /// keeps its control files (upstream #45947).
-const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] = &[".env", "auth", "mcp_auth.json"];
+const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] = &[".env", "auth", "mcp_auth.json", "hub_token"];
 
 // ---------------------------------------------------------------------------
 // Content secret patterns
@@ -477,8 +479,17 @@ fn is_expanded_write_denied(
     }
 
     if let Some(hermes_home) = hermes_home {
-        for store in WRITE_DENY_HERMES_HOME_PREFIX {
-            let store_forms = root_forms(&hermes_home.join(store));
+        let linked_out_of_auth = std::fs::read_dir(hermes_home.join("auth"))
+            .into_iter()
+            .flatten()
+            .flatten()
+            .map(|entry| entry.path());
+        let stores = WRITE_DENY_HERMES_HOME_PREFIX
+            .iter()
+            .map(|store| hermes_home.join(store))
+            .chain(linked_out_of_auth);
+        for store in stores {
+            let store_forms = root_forms(&store);
             if forms
                 .iter()
                 .any(|form| store_forms.iter().any(|store| form.starts_with(store)))

@@ -111,6 +111,11 @@ impl FileMemoryBackend {
         self.ensure_dir().await?;
         // A symlinked memory file keeps its link: the target is replaced.
         let path = &hermes_config::resolve_symlink_target(path);
+        if let Some(parent) = path.parent() {
+            tokio::fs::create_dir_all(parent).await.map_err(|e| {
+                ToolError::ExecutionFailed(format!("Failed to create {}: {}", parent.display(), e))
+            })?;
+        }
         let tmp = Self::temp_path_for(path);
         if let Err(e) = tokio::fs::write(&tmp, content).await {
             return Err(ToolError::ExecutionFailed(format!(
