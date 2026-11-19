@@ -23,16 +23,19 @@ async fn local_execute_simple_echo() {
 
 #[tokio::test]
 async fn local_execute_with_workdir() {
+    let dir = std::env::temp_dir();
+    // macOS resolves /var to /private/var and an MSYS shell prints `/c/...`
+    // for a drive path, so compare the last part.
+    let name = dir.file_name().unwrap().to_string_lossy().to_string();
     let backend = LocalBackend::default();
     let output = backend
-        .execute_command("pwd", None, Some("/tmp"), false, false)
+        .execute_command("pwd", None, dir.to_str(), false, false)
         .await
         .unwrap();
     assert_eq!(output.exit_code, 0);
-    // macOS may resolve /tmp to /private/tmp
     assert!(
-        output.stdout.trim().contains("/tmp"),
-        "Expected /tmp in output, got: {}",
+        output.stdout.trim().ends_with(&name),
+        "Expected {name} at the end of the output, got: {}",
         output.stdout.trim()
     );
 }
@@ -130,10 +133,12 @@ async fn local_write_read_file() {
 
 #[tokio::test]
 async fn local_file_exists() {
+    let dir = std::env::temp_dir();
+    let missing = dir.join("hermes_nonexistent_xyz_12345");
     let backend = LocalBackend::default();
-    assert!(backend.file_exists("/tmp").await.unwrap());
+    assert!(backend.file_exists(dir.to_str().unwrap()).await.unwrap());
     assert!(!backend
-        .file_exists("/tmp/hermes_nonexistent_xyz_12345")
+        .file_exists(missing.to_str().unwrap())
         .await
         .unwrap());
 }
