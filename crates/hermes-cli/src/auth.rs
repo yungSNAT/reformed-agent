@@ -43,6 +43,8 @@ fn load_auth_store(path: &Path) -> Result<AuthStore, AgentError> {
 }
 
 fn write_owner_only_atomic(path: &Path, raw: &str) -> Result<(), AgentError> {
+    // A symlinked store keeps its link: the target is replaced.
+    let path = &hermes_config::resolve_symlink_target(path);
     let parent = path.parent().ok_or_else(|| {
         AgentError::Io(format!(
             "credential path {} has no parent directory",
