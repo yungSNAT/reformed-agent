@@ -109,7 +109,14 @@ fn store_key(path: &Path) -> PathBuf {
     path.components()
         .map(|component| match component {
             Component::Normal(name) => {
-                let name = name.to_string_lossy().to_lowercase();
+                // Upper then lower case folds the forms APFS folds,
+                // such as the long s.
+                let name: String = name
+                    .to_string_lossy()
+                    .chars()
+                    .flat_map(char::to_uppercase)
+                    .flat_map(char::to_lowercase)
+                    .collect();
                 match name.split(':').next() {
                     Some(stem) if !stem.is_empty() => stem.to_string(),
                     _ => name,
@@ -277,6 +284,18 @@ impl CredentialGuard {
         }
 
         Ok(())
+    }
+}
+
+impl CredentialGuard {
+    /// `check_write_access` for a tool that writes `path` itself, so a
+    /// relative path is judged against the process folder, where it lands,
+    /// not against `TERMINAL_CWD`.
+    pub fn check_local_write_access(&self, path: &Path, content: &str) -> Result<(), ToolError> {
+        let absolute = std::path::absolute(path).map_err(|e| {
+            ToolError::InvalidParams(format!("Invalid path '{}': {e}", path.display()))
+        })?;
+        self.check_write_access(&absolute, content)
     }
 }
 
