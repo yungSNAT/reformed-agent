@@ -258,8 +258,8 @@ async fn rest_needs_a_one_use_native_http_ticket_and_no_origin() {
     let interactive = mint(&home, runtime.instance_id(), "interactive");
     assert_eq!(get(Some(&interactive), None).await, 401);
     let ticket = mint(&home, runtime.instance_id(), "native-http");
-    // Past authentication: the session does not exist.
-    assert_eq!(get(Some(&ticket), None).await, 404);
+    // Past authentication: the empty home answers with no messages.
+    assert_eq!(get(Some(&ticket), None).await, 200);
     assert_eq!(get(Some(&ticket), None).await, 401);
     let ticket = mint(&home, runtime.instance_id(), "native-http");
     assert_eq!(get(Some(&ticket), Some("file://")).await, 403);
