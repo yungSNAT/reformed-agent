@@ -154,7 +154,15 @@ impl WebhookAdapter {
     }
 
     /// Checks the global secret and each route's effective secret before the server starts.
-    fn validate_auth_safety(config: &WebhookConfig) -> Result<(), GatewayError> {
+    /// `addrs` are the addresses the bind host resolves to. INSECURE_NO_AUTH needs every one
+    /// of them on loopback: the decision is made on addresses, not the host name, because a
+    /// name such as `localhost` can resolve off loopback.
+    fn validate_auth_safety(
+        config: &WebhookConfig,
+        addrs: &[SocketAddr],
+    ) -> Result<(), GatewayError> {
+        let loopback =
+            !addrs.is_empty() && addrs.iter().all(|a| a.ip().to_canonical().is_loopback());
         let routes = config.routes.iter().map(|(name, route)| {
             let secret = route.secret.as_deref().unwrap_or(&config.secret);
             (format!("route '{name}'"), secret)
@@ -166,9 +174,10 @@ impl WebhookAdapter {
                     "webhook {owner} secret is blank or encodes a blank key; set a secret, or INSECURE_NO_AUTH for a loopback test bind"
                 )));
             }
-            if secret.trim() == INSECURE_NO_AUTH && !is_loopback_host(&config.host) {
+            if secret.trim() == INSECURE_NO_AUTH && !loopback {
                 return Err(GatewayError::Auth(format!(
-                    "webhook {owner} secret INSECURE_NO_AUTH is refused on non-loopback binds; unauthenticated webhook routes are only safe on loopback test binds"
+                    "webhook {owner} secret INSECURE_NO_AUTH is refused on non-loopback binds (host '{}' must resolve only to loopback addresses); unauthenticated webhook routes are only safe on loopback test binds",
+                    config.host
                 )));
             }
         }
@@ -251,13 +260,6 @@ fn is_blank_secret(secret: &str) -> bool {
     secret.trim().is_empty() || blank(secret.as_bytes()) || svix_key.is_some_and(|key| blank(&key))
 }
 
-fn is_loopback_host(host: &str) -> bool {
-    matches!(
-        host.trim().to_ascii_lowercase().as_str(),
-        "127.0.0.1" | "localhost" | "::1"
-    )
-}
-
 fn constant_time_eq(a: &[u8], b: &[u8]) -> bool {
     if a.len() != b.len() {
         return false;
@@ -331,22 +333,21 @@ fn decode_hex(input: &str) -> Option<Vec<u8>> {
 #[async_trait]
 impl PlatformAdapter for WebhookAdapter {
     async fn start(&self) -> Result<(), GatewayError> {
-        Self::validate_auth_safety(&self.config)?;
+        // Resolves names and bare IPv6 literals, which `"{host}:{port}"` parsing rejects.
+        let host = self.config.host.as_str();
+        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((host, self.config.port))
+            .await
+            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address {host}: {e}")))?
+            .collect();
+        Self::validate_auth_safety(&self.config, &addrs)?;
+        let addr = *addrs.first().ok_or_else(|| {
+            GatewayError::ConnectionFailed(format!("Invalid address {host}: no address"))
+        })?;
 
         info!(
             "Webhook adapter starting on port {} at path {}",
             self.config.port, self.config.path
         );
-
-        // Resolves names and bare IPv6 literals, which `"{host}:{port}"` parsing rejects.
-        let host = self.config.host.as_str();
-        let addr = tokio::net::lookup_host((host, self.config.port))
-            .await
-            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address {host}: {e}")))?
-            .next()
-            .ok_or_else(|| {
-                GatewayError::ConnectionFailed(format!("Invalid address {host}: no address"))
-            })?;
 
         let config = self.config.clone();
         let outbound_queue = self.outbound_queue.clone();
@@ -985,7 +986,7 @@ mod tests {
             max_body_bytes: default_webhook_max_body_bytes(),
             routes: BTreeMap::new(),
         };
-        let err = WebhookAdapter::validate_auth_safety(&config).unwrap_err();
+        let err = validate(&config).unwrap_err();
         assert!(err.to_string().contains("INSECURE_NO_AUTH"));
         assert!(err.to_string().contains("non-loopback"));
     }
@@ -1001,7 +1002,7 @@ mod tests {
             max_body_bytes: default_webhook_max_body_bytes(),
             routes: BTreeMap::new(),
         };
-        WebhookAdapter::validate_auth_safety(&config).unwrap();
+        validate(&config).unwrap();
     }
 
     /// The documented loopback hosts start, not only `127.0.0.1`.
@@ -1023,6 +1024,88 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{host}: {e}"));
             adapter.stop().await.unwrap();
         }
+    }
+
+    /// An INSECURE_NO_AUTH bind starts exactly when every address its host resolves to here
+    /// is loopback: the host name alone decides nothing, since `localhost` can resolve
+    /// anywhere (a hosts file, a resolver that forwards the name).
+    #[tokio::test]
+    async fn insecure_no_auth_start_follows_the_resolved_addresses() {
+        for host in ["localhost", "127.0.0.1", "::1"] {
+            let all_loopback = match tokio::net::lookup_host((host, 0)).await {
+                Ok(addrs) => {
+                    let addrs: Vec<SocketAddr> = addrs.collect();
+                    !addrs.is_empty() && addrs.iter().all(|a| a.ip().to_canonical().is_loopback())
+                }
+                Err(_) => false,
+            };
+            let adapter = WebhookAdapter::new(WebhookConfig {
+                host: host.into(),
+                port: 0,
+                path: "/webhook".into(),
+                secret: INSECURE_NO_AUTH.into(),
+                rate_limit: default_webhook_rate_limit(),
+                max_body_bytes: default_webhook_max_body_bytes(),
+                routes: BTreeMap::new(),
+            });
+            let started = adapter.start().await;
+            if started.is_ok() {
+                adapter.stop().await.unwrap();
+            }
+            assert_eq!(started.is_ok(), all_loopback, "{host}: {started:?}");
+        }
+    }
+
+    /// `validate_auth_safety` on the addresses `config.host` resolves to, as `start` does.
+    fn validate(config: &WebhookConfig) -> Result<(), GatewayError> {
+        use std::net::ToSocketAddrs;
+        let addrs: Vec<SocketAddr> = (config.host.as_str(), config.port)
+            .to_socket_addrs()
+            .expect("test hosts resolve")
+            .collect();
+        WebhookAdapter::validate_auth_safety(config, &addrs)
+    }
+
+    /// INSECURE_NO_AUTH, global or on a route, is judged on the resolved addresses: a
+    /// `localhost` that resolves off loopback is refused, as is one routable address among
+    /// loopback ones; loopback in any form starts. Real secrets start on any address.
+    #[test]
+    fn insecure_no_auth_needs_every_resolved_address_on_loopback() {
+        let addrs = |list: &[&str]| -> Vec<SocketAddr> {
+            list.iter()
+                .map(|a| a.parse().expect("socket address"))
+                .collect()
+        };
+        let mut global = config_with_route_secret("localhost", "route-secret");
+        global.secret = INSECURE_NO_AUTH.into();
+        let route = config_with_route_secret("localhost", INSECURE_NO_AUTH);
+        for config in [&global, &route] {
+            for refused in [
+                &["192.168.4.52:9000"][..],
+                &["127.0.0.1:9000", "10.0.0.1:9000"],
+                &["[::1]:9000", "[2001:db8::1]:9000"],
+                &["0.0.0.0:9000"],
+                &[],
+            ] {
+                let err = WebhookAdapter::validate_auth_safety(config, &addrs(refused))
+                    .expect_err("refused");
+                assert!(
+                    err.to_string().contains("non-loopback"),
+                    "{refused:?}: {err}"
+                );
+            }
+            for allowed in [
+                &["127.0.0.1:9000"][..],
+                &["127.0.0.2:9000"],
+                &["[::1]:9000", "127.0.0.1:9000"],
+                &["[::ffff:127.0.0.1]:9000"],
+            ] {
+                WebhookAdapter::validate_auth_safety(config, &addrs(allowed))
+                    .unwrap_or_else(|e| panic!("{allowed:?}: {e}"));
+            }
+        }
+        let secured = config_with_route_secret("localhost", "route-secret");
+        WebhookAdapter::validate_auth_safety(&secured, &addrs(&["192.168.4.52:9000"])).unwrap();
     }
 
     fn config_with_route_secret(host: &str, route_secret: &str) -> WebhookConfig {
@@ -1050,12 +1133,12 @@ mod tests {
     fn route_insecure_no_auth_is_refused_for_public_bind() {
         for secret in [INSECURE_NO_AUTH, " INSECURE_NO_AUTH "] {
             let config = config_with_route_secret("0.0.0.0", secret);
-            let err = WebhookAdapter::validate_auth_safety(&config).unwrap_err();
+            let err = validate(&config).unwrap_err();
             assert!(err.to_string().contains("'open'"), "{err}");
             assert!(err.to_string().contains("non-loopback"), "{err}");
         }
         let loopback = config_with_route_secret("127.0.0.1", INSECURE_NO_AUTH);
-        WebhookAdapter::validate_auth_safety(&loopback).unwrap();
+        validate(&loopback).unwrap();
     }
 
     /// A blank secret, or a Svix `whsec_` secret encoding a blank key, is an HMAC key anyone
@@ -1067,16 +1150,16 @@ mod tests {
         for host in ["0.0.0.0", "127.0.0.1"] {
             for secret in ["", "  ", "\0", "whsec_", "whsec_ICAg", "whsec_AA=="] {
                 let route = config_with_route_secret(host, secret);
-                let err = WebhookAdapter::validate_auth_safety(&route).unwrap_err();
+                let err = validate(&route).unwrap_err();
                 assert!(err.to_string().contains("'open'"), "{err}");
 
                 let mut global = config_with_route_secret(host, "route-secret");
                 global.secret = secret.into();
-                assert!(WebhookAdapter::validate_auth_safety(&global).is_err());
+                assert!(validate(&global).is_err());
             }
         }
         let svix = config_with_route_secret("0.0.0.0", "whsec_YWdlbnRtYWlsLXNlY3JldA==");
-        WebhookAdapter::validate_auth_safety(&svix).unwrap();
+        validate(&svix).unwrap();
     }
 
     /// Secrets that only look like a blank Svix key start, and sign with their own bytes.
@@ -1086,10 +1169,10 @@ mod tests {
         for host in ["0.0.0.0", "127.0.0.1"] {
             for secret in lookalikes {
                 let route = config_with_route_secret(host, secret);
-                WebhookAdapter::validate_auth_safety(&route).unwrap();
+                validate(&route).unwrap();
                 let mut global = config_with_route_secret(host, "route-secret");
                 global.secret = secret.into();
-                WebhookAdapter::validate_auth_safety(&global).unwrap();
+                validate(&global).unwrap();
             }
         }
         for secret in lookalikes {
@@ -1366,7 +1449,7 @@ mod tests {
     async fn outbound_poll_on_a_loopback_sentinel_bind_needs_no_signature() {
         let mut config = config_with_route_secret("127.0.0.1", "route-secret");
         config.secret = INSECURE_NO_AUTH.into();
-        WebhookAdapter::validate_auth_safety(&config).unwrap();
+        validate(&config).unwrap();
         let queue = queue_of_one();
         let reply = request_reply(&config, queue.clone(), &poll("")).await;
         assert!(reply.starts_with("HTTP/1.1 200"), "{reply}");
