@@ -180,24 +180,30 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     Some(cmd)
 }
 
-/// Whether git would expand the value, or an include's `gitdir` condition,
-/// as a path that begins `~name`: git finds that user's home through
-/// `getpwnam`, which can ask a directory service about a name the repository
-/// chose. Any value counts, as git takes many keys as paths.
+/// Whether git would expand the value, or an include's `gitdir` or
+/// `worktree` condition, as a path that begins `~name`: git finds that user's
+/// home through `getpwnam`, which can ask a directory service about a name
+/// the repository chose. Any value counts, as git takes many keys as paths.
+/// Git tests an `includeIf` condition whatever the variable under it.
 ///
-/// shortcut: git follows the includes, and expands their paths and `gitdir`
+/// shortcut: git follows the includes, and expands their paths and
 /// conditions, as soon as it starts in the repository, so the listing itself
 /// still makes those lookups; this stops the ones status, log and the other
-/// commands would make for every other path. Ending those too means finding
-/// and reading the repository's config files without git.
+/// commands would make for every other path. Ending those too means reading
+/// the repository's config files without git's repository discovery and
+/// include traversal.
 fn names_a_user(key: &[u8], value: Option<&[u8]>) -> bool {
     let condition = key
         .strip_prefix(b"includeif.")
-        .and_then(|rest| rest.strip_suffix(b".path"))
+        .and_then(|rest| {
+            rest.iter()
+                .rposition(|byte| *byte == b'.')
+                .map(|dot| &rest[..dot])
+        })
         .and_then(|condition| {
-            condition
-                .strip_prefix(b"gitdir:")
-                .or_else(|| condition.strip_prefix(b"gitdir/i:"))
+            [&b"gitdir:"[..], b"gitdir/i:", b"worktree:", b"worktree/i:"]
+                .iter()
+                .find_map(|prefix| condition.strip_prefix(*prefix))
         });
     value.into_iter().chain(condition).any(|path| {
         // Git 2.52 and later take a path marked optional.
@@ -352,6 +358,14 @@ mod tests {
             ("include.path".to_string(), format!("~{USER}/x")),
             (format!("includeIf.gitdir:~{USER}/.path"), "x".to_string()),
             (format!("includeIf.gitdir/i:~{USER}/.path"), "x".to_string()),
+            // Git tests the condition before it looks at the variable.
+            (format!("includeIf.gitdir:~{USER}/.note"), "x".to_string()),
+            (format!("includeIf.gitdir/i:~{USER}/.note"), "x".to_string()),
+            (format!("includeIf.worktree:~{USER}/.path"), "x".to_string()),
+            (
+                format!("includeIf.worktree/i:~{USER}/.note"),
+                "x".to_string(),
+            ),
         ] {
             let tmp = tempfile::tempdir().unwrap();
             let repo = tmp.path().join("repo");
@@ -428,5 +442,42 @@ mod tests {
             &["config", "core.excludesFile", &format!("~{USER}/x")],
         );
         assert!(workspace_git(&linked, LazyFetchGuard::NoPromisorRemote).is_none());
+    }
+
+    /// With `extensions.worktreeConfig`, each worktree has a config of its
+    /// own, which git lists under the `worktree` scope.
+    #[test]
+    fn a_user_name_in_a_worktree_s_own_config_gets_no_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        new_repo(&repo);
+        git(
+            &repo,
+            &[
+                "-c",
+                "user.name=T",
+                "-c",
+                "user.email=t@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        git(&repo, &["config", "extensions.worktreeConfig", "true"]);
+        let linked = tmp.path().join("linked");
+        git(&repo, &["worktree", "add", "-q", linked.to_str().unwrap()]);
+        git(
+            &linked,
+            &[
+                "config",
+                "--worktree",
+                "core.excludesFile",
+                &format!("~{USER}/x"),
+            ],
+        );
+        assert!(workspace_git(&linked, LazyFetchGuard::NoPromisorRemote).is_none());
+        assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some());
     }
 }
