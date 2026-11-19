@@ -504,6 +504,30 @@
         assert_eq!(token_requests(&server).await, 1);
     }
 
+    #[tokio::test(start_paused = true)]
+    async fn token_endpoint_that_never_answers_ends_the_refresh() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, ResponseTemplate};
+
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(200).set_delay(std::time::Duration::from_secs(3600)))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let err = agent
+            .call_llm_with_retry(&user_context(), &[], None, None)
+            .await
+            .expect_err("the 401 stands when the refresh times out");
+
+        assert!(err.to_string().contains("401"), "{err}");
+        assert_eq!(provider.sent_keys(), ["old-access"]);
+        assert_eq!(stored_anthropic_token(&home).0, "old-access");
+    }
+
     #[tokio::test]
     async fn bad_request_whose_text_contains_401_is_not_refreshed() {
         let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
