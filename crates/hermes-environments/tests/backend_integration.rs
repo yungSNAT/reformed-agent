@@ -23,13 +23,18 @@ async fn local_execute_simple_echo() {
 
 #[tokio::test]
 async fn local_execute_with_workdir() {
-    let dir = std::env::temp_dir();
-    // macOS resolves /var to /private/var and an MSYS shell prints `/c/...`
-    // for a drive path, so compare the last part.
-    let name = dir.file_name().unwrap().to_string_lossy().to_string();
+    let dir = tempfile::tempdir().unwrap();
+    // macOS resolves /var to /private/var and an MSYS shell prints its own
+    // names (`/tmp` for the temp folder), so compare the last part.
+    let name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let backend = LocalBackend::default();
     let output = backend
-        .execute_command("pwd", None, dir.to_str(), false, false)
+        .execute_command("pwd", None, dir.path().to_str(), false, false)
         .await
         .unwrap();
     assert_eq!(output.exit_code, 0);

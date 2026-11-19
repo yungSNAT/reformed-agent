@@ -444,7 +444,7 @@ impl StdioTransport {
     }
 
     fn effective_child_env(&self, profile: McpSandboxProfile) -> HashMap<String, String> {
-        let mut env = sanitize_child_env(&self.env, profile);
+        let mut env = sanitize_child_env(&child_env_with_inherited(&self.env), profile);
         if self.suppress_interactive_oauth {
             env.insert(
                 "HERMES_MCP_BACKGROUND_DISCOVERY".to_string(),
@@ -491,8 +491,7 @@ impl McpTransport for StdioTransport {
         );
 
         let cwd = sandbox_cwd(sandbox_profile);
-        let _ = program_for;
-        let mut cmd = Command::new(&self.command);
+        let mut cmd = Command::new(program_for(&self.command, &sanitized_env, cwd.as_deref()));
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
