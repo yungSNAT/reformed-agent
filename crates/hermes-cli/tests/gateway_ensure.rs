@@ -223,6 +223,41 @@ fn status_and_restart_keep_the_owners_lock_and_one_owner() {
     assert!(!alive(old), "the old owner is gone");
 }
 
+/// A signalled run withdraws local mode before its slower shutdown, so ensure cannot report it
+/// ready once its pid file is gone: by the time it says it is shutting down, the socket and state
+/// file are gone.
+#[test]
+fn a_signalled_run_withdraws_local_mode_before_it_shuts_down() {
+    use std::io::{BufRead, BufReader};
+    let (_dir, home) = private_root();
+    let _owner = Owner(home.clone());
+    let mut run = Command::new(cargo_bin("hermes"))
+        .env("HERMES_HOME", &home)
+        .args(["gateway", "run"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(run.stdout.take().unwrap()).lines();
+    let mut next_line_starting = |prefix: &str| {
+        lines
+            .by_ref()
+            .map_while(Result::ok)
+            .any(|line| line.starts_with(prefix))
+    };
+    assert!(next_line_starting("Gateway is ready"), "the run started");
+    assert!(home.join("gateway.sock").exists());
+    let signalled = Command::new("kill")
+        .args(["-TERM", &run.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signalled.success());
+    assert!(next_line_starting("Shutting down gateway"));
+    assert!(!home.join("gateway.sock").exists(), "socket still served");
+    assert!(!home.join("gateway_state.json").exists());
+    assert!(run.wait().unwrap().success());
+}
+
 /// A run that cannot own the home must leave the owner's pid file alone, even when the file names
 /// a dead pid: removing it would leave a ready owner that `gateway stop` cannot find.
 #[test]
