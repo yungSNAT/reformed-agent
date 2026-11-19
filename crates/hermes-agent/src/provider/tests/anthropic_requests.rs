@@ -344,3 +344,20 @@ fn test_anthropic_strips_sampling_and_unsupported_fast_controls() {
     assert_eq!(supported["temperature"], serde_json::json!(0.7));
     assert_eq!(supported["speed"], serde_json::json!("fast"));
 }
+
+#[test]
+fn test_anthropic_later_system_message_stays_in_place_as_user_text() {
+    let messages = vec![
+        Message::system("You are helpful"),
+        Message::user("Hello"),
+        Message::system("<memory-context>recalled</memory-context>"),
+    ];
+    let (system, msgs) = AnthropicProvider::convert_messages(&messages, None);
+    assert_eq!(system.as_deref(), Some("You are helpful"));
+    assert_eq!(msgs.len(), 2);
+    assert_eq!(msgs[1]["role"], "user");
+    assert_eq!(
+        msgs[1]["content"][0]["text"],
+        "<memory-context>recalled</memory-context>"
+    );
+}

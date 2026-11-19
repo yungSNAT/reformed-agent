@@ -1671,6 +1671,7 @@
     }
 
     include!("tests/llm_retry_stream.rs");
+    include!("tests/prompt_cache_prefix.rs");
 
     #[test]
     fn quiet_mode_suppresses_status_callback() {
