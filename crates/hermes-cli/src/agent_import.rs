@@ -707,8 +707,9 @@ impl Importer<'_> {
     /// reported and skipped, and links inside a skill are not copied.
     fn skills(&mut self, source: &Path) {
         // A linked entry is kept so that it is reported, never followed; a
-        // folder whose SKILL.md is a folder or special file, or an entry gone
-        // since the listing, is kept so that it is reported as an error.
+        // special file, a folder whose SKILL.md is a folder or special file,
+        // or an entry gone since the listing, is kept so that it is reported
+        // as an error.
         let skill_dirs = SourceDir::open(source).and_then(|dir| {
             let mut kept = Vec::new();
             for name in dir.names()? {
@@ -725,7 +726,10 @@ impl Importer<'_> {
                         }
                         None => continue,
                     },
-                    Some(Entry::File(_) | Entry::Other) => continue,
+                    Some(Entry::File(_)) => continue,
+                    Some(Entry::Other) => {
+                        Err((Status::Error, "it is not a regular file or folder"))
+                    }
                     None => Err((Status::Error, "it went away while it was read")),
                 };
                 kept.push((name, found));
