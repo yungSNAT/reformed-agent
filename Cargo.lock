@@ -1704,6 +1704,7 @@ dependencies = [
  "hermes-config",
  "hermes-core",
  "hermes-cron",
+ "hermes-desktop-gateway",
  "hermes-environments",
  "hermes-gateway",
  "hermes-intelligence",
@@ -1831,6 +1832,7 @@ dependencies = [
  "hermes-config",
  "hermes-core",
  "hermes-provider-runtime",
+ "libc",
  "reqwest",
  "rusqlite",
  "serde",
@@ -1839,6 +1841,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tokio-tungstenite",
+ "tracing",
  "uuid",
  "windows-sys 0.61.2",
 ]
