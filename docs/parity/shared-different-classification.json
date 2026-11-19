@@ -930,7 +930,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/gmi/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream sends GMI's `HermesAgent/<version>` User-Agent and adds anthropic/claude-sonnet-5 to its 7 fallback models. Rust carries both: crates/hermes-agent/src/provider/generic.rs sends the header for gmi (gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai) and crates/hermes-cli/src/model_switch/curated_models.rs lists the same models (gmi_curated_models_follow_upstreams_fallback_models). The Python plugin stays reference-only."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream sends GMI's `HermesAgent/<version>` User-Agent and adds anthropic/claude-sonnet-5 to its 7 fallback models. Rust carries both: crates/hermes-agent/src/provider/generic.rs sends the header for gmi on main-model and auxiliary requests (gmi_and_xai_requests_carry_upstreams_user_agents, auxiliary_gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai) and crates/hermes-cli/src/model_switch/curated_models.rs lists the same models (gmi_curated_models_follow_upstreams_fallback_models). The Python plugin stays reference-only."
     },
     {
       "classification": "policy_only",
@@ -979,7 +979,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/nvidia/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. Rust strips both fields for nvidia, and its provider profile and CLI resolve the 3 aliases (crates/hermes-agent/src/provider_profiles.rs; nvidia_tool_messages_drop_name_and_tool_name). The Python plugin stays reference-only."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. Rust strips `name` from nvidia tool messages (its messages carry no `tool_name`, which is removed too if present), and its provider profile and CLI resolve the 3 aliases (crates/hermes-agent/src/provider_profiles.rs; nvidia_tool_messages_drop_name_and_tool_name). The Python plugin stays reference-only."
     },
     {
       "classification": "intentional_divergence",
@@ -1028,7 +1028,7 @@
       "owner": "yungSNAT",
       "path": "plugins/model-providers/xai/__init__.py",
       "ticket": 3524,
-      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile sends a `Hermes-Agent/<version>` User-Agent. Rust's generic provider sends it for xai (crates/hermes-agent/src/provider/generic.rs; gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai). The Python plugin stays reference-only."
+      "rationale": "Compared b51fbc73 with v0.23.2: upstream's xAI profile sends a `Hermes-Agent/<version>` User-Agent. Rust's generic provider sends it for xai on main-model and auxiliary requests (crates/hermes-agent/src/provider/generic.rs; gmi_and_xai_requests_carry_upstreams_user_agents, auxiliary_gmi_and_xai_requests_carry_upstreams_user_agents, build_provider_sends_upstreams_user_agent_for_gmi_and_xai). The Python plugin stays reference-only."
     },
     {
       "classification": "intentional_divergence",

@@ -217,6 +217,41 @@ fn gmi_and_xai_requests_carry_upstreams_user_agents() {
 }
 
 #[test]
+fn auxiliary_gmi_and_xai_requests_carry_upstreams_user_agents() {
+    let user_agent = |label: &str| {
+        let provider = crate::auxiliary_builder::direct_key_provider(
+            label,
+            "https://example.invalid/v1",
+            "key",
+            "m",
+        );
+        let request = provider
+            .build_request(
+                &Client::new(),
+                "https://example.invalid/v1/chat/completions",
+                "key",
+                &serde_json::json!({}),
+            )
+            .build()
+            .expect("request");
+        request
+            .headers()
+            .get("User-Agent")
+            .map(|value| value.to_str().unwrap().to_string())
+    };
+    assert_eq!(
+        user_agent("gmi"),
+        Some(format!("HermesAgent/{}", env!("CARGO_PKG_VERSION")))
+    );
+    assert_eq!(
+        user_agent("xai"),
+        Some(format!("Hermes-Agent/{}", env!("CARGO_PKG_VERSION")))
+    );
+    // Other profiles' request shaping stays off in the auxiliary chain.
+    assert_eq!(user_agent("fireworks"), None);
+}
+
+#[test]
 fn nvidia_tool_messages_drop_name_and_tool_name() {
     let tool_result = Message {
         name: Some("terminal".to_string()),

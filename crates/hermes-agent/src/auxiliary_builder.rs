@@ -46,7 +46,6 @@ mod default_base_urls {
     pub const XAI: &str = "https://api.x.ai/v1";
     pub const XIAOMI: &str = "https://api.xiaomimimo.com/v1";
     pub const GMI: &str = "https://api.gmi-serving.com/v1";
-    pub const KILOCODE: &str = "https://api.kilo.ai/api/gateway";
     pub const HUGGINGFACE: &str = "https://router.huggingface.co/v1";
     pub const ZAI: &str = "https://api.z.ai/api/paas/v4";
     pub const MINIMAX: &str = "https://api.minimax.io/v1";
@@ -283,7 +282,7 @@ pub fn build_auxiliary_client_with_main_runtime(
         &mut summary,
         "KILOCODE_API_KEY",
         "kilocode",
-        default_base_urls::KILOCODE,
+        provider_profiles::KILOCODE_BASE_URL,
         default_models::KILOCODE,
         main_label.as_deref(),
     );
@@ -423,7 +422,7 @@ fn build_main_runtime_candidate(
         ),
         _ => {
             let url = base_url.or_else(|| default_base_url(label).map(str::to_string))?;
-            Arc::new(GenericProvider::new(url, api_key, model))
+            Arc::new(direct_key_provider(label, url, api_key, model))
         }
     };
 
@@ -610,7 +609,7 @@ fn register_direct_key(
         }
     };
     let provider: Arc<dyn LlmProvider> =
-        Arc::new(GenericProvider::new(base_url, key, default_model));
+        Arc::new(direct_key_provider(label, base_url, key, default_model));
     add_candidate(
         builder,
         ProviderCandidate::new(
@@ -620,6 +619,22 @@ fn register_direct_key(
         ),
     );
     summary.registered.push(label.to_string());
+}
+
+/// An OpenAI-compatible auxiliary provider. GMI and xAI keep their profile so
+/// auxiliary requests carry upstream's User-Agent, as main-model requests do;
+/// other profiles' request shaping stays off in the auxiliary chain.
+pub(crate) fn direct_key_provider(
+    label: &str,
+    base_url: impl Into<String>,
+    api_key: impl Into<String>,
+    model: impl Into<String>,
+) -> GenericProvider {
+    let provider = GenericProvider::new(base_url, api_key, model);
+    match provider_profiles::canonical_provider_profile_id(label) {
+        Some(profile @ ("gmi" | "xai")) => provider.with_provider_profile(profile),
+        _ => provider,
+    }
 }
 
 fn register_kimi_direct_key(
@@ -928,6 +943,7 @@ mod tests {
         std::env::set_var("ANTHROPIC_API_KEY", "sk-an");
         std::env::set_var("ZAI_API_KEY", "z");
         std::env::set_var("GMI_API_KEY", "sk-gmi");
+        std::env::set_var("KILOCODE_API_KEY", "sk-kilo");
         std::env::set_var("TOKENHUB_API_KEY", "sk-tokenhub");
         {
             let (client, _) = build_default_auxiliary_client(AuxiliaryConfig::default());
@@ -939,6 +955,7 @@ mod tests {
                     "anthropic",
                     "zai",
                     "gmi",
+                    "kilocode",
                     "tencent-tokenhub"
                 ]
             );
