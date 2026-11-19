@@ -170,6 +170,26 @@ jobs:
           cargo test --locked -p hermes-config --lib check_implicit_home
           cargo test --locked -p hermes-cli -p hermes-http -p hermes-eval --test linked_home
 
+  # Process, environment and path behaviour that differs on macOS, such as the
+  # write guard's /private/var/folders allowance; the macOS jobs above only
+  # build.
+  macos-test:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Write guard tests
+        run: cargo test --locked -p hermes-tools --lib credential_guard
+      - name: Native tests
+        if: ${{ !cancelled() }}
+        run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp
+
   desktop-gateway:
     strategy:
       fail-fast: false

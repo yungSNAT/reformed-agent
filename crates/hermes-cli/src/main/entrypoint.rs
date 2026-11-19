@@ -49,6 +49,19 @@ async fn run_main() {
         }
         return;
     }
+    if let Some(name) = cli.profile.as_deref() {
+        if cli.config_dir.is_some() {
+            eprintln!("Error: --profile and --config-dir each choose the home; give one of them.");
+            std::process::exit(1);
+        }
+        match hermes_cli::profiles::profile_home(name) {
+            Ok(home) => std::env::set_var("HERMES_HOME", home),
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
     if let Some(config_dir) = cli.config_dir.as_deref() {
         std::env::set_var("HERMES_HOME", config_dir);
     }
@@ -398,6 +411,9 @@ async fn run_main() {
             run_config(cli, action, key, value)
         }
         CliCommand::Gateway(GatewayArgs {
+            action, timeout, ..
+        }) if action.as_deref() == Some("ensure") => run_gateway_ensure(&timeout),
+        CliCommand::Gateway(GatewayArgs {
             action,
             platform,
             system,
@@ -408,6 +424,9 @@ async fn run_main() {
             dry_run,
             yes,
             deep,
+            json: _,
+            timeout: _,
+            quiet: _,
         }) => {
             run_gateway(
                 cli,

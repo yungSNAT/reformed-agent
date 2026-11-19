@@ -72,10 +72,6 @@ fn apply_route_autotune_env_overrides(cli: &Cli) -> Vec<String> {
     applied
 }
 
-fn gateway_lock_path_for_pid_path(pid_path: &Path) -> PathBuf {
-    pid_path.with_file_name("gateway.lock")
-}
-
 fn read_gateway_pid(path: &Path) -> Option<u32> {
     let raw = std::fs::read_to_string(path).ok()?;
     let trimmed = raw.trim();
@@ -90,9 +86,10 @@ fn read_gateway_pid(path: &Path) -> Option<u32> {
     u32::try_from(pid).ok()
 }
 
+/// Removes a stale pid file. `gateway.lock` stays: its `flock`, not its presence, says whether
+/// an owner runs, and unlinking a live owner's lock would let a second owner claim the home.
 fn cleanup_stale_gateway_metadata(pid_path: &Path) {
     let _ = std::fs::remove_file(pid_path);
-    let _ = std::fs::remove_file(gateway_lock_path_for_pid_path(pid_path));
 }
 
 // Only the Unix `gateway_pid_is_alive` and its test call this.
