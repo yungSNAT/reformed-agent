@@ -145,12 +145,13 @@ pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
     let count = loop {
         let bytes = (pids.len() * size_of::<libc::pid_t>()) as libc::c_int;
         // SAFETY: `pids` holds `bytes` bytes and the call writes at most
-        // that many. The listing includes zombies.
-        let written = unsafe { libc::proc_listpgrppids(pgid, pids.as_mut_ptr().cast(), bytes) };
-        if written <= 0 {
+        // that many. It returns the number of pids, zombies included, and 0
+        // on failure.
+        let listed = unsafe { libc::proc_listpgrppids(pgid, pids.as_mut_ptr().cast(), bytes) };
+        if listed <= 0 {
             return false;
         }
-        let count = written as usize / size_of::<libc::pid_t>();
+        let count = listed as usize;
         if count < pids.len() {
             break count;
         }
