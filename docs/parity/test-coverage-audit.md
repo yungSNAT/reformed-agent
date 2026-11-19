@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-19T00:07:29.103154+00:00`
+Generated: `2026-11-19T00:27:01.928464+00:00`
 
 ## Gate
 
@@ -13,14 +13,14 @@ Generated: `2026-11-19T00:07:29.103154+00:00`
 | Metric | Value |
 | --- | ---: |
 | `tracked_behavior_rows` | 511 |
-| `covered_behavior_rows` | 372 |
-| `tracked_behavior_coverage_ratio` | 0.728 |
+| `covered_behavior_rows` | 369 |
+| `tracked_behavior_coverage_ratio` | 0.7221 |
 | `rust_test_files` | 483 |
 | `rust_test_functions` | 8787 |
 | `coverage_manifest_entries` | 501 |
-| `coverage_manifest_entries_with_valid_rust_tests` | 362 |
-| `coverage_manifest_deferred_entries` | 139 |
-| `coverage_manifest_not_rechecked_entries` | 340 |
+| `coverage_manifest_entries_with_valid_rust_tests` | 359 |
+| `coverage_manifest_deferred_entries` | 142 |
+| `coverage_manifest_not_rechecked_entries` | 337 |
 | `missing_rust_test_refs` | 0 |
 | `queue_pending` | 0 |
 | `queue_total` | 1 |
@@ -31,8 +31,8 @@ Generated: `2026-11-19T00:07:29.103154+00:00`
 
 | Manifest | Entries | Valid Rust-test entries | Deferred, not covered | Not rechecked at the pin | Referenced Rust tests | Missing refs |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: |
-| `docs/parity/python-test-suite-coverage.json` | 177 | 133 | 44 | 133 | 109 | 0 |
-| `docs/parity/hermes-cli-test-coverage.json` | 147 | 111 | 36 | 111 | 89 | 0 |
+| `docs/parity/python-test-suite-coverage.json` | 177 | 131 | 46 | 131 | 105 | 0 |
+| `docs/parity/hermes-cli-test-coverage.json` | 147 | 110 | 37 | 110 | 89 | 0 |
 | `docs/parity/ui-tui-source-coverage.json` | 177 | 118 | 59 | 96 | 68 | 0 |
 
 ## Test Intent Domains

@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-19T11:07:12+11:00",
-  "head_sha": "d75111720c5c2fabf1844c67f0fe16596f6e723e",
+  "generated_at_utc": "2026-11-19T11:26:45+11:00",
+  "head_sha": "687310ff2e2f355acf6cc3c54fee6470608cbafa",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -67,11 +67,11 @@
     {
       "evidence": [
         "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.",
-        "94 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "97 rows are deferred without review or Rust test coverage (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "ci_jobs": 0,
-        "deferred_rows": 94,
+        "deferred_rows": 97,
         "parity_gate_present": true
       },
       "state": "in_progress",

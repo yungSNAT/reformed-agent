@@ -82,7 +82,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.728,
+        "actual": 0.7221,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-19T00:07:30.733980+00:00",
+  "generated_at_utc": "2026-11-19T00:27:03.426132+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -293,7 +293,7 @@
     "max_sota_harness_missing_rust_refs": 0.0,
     "max_test_coverage_audit_critical_gaps": 0.0,
     "max_test_coverage_missing_rust_refs": 0.0,
-    "max_test_coverage_not_rechecked_rows": 340.0,
+    "max_test_coverage_not_rechecked_rows": 337.0,
     "max_test_coverage_unaccounted_rows": 0.0,
     "max_unowned_divergences": 0.0,
     "max_upstream_patch_missing": 1.0,
@@ -303,7 +303,7 @@
     "min_deep_problem_solving_superiority_cases": 10.0,
     "min_deep_problem_solving_total_cases": 10.0,
     "min_sota_harness_domain_coverage_ratio": 1.0,
-    "min_test_coverage_tracked_behavior_ratio": 0.728,
+    "min_test_coverage_tracked_behavior_ratio": 0.7221,
     "min_test_intent_mapping_ratio": 1.0
   },
   "program": {
@@ -344,7 +344,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.728,
+        "actual": 0.7221,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -368,7 +368,7 @@
         "status": "fail"
       },
       {
-        "actual": 340.0,
+        "actual": 337.0,
         "limit": 0,
         "metric": "max_test_coverage_not_rechecked_rows",
         "status": "fail"
@@ -548,11 +548,11 @@
       "pass": true
     },
     "summary": {
-      "coverage_manifest_deferred_entries": 139,
+      "coverage_manifest_deferred_entries": 142,
       "coverage_manifest_entries": 501,
-      "coverage_manifest_entries_with_valid_rust_tests": 362,
-      "coverage_manifest_not_rechecked_entries": 340,
-      "covered_behavior_rows": 372,
+      "coverage_manifest_entries_with_valid_rust_tests": 359,
+      "coverage_manifest_not_rechecked_entries": 337,
+      "covered_behavior_rows": 369,
       "divergence_errors": 0,
       "divergence_review_overdue": 0,
       "divergence_unowned": 0,
@@ -564,7 +564,7 @@
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,
-      "tracked_behavior_coverage_ratio": 0.728,
+      "tracked_behavior_coverage_ratio": 0.7221,
       "tracked_behavior_rows": 511
     }
   },

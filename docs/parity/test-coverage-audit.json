@@ -1,22 +1,22 @@
 {
   "advisory_gaps": [
     {
-      "count": 44,
+      "count": 46,
       "kind": "coverage_manifest_deferred",
       "message": "docs/parity/python-test-suite-coverage.json has rows deferred without Rust test coverage"
     },
     {
-      "count": 133,
+      "count": 131,
       "kind": "coverage_manifest_not_rechecked",
       "message": "docs/parity/python-test-suite-coverage.json has covered rows not rechecked since upstream changed their files"
     },
     {
-      "count": 36,
+      "count": 37,
       "kind": "coverage_manifest_deferred",
       "message": "docs/parity/hermes-cli-test-coverage.json has rows deferred without Rust test coverage"
     },
     {
-      "count": 111,
+      "count": 110,
       "kind": "coverage_manifest_not_rechecked",
       "message": "docs/parity/hermes-cli-test-coverage.json has covered rows not rechecked since upstream changed their files"
     },
@@ -90,6 +90,8 @@
         "tests/acp_adapter/test_acp_commands.py",
         "tests/acp_adapter/test_acp_images.py",
         "tests/agent/test_auxiliary_client_anthropic_custom.py",
+        "tests/agent/test_bedrock_adapter.py",
+        "tests/agent/test_credential_pool_routing.py",
         "tests/agent/test_curator_activity.py",
         "tests/agent/test_direct_provider_url_detection.py",
         "tests/agent/test_display_emoji.py",
@@ -137,9 +139,7 @@
       "missing_rust_tests_entries": [],
       "not_rechecked_entries": [
         "tests/agent/test_arcee_trinity_overrides.py",
-        "tests/agent/test_bedrock_adapter.py",
         "tests/agent/test_context_references.py",
-        "tests/agent/test_credential_pool_routing.py",
         "tests/agent/test_crossloop_client_cache.py",
         "tests/agent/test_curator.py",
         "tests/agent/test_curator_backup.py",
@@ -271,12 +271,12 @@
         "tests/tui_gateway/test_review_summary_callback.py"
       ],
       "path": "docs/parity/python-test-suite-coverage.json",
-      "referenced_rust_tests": 109,
+      "referenced_rust_tests": 105,
       "status_counts": {
-        "covered_by_rust_test_suite_contracts": 133,
-        "deferred_not_covered": 44
+        "covered_by_rust_test_suite_contracts": 131,
+        "deferred_not_covered": 46
       },
-      "valid_entries_with_rust_tests": 133
+      "valid_entries_with_rust_tests": 131
     },
     {
       "deferred_entries": [
@@ -284,6 +284,7 @@
         "tests/hermes_cli/test_anthropic_provider_persistence.py",
         "tests/hermes_cli/test_apply_model_switch_result_context.py",
         "tests/hermes_cli/test_at_context_completion_filter.py",
+        "tests/hermes_cli/test_auth_nous_provider.py",
         "tests/hermes_cli/test_auth_toctou_file_modes.py",
         "tests/hermes_cli/test_chat_skills_flag.py",
         "tests/hermes_cli/test_config_env_refs.py",
@@ -328,7 +329,6 @@
         "tests/hermes_cli/test_argparse_flag_propagation.py",
         "tests/hermes_cli/test_auth_codex_provider.py",
         "tests/hermes_cli/test_auth_commands.py",
-        "tests/hermes_cli/test_auth_nous_provider.py",
         "tests/hermes_cli/test_auth_profile_fallback.py",
         "tests/hermes_cli/test_auth_provider_gate.py",
         "tests/hermes_cli/test_auth_qwen_provider.py",
@@ -436,10 +436,10 @@
       "path": "docs/parity/hermes-cli-test-coverage.json",
       "referenced_rust_tests": 89,
       "status_counts": {
-        "covered_by_rust_contracts": 111,
-        "deferred_not_covered": 36
+        "covered_by_rust_contracts": 110,
+        "deferred_not_covered": 37
       },
-      "valid_entries_with_rust_tests": 111
+      "valid_entries_with_rust_tests": 110
     },
     {
       "deferred_entries": [
@@ -614,7 +614,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T00:07:29.103154+00:00",
+  "generated_at_utc": "2026-11-19T00:27:01.928464+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -1164,11 +1164,11 @@
     "upstream_missing_queue": "docs/parity/upstream-missing-queue.json"
   },
   "summary": {
-    "coverage_manifest_deferred_entries": 139,
+    "coverage_manifest_deferred_entries": 142,
     "coverage_manifest_entries": 501,
-    "coverage_manifest_entries_with_valid_rust_tests": 362,
-    "coverage_manifest_not_rechecked_entries": 340,
-    "covered_behavior_rows": 372,
+    "coverage_manifest_entries_with_valid_rust_tests": 359,
+    "coverage_manifest_not_rechecked_entries": 337,
+    "covered_behavior_rows": 369,
     "divergence_errors": 0,
     "divergence_review_overdue": 0,
     "divergence_unowned": 0,
@@ -1180,7 +1180,7 @@
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
-    "tracked_behavior_coverage_ratio": 0.728,
+    "tracked_behavior_coverage_ratio": 0.7221,
     "tracked_behavior_rows": 511
   }
 }
