@@ -1170,6 +1170,38 @@ async fn test_abandoned_kill_process_still_ends_the_shells_descendants() {
     assert_no_survivor(&marker).await;
 }
 
+/// When the exit cannot be seen unreaped, the shell is still reaped only
+/// whilst nobody holds the signal lock.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_an_unseen_exit_is_reaped_only_outside_a_held_signal_lock() {
+    let mut child = TokioCommand::new("sh")
+        .arg("-c")
+        .arg("sleep 0.2")
+        .spawn()
+        .unwrap();
+    let pid = child.id().expect("pid") as libc::pid_t;
+    let lock = Arc::new(AsyncMutex::new(()));
+    let held = lock.clone().lock_owned().await;
+    let reaper = tokio::spawn(async move {
+        let guard = reap_under_lock(&mut child, &lock).await;
+        (guard.is_some(), child)
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // SAFETY: signal 0 only checks that the process id exists.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+    drop(held);
+    let (guarded, mut child) = reaper.await.unwrap();
+
+    assert!(
+        exists,
+        "the child was reaped whilst the signal lock was held"
+    );
+    assert!(guarded, "the reap returned without the lock");
+    assert!(child.try_wait().unwrap().is_some());
+}
+
 /// The shell stays unreaped whilst `kill_process` signals its group, so the
 /// group id cannot pass to an unrelated process meanwhile.
 #[cfg(unix)]

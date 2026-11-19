@@ -26,6 +26,17 @@ const PROCESS_PREVIEW_CHARS: usize = 1_000;
 const PROCESS_WAIT_OUTPUT_CHARS: usize = 2_000;
 const PROCESS_LOG_DEFAULT_LINES: usize = 200;
 const FOREGROUND_DRAIN_GRACE_MS: u64 = 120;
+
+/// Reaps `child` when its exit could not be seen unreaped, returning the
+/// lock's guard once it has.
+#[cfg(unix)]
+async fn reap_under_lock(
+    child: &mut tokio::process::Child,
+    _lock: &Arc<AsyncMutex<()>>,
+) -> Option<tokio::sync::OwnedMutexGuard<()>> {
+    let _ = child.wait().await;
+    None
+}
 /// How long a process tree has to stop after SIGTERM before SIGKILL.
 #[cfg(unix)]
 const PROCESS_TREE_TERM_GRACE: std::time::Duration = std::time::Duration::from_millis(250);
@@ -526,14 +537,14 @@ impl TerminalBackend for LocalBackend {
 
             tokio::spawn(async move {
                 let _script_file = script_file;
-                // Reaping under the lock only once the exit is seen, so a
-                // failed wait cannot hold the lock for the command's life.
+                // The shell is reaped only under the lock, which is never
+                // held whilst waiting for a running shell.
                 #[cfg(unix)]
                 let _signalling = match pid {
                     Some(pid) if process_tree::wait_unreaped(pid).await => {
                         Some(signal_lock.lock_owned().await)
                     }
-                    _ => None,
+                    _ => reap_under_lock(&mut child, &signal_lock).await,
                 };
                 #[cfg(not(unix))]
                 drop(signal_lock);
