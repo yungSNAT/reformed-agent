@@ -1,6 +1,6 @@
 # Global Parity Proof
 
-Generated: `2026-11-19T19:37:31.013880+00:00`
+Generated: `2026-11-19T20:21:36.178478+00:00`
 
 ## Gate Status
 
@@ -22,7 +22,7 @@ Generated: `2026-11-19T19:37:31.013880+00:00`
 | `min_test_coverage_tracked_behavior_ratio` | 0.0646 |
 | `max_test_coverage_audit_critical_gaps` | 0.0 |
 | `max_test_coverage_unaccounted_rows` | 0.0 |
-| `max_shared_diff_deferred_rows` | 27.0 |
+| `max_shared_diff_deferred_rows` | 22.0 |
 | `max_test_coverage_not_rechecked_rows` | 337.0 |
 | `max_deferred_review_overdue` | 0.0 |
 | `max_test_coverage_missing_rust_refs` | 0.0 |
