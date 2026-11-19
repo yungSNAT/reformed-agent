@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-19T07:45:21.977214+00:00",
+  "generated_at_utc": "2026-11-19T19:37:28.428021+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "885c69d9de22d25183f12fc444420e1e2ce0462c",
+    "local_sha": "345bdec7d0fa01178695185e322fedaa5ca11aaf",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1630,
+    "commits_ahead": 1647,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1357,
+    "local_patch_unique": 1373,
     "files_only_upstream": 24117,
-    "files_only_local": 2022,
+    "files_only_local": 2031,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27376,
-    "tree_insertions": 4528880,
-    "tree_deletions": 934948
+    "tree_files_changed": 27385,
+    "tree_insertions": 4528858,
+    "tree_deletions": 940444
   },
   "top_upstream_only": [
     {
@@ -348,7 +348,7 @@
   "top_local_only": [
     {
       "path": "crates/hermes-cli",
-      "count": 197
+      "count": 199
     },
     {
       "path": "skills/creative",
@@ -419,6 +419,10 @@
       "count": 28
     },
     {
+      "path": "crates/hermes-core",
+      "count": 24
+    },
+    {
       "path": "plugins/memory",
       "count": 24
     },
@@ -431,16 +435,12 @@
       "count": 22
     },
     {
-      "path": "crates/hermes-core",
-      "count": 22
+      "path": "crates/hermes-environments",
+      "count": 18
     },
     {
       "path": "crates/hermes-eval",
       "count": 18
-    },
-    {
-      "path": "crates/hermes-environments",
-      "count": 17
     },
     {
       "path": "docs/releases",
@@ -465,6 +465,10 @@
     {
       "path": "crates/hermes-skills",
       "count": 12
+    },
+    {
+      "path": "crates/hermes-desktop-gateway",
+      "count": 11
     },
     {
       "path": "tests/acp",
@@ -500,10 +504,6 @@
     },
     {
       "path": "optional-skills/creative",
-      "count": 9
-    },
-    {
-      "path": "skills/red-teaming",
       "count": 9
     }
   ],
@@ -672,7 +672,7 @@
   "top_unique_to_local": [
     {
       "path": "crates/hermes-cli",
-      "count": 197
+      "count": 199
     },
     {
       "path": "skills/creative",
@@ -743,6 +743,10 @@
       "count": 28
     },
     {
+      "path": "crates/hermes-core",
+      "count": 24
+    },
+    {
       "path": "plugins/memory",
       "count": 24
     },
@@ -755,16 +759,12 @@
       "count": 22
     },
     {
-      "path": "crates/hermes-core",
-      "count": 22
+      "path": "crates/hermes-environments",
+      "count": 18
     },
     {
       "path": "crates/hermes-eval",
       "count": 18
-    },
-    {
-      "path": "crates/hermes-environments",
-      "count": 17
     },
     {
       "path": "docs/releases",
@@ -789,6 +789,10 @@
     {
       "path": "crates/hermes-skills",
       "count": 12
+    },
+    {
+      "path": "crates/hermes-desktop-gateway",
+      "count": 11
     },
     {
       "path": "tests/acp",
@@ -825,10 +829,6 @@
     {
       "path": "optional-skills/creative",
       "count": 9
-    },
-    {
-      "path": "skills/red-teaming",
-      "count": 9
     }
   ],
   "workstream_matrix": [
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 341,
+      "local_only": 348,
       "risk": "critical",
       "effort": "XL"
     },
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 413,
       "shared_different": 0,
-      "local_only": 449,
+      "local_only": 451,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1357,
+    "local_patch_unique": 1373,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

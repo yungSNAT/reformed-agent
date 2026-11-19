@@ -280,6 +280,23 @@ jobs:
         run: cargo test --locked -p hermes-desktop-gateway
       - name: Desktop gateway clippy
         run: cargo clippy --locked -p hermes-desktop-gateway --all-targets -- -D warnings
+      # The Ink TUI starts this binary when HERMES_TUI_GATEWAY_URL is unset; `cargo test`
+      # above built it in target/debug.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui-tui/package-lock.json
+      - name: TUI starts the desktop gateway
+        working-directory: ui-tui
+        shell: bash
+        env:
+          HERMES_TUI_GATEWAY_IT_BIN: ${{ github.workspace }}/target/debug/hermes-desktop-gateway${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          npm ci --ignore-scripts
+          npm run build --prefix packages/hermes-ink
+          npm test -- src/__tests__/gatewayClient.test.ts
 
   # Process trees, command lines and program lookup differ on Windows; the
   # cross build above compiles for Windows but runs nothing there.

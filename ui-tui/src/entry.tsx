@@ -23,6 +23,9 @@ resetTerminalModes()
 const gw = new GatewayClient()
 
 gw.start()
+// process.exit (the memory monitor's included) skips the graceful-exit cleanups; stop the
+// gateway this client started there too.
+process.once('exit', () => gw.kill())
 
 const dumpNotice = (snap: MemorySnapshot, dump: HeapDumpResult | null) =>
   `hermes-tui: ${snap.level} memory (${formatBytes(snap.heapUsed)}) — auto heap dump → ${dump?.heapPath ?? '(failed)'}\n`
