@@ -33,7 +33,8 @@ static REGISTERED: LazyLock<RwLock<Vec<(String, String)>>> =
     LazyLock::new(|| RwLock::new(Vec::new()));
 
 /// Whether a variable or field name names a credential: one of its words is
-/// `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIAL` or `CREDENTIALS`, or ends
+/// `PASSWORD`, `PASSWD`, `PASSPHRASE`, `CREDENTIAL`, `CREDENTIALS` or `PAT` (a
+/// personal access token), or ends
 /// with `KEY`, `TOKEN` or `SECRET` (`APIKEY` too), and its last word is not
 /// `PATH`, `FILE`, `DIR`, `ENV`, `URL` or `ID`, which name where a secret is
 /// kept or which one it is, not the secret. Words are split on anything but
@@ -56,7 +57,7 @@ pub fn is_secret_name(name: &str) -> bool {
     words.iter().any(|word| {
         matches!(
             word.as_str(),
-            "PASSWORD" | "PASSWD" | "PASSPHRASE" | "CREDENTIAL" | "CREDENTIALS"
+            "PASSWORD" | "PASSWD" | "PASSPHRASE" | "CREDENTIAL" | "CREDENTIALS" | "PAT"
         ) || ["KEY", "TOKEN", "SECRET"]
             .iter()
             .any(|suffix| word.ends_with(suffix))
@@ -193,6 +194,7 @@ mod tests {
             "client-secret",
             "db.passphrase",
             "AWS_CREDENTIALS",
+            "GITHUB_PAT",
         ] {
             assert!(
                 is_secret_name(name),
