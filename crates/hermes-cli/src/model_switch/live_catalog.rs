@@ -286,9 +286,7 @@ async fn resolve_nous_catalog_endpoint_and_token() -> Option<(String, String)> {
                 state
                     .get("inference_base_url")
                     .and_then(Value::as_str)
-                    .map(str::trim)
-                    .filter(|s| !s.is_empty())
-                    .map(ToString::to_string)
+                    .and_then(hermes_core::nous_urls::trusted_nous_inference_url)
             })
         })
         .unwrap_or_else(|| NOUS_DEFAULT_INFERENCE_BASE_URL.to_string());

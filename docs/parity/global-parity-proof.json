@@ -82,7 +82,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.0626,
+        "actual": 0.0646,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-19T05:40:26.252903+00:00",
+  "generated_at_utc": "2026-11-19T07:45:29.173852+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -303,7 +303,7 @@
     "min_deep_problem_solving_superiority_cases": 10.0,
     "min_deep_problem_solving_total_cases": 10.0,
     "min_sota_harness_domain_coverage_ratio": 1.0,
-    "min_test_coverage_tracked_behavior_ratio": 0.0626,
+    "min_test_coverage_tracked_behavior_ratio": 0.0646,
     "min_test_intent_mapping_ratio": 1.0
   },
   "program": {
@@ -344,7 +344,7 @@
         "status": "pass"
       },
       {
-        "actual": 0.0626,
+        "actual": 0.0646,
         "limit": 1.0,
         "metric": "min_test_coverage_tracked_behavior_ratio",
         "status": "fail"
@@ -548,23 +548,23 @@
       "pass": true
     },
     "summary": {
-      "coverage_manifest_deferred_entries": 142,
+      "coverage_manifest_deferred_entries": 141,
       "coverage_manifest_entries": 501,
-      "coverage_manifest_entries_with_valid_rust_tests": 22,
+      "coverage_manifest_entries_with_valid_rust_tests": 23,
       "coverage_manifest_not_rechecked_entries": 337,
-      "covered_behavior_rows": 32,
+      "covered_behavior_rows": 33,
       "divergence_errors": 0,
       "divergence_review_overdue": 0,
       "divergence_unowned": 0,
       "missing_rust_test_refs": 0,
       "queue_pending": 0,
       "queue_total": 1,
-      "rust_test_files": 482,
-      "rust_test_functions": 8836,
+      "rust_test_files": 483,
+      "rust_test_functions": 8856,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,
-      "tracked_behavior_coverage_ratio": 0.0626,
+      "tracked_behavior_coverage_ratio": 0.0646,
       "tracked_behavior_rows": 511
     }
   },
