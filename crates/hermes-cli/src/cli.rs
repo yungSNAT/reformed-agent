@@ -328,7 +328,7 @@ pub struct GatewayArgs {
     #[arg(long)]
     pub json: bool,
     /// `ensure`: seconds to wait for the gateway to answer.
-    #[arg(long, default_value = "60")]
+    #[arg(long, default_value = "60", allow_hyphen_values = true)]
     pub timeout: String,
     /// `run`: accepted for the detached start `ensure` makes, whose output goes to a log file.
     #[arg(long)]
