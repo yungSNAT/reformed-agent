@@ -851,16 +851,12 @@ mod tests {
             "auth/new-store.json",
             "mcp_auth.json",
             "hub_token",
+            "auth.json",
         ] {
             assert!(denied(&hermes_home.join(rel)), "{rel} was writable");
         }
         // Control files stay writable, as upstream keeps them (#45947).
-        for rel in [
-            "auth.json",
-            "config.yaml",
-            "mcp_servers.json",
-            "authority.md",
-        ] {
+        for rel in ["config.yaml", "mcp_servers.json", "authority.md"] {
             assert!(!denied(&hermes_home.join(rel)), "{rel} was denied");
         }
     }

@@ -571,6 +571,44 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
+    async fn add_keeps_the_mode_of_a_linked_memory_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("dotfiles").join("MEMORY.md");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend.add("memory", "Kept private.").await.unwrap();
+
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "the linked file's mode widened");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_refuses_a_memory_link_into_a_protected_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        std::os::unix::fs::symlink("/etc/hosts", memories.join("MEMORY.md")).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        let err = backend
+            .add("memory", "Planted.")
+            .await
+            .expect_err("a memory write followed a link into /etc/hosts");
+
+        assert!(err.to_string().contains("Write denied"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
     async fn add_creates_the_missing_folder_of_a_linked_memory_file() {
         let temp = tempfile::tempdir().unwrap();
         let memories = temp.path().join("memories");

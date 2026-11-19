@@ -1015,11 +1015,7 @@ mod tests {
         let real = tmp.path().join("dotfiles").join("tracked.json");
         fs::create_dir_all(real.parent().unwrap()).unwrap();
         fs::create_dir_all(link.parent().unwrap()).unwrap();
-        fs::write(
-            &real, "[]
-",
-        )
-        .unwrap();
+        fs::write(&real, "[]\n").unwrap();
         std::os::unix::fs::symlink(&real, &link).unwrap();
         let item = stale_item(&tmp.path().join("old.log"), "temp", 3);
 

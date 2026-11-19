@@ -962,6 +962,38 @@ mod tests {
         }
     }
 
+    /// Counts its calls.
+    struct CountingPatch(std::sync::atomic::AtomicUsize);
+
+    #[async_trait]
+    impl PatchBackend for CountingPatch {
+        async fn patch_file(
+            &self,
+            _path: &str,
+            _old: &str,
+            _new: &str,
+            _all: bool,
+        ) -> Result<String, ToolError> {
+            self.0.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok("patched".into())
+        }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn patch_refuses_a_protected_path_before_its_backend_runs() {
+        let backend = Arc::new(CountingPatch(Default::default()));
+        let handler = PatchHandler::new(backend.clone());
+
+        let result = handler
+            .execute(json!({"path": "/etc/shadow", "old_string": "", "new_string": "x"}))
+            .await;
+
+        let err = result.expect_err("the patch was applied");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
     /// A patch that read the file before a parallel write must not put the
     /// old content back over the write.
     #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
