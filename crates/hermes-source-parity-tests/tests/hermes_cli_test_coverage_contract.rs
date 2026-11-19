@@ -28,7 +28,12 @@ fn hermes_cli_manifest_covers_all_backlog_rows_and_references_real_tests() {
         .expect("entries should be array");
     let deferred = manifest_entries
         .iter()
-        .filter(|entry| entry["status"].as_str() == Some("deferred_not_covered"))
+        .filter(|entry| {
+            matches!(
+                entry["status"].as_str(),
+                Some("deferred_not_covered" | "not_rechecked_since_upstream_changed")
+            )
+        })
         .count();
     assert_eq!(
         manifest["summary"]["covered_paths"].as_u64(),
@@ -66,10 +71,18 @@ fn hermes_cli_manifest_covers_all_backlog_rows_and_references_real_tests() {
             assert_eq!(entry["rust_tests"], Value::Array(Vec::new()), "{path}");
             continue;
         }
+        // A row whose upstream file changed after its tests were cited still names real
+        // tests, but does not count as covered; global_parity_governance counts it.
+        let status = entry["status"].as_str();
+        let not_rechecked = status == Some("not_rechecked_since_upstream_changed");
         assert_eq!(
-            entry["status"].as_str(),
-            Some("covered_by_rust_contracts"),
-            "{path} should be marked covered_by_rust_contracts or deferred_not_covered"
+            not_rechecked,
+            !entry["not_rechecked_at_pin"].is_null(),
+            "{path}: status and not_rechecked_at_pin must agree"
+        );
+        assert!(
+            not_rechecked || status == Some("covered_by_rust_contracts"),
+            "{path} should be marked covered_by_rust_contracts, not_rechecked_since_upstream_changed or deferred_not_covered"
         );
         let tests = entry["rust_tests"]
             .as_array()

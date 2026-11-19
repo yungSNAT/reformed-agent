@@ -57,9 +57,11 @@ fn test_coverage_audit_gate_passes() {
             .unwrap_or_else(|| panic!("{key} should be integer"))
     };
     assert_eq!(
-        count("covered_behavior_rows") + count("coverage_manifest_deferred_entries"),
+        count("covered_behavior_rows")
+            + count("coverage_manifest_deferred_entries")
+            + count("coverage_manifest_not_rechecked_entries"),
         count("tracked_behavior_rows"),
-        "every tracked behaviour row must be covered or deferred"
+        "every tracked behaviour row must be covered, deferred or counted as not rechecked"
     );
     let rust_tests = payload["summary"]["rust_test_functions"]
         .as_u64()
@@ -537,10 +539,10 @@ fn test_rows_not_rechecked_at_the_pin_are_counted_and_match_the_ratchet() {
                 Some(pin.trim()),
                 "{name}: {path} must name the current pin"
             );
-            assert_ne!(
+            assert_eq!(
                 row["status"].as_str(),
-                Some("deferred_not_covered"),
-                "{name}: {path} is deferred, so it has no coverage to recheck"
+                Some("not_rechecked_since_upstream_changed"),
+                "{name}: {path} must not read as covered"
             );
         }
         assert_eq!(
@@ -615,6 +617,8 @@ fn test_release_gate_holds_rows_not_shown_matching() {
             .find(|check| check["metric"].as_str() == Some(metric))
             .unwrap_or_else(|| panic!("release gate has no {metric} check"));
         assert_eq!(check["actual"].as_f64(), Some(actual), "{metric}");
+        let status = if actual > 0.0 { "fail" } else { "pass" };
+        assert_eq!(check["status"].as_str(), Some(status), "{metric}");
     }
     assert_eq!(
         thresholds["ci_thresholds"]["max_deferred_review_overdue"].as_f64(),
