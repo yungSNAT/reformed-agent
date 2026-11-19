@@ -773,7 +773,10 @@ mod tests {
         let _env = EnvVarGuard::set("HERMES_ALLOW_PRIVATE_URLS", "true");
         let _no_proxy = without_proxy();
         assert!(!is_safe_url_with_resolver("not-a-url", resolver_err));
-        assert!(is_safe_url_with_resolver("http://198.18.0.1/api", resolver_err));
+        assert!(is_safe_url_with_resolver(
+            "http://198.18.0.1/api",
+            resolver_err
+        ));
         for url in [
             "http://169.254.170.2/v2/credentials",
             "http://169.254.169.253/",

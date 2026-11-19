@@ -70,7 +70,11 @@ fn public_ip_allowed() {
 fn bracketed_ipv6_literals_are_judged_by_address() {
     assert!(is_safe_url("https://[2606:4700:4700::1111]/api"));
     assert!(is_safe_url("https://[2001:4860:4860::8888]:8443/api"));
-    for url in ["http://[::1]/api", "http://[fd00::1]/api", "http://[fe80::1]/api"] {
+    for url in [
+        "http://[::1]/api",
+        "http://[fd00::1]/api",
+        "http://[fe80::1]/api",
+    ] {
         assert!(!is_safe_url(url), "{url} should be blocked");
     }
 }
