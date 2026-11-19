@@ -86,6 +86,8 @@ Gateway mode, in the foreground. Without chat platforms the gateway serves only 
 hermes-ultra gateway run
 ```
 
+On Linux and macOS, `gateway run` also serves [Hermes Desktop](https://github.com/NousResearch/hermes-agent/tree/v0.23.2/apps/desktop)'s local mode. It holds `gateway.lock` in the Hermes home, so a second `gateway run` for the same home exits at start-up. It listens on one 127.0.0.1 port, answers the desktop on `gateway.sock` (mode 0600) and writes `gateway_state.json`. SIGTERM stops it as Ctrl+C does. The desktop starts it with `hermes-ultra gateway ensure --json`. Creating, renaming and deleting profiles from the desktop is not served yet.
+
 Deep diagnostics bundle:
 
 ```bash
