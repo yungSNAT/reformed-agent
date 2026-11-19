@@ -7,7 +7,6 @@
 //! - Session management with configurable reset policies
 //! - Streaming output management for progressive message updates
 //! - Media caching for images, audio, and documents
-//! - SSRF protection for outbound URL validation
 //! - DM pairing mechanism for unauthorized user handling
 //! - Platform-specific adapters behind feature flags
 
@@ -29,7 +28,6 @@ pub mod platforms;
 pub mod relay;
 pub mod session;
 pub mod session_control;
-pub mod ssrf;
 pub mod sticker_cache;
 pub mod stream;
 pub mod tool_backends;
@@ -63,9 +61,6 @@ pub use stream::{StreamHandle, StreamManager};
 
 // Re-export media caching
 pub use media::MediaCache;
-
-// Re-export SSRF protection
-pub use ssrf::{is_safe_url, validate_url};
 
 // Re-export DM management
 pub use channel_directory::{ChannelDirectory, ChannelEntry};

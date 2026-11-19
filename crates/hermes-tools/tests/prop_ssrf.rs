@@ -4,7 +4,7 @@
 //! Private/reserved IPv4 addresses in URLs must be blocked, while selected
 //! public IPv4 HTTP/HTTPS URLs must be allowed.
 
-use hermes_gateway::is_safe_url;
+use hermes_tools::tools::url_safety::is_safe_url;
 
 fn private_ipv4_cases() -> &'static [&'static str] {
     &[
