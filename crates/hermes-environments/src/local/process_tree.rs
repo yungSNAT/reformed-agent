@@ -156,7 +156,6 @@ pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
         }
         pids.resize(pids.len() * 2, 0);
     };
-    eprintln!("DIAG listed {count} of group {pgid}: {:?}", &pids[..count]);
     pids[..count].iter().all(|&pid| {
         // SAFETY: an all-zero proc_bsdinfo is a valid value.
         let mut info: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
@@ -172,7 +171,6 @@ pub(super) fn only_zombies_in_group(pgid: libc::pid_t) -> bool {
                 size,
             )
         };
-        eprintln!("DIAG pid {pid} written {written} size {size} status {} pgid {} errno {:?}", info.pbi_status, info.pbi_pgid, io::Error::last_os_error());
         if written == size {
             info.pbi_status == libc::SZOMB
         } else {
