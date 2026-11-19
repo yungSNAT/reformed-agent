@@ -80,6 +80,8 @@ fn merge_object_values(existing: &mut Map<String, Value>, incoming: &Map<String,
 }
 
 pub(crate) fn write_owner_only_atomic(path: &Path, value: &Value) -> Result<(), String> {
+    // A symlinked config keeps its link: the target is replaced.
+    let path = &hermes_config::resolve_symlink_target(path);
     let parent = path
         .parent()
         .ok_or_else(|| format!("config path {} has no parent directory", path.display()))?;

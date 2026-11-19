@@ -109,6 +109,8 @@ impl FileMemoryBackend {
 
     async fn write_file(&self, path: &std::path::Path, content: &str) -> Result<(), ToolError> {
         self.ensure_dir().await?;
+        // A symlinked memory file keeps its link: the target is replaced.
+        let path = &hermes_config::resolve_symlink_target(path);
         let tmp = Self::temp_path_for(path);
         if let Err(e) = tokio::fs::write(&tmp, content).await {
             return Err(ToolError::ExecutionFailed(format!(

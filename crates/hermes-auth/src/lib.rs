@@ -242,6 +242,9 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
 }
 
 async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
+    // A symlinked store keeps its link: the temp file is staged beside the
+    // link's target and renamed over it.
+    let path = &hermes_config::resolve_symlink_target(path);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await

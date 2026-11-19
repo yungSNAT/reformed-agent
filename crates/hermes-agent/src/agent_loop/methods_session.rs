@@ -279,20 +279,11 @@ impl AgentLoop {
                 return;
             }
         };
-        let tmp = path.with_extension("json.tmp");
-        if let Err(err) = std::fs::write(&tmp, serialized) {
-            tracing::warn!(
-                path = %tmp.display(),
-                error = %err,
-                "failed to write route-learning state temp file"
-            );
-            return;
-        }
-        if let Err(err) = std::fs::rename(&tmp, &path) {
+        if let Err(err) = hermes_config::atomic_write_bytes(&path, &serialized) {
             tracing::warn!(
                 path = %path.display(),
                 error = %err,
-                "failed to move route-learning state into place"
+                "failed to write route-learning state"
             );
         }
     }

@@ -130,25 +130,8 @@ pub fn write_directory_atomic(
     path: impl AsRef<Path>,
     snapshot: &ChannelDirectorySnapshot,
 ) -> io::Result<()> {
-    let path = path.as_ref();
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
     let bytes = serde_json::to_vec_pretty(snapshot).map_err(io::Error::other)?;
-    let tmp_path = path.with_extension(format!(
-        "json.tmp.{}.{}",
-        std::process::id(),
-        i64::try_from(jiff::Timestamp::now().as_nanosecond()).unwrap_or_default()
-    ));
-
-    match std::fs::write(&tmp_path, bytes).and_then(|_| std::fs::rename(&tmp_path, path)) {
-        Ok(()) => Ok(()),
-        Err(err) => {
-            let _ = std::fs::remove_file(&tmp_path);
-            Err(err)
-        }
-    }
+    hermes_config::atomic_write_bytes(path.as_ref(), &bytes).map_err(io::Error::other)
 }
 
 pub fn build_channel_directory(

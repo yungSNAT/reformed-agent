@@ -195,7 +195,10 @@ fn notification_receipt_hash_matches_canonical_shape() {
 #[test]
 fn store_writes_through_a_symlink_and_keeps_it() {
     let tmp = tempfile::tempdir().unwrap();
-    let real = tmp.path().join("dotfiles").join("teams_pipeline_store.json");
+    let real = tmp
+        .path()
+        .join("dotfiles")
+        .join("teams_pipeline_store.json");
     std::fs::create_dir_all(real.parent().unwrap()).unwrap();
     let link = tmp.path().join("teams_pipeline_store.json");
     std::os::unix::fs::symlink(&real, &link).unwrap();

@@ -1319,26 +1319,11 @@ async fn run_profile(
                     serde_yaml::Value::String(target_name.clone()),
                 );
             }
-            let staged_path = profiles_dir.join(format!(
-                ".{}.import-{}.yaml.tmp",
-                target_name,
-                uuid::Uuid::new_v4()
-            ));
-            save_profile_yaml(&staged_path, &value)?;
-            if target_path.exists() {
-                tokio::fs::remove_file(&target_path).await.map_err(|e| {
-                    AgentError::Io(format!("remove {}: {}", target_path.display(), e))
-                })?;
-            }
-            if let Err(err) = tokio::fs::rename(&staged_path, &target_path).await {
-                let _ = tokio::fs::remove_file(&staged_path).await;
-                return Err(AgentError::Io(format!(
-                    "rename {} -> {}: {}",
-                    staged_path.display(),
-                    target_path.display(),
-                    err
-                )));
-            }
+            let raw =
+                serde_yaml::to_string(&value).map_err(|e| AgentError::Config(e.to_string()))?;
+            hermes_config::atomic_write_bytes(&target_path, raw.as_bytes()).map_err(|e| {
+                AgentError::Io(format!("write {}: {}", target_path.display(), e))
+            })?;
             if !no_alias {
                 if let Some(alias) = alias_name
                     .or(secondary)

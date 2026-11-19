@@ -260,15 +260,10 @@ fn flush_dead_targets(path: &Path, entries: &HashMap<String, DeadTargetEntry>) {
         debug!(path = %parent.display(), error = %err, "Failed to create dead-target registry directory");
         return;
     }
-    let tmp = path.with_extension("json.tmp");
     match serde_json::to_vec_pretty(entries) {
         Ok(bytes) => {
-            if let Err(err) = std::fs::write(&tmp, bytes) {
-                debug!(path = %tmp.display(), error = %err, "Failed to write dead-target registry");
-                return;
-            }
-            if let Err(err) = std::fs::rename(&tmp, path) {
-                debug!(from = %tmp.display(), to = %path.display(), error = %err, "Failed to replace dead-target registry");
+            if let Err(err) = hermes_config::atomic_write_bytes(path, &bytes) {
+                debug!(path = %path.display(), error = %err, "Failed to write dead-target registry");
             }
         }
         Err(err) => debug!(error = %err, "Failed to serialize dead-target registry"),

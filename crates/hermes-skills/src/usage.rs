@@ -137,13 +137,10 @@ pub fn save_usage(
     usage: &BTreeMap<String, SkillUsageRecord>,
 ) -> Result<(), SkillError> {
     fs::create_dir_all(skills_dir)?;
-    let path = usage_file(skills_dir);
-    let tmp = skills_dir.join(format!(".usage_{}.tmp", std::process::id()));
     let body = serde_json::to_string_pretty(usage)
         .map_err(|e| SkillError::Parse(format!("Failed to encode usage sidecar: {e}")))?;
-    fs::write(&tmp, body)?;
-    fs::rename(&tmp, &path)?;
-    Ok(())
+    hermes_config::atomic_write_bytes(&usage_file(skills_dir), body.as_bytes())
+        .map_err(|e| SkillError::Io(e.to_string()))
 }
 
 fn mutate_usage<F>(skills_dir: &Path, skill_name: &str, mut f: F) -> Result<(), SkillError>

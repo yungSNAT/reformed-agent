@@ -92,6 +92,12 @@ const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".azure",
     ".config/gh",
 ];
+/// Credential stores under the active Hermes home, each denied with
+/// everything below it: provider keys (`.env`); the token store, credential
+/// pool, provenance key and Gemini OAuth file (`auth/`); and MCP server tokens
+/// (`mcp_auth.json`). `auth.json` and `config.yaml` stay writable, as upstream
+/// keeps its control files (upstream #45947).
+const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] = &[".env", "auth", "mcp_auth.json"];
 
 // ---------------------------------------------------------------------------
 // Content secret patterns
@@ -260,7 +266,8 @@ pub fn is_protected_file(path: &Path) -> bool {
 
 /// Check whether a file path is write-denied even if it is not a credential
 /// file by name. This covers sensitive system files, shell profiles, package
-/// manager credential files, and the active Hermes home's `.env`. The path is
+/// manager credential files, and the active Hermes home's credential stores
+/// (`WRITE_DENY_HERMES_HOME_PREFIX`). The path is
 /// judged where the local backend writes it (`resolve_path` in
 /// hermes-environments): `~` is the `HOME` or `USERPROFILE` value as set, and
 /// another relative path sits under a non-empty `TERMINAL_CWD`.
@@ -470,9 +477,14 @@ fn is_expanded_write_denied(
     }
 
     if let Some(hermes_home) = hermes_home {
-        let env_forms = root_forms(&hermes_home.join(".env"));
-        if forms.iter().any(|form| env_forms.contains(form)) {
-            return true;
+        for store in WRITE_DENY_HERMES_HOME_PREFIX {
+            let store_forms = root_forms(&hermes_home.join(store));
+            if forms
+                .iter()
+                .any(|form| store_forms.iter().any(|store| form.starts_with(store)))
+            {
+                return true;
+            }
         }
     }
 
@@ -816,7 +828,8 @@ mod tests {
         let home = tmp.path().join("home");
         let hermes_home = tmp.path().join("profile");
         std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
-        let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
 
         for rel in [
             "auth",
@@ -830,7 +843,12 @@ mod tests {
             assert!(denied(&hermes_home.join(rel)), "{rel} was writable");
         }
         // Control files stay writable, as upstream keeps them (#45947).
-        for rel in ["auth.json", "config.yaml", "mcp_servers.json", "authority.md"] {
+        for rel in [
+            "auth.json",
+            "config.yaml",
+            "mcp_servers.json",
+            "authority.md",
+        ] {
             assert!(!denied(&hermes_home.join(rel)), "{rel} was denied");
         }
     }

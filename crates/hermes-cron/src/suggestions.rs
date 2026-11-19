@@ -249,7 +249,12 @@ impl SuggestionStore {
             updated_at: Some(Timestamp::now()),
         };
         let raw = serde_json::to_string_pretty(&file)?;
-        let tmp = parent.join(format!(
+        // A symlinked store keeps its link: the temp file is staged beside the
+        // link's target, whose folder a dangling link may not have created yet.
+        let path = hermes_config::resolve_symlink_target(&self.path);
+        let target_dir = path.parent().unwrap_or(parent);
+        std::fs::create_dir_all(target_dir)?;
+        let tmp = target_dir.join(format!(
             ".suggestions.{}.tmp",
             uuid::Uuid::new_v4().simple()
         ));
@@ -262,8 +267,8 @@ impl SuggestionStore {
             handle.flush()?;
             handle.sync_all()?;
             secure_file(&tmp)?;
-            std::fs::rename(&tmp, &self.path)?;
-            secure_file(&self.path)?;
+            std::fs::rename(&tmp, &path)?;
+            secure_file(&path)?;
             Ok(())
         })();
         if write_result.is_err() {
