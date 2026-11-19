@@ -999,3 +999,99 @@ async fn a_large_image_is_attached() {
     let reply = client.call(2, "image.attach_bytes", params).await;
     assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
 }
+
+/// As upstream, an empty or null `content_base64` gives way to the `data` alias, in a small
+/// request and in one over the message limit.
+#[tokio::test]
+async fn an_empty_content_base64_gives_way_to_data() {
+    let started = start(vec!["x"], Duration::ZERO).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let mut large = png("large");
+    large.resize(13 << 20, 7);
+    let cases = [
+        (json!(null), png("a")),
+        (json!(""), png("b")),
+        (json!(""), large),
+    ];
+    for (n, (primary, image)) in cases.into_iter().enumerate() {
+        let params = json!({"session_id": session, "content_base64": primary, "data": b64(&image)});
+        let reply = client
+            .call(2 + n as u64, "image.attach_bytes", params)
+            .await;
+        assert_eq!(reply["result"]["bytes"], image.len(), "{}", reply["error"]);
+    }
+}
+
+/// A staged image that can no longer be read fails the turn before the model is asked, and
+/// the session keeps the prompt's words, as for any failed turn.
+#[tokio::test]
+async fn an_unreadable_staged_image_fails_the_turn_and_keeps_its_words() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["x"], Duration::ZERO, None, native).await;
+    let mut client = connect(started.addr).await;
+    let session = client.create().await;
+    let params = json!({"session_id": session, "content_base64": b64(&png("gone"))});
+    let reply = client.call(2, "image.attach_bytes", params).await;
+    let staged = reply["result"]["path"].as_str().unwrap().to_string();
+    std::fs::remove_file(&staged).unwrap();
+
+    client.submit(3, &session, "U5 look").await;
+    let complete = client.turn_events(&session).await.pop().unwrap().1;
+    assert_eq!(complete["status"], "error", "{complete}");
+    let words = format!("U5 look\n\n[Image attached at: {staged}]");
+    assert_eq!(
+        history(started.addr, &session).await,
+        vec![("user".to_string(), words)]
+    );
+    assert!(started.requests.lock().unwrap().is_empty());
+}
+
+/// Each session's staged images go with its own next prompt only, once, and a prompt refused
+/// as busy leaves them staged.
+#[tokio::test]
+async fn staged_images_go_with_their_own_sessions_next_prompt_once() {
+    let native = "agent:\n  image_input_mode: native\n";
+    let started = start_with(vec!["ok"], Duration::from_millis(1000), None, native).await;
+    let mut client = connect(started.addr).await;
+    let (a, b) = (client.create().await, client.create().await);
+    let attach =
+        |session: &str, tag: &str| json!({"session_id": session, "content_base64": b64(&png(tag))});
+    client
+        .call(10, "image.attach_bytes", attach(&a, "a1"))
+        .await;
+    client
+        .call(11, "image.attach_bytes", attach(&b, "b1"))
+        .await;
+    client.submit(12, &a, "A1").await;
+    // Staged during A's turn, which the model holds for a second.
+    client
+        .call(13, "image.attach_bytes", attach(&a, "a2"))
+        .await;
+    let busy = client.submit(14, &a, "A again").await;
+    assert_eq!(busy["error"]["code"], 4009, "{busy}");
+    client.turn_events(&a).await;
+    client.submit(15, &a, "A2").await;
+    client.turn_events(&a).await;
+    client.submit(16, &b, "B1").await;
+    client.turn_events(&b).await;
+
+    let images = |body: &Value| -> Vec<String> {
+        let parts = &body["messages"].as_array().unwrap().last().unwrap()["content"];
+        parts
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|part| part["image_url"]["url"].as_str().map(str::to_string))
+            .collect()
+    };
+    let url = |tag: &str| format!("data:image/png;base64,{}", b64(&png(tag)));
+    let seen: Vec<Vec<String>> = started
+        .requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(images)
+        .collect();
+    assert_eq!(seen, [vec![url("a1")], vec![url("a2")], vec![url("b1")]]);
+}

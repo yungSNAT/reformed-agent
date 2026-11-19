@@ -412,6 +412,10 @@ async fn only_a_file_attach_request_may_exceed_the_size_limit() {
         ),
         image_attach(json!({"session_id": "no-such-session", "padding": data_url})),
         image_attach(json!({"session_id": "no-such-session", "data_url": data_url})),
+        // A request, or its params, as an array of the fields in order is no request.
+        json!(["2.0", 13, "file.attach", {"session_id": "no-such-session", "data_url": data_url}])
+            .to_string(),
+        attach(14, json!(["no-such-session", data_url])),
     ] {
         let mut socket = connected().await;
         let _ = socket.send(Message::text(oversized)).await;
