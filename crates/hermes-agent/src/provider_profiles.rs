@@ -80,7 +80,9 @@ pub fn canonical_provider_profile_id(provider: &str) -> Option<&'static str> {
         return None;
     }
     match normalized.as_str() {
-        "nvidia" | "nvidia-nim" => Some("nvidia"),
+        "nvidia" | "nvidia-nim" | "nim" | "build-nvidia" | "nemotron" => Some("nvidia"),
+        "gmi" | "gmi-cloud" | "gmicloud" => Some("gmi"),
+        "xai" | "grok" | "x-ai" | "x.ai" => Some("xai"),
         "kimi" | "moonshot" | "moonshot-ai" | "kimi-coding" => Some("kimi-coding"),
         "kimi-coding-cn" | "kimi-cn" | "moonshot-cn" => Some("kimi-coding-cn"),
         "openrouter" | "or" => Some("openrouter"),
@@ -463,9 +465,27 @@ pub fn clean_extra_body_for_native_gemini(extra_body: Option<&Value>) -> Option<
 }
 
 pub fn normalize_messages_for_profile(profile: Option<&str>, messages: &mut Value) {
-    let Some("qwen-oauth") = profile.and_then(canonical_provider_profile_id) else {
+    match profile.and_then(canonical_provider_profile_id) {
+        Some("qwen-oauth") => normalize_qwen_messages(messages),
+        Some("nvidia") => strip_nvidia_tool_message_fields(messages),
+        _ => {}
+    }
+}
+
+/// NVIDIA NIM refuses `name` and `tool_name` on tool messages (upstream `NvidiaProviderProfile`).
+fn strip_nvidia_tool_message_fields(messages: &mut Value) {
+    let Some(items) = messages.as_array_mut() else {
         return;
     };
+    for obj in items.iter_mut().filter_map(Value::as_object_mut) {
+        if obj.get("role").and_then(Value::as_str) == Some("tool") {
+            obj.remove("name");
+            obj.remove("tool_name");
+        }
+    }
+}
+
+fn normalize_qwen_messages(messages: &mut Value) {
     let Some(items) = messages.as_array_mut() else {
         return;
     };

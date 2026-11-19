@@ -32,6 +32,7 @@ mod default_models {
     pub const MINIMAX: &str = "MiniMax-M3";
     pub const GEMINI: &str = "gemini-3.5-flash";
     pub const GMI: &str = "google/gemini-3.1-flash-lite-preview";
+    pub const KILOCODE: &str = "google/gemini-3.6-flash";
     pub const TENCENT_TOKENHUB: &str = "hy3-preview";
     pub const DEEPINFRA: &str = "deepseek-ai/DeepSeek-V4-Flash";
     pub const FIREWORKS: &str = "accounts/fireworks/models/glm-5p2";
@@ -45,6 +46,7 @@ mod default_base_urls {
     pub const XAI: &str = "https://api.x.ai/v1";
     pub const XIAOMI: &str = "https://api.xiaomimimo.com/v1";
     pub const GMI: &str = "https://api.gmi-serving.com/v1";
+    pub const KILOCODE: &str = "https://api.kilo.ai/api/gateway";
     pub const HUGGINGFACE: &str = "https://router.huggingface.co/v1";
     pub const ZAI: &str = "https://api.z.ai/api/paas/v4";
     pub const MINIMAX: &str = "https://api.minimax.io/v1";
@@ -274,6 +276,15 @@ pub fn build_auxiliary_client_with_main_runtime(
         "gmi",
         default_base_urls::GMI,
         default_models::GMI,
+        main_label.as_deref(),
+    );
+    register_direct_key(
+        &mut builder,
+        &mut summary,
+        "KILOCODE_API_KEY",
+        "kilocode",
+        default_base_urls::KILOCODE,
+        default_models::KILOCODE,
         main_label.as_deref(),
     );
     register_direct_key(
@@ -901,7 +912,10 @@ mod tests {
                 .collect();
             assert_eq!(
                 entries,
-                vec![("kilocode".to_string(), "google/gemini-3.6-flash".to_string())]
+                vec![(
+                    "kilocode".to_string(),
+                    "google/gemini-3.6-flash".to_string()
+                )]
             );
             assert_eq!(summary.registered, vec!["kilocode"]);
         }
