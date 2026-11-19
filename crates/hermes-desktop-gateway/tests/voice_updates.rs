@@ -99,18 +99,18 @@ async fn wake_status_reports_the_wake_word_unavailable() {
     assert_eq!(result["owned_by_caller"], false);
     assert_eq!(result["local_input_available"], false);
     assert!(result["hint"].as_str().is_some_and(|h| !h.is_empty()));
-    // Every field of upstream's `WakeStatusResult` is present.
-    for key in [
-        "owner_surface",
-        "phrase",
-        "provider",
-        "configured_surface",
-        "input_device",
-        "audio_silent",
-        "capture",
-        "sample_rate",
-        "frame_length",
-    ] {
-        assert!(result.get(key).is_some(), "{key} missing: {reply}");
-    }
+    // Upstream's `WakeStatusResult` fields, with the values its own gateway reports for an
+    // unavailable detector, and no others.
+    let mut fields = result.as_object().unwrap().clone();
+    fields.remove("hint");
+    assert_eq!(
+        Value::Object(fields),
+        json!({
+            "listening": false, "owned_by_caller": false, "owner_surface": null,
+            "phrase": "hey hermes", "provider": "openwakeword", "configured_surface": "auto",
+            "input_device": {"selector": null, "error": null}, "available": false,
+            "enabled": false, "audio_silent": false, "capture": "client",
+            "local_input_available": false, "sample_rate": 16000, "frame_length": 1280,
+        })
+    );
 }
