@@ -712,4 +712,21 @@ mod tests {
             "the snapshot ran a filter of the submodule"
         );
     }
+
+    /// Where git gives no status the snapshot says so rather than reporting
+    /// a clean tree.
+    #[test]
+    fn project_facts_reports_an_unread_status_as_unknown() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        committed_repo(&repo);
+        // Git refuses a config it cannot parse, whatever it is asked.
+        std::fs::write(repo.join(".git").join("config"), "[core").unwrap();
+
+        let facts = project_facts_snapshot(Some(&repo));
+
+        assert_eq!(facts["git"]["present"], true);
+        assert_eq!(facts["git"]["head"], Value::Null);
+        assert_eq!(facts["git"]["dirty"], Value::Null);
+    }
 }
