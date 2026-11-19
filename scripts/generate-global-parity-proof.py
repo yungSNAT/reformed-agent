@@ -387,12 +387,13 @@ def main() -> int:
         "max_test_coverage_audit_critical_gaps": float(
             test_coverage_gate.get("critical_gaps", 0)
         ),
-        # Tracked rows neither covered nor deferred. Deferred rows are counted and
-        # ratcheted by global_parity_governance; the ratio above still counts them as uncovered.
+        # Tracked rows neither covered, deferred nor counted as not rechecked. Those 2 groups are
+        # counted and ratcheted by global_parity_governance; the ratio above counts them as uncovered.
         "max_test_coverage_unaccounted_rows": float(
             test_coverage_summary["tracked_behavior_rows"]
             - test_coverage_summary["covered_behavior_rows"]
             - test_coverage_summary["coverage_manifest_deferred_entries"]
+            - test_coverage_summary["coverage_manifest_not_rechecked_entries"]
         ),
         # Rows not shown matching: deferred shared-diff rows, covered manifest rows whose
         # upstream file changed after they were judged, and deferred rows past review.

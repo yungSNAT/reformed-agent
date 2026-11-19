@@ -121,7 +121,7 @@ def divergence_has_prefix(items: list[dict], prefix: str) -> bool:
 
 
 def deferred_rows_by_workstream() -> Counter[str]:
-    """Count rows deferred without review or Rust test coverage, by workstream."""
+    """Count rows not yet shown to match in Rust (deferred or not rechecked), by workstream."""
     spec = importlib.util.spec_from_file_location(
         "shared_diff_backlog", Path(__file__).with_name("generate-shared-diff-backlog.py")
     )
@@ -143,7 +143,7 @@ def deferred_rows_by_workstream() -> Counter[str]:
         paths += [
             entry["path"]
             for entry in json.loads(read_text(parity / name))["entries"]
-            if entry.get("status") == "deferred_not_covered"
+            if entry.get("status") in {"deferred_not_covered", "not_rechecked_since_upstream_changed"}
         ]
     return Counter(backlog.classify_workstream(path) for path in paths)
 
@@ -336,9 +336,9 @@ def build_status(upstream_ref: str) -> tuple[dict, str]:
     for status in statuses:
         if deferred[status.id]:
             status.state = "in_progress"
-            status.metrics["deferred_rows"] = deferred[status.id]
+            status.metrics["rows_not_shown_matching"] = deferred[status.id]
             status.evidence.append(
-                f"{deferred[status.id]} rows are deferred without review or Rust test coverage "
+                f"{deferred[status.id]} rows are deferred or not rechecked, so not yet shown to match in Rust "
                 "(docs/parity/shared-diff-backlog.md and the coverage manifests)."
             )
     summary = {

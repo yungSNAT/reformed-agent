@@ -204,7 +204,9 @@ def build_ledger(
                 if classification == "deferred"
                 else "unknown",
                 "rust_requirement": rust_requirement,
-                "existing_coverage": "claimed_by_shared_diff_classification"
+                "existing_coverage": "not_established"
+                if classification == "deferred"
+                else "claimed_by_shared_diff_classification"
                 if matched
                 else "unclaimed",
                 "owner": str(matched.get("owner", "")) if matched else "",

@@ -7,7 +7,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/conftest.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -26,7 +26,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -51,7 +51,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_anthropic_model_flow_stale_oauth.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -86,7 +86,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -96,7 +96,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_anthropic_oauth_flow.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -131,7 +131,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -170,7 +170,7 @@
         "profile/profiles"
       ],
       "path": "tests/hermes_cli/test_apply_profile_override.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -197,7 +197,7 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -206,7 +206,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_argparse_flag_propagation.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -225,7 +225,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -250,7 +250,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_auth_codex_provider.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -285,7 +285,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -294,7 +294,7 @@
         "auth/oauth/credential"
       ],
       "path": "tests/hermes_cli/test_auth_commands.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -325,7 +325,7 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -349,7 +349,7 @@
         "profile/profiles"
       ],
       "path": "tests/hermes_cli/test_auth_profile_fallback.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -384,7 +384,7 @@
           "name": "cli_parse_profile"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -394,7 +394,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_auth_provider_gate.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -429,7 +429,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -439,7 +439,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_auth_qwen_provider.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -474,7 +474,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -498,7 +498,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_aux_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -525,7 +525,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -534,7 +534,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_azure_detect.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -569,7 +569,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -578,7 +578,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_backup.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -601,7 +601,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -611,7 +611,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_banner.py",
-      "rationale": "Upstream banner behavior maps to Rust Ultra banner identity plus platform toolset normalization and disabled-tool filtering contracts.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream banner behavior maps to Rust Ultra banner identity plus platform toolset normalization and disabled-tool filtering contracts.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/banner.rs",
@@ -630,7 +630,7 @@
           "name": "e2e_replay_suite_provider_auth_gateway_and_deterministic_manifest"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -639,7 +639,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_banner_skills.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -662,7 +662,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -686,7 +686,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_clear_stale_base_url.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -713,7 +713,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -722,7 +722,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_cmd_update.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -745,7 +745,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -754,7 +754,7 @@
         "session/resume/memory_reset"
       ],
       "path": "tests/hermes_cli/test_coalesce_session_args.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -777,7 +777,7 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -786,7 +786,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_codex_cli_model_picker.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -821,7 +821,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -830,7 +830,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_codex_models.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -865,7 +865,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -874,7 +874,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_commands.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -893,7 +893,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -902,7 +902,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_completion.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -929,7 +929,7 @@
           "name": "test_tui_state_completions_update"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -938,7 +938,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -965,7 +965,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -989,7 +989,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_config_validation.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1016,7 +1016,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1040,7 +1040,7 @@
         "cron"
       ],
       "path": "tests/hermes_cli/test_cron.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1067,7 +1067,7 @@
           "name": "api_jobs_endpoint_crud_filters_and_actions"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1076,7 +1076,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_curator_archive_prune.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1095,7 +1095,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1164,7 +1164,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_custom_provider_model_switch.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1199,7 +1199,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1208,7 +1208,7 @@
         "web_server/web_ui/dashboard"
       ],
       "path": "tests/hermes_cli/test_dashboard_lifecycle_flags.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1239,7 +1239,7 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1248,7 +1248,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_debug.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1271,7 +1271,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1280,7 +1280,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_deprecated_cwd_warning.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1299,7 +1299,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1322,8 +1322,8 @@
       "coverage_tags": [
         "model/provider/api_mode"
       ],
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
-      "status": "covered_by_rust_contracts",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "status": "not_rechecked_since_upstream_changed",
       "path": "tests/hermes_cli/test_detect_api_mode_for_url.py",
       "rust_tests": [
         {
@@ -1392,7 +1392,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_doctor.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1415,7 +1415,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1425,7 +1425,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_doctor_command_install.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1460,7 +1460,7 @@
           "name": "capture_debug_log_snapshot_preserves_boundary_line"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1499,7 +1499,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_fallback_cmd.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1518,7 +1518,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1527,7 +1527,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_gateway.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1558,7 +1558,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1567,7 +1567,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_gateway_proc_fallback.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1590,7 +1590,7 @@
           "name": "gateway_reload_mcp_and_status_reflect_runtime_state"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1599,7 +1599,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_gateway_runtime_health.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1622,7 +1622,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1631,7 +1631,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_gateway_service.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1662,7 +1662,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1671,7 +1671,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_gateway_wsl.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1702,7 +1702,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1726,7 +1726,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_goals.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1745,7 +1745,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1754,7 +1754,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_hooks_cli.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1785,7 +1785,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1794,7 +1794,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_ignore_user_config_flags.py",
-      "rationale": "Covered: --ignore-user-config and --ignore-rules parse in the Rust CLI and set HERMES_IGNORE_USER_CONFIG and HERMES_IGNORE_RULES (crates/hermes-cli/src/main/entrypoint.rs); the config loader then skips the user config.yaml but keeps managed scope, and the rules flag turns off context files.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Covered: --ignore-user-config and --ignore-rules parse in the Rust CLI and set HERMES_IGNORE_USER_CONFIG and HERMES_IGNORE_RULES (crates/hermes-cli/src/main/entrypoint.rs); the config loader then skips the user config.yaml but keeps managed scope, and the rules flag turns off context files.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli/tests.rs",
@@ -1813,7 +1813,7 @@
           "name": "apply_env_overrides_respects_ignore_rules_flags"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1822,7 +1822,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_image_gen_picker.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1841,7 +1841,7 @@
           "name": "cli_parse_default"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1850,7 +1850,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_boards.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1877,7 +1877,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1886,7 +1886,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_cli.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1913,7 +1913,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1922,7 +1922,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_core_functionality.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1949,7 +1949,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1958,7 +1958,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_db.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -1985,7 +1985,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -1994,7 +1994,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_diagnostics.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2021,7 +2021,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2030,7 +2030,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_notify.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2057,7 +2057,7 @@
           "name": "cli_parse_kanban_passes_flags_as_args"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2066,7 +2066,7 @@
         "kanban"
       ],
       "path": "tests/hermes_cli/test_kanban_specify.py",
-      "rationale": "Not ported: upstream's `hermes kanban specify` has an auxiliary model write a triage task's specification. The Rust kanban CLI passes its flags through and keeps its store consistent (cited tests) but has no specify subcommand; ledger follow-up under R3524.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Not ported: upstream's `hermes kanban specify` has an auxiliary model write a triage task's specification. The Rust kanban CLI passes its flags through and keeps its store consistent (cited tests) but has no specify subcommand; ledger follow-up under R3524.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli/tests.rs",
@@ -2077,7 +2077,7 @@
           "name": "kanban_claim_completion_archive_is_idempotent_under_reclaim_like_replay"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2101,7 +2101,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_list_picker_providers.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2124,7 +2124,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2133,7 +2133,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_logs.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2156,7 +2156,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2165,7 +2165,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_managed_installs.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2192,7 +2192,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2201,7 +2201,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_mcp_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2228,7 +2228,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2238,7 +2238,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_mcp_tools_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2273,7 +2273,7 @@
           "name": "browser_tool_surface_exposes_current_commands_without_legacy_close"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2297,7 +2297,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_model_provider_persistence.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2332,7 +2332,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2341,7 +2341,7 @@
         "model/provider/context_display"
       ],
       "path": "tests/hermes_cli/test_model_switch_context_display.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/commands/command_tests.rs",
@@ -2356,7 +2356,7 @@
           "name": "model_meets_requirements_checks_tools_vision_reasoning_and_context"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2365,7 +2365,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_model_switch_custom_providers.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2400,7 +2400,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2439,7 +2439,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_models_dev_preferred_merge.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2474,7 +2474,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2483,7 +2483,7 @@
         "auth/oauth/credential"
       ],
       "path": "tests/hermes_cli/test_non_ascii_credential.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2514,7 +2514,7 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2538,7 +2538,7 @@
         "auth/oauth/credential"
       ],
       "path": "tests/hermes_cli/test_nous_subscription.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2569,7 +2569,7 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2579,7 +2579,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_ollama_cloud_auth.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2614,7 +2614,7 @@
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2623,7 +2623,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_ollama_cloud_provider.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2658,7 +2658,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2697,7 +2697,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_opencode_go_in_model_list.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2732,7 +2732,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2756,7 +2756,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_overlay_slug_resolution.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2791,7 +2791,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2800,7 +2800,7 @@
         "general_cli"
       ],
       "path": "tests/hermes_cli/test_path_completion.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2823,7 +2823,7 @@
           "name": "local_skill_markdown_resolves_by_name_and_relative_path"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2847,7 +2847,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_plugin_cli_registration.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2870,7 +2870,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2879,7 +2879,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_plugin_scanner_recursion.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2902,7 +2902,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2911,7 +2911,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_plugins.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2934,7 +2934,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2943,7 +2943,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_plugins_cmd.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -2966,7 +2966,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -2990,7 +2990,7 @@
         "profile/profiles"
       ],
       "path": "tests/hermes_cli/test_profile_distribution.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3017,7 +3017,7 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3027,7 +3027,7 @@
         "profile/profiles"
       ],
       "path": "tests/hermes_cli/test_profile_export_credentials.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3062,7 +3062,7 @@
           "name": "cli_parse_profile"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3071,7 +3071,7 @@
         "profile/profiles"
       ],
       "path": "tests/hermes_cli/test_profiles.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3098,7 +3098,7 @@
           "name": "validate_profile_name_rejects_paths"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3107,7 +3107,7 @@
         "auth/oauth/credential"
       ],
       "path": "tests/hermes_cli/test_prompt_api_key.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3138,7 +3138,7 @@
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3148,7 +3148,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_provider_config_validation.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3183,7 +3183,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3192,7 +3192,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_pty_bridge.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3219,7 +3219,7 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3228,7 +3228,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_reasoning_effort_menu.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3263,7 +3263,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3317,7 +3317,7 @@
         "session/resume/memory_reset"
       ],
       "path": "tests/hermes_cli/test_session_browse.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3340,7 +3340,7 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3349,7 +3349,7 @@
         "session/delete/prune"
       ],
       "path": "tests/hermes_cli/test_sessions_delete.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/commands/command_tests.rs",
@@ -3368,7 +3368,7 @@
           "name": "cli_sessions_confirmation_treats_eof_or_empty_input_as_cancelled"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3377,7 +3377,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3404,7 +3404,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3428,7 +3428,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_hermes_script.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3455,7 +3455,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3464,7 +3464,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_irc.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3491,7 +3491,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3501,7 +3501,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_model_provider.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3536,7 +3536,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3545,7 +3545,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_noninteractive.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3572,7 +3572,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3581,7 +3581,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_prompt_menus.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3608,7 +3608,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3618,7 +3618,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_setup_reconfigure.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3653,7 +3653,7 @@
           "name": "setup_provider_defaults_are_unique_and_include_nous"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3663,7 +3663,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_skills_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3698,7 +3698,7 @@
           "name": "local_backend_exposes_terminal_and_terminal_backed_file_tools"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3707,7 +3707,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_skills_hub.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3730,7 +3730,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3740,7 +3740,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_skills_install_flags.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3775,7 +3775,7 @@
           "name": "local_backend_exposes_terminal_and_terminal_backed_file_tools"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3784,7 +3784,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_skills_skip_confirm.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3807,7 +3807,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3816,7 +3816,7 @@
         "plugin/plugins/skills"
       ],
       "path": "tests/hermes_cli/test_skin_engine.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3839,7 +3839,7 @@
           "name": "profile_create_no_skills_strips_cloned_skill_overrides"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3848,7 +3848,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_slack_cli.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3867,7 +3867,7 @@
           "name": "slack_mention_patterns_env_fallback_splits_mixed_csv_and_newlines"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3891,7 +3891,7 @@
         "status"
       ],
       "path": "tests/hermes_cli/test_status.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3914,7 +3914,7 @@
           "name": "gateway_status_updates_use_platform_status_api"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3924,7 +3924,7 @@
         "status"
       ],
       "path": "tests/hermes_cli/test_status_model_provider.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -3959,7 +3959,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -3983,7 +3983,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_terminal_menu_fallbacks.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4010,7 +4010,7 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4019,7 +4019,7 @@
         "config/aux/mcp"
       ],
       "path": "tests/hermes_cli/test_timeouts.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4046,7 +4046,7 @@
           "name": "python_custom_providers_merge_into_llm_provider_config"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4055,7 +4055,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_tool_token_estimation.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4082,7 +4082,7 @@
           "name": "load_website_blocklist_merges_config_and_shared_file"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4092,7 +4092,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_tools_config.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4127,7 +4127,7 @@
           "name": "browser_tool_surface_exposes_current_commands_without_legacy_close"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4136,7 +4136,7 @@
         "tool/tools/pty"
       ],
       "path": "tests/hermes_cli/test_tools_disable_enable.py",
-      "rationale": "Partly covered: Rust `/tools enable|disable <name>` edits tools.enabled and tools.disabled in config.yaml idempotently, and tool planning applies them over platform toolsets (cited tests). Upstream's per-platform toolset lists and MCP server exclude lists are not ported.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Partly covered: Rust `/tools enable|disable <name>` edits tools.enabled and tools.disabled in config.yaml idempotently, and tool planning applies them over platform toolsets (cited tests). Upstream's per-platform toolset lists and MCP server exclude lists are not ported.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/commands/command_tests.rs",
@@ -4151,7 +4151,7 @@
           "name": "tools_config_disabled_removes_even_if_platform_enables"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4160,7 +4160,7 @@
         "setup/install/reconfigure"
       ],
       "path": "tests/hermes_cli/test_tui_npm_install.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4187,7 +4187,7 @@
           "name": "merge_missing_env_keys_skips_empty_values"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4196,7 +4196,7 @@
         "session/resume/memory_reset"
       ],
       "path": "tests/hermes_cli/test_tui_resume_flow.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4219,7 +4219,7 @@
           "name": "test_persist_session_snapshot_prunes_old_files_by_count_limit"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4228,7 +4228,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_update_autostash.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4251,7 +4251,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4261,7 +4261,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_update_config_clears_custom_fields.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4284,7 +4284,7 @@
           "name": "test_build_agent_config_maps_named_custom_runtime_provider"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4293,7 +4293,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_update_hangup_protection.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4316,7 +4316,7 @@
           "name": "provenance_sign_and_verify_round_trip"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4326,7 +4326,7 @@
         "doctor/debug/logs"
       ],
       "path": "tests/hermes_cli/test_update_stale_dashboard.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4361,7 +4361,7 @@
           "name": "cli_parse_doctor_with_flags"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4370,7 +4370,7 @@
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_user_providers_model_switch.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4405,7 +4405,7 @@
           "name": "known_provider_registry_covers_upstream_snapshot_required_ids"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4429,7 +4429,7 @@
         "web_server/web_ui/dashboard"
       ],
       "path": "tests/hermes_cli/test_web_server.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4460,7 +4460,7 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4469,7 +4469,7 @@
         "web_server/web_ui/dashboard"
       ],
       "path": "tests/hermes_cli/test_web_server_host_header.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4500,7 +4500,7 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4509,7 +4509,7 @@
         "web_server/web_ui/dashboard"
       ],
       "path": "tests/hermes_cli/test_web_ui_build.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4540,7 +4540,7 @@
           "name": "runs_endpoints_require_bearer_auth_when_configured"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
@@ -4549,7 +4549,7 @@
         "gateway/webhook/hooks_cli"
       ],
       "path": "tests/hermes_cli/test_webhook_cli.py",
-      "rationale": "Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python hermes_cli test intent is covered by the listed Rust unit/contract tests for the equivalent Rust-first CLI, config, provider, gateway, or tool surface.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/src/cli.rs",
@@ -4580,7 +4580,7 @@
           "name": "gateway_emits_agent_start_and_end_hooks"
         }
       ],
-      "status": "covered_by_rust_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     }
   ],
@@ -4588,7 +4588,7 @@
   "schema_version": 1,
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 110,
+    "covered_paths": 0,
     "guard_test": "crates/hermes-source-parity-tests/tests/hermes_cli_test_coverage_contract.rs",
     "provider_api_mode_bridge_added": true,
     "required_backlog_classification_path": "tests/hermes_cli",

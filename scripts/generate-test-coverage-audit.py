@@ -216,7 +216,10 @@ def validate_manifest_refs(
             if not file or not name or not rust_test_exists(tests_by_file, file, name):
                 missing_refs.append({"path": path, "file": file, "name": name})
 
-    valid_entries = len(manifest["entries"]) - len(missing_test_arrays) - len(deferred)
+    # Not-rechecked rows still have their cited tests checked above, but do not count as covered.
+    valid_entries = (
+        len(manifest["entries"]) - len(missing_test_arrays) - len(deferred) - len(not_rechecked)
+    )
     return {
         "path": manifest["path"],
         "entries": len(manifest["entries"]),

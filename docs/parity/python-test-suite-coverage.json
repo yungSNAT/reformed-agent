@@ -2,7 +2,7 @@
   "generated_at_utc": "2026-07-02T18:14:12Z",
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 131,
+    "covered_paths": 0,
     "required_backlog_classification_paths": [
       "tests",
       "tests/agent",
@@ -57,7 +57,7 @@
     {
       "path": "tests/agent/test_arcee_trinity_overrides.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_arcee_trinity_overrides",
@@ -65,7 +65,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -153,7 +153,7 @@
     {
       "path": "tests/agent/test_context_references.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_context_references",
@@ -161,7 +161,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -235,7 +235,7 @@
     {
       "path": "tests/agent/test_crossloop_client_cache.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "crossloop_client_cache",
@@ -243,7 +243,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -299,7 +299,7 @@
     {
       "path": "tests/agent/test_curator.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "curator",
@@ -307,7 +307,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -378,7 +378,7 @@
     {
       "path": "tests/agent/test_curator_backup.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_curator_backup",
@@ -386,7 +386,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -442,7 +442,7 @@
     {
       "path": "tests/agent/test_curator_classification.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "curator_classification",
@@ -450,7 +450,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -506,7 +506,7 @@
     {
       "path": "tests/agent/test_curator_reports.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "curator_reports",
@@ -514,7 +514,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -600,7 +600,7 @@
     {
       "path": "tests/agent/test_external_skills.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "external_skills",
@@ -609,7 +609,7 @@
         "skills",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -665,7 +665,7 @@
     {
       "path": "tests/agent/test_external_skills_dirs_cache.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "external_skills_dirs_cache",
@@ -674,7 +674,7 @@
         "skills",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -730,7 +730,7 @@
     {
       "path": "tests/agent/test_gemini_free_tier_gate.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "gemini_free_tier_gate",
@@ -738,7 +738,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -794,7 +794,7 @@
     {
       "path": "tests/agent/test_gemini_native_adapter.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_gemini_native_adapter",
@@ -802,7 +802,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -858,7 +858,7 @@
     {
       "path": "tests/agent/test_gemini_schema.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_gemini_schema",
@@ -866,7 +866,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/gemini_schema/tests.rs",
@@ -914,7 +914,7 @@
     {
       "path": "tests/agent/test_i18n.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "i18n",
@@ -922,7 +922,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -993,7 +993,7 @@
     {
       "path": "tests/agent/test_insights.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "insights",
@@ -1001,7 +1001,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1072,7 +1072,7 @@
     {
       "path": "tests/agent/test_local_stream_timeout.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_local_stream_timeout",
@@ -1080,7 +1080,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1136,7 +1136,7 @@
     {
       "path": "tests/agent/test_memory_provider.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "memory",
@@ -1145,7 +1145,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1201,7 +1201,7 @@
     {
       "path": "tests/agent/test_memory_session_switch.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "memory",
@@ -1210,7 +1210,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1266,7 +1266,7 @@
     {
       "path": "tests/agent/test_memory_user_id.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "memory",
@@ -1275,7 +1275,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1346,7 +1346,7 @@
     {
       "path": "tests/agent/test_minimax_provider.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "minimax_provider",
@@ -1354,7 +1354,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1410,7 +1410,7 @@
     {
       "path": "tests/agent/test_model_metadata_local_ctx.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "model",
@@ -1419,7 +1419,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1490,7 +1490,7 @@
     {
       "path": "tests/agent/test_onboarding.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "onboarding",
@@ -1498,7 +1498,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1584,7 +1584,7 @@
     {
       "path": "tests/agent/test_shell_hooks.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -1592,7 +1592,7 @@
         "shell_hooks",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1648,7 +1648,7 @@
     {
       "path": "tests/agent/test_shell_hooks_consent.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -1656,7 +1656,7 @@
         "shell_hooks_consent",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1712,7 +1712,7 @@
     {
       "path": "tests/agent/test_skill_commands_reload.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_skill_commands_reload",
@@ -1720,7 +1720,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1791,7 +1791,7 @@
     {
       "path": "tests/agent/test_think_scrubber.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_think_scrubber",
@@ -1799,7 +1799,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Partly covered: the Rust TTS stream strips think blocks whose tags are split across deltas (cited tests). Upstream's single scrubber for every stream consumer (ACP, API server, CLI, gateway) is not ported as one component; whether each Rust consumer scrubs split tags is not verified.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Partly covered: the Rust TTS stream strips think blocks whose tags are split across deltas (cited tests). Upstream's single scrubber for every stream consumer (ACP, API server, CLI, gateway) is not ported as one component; whether each Rust consumer scrubs split tags is not verified.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/tts_streaming/sanitizer.rs",
@@ -1815,7 +1815,7 @@
     {
       "path": "tests/agent/test_unsupported_parameter_retry.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_unsupported_parameter_retry",
@@ -1823,7 +1823,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Covered: the Rust auxiliary client detects a provider's unsupported-parameter error for any named parameter and retries the same provider without it (cited tests).",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Covered: the Rust auxiliary client detects a provider's unsupported-parameter error for any named parameter and retries the same provider without it (cited tests).",
       "rust_tests": [
         {
           "file": "crates/hermes-intelligence/src/auxiliary/error.rs",
@@ -1839,7 +1839,7 @@
     {
       "path": "tests/agent/transports/test_chat_completions.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "chat_completions",
@@ -1847,7 +1847,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1903,7 +1903,7 @@
     {
       "path": "tests/agent/transports/test_codex_transport.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "codex_transport",
@@ -1911,7 +1911,7 @@
         "rust_contracts",
         "tests_agent"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -1967,7 +1967,7 @@
     {
       "path": "tests/agent/transports/test_transport.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -1975,7 +1975,7 @@
         "tests_agent",
         "transport"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -2031,7 +2031,7 @@
     {
       "path": "tests/agent/transports/test_types.py",
       "classification_path": "tests/agent",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -2039,7 +2039,7 @@
         "tests_agent",
         "types"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-agent/src/agent_loop.rs",
@@ -2095,7 +2095,7 @@
     {
       "path": "tests/conftest.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "conftest",
@@ -2103,7 +2103,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -2159,7 +2159,7 @@
     {
       "path": "tests/e2e/conftest.py",
       "classification_path": "tests/e2e",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "conftest",
@@ -2167,7 +2167,7 @@
         "rust_contracts",
         "tests_e2e"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-cli/tests/e2e_cli.rs",
@@ -2238,7 +2238,7 @@
     {
       "path": "tests/hermes_state/test_resolve_resume_session_id.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_resolve_resume_session_id",
@@ -2246,7 +2246,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -2302,7 +2302,7 @@
     {
       "path": "tests/plugins/image_gen/test_openai_codex_provider.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "image",
@@ -2312,7 +2312,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2368,7 +2368,7 @@
     {
       "path": "tests/plugins/image_gen/test_openai_provider.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "image",
@@ -2378,7 +2378,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2434,7 +2434,7 @@
     {
       "path": "tests/plugins/image_gen/test_xai_provider.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "image",
@@ -2444,7 +2444,7 @@
         "tests_plugins",
         "xai_provider"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2500,7 +2500,7 @@
     {
       "path": "tests/plugins/test_achievements_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "achievements_plugin",
@@ -2509,7 +2509,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2565,7 +2565,7 @@
     {
       "path": "tests/plugins/test_disk_cleanup_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "disk_cleanup_plugin",
@@ -2574,7 +2574,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2630,7 +2630,7 @@
     {
       "path": "tests/plugins/test_google_meet_audio.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "google_meet_audio",
@@ -2639,7 +2639,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2695,7 +2695,7 @@
     {
       "path": "tests/plugins/test_google_meet_node.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "google_meet_node",
@@ -2704,7 +2704,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2760,7 +2760,7 @@
     {
       "path": "tests/plugins/test_google_meet_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "google_meet_plugin",
@@ -2769,7 +2769,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2825,7 +2825,7 @@
     {
       "path": "tests/plugins/test_google_meet_realtime.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "google_meet_realtime",
@@ -2834,7 +2834,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2890,7 +2890,7 @@
     {
       "path": "tests/plugins/test_kanban_dashboard_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "kanban",
@@ -2900,7 +2900,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -2956,7 +2956,7 @@
     {
       "path": "tests/plugins/test_retaindb_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "plugins",
@@ -2965,7 +2965,7 @@
         "rust_contracts",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3021,7 +3021,7 @@
     {
       "path": "tests/plugins/test_teams_pipeline_plugin.py",
       "classification_path": "tests/plugins",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "plugins",
@@ -3031,7 +3031,7 @@
         "teams_pipeline_plugin",
         "tests_plugins"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3117,7 +3117,7 @@
     {
       "path": "tests/skills/test_google_workspace_api.py",
       "classification_path": "tests/skills",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "google_workspace_api",
@@ -3126,7 +3126,7 @@
         "skills",
         "tests_skills"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3182,7 +3182,7 @@
     {
       "path": "tests/skills/test_google_workspace_credential_files.py",
       "classification_path": "tests/skills",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "file_tools",
@@ -3192,7 +3192,7 @@
         "skills",
         "tests_skills"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3248,7 +3248,7 @@
     {
       "path": "tests/skills/test_memento_cards.py",
       "classification_path": "tests/skills",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "memento_cards",
@@ -3257,7 +3257,7 @@
         "skills",
         "tests_skills"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3313,7 +3313,7 @@
     {
       "path": "tests/skills/test_telephony_skill.py",
       "classification_path": "tests/skills",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "audio",
@@ -3323,7 +3323,7 @@
         "telephony_skill",
         "tests_skills"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3379,7 +3379,7 @@
     {
       "path": "tests/skills/test_youtube_quiz.py",
       "classification_path": "tests/skills",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -3388,7 +3388,7 @@
         "tests_skills",
         "youtube_quiz"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-skills/src/guard.rs",
@@ -3444,7 +3444,7 @@
     {
       "path": "tests/test_batch_runner_checkpoint.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "batch_runner_checkpoint",
@@ -3452,7 +3452,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3508,7 +3508,7 @@
     {
       "path": "tests/test_get_tool_definitions_cache_isolation.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_get_tool_definitions_cache_isolation",
@@ -3516,7 +3516,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3572,7 +3572,7 @@
     {
       "path": "tests/test_hermes_bootstrap.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "hermes_bootstrap",
@@ -3580,7 +3580,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3636,7 +3636,7 @@
     {
       "path": "tests/test_hermes_constants.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "hermes_constants",
@@ -3644,7 +3644,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3715,7 +3715,7 @@
     {
       "path": "tests/test_hermes_logging.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "hermes_logging",
@@ -3723,7 +3723,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3779,7 +3779,7 @@
     {
       "path": "tests/test_ipv4_preference.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "ipv4_preference",
@@ -3787,7 +3787,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3843,7 +3843,7 @@
     {
       "path": "tests/test_model_tools_async_bridge.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "model",
@@ -3852,7 +3852,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3908,7 +3908,7 @@
     {
       "path": "tests/test_packaging_metadata.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "packaging",
@@ -3917,7 +3917,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -3973,7 +3973,7 @@
     {
       "path": "tests/test_project_metadata.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "project_metadata",
@@ -3981,7 +3981,7 @@
         "rust_contracts",
         "tests"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -4037,7 +4037,7 @@
     {
       "path": "tests/test_trajectory_compressor.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -4045,7 +4045,7 @@
         "tests",
         "trajectory_compressor"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -4101,7 +4101,7 @@
     {
       "path": "tests/test_trajectory_compressor_async.py",
       "classification_path": "tests",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -4109,7 +4109,7 @@
         "tests",
         "trajectory_compressor_async"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-source-parity-tests/tests/python_test_suite_coverage_contract.rs",
@@ -4165,7 +4165,7 @@
     {
       "path": "tests/tools/test_accretion_caps.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "accretion_caps",
@@ -4173,7 +4173,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4229,7 +4229,7 @@
     {
       "path": "tests/tools/test_ansi_strip.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_ansi_strip",
@@ -4237,7 +4237,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "strip_ansi is covered: terminal, background process and code execution output and the RTK filter drop every ECMA-48 escape sequence before the model sees it (cited tests). Not ported: sanitize_display_text, which upstream uses when it replays stored text in a terminal; ledger follow-up under R3634.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: strip_ansi is covered: terminal, background process and code execution output and the RTK filter drop every ECMA-48 escape sequence before the model sees it (cited tests). Not ported: sanitize_display_text, which upstream uses when it replays stored text in a terminal; ledger follow-up under R3634.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/ansi_strip.rs",
@@ -4261,7 +4261,7 @@
     {
       "path": "tests/tools/test_browser_cdp_override.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_browser_cdp_override",
@@ -4269,7 +4269,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4325,7 +4325,7 @@
     {
       "path": "tests/tools/test_browser_cdp_tool.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_browser_cdp_tool",
@@ -4334,7 +4334,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/backends/browser.rs",
@@ -4392,7 +4392,7 @@
     {
       "path": "tests/tools/test_browser_hybrid_routing.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_browser_hybrid_routing",
@@ -4401,7 +4401,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/backends/browser.rs",
@@ -4444,7 +4444,7 @@
     {
       "path": "tests/tools/test_browser_ssrf_local.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_browser_ssrf_local",
@@ -4452,7 +4452,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4523,7 +4523,7 @@
     {
       "path": "tests/tools/test_budget_config.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_budget_config",
@@ -4531,7 +4531,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4587,7 +4587,7 @@
     {
       "path": "tests/tools/test_checkpoint_manager.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "checkpoint_manager",
@@ -4595,7 +4595,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4651,7 +4651,7 @@
     {
       "path": "tests/tools/test_clipboard.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "clipboard",
@@ -4659,7 +4659,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4715,7 +4715,7 @@
     {
       "path": "tests/tools/test_code_execution_modes.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "code_execution",
@@ -4724,7 +4724,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4780,7 +4780,7 @@
     {
       "path": "tests/tools/test_code_execution_windows_env.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "code_execution",
@@ -4789,7 +4789,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4845,7 +4845,7 @@
     {
       "path": "tests/tools/test_computer_use.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "computer_use",
@@ -4853,7 +4853,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4909,7 +4909,7 @@
     {
       "path": "tests/tools/test_credential_pool_env_fallback.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_credential_pool_env_fallback",
@@ -4917,7 +4917,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -4973,7 +4973,7 @@
     {
       "path": "tests/tools/test_daytona_environment.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "daytona_environment",
@@ -4981,7 +4981,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5052,7 +5052,7 @@
     {
       "path": "tests/tools/test_delegate.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "delegate",
@@ -5060,7 +5060,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5116,7 +5116,7 @@
     {
       "path": "tests/tools/test_delegate_composite_toolsets.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "delegate_composite_toolsets",
@@ -5124,7 +5124,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5180,7 +5180,7 @@
     {
       "path": "tests/tools/test_delegate_subagent_timeout_diagnostic.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "delegate_subagent_timeout_diagnostic",
@@ -5188,7 +5188,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5244,7 +5244,7 @@
     {
       "path": "tests/tools/test_delegate_toolset_scope.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "delegate_toolset_scope",
@@ -5252,7 +5252,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5308,7 +5308,7 @@
     {
       "path": "tests/tools/test_discord_tool.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "discord_tool",
@@ -5316,7 +5316,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5372,7 +5372,7 @@
     {
       "path": "tests/tools/test_docker_environment.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "docker",
@@ -5381,7 +5381,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5452,7 +5452,7 @@
     {
       "path": "tests/tools/test_file_operations_edge_cases.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "file_operations_edge_cases",
@@ -5461,7 +5461,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5517,7 +5517,7 @@
     {
       "path": "tests/tools/test_file_staleness.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_file_staleness",
@@ -5525,7 +5525,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Not ported: upstream warns on write_file and patch when a file changed after the agent read it. Rust file tools deduplicate repeated reads (cited test) but give no staleness warning; ledger follow-up under R3524.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Not ported: upstream warns on write_file and patch when a file changed after the agent read it. Rust file tools deduplicate repeated reads (cited test) but give no staleness warning; ledger follow-up under R3524.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/tools/file.rs",
@@ -5552,7 +5552,7 @@
     {
       "path": "tests/tools/test_file_sync.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_file_sync",
@@ -5561,7 +5561,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-environments/src/file_sync.rs",
@@ -5577,7 +5577,7 @@
     {
       "path": "tests/tools/test_file_sync_back.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "file_sync_back",
@@ -5586,7 +5586,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5642,7 +5642,7 @@
     {
       "path": "tests/tools/test_file_tools_live.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "file_tools",
@@ -5651,7 +5651,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5707,7 +5707,7 @@
     {
       "path": "tests/tools/test_image_generation.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_image_generation",
@@ -5715,7 +5715,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5771,7 +5771,7 @@
     {
       "path": "tests/tools/test_image_generation_env.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "image",
@@ -5780,7 +5780,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5836,7 +5836,7 @@
     {
       "path": "tests/tools/test_image_generation_plugin_dispatch.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_image_generation_plugin_dispatch",
@@ -5844,7 +5844,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Covered in Rust form: image generation picks its provider from the environment and config (cited test) instead of upstream's plugin registry. A DeepInfra key cannot select an image backend because Rust has none (intentional-divergence rust-no-deepinfra-media-generation).",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Covered in Rust form: image generation picks its provider from the environment and config (cited test) instead of upstream's plugin registry. A DeepInfra key cannot select an image backend because Rust has none (intentional-divergence rust-no-deepinfra-media-generation).",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/backends/image_gen/fal_managed_tests.rs",
@@ -5871,7 +5871,7 @@
     {
       "path": "tests/tools/test_interrupt.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "interrupt",
@@ -5879,7 +5879,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -5935,7 +5935,7 @@
     {
       "path": "tests/tools/test_kanban_tools.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "kanban",
@@ -5944,7 +5944,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6000,7 +6000,7 @@
     {
       "path": "tests/tools/test_local_env_cwd_recovery.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_local_env_cwd_recovery",
@@ -6008,7 +6008,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Not ported: upstream's local terminal falls back to the nearest existing ancestor when its working directory is deleted. No Rust test covers a deleted working directory; the cited tests cover how Rust resolves the working directory; ledger follow-up under R3524.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Not ported: upstream's local terminal falls back to the nearest existing ancestor when its working directory is deleted. No Rust test covers a deleted working directory; the cited tests cover how Rust resolves the working directory; ledger follow-up under R3524.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/tools/file.rs",
@@ -6024,7 +6024,7 @@
     {
       "path": "tests/tools/test_managed_modal_environment.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "managed_modal_environment",
@@ -6033,7 +6033,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6089,7 +6089,7 @@
     {
       "path": "tests/tools/test_managed_tool_gateway.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "gateway",
@@ -6098,7 +6098,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6154,7 +6154,7 @@
     {
       "path": "tests/tools/test_mcp_cancelled_error_propagation.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6163,7 +6163,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6219,7 +6219,7 @@
     {
       "path": "tests/tools/test_mcp_circuit_breaker.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_mcp_circuit_breaker",
@@ -6227,7 +6227,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6309,15 +6309,15 @@
           "name": "registry_contract_lists_dispatches_and_wraps_errors_as_json"
         }
       ],
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
       "path": "tests/tools/test_mcp_empty_error_message.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6326,7 +6326,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6382,7 +6382,7 @@
     {
       "path": "tests/tools/test_mcp_image_content.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "image",
@@ -6392,7 +6392,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6448,7 +6448,7 @@
     {
       "path": "tests/tools/test_mcp_oauth.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6457,7 +6457,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6558,7 +6558,7 @@
     {
       "path": "tests/tools/test_mcp_probe.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6567,7 +6567,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6653,7 +6653,7 @@
     {
       "path": "tests/tools/test_mcp_stability.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6662,7 +6662,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6718,7 +6718,7 @@
     {
       "path": "tests/tools/test_mcp_structured_content.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6727,7 +6727,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6783,7 +6783,7 @@
     {
       "path": "tests/tools/test_mcp_tool.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6792,7 +6792,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6863,7 +6863,7 @@
     {
       "path": "tests/tools/test_mcp_tool_issue_948.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6872,7 +6872,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6928,7 +6928,7 @@
     {
       "path": "tests/tools/test_mcp_tool_session_expired.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -6937,7 +6937,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -6993,7 +6993,7 @@
     {
       "path": "tests/tools/test_mcp_utility_capability_gating.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "mcp",
@@ -7002,7 +7002,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7058,7 +7058,7 @@
     {
       "path": "tests/tools/test_memory_tool_schema.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_memory_tool_schema",
@@ -7066,7 +7066,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7152,7 +7152,7 @@
     {
       "path": "tests/tools/test_modal_bulk_upload.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "modal",
@@ -7161,7 +7161,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7217,7 +7217,7 @@
     {
       "path": "tests/tools/test_modal_sandbox_fixes.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "modal",
@@ -7226,7 +7226,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7297,7 +7297,7 @@
     {
       "path": "tests/tools/test_notify_on_complete.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "notify_on_complete",
@@ -7305,7 +7305,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7361,7 +7361,7 @@
     {
       "path": "tests/tools/test_osv_check.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_osv_check",
@@ -7369,7 +7369,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7440,7 +7440,7 @@
     {
       "path": "tests/tools/test_patch_parser.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "patch_parser",
@@ -7448,7 +7448,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7504,7 +7504,7 @@
     {
       "path": "tests/tools/test_read_loop_detection.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_read_loop_detection",
@@ -7512,7 +7512,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7568,7 +7568,7 @@
     {
       "path": "tests/tools/test_shared_container_task_id.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_shared_container_task_id",
@@ -7576,7 +7576,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7647,7 +7647,7 @@
     {
       "path": "tests/tools/test_ssh_bulk_upload.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -7656,7 +7656,7 @@
         "ssh_bulk_upload",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7727,7 +7727,7 @@
     {
       "path": "tests/tools/test_sync_back_backends.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -7735,7 +7735,7 @@
         "sync_back_backends",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7821,7 +7821,7 @@
     {
       "path": "tests/tools/test_terminal_output_transform_hook.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_terminal_output_transform_hook",
@@ -7829,7 +7829,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7900,7 +7900,7 @@
     {
       "path": "tests/tools/test_terminal_tool.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_terminal_tool",
@@ -7908,7 +7908,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -7994,7 +7994,7 @@
     {
       "path": "tests/tools/test_todo_tool.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_todo_tool",
@@ -8002,7 +8002,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8058,7 +8058,7 @@
     {
       "path": "tests/tools/test_tool_backend_helpers.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -8066,7 +8066,7 @@
         "tests_tools",
         "tool_backend_helpers"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8122,7 +8122,7 @@
     {
       "path": "tests/tools/test_tts_gemini.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_tts_gemini",
@@ -8130,7 +8130,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8186,7 +8186,7 @@
     {
       "path": "tests/tools/test_tts_mistral.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_tts_mistral",
@@ -8194,7 +8194,7 @@
         "rust_contracts",
         "tests_tools"
       ],
-      "rationale": "Intentional divergence: Rust reserves `mistral` as an upstream TTS provider name so a command provider cannot shadow it, and has no Mistral (Voxtral) TTS backend; Mistral is supported for transcription only.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Intentional divergence: Rust reserves `mistral` as an upstream TTS provider name so a command provider cannot shadow it, and has no Mistral (Voxtral) TTS backend; Mistral is supported for transcription only.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/backends/tts.rs",
@@ -8225,7 +8225,7 @@
     {
       "path": "tests/tools/test_watch_patterns.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -8233,7 +8233,7 @@
         "tests_tools",
         "watch_patterns"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8289,7 +8289,7 @@
     {
       "path": "tests/tools/test_windows_native_support.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -8297,7 +8297,7 @@
         "tests_tools",
         "windows_native_support"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8353,7 +8353,7 @@
     {
       "path": "tests/tools/test_zombie_process_cleanup.py",
       "classification_path": "tests/tools",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "python_test_suite",
@@ -8361,7 +8361,7 @@
         "tests_tools",
         "zombie_process_cleanup"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-tools/src/registry.rs",
@@ -8417,7 +8417,7 @@
     {
       "path": "tests/tui_gateway/test_entry_sys_path.py",
       "classification_path": "tests/tui_gateway",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "entry_sys_path",
@@ -8427,7 +8427,7 @@
         "tests_tui_gateway",
         "tui"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-gateway/src/gateway.rs",
@@ -8483,7 +8483,7 @@
     {
       "path": "tests/tui_gateway/test_goal_command.py",
       "classification_path": "tests/tui_gateway",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "gateway",
@@ -8493,7 +8493,7 @@
         "tests_tui_gateway",
         "tui"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-gateway/src/gateway.rs",
@@ -8549,7 +8549,7 @@
     {
       "path": "tests/tui_gateway/test_make_agent_provider.py",
       "classification_path": "tests/tui_gateway",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "test_make_agent_provider",
@@ -8557,7 +8557,7 @@
         "rust_contracts",
         "tests_tui_gateway"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-gateway/src/gateway.rs",
@@ -8613,7 +8613,7 @@
     {
       "path": "tests/tui_gateway/test_protocol.py",
       "classification_path": "tests/tui_gateway",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "gateway",
@@ -8623,7 +8623,7 @@
         "tests_tui_gateway",
         "tui"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-gateway/src/gateway.rs",
@@ -8679,7 +8679,7 @@
     {
       "path": "tests/tui_gateway/test_review_summary_callback.py",
       "classification_path": "tests/tui_gateway",
-      "status": "covered_by_rust_test_suite_contracts",
+      "status": "not_rechecked_since_upstream_changed",
       "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "gateway",
@@ -8689,7 +8689,7 @@
         "tests_tui_gateway",
         "tui"
       ],
-      "rationale": "Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
+      "rationale": "Not rechecked at v0.23.2: upstream changed this file after the Rust tests below were cited, so they are not counted as covering it. Reason given when they were cited: Upstream Python test intent is covered by the listed Rust unit, integration, or contract tests for the equivalent Rust-first runtime surface; the Python file remains reference-only and is not vendored into runtime.",
       "rust_tests": [
         {
           "file": "crates/hermes-gateway/src/gateway.rs",
