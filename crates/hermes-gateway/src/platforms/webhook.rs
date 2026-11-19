@@ -313,9 +313,15 @@ impl PlatformAdapter for WebhookAdapter {
             self.config.port, self.config.path
         );
 
-        let addr: SocketAddr = format!("{}:{}", self.config.host, self.config.port)
-            .parse()
-            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address: {e}")))?;
+        // Resolves names and bare IPv6 literals, which `"{host}:{port}"` parsing rejects.
+        let host = self.config.host.as_str();
+        let addr = tokio::net::lookup_host((host, self.config.port))
+            .await
+            .map_err(|e| GatewayError::ConnectionFailed(format!("Invalid address {host}: {e}")))?
+            .next()
+            .ok_or_else(|| {
+                GatewayError::ConnectionFailed(format!("Invalid address {host}: no address"))
+            })?;
 
         let config = self.config.clone();
         let outbound_queue = self.outbound_queue.clone();
