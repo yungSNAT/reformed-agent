@@ -175,23 +175,11 @@ async fn run_gateway(
                 return Err(AgentError::Config(msg));
             }
 
-            let pid_path = gateway_pid_path_for_cli(&cli);
-            if let Some(pid) = read_gateway_pid(&pid_path) {
-                if gateway_pid_is_alive(pid) {
-                    println!(
-                        "Gateway already appears to be running (PID {}, file {}). Stop it first or remove a stale PID file.",
-                        pid,
-                        pid_path.display()
-                    );
-                    return Ok(());
-                }
-                cleanup_stale_gateway_metadata(&pid_path);
-            }
-
             // The runtime Hermes Desktop's local mode attaches to (`hermes gateway ensure`), claimed
             // here and served once the pid file is written. A failed claim stops the run, as
-            // upstream's does, so 2 runs never share a home; a home too deep for a socket path
-            // runs without it, as before.
+            // upstream's does, so 2 runs never share a home, and comes before the stale-pid
+            // clean-up, so a run that cannot own the home never removes the owner's pid file. A
+            // home too deep for a socket path runs without it, as before.
             #[cfg(unix)]
             let mut desktop = {
                 let home = hermes_state_root(&cli);
@@ -213,6 +201,19 @@ async fn run_gateway(
                     None
                 }
             };
+
+            let pid_path = gateway_pid_path_for_cli(&cli);
+            if let Some(pid) = read_gateway_pid(&pid_path) {
+                if gateway_pid_is_alive(pid) {
+                    println!(
+                        "Gateway already appears to be running (PID {}, file {}). Stop it first or remove a stale PID file.",
+                        pid,
+                        pid_path.display()
+                    );
+                    return Ok(());
+                }
+                cleanup_stale_gateway_metadata(&pid_path);
+            }
 
             if !enabled.is_empty() {
                 println!(
