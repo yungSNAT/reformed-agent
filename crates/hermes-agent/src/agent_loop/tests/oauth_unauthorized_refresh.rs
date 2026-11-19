@@ -4,6 +4,8 @@
         key: Mutex<String>,
         accepted: &'static str,
         refusal: &'static str,
+        /// Streamed before a refusal, as output already delivered.
+        lead: Option<StreamChunk>,
         sent_keys: Mutex<Vec<String>>,
     }
 
@@ -13,10 +15,24 @@
         }
 
         fn refusing(key: &str, accepted: &'static str, refusal: &'static str) -> Arc<Self> {
+            Self::build(key, accepted, refusal, None)
+        }
+
+        fn streaming_before_refusal(key: &str, accepted: &'static str, lead: StreamChunk) -> Arc<Self> {
+            Self::build(key, accepted, "API error 401 Unauthorized: invalid x-api-key", Some(lead))
+        }
+
+        fn build(
+            key: &str,
+            accepted: &'static str,
+            refusal: &'static str,
+            lead: Option<StreamChunk>,
+        ) -> Arc<Self> {
             Arc::new(Self {
                 key: Mutex::new(key.to_string()),
                 accepted,
                 refusal,
+                lead,
                 sent_keys: Mutex::new(Vec::new()),
             })
         }
@@ -74,7 +90,7 @@
                         usage: None,
                     }),
                 ],
-                Err(e) => vec![Err(e)],
+                Err(e) => self.lead.clone().map(Ok).into_iter().chain([Err(e)]).collect(),
             };
             futures::stream::iter(chunks).boxed()
         }
@@ -334,8 +350,10 @@
         assert_eq!(token_requests(&server).await, 1);
     }
 
+    /// Refreshes after a 401 whilst the store cannot be written, has another
+    /// process write `later`, then runs the next turn's store step.
     #[cfg(unix)]
-    async fn kept_token_gives_way_to_a_writer(access: &str, refresh: &str) {
+    async fn kept_token_meets_a_writer(later: serde_json::Value) -> tempfile::TempDir {
         use std::os::unix::fs::PermissionsExt;
 
         let (home, _server, cfg) = anthropic_oauth_fixture("old-access").await;
@@ -346,21 +364,26 @@
         std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o500))
             .expect("make the auth folder read-only");
         let result = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
-        // Another process stores its own refreshed credential.
-        let later = serde_json::json!({
-            "anthropic": {
-                "provider": "anthropic",
-                "access_token": access,
-                "refresh_token": refresh,
-                "expires_at": "2199-01-01T00:00:00Z"
-            }
-        });
         std::fs::write(auth_dir.join("tokens.json"), later.to_string()).expect("other writer");
         std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
             .expect("make the auth folder writable again");
         result.expect("the refreshed token is used although it was not stored");
 
         agent.refresh_oauth_store_tokens_if_needed().await;
+        home
+    }
+
+    #[cfg(unix)]
+    async fn kept_token_gives_way_to_a_writer(access: &str, refresh: &str) {
+        let home = kept_token_meets_a_writer(serde_json::json!({
+            "anthropic": {
+                "provider": "anthropic",
+                "access_token": access,
+                "refresh_token": refresh,
+                "expires_at": "2199-01-01T00:00:00Z"
+            }
+        }))
+        .await;
         assert_eq!(
             stored_anthropic_token(&home),
             (access.to_string(), refresh.to_string())
@@ -377,6 +400,127 @@
     #[tokio::test]
     async fn kept_token_gives_way_to_a_writer_that_rotated_only_the_refresh_token() {
         kept_token_gives_way_to_a_writer("new-access", "writer-refresh").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn kept_token_is_not_written_back_after_another_writer_removed_its_entry() {
+        let home = kept_token_meets_a_writer(serde_json::json!({})).await;
+        let raw = std::fs::read_to_string(home.path().join("auth").join("tokens.json"))
+            .expect("read token store");
+        let store: serde_json::Value = serde_json::from_str(&raw).expect("token store json");
+        assert!(store.get("anthropic").is_none(), "{store}");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn second_exchange_that_cannot_be_stored_is_kept_too() {
+        use std::os::unix::fs::PermissionsExt;
+        use wiremock::matchers::{body_string_contains, method};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        Mock::given(method("POST"))
+            .and(body_string_contains("refresh_token=new-refresh"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "access_token": "newer-access",
+                "refresh_token": "newer-refresh",
+                "token_type": "Bearer",
+                "expires_in": 3600
+            })))
+            .mount(&server)
+            .await;
+        let auth_dir = home.path().join("auth");
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "never-accepted");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o500))
+            .expect("make the auth folder read-only");
+        // Each call refreshes once: old to new, then new to newer.
+        let first = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
+        let second = agent.call_llm_with_retry(&user_context(), &[], None, None).await;
+        std::fs::set_permissions(&auth_dir, std::fs::Permissions::from_mode(0o700))
+            .expect("make the auth folder writable again");
+        assert!(first.is_err() && second.is_err());
+        assert_eq!(
+            provider.sent_keys(),
+            ["old-access", "new-access", "new-access", "newer-access"]
+        );
+        assert_eq!(token_requests(&server).await, 2);
+
+        agent.refresh_oauth_store_tokens_if_needed().await;
+        assert_eq!(
+            stored_anthropic_token(&home),
+            ("newer-access".to_string(), "newer-refresh".to_string())
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_unauthorized_calls_exchange_the_refresh_token_once() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let first = AgentLoop::new(cfg.clone(), Arc::new(ToolRegistry::new()), provider.clone());
+        let second = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+        let (ctx_a, ctx_b) = (user_context(), user_context());
+
+        let (a, b) = tokio::join!(
+            first.call_llm_with_retry(&ctx_a, &[], None, None),
+            second.call_llm_with_retry(&ctx_b, &[], None, None)
+        );
+
+        a.expect("the first call succeeds after the refresh");
+        b.expect("the second call succeeds with the token the first one got");
+        assert_eq!(token_requests(&server).await, 1);
+        assert_eq!(stored_anthropic_token(&home).0, "new-access");
+    }
+
+    #[tokio::test]
+    async fn bad_request_whose_text_contains_401_is_not_refreshed() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let provider = UnauthorizedUntilRefreshed::refusing(
+            "old-access",
+            "new-access",
+            "API error 400 Bad Request: prompt is too long: 240100 tokens > 200000 maximum",
+        );
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let err = agent
+            .call_llm_with_retry(&user_context(), &[], None, None)
+            .await
+            .expect_err("a 400 keeps its refusal");
+
+        assert!(err.to_string().contains("400"), "{err}");
+        assert_eq!(provider.sent_keys(), ["old-access"]);
+        assert_eq!(token_requests(&server).await, 0);
+        assert_eq!(stored_anthropic_token(&home).0, "old-access");
+    }
+
+    #[tokio::test]
+    async fn unauthorized_stream_after_delivered_output_is_not_replayed() {
+        let thinking = StreamChunk {
+            delta: Some(hermes_core::StreamDelta {
+                content: None,
+                tool_calls: None,
+                extra: Some(serde_json::json!({ "thinking": "planning" })),
+            }),
+            finish_reason: None,
+            usage: None,
+        };
+        let (_home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let provider =
+            UnauthorizedUntilRefreshed::streaming_before_refusal("old-access", "new-access", thinking);
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+
+        let out = agent
+            .collect_stream_llm_response(&user_context(), &[], None, "anthropic:claude-test", None, &|_| {})
+            .await;
+
+        match out {
+            Err(e) => assert!(e.to_string().contains("401"), "{e}"),
+            Ok(_) => panic!("the stream should fail"),
+        }
+        assert_eq!(provider.sent_keys(), ["old-access"]);
+        assert_eq!(token_requests(&server).await, 0);
     }
 
     #[tokio::test]
