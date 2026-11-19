@@ -1072,10 +1072,7 @@ async fn spawn_nous_portal_stub(token_body: String) -> String {
             // Read the whole request before answering so the close does not reset the client.
             let mut request = Vec::new();
             let mut buf = [0_u8; 4096];
-            loop {
-                let Ok(n) = stream.read(&mut buf).await else {
-                    break;
-                };
+            while let Ok(n) = stream.read(&mut buf).await {
                 if n == 0 {
                     break;
                 }
