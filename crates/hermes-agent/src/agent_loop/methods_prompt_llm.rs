@@ -612,12 +612,14 @@ impl AgentLoop {
         let mut unauthorized_refresh_tried = false;
         for attempt in 0..=effective_max_retries {
             self.interrupt.check_interrupt()?;
+            // Always try the requested model first. Some providers only reveal tool
+            // schema limitations at request time, so proactive substitution hides
+            // the real model behavior and makes quorum voters appear to "succeed"
+            // on a different backend.
+            let target = self.attempt_runtime(route, model);
+            // A replay after an OAuth refresh reuses `target`, the provider that
+            // now holds the new token: a rebuilt route could load the old key.
             let result = loop {
-                // Always try the requested model first. Some providers only reveal tool
-                // schema limitations at request time, so proactive substitution hides
-                // the real model behavior and makes quorum voters appear to "succeed"
-                // on a different backend.
-                let target = self.attempt_runtime(route, model);
                 let result = target
                     .provider
                     .chat_completion(
@@ -1031,6 +1033,8 @@ impl AgentLoop {
         // One OAuth refresh per call; the stream sent after it reuses the attempt.
         let mut unauthorized_refresh_tried = false;
         let mut stream_attempt = 0;
+        // The provider holding a refreshed token, for the replay that follows.
+        let mut replay_target: Option<AttemptRuntime> = None;
         'stream_attempt: while stream_attempt <= max_stream_retries {
             let lifetime_deadline = stream_lifetime
                 .map(|cap| {
@@ -1042,7 +1046,9 @@ impl AgentLoop {
                         })
                 })
                 .transpose()?;
-            let target = self.attempt_runtime(route, active_model);
+            let target = replay_target
+                .take()
+                .unwrap_or_else(|| self.attempt_runtime(route, active_model));
             // The reply is labelled, and so priced, as the model actually streamed.
             let streamed_model = if target.primary_fallback {
                 self.config.model.as_str()
@@ -1121,6 +1127,7 @@ impl AgentLoop {
                                 )
                                 .await
                             {
+                                replay_target = Some(target);
                                 continue 'stream_attempt;
                             }
                         }

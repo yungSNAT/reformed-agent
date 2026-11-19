@@ -251,7 +251,8 @@ impl AgentLoop {
         let provider_key = Self::oauth_store_provider_key(provider)?;
         let path = self.auth_tokens_path();
         let raw = std::fs::read_to_string(path).ok()?;
-        let entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
+        let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
+        self.overlay_unsaved_oauth_credentials(&mut entries);
         let cred = entries.get(provider_key)?;
         if cred.access_token.trim().is_empty() {
             return None;
@@ -344,17 +345,24 @@ impl AgentLoop {
             .await
             .ok()?;
         let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
+        self.overlay_unsaved_oauth_credentials(&mut entries);
+        Some(entries)
+    }
+
+    /// Puts each kept credential in place of its entry, unless another writer
+    /// changed that entry since the exchange: then the kept one is dropped.
+    fn overlay_unsaved_oauth_credentials(&self, entries: &mut HashMap<String, OAuthStoreCredential>) {
+        let same = |a: &OAuthStoreCredential, b: &OAuthStoreCredential| {
+            a.access_token == b.access_token && a.refresh_token == b.refresh_token
+        };
         if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
-            // An entry another writer changed since the exchange replaces the
-            // kept credential.
             unsaved.retain(|key, (replaced, kept)| {
-                entries.get(key).is_none_or(|stored| {
-                    stored.access_token == *replaced || stored.access_token == kept.access_token
-                })
+                entries
+                    .get(key)
+                    .is_none_or(|stored| same(stored, replaced) || same(stored, kept))
             });
             entries.extend(unsaved.iter().map(|(k, (_, v))| (k.clone(), v.clone())));
         }
-        Some(entries)
     }
 
     /// Writes the unsaved credentials into `tokens.json`, read afresh so that
@@ -377,8 +385,8 @@ impl AgentLoop {
                 if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
                     // Keep any exchanged since the read.
                     for key in pending {
-                        if unsaved.get(&key).map(|(_, c)| &c.access_token)
-                            == entries.get(&key).map(|c| &c.access_token)
+                        if unsaved.get(&key).map(|(_, c)| (&c.access_token, &c.refresh_token))
+                            == entries.get(&key).map(|c| (&c.access_token, &c.refresh_token))
                         {
                             unsaved.remove(&key);
                         }
@@ -425,10 +433,7 @@ impl AgentLoop {
         };
         let access_token = refreshed.access_token.clone();
         if let Ok(mut unsaved) = self.unsaved_oauth_credentials.lock() {
-            unsaved.insert(
-                provider_key.to_string(),
-                (current.access_token.clone(), refreshed),
-            );
+            unsaved.insert(provider_key.to_string(), (current.clone(), refreshed));
         }
         self.mark_oauth_refresh_success(provider_key);
         self.store_unsaved_oauth_credentials().await;

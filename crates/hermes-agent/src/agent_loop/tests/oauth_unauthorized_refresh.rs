@@ -335,8 +335,7 @@
     }
 
     #[cfg(unix)]
-    #[tokio::test]
-    async fn kept_token_gives_way_to_one_another_writer_stored() {
+    async fn kept_token_gives_way_to_a_writer(access: &str, refresh: &str) {
         use std::os::unix::fs::PermissionsExt;
 
         let (home, _server, cfg) = anthropic_oauth_fixture("old-access").await;
@@ -351,8 +350,8 @@
         let later = serde_json::json!({
             "anthropic": {
                 "provider": "anthropic",
-                "access_token": "other-access",
-                "refresh_token": "other-refresh",
+                "access_token": access,
+                "refresh_token": refresh,
                 "expires_at": "2199-01-01T00:00:00Z"
             }
         });
@@ -364,6 +363,72 @@
         agent.refresh_oauth_store_tokens_if_needed().await;
         assert_eq!(
             stored_anthropic_token(&home),
-            ("other-access".to_string(), "other-refresh".to_string())
+            (access.to_string(), refresh.to_string())
         );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn kept_token_gives_way_to_one_another_writer_stored() {
+        kept_token_gives_way_to_a_writer("other-access", "other-refresh").await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn kept_token_gives_way_to_a_writer_that_rotated_only_the_refresh_token() {
+        kept_token_gives_way_to_a_writer("new-access", "writer-refresh").await;
+    }
+
+    #[tokio::test]
+    async fn routed_provider_replays_with_the_refreshed_token_not_its_configured_key() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, ResponseTemplate};
+
+        let (home, server, mut cfg) = anthropic_oauth_fixture("old-access").await;
+        // The route's configured key is the stored token, so a rebuilt route
+        // would send it again.
+        if let Some(anthropic) = cfg.runtime_providers.get_mut("anthropic") {
+            anthropic.api_key = Some("old-access".to_string());
+        }
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .and(header("x-api-key", "new-access"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "msg_1", "type": "message", "role": "assistant", "model": "claude-test",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 1, "output_tokens": 1}
+            })))
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("invalid x-api-key"))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        let primary = UnauthorizedUntilRefreshed::new("primary-key", "primary-key");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), primary.clone());
+        let mut route = agent.turn_route_cost_guard("claude-test".to_string());
+        route.provider = Some("anthropic".to_string());
+        route.base_url = Some(server.uri());
+
+        let resp = agent
+            .call_llm_with_retry(&user_context(), &[], Some(&route), None)
+            .await
+            .expect("the replay sends the refreshed token");
+
+        assert_eq!(resp.message.content.as_deref(), Some("ok"));
+        let sent: Vec<String> = server
+            .received_requests()
+            .await
+            .expect("recorded requests")
+            .iter()
+            .filter(|r| r.url.path() == "/v1/messages")
+            .filter_map(|r| r.headers.get("x-api-key").and_then(|v| v.to_str().ok()).map(str::to_string))
+            .collect();
+        assert_eq!(sent, ["old-access", "new-access"]);
+        assert_eq!(stored_anthropic_token(&home).0, "new-access");
+        assert!(primary.sent_keys().is_empty());
     }
