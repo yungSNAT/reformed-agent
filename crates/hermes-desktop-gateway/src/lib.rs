@@ -3,8 +3,8 @@
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
-//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports voice chat, the
-//! wake word and self-update as off. Other methods get JSON-RPC 'method not found'.
+//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
+//! self-update as off. Other methods get JSON-RPC 'method not found'.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
@@ -131,7 +131,6 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     });
     let private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
-        .route("/api/audio/voice-live/status", get(voice_live_status))
         .route("/api/hermes/update/check", get(update_check))
         .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
     Router::new()
@@ -209,21 +208,11 @@ async fn status() -> Json<Value> {
     }))
 }
 
-// Voice chat and self-update are not served. Each route answers in upstream's shape with the
-// feature off, so the desktop draws it as off: hermes_cli/web_routers/audio.py
-// `get_voice_live_status` (tools/voice_live.py `resolve_gpt_live_status` with no key, upstream's
-// default mode, model and voice) and hermes_cli/web_routers/actions.py `check_hermes_update`.
-
-async fn voice_live_status() -> Json<Value> {
-    Json(json!({
-        "ok": true,
-        "mode": "chained",
-        "available": false,
-        "reason": "voice chat is not served by this gateway",
-        "model": "gpt-live-1",
-        "voice": "marin",
-    }))
-}
+// Self-update is not served: this answers in the shape of upstream's
+// hermes_cli/web_routers/actions.py `check_hermes_update` with nothing to apply. Voice chat is not
+// served either, and `/api/audio/voice-live/status` is left unrouted on purpose: every 200 reply in
+// upstream's contract shows the desktop's voice-engine picker, whilst a 404 is read as a backend
+// that predates voice modes and hides it (apps/desktop/src/lib/voice-live.ts).
 
 async fn update_check() -> Json<Value> {
     Json(json!({

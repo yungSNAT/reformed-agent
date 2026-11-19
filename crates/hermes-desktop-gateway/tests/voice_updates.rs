@@ -1,7 +1,8 @@
 //! Voice and updates, as Hermes Desktop v0.23.2 asks for them at start-up: `wake.status` on the
 //! socket, `GET /api/audio/voice-live/status` and `GET /api/hermes/update/check`. This gateway
-//! serves no wake word, voice chat or self-update, so each answers with upstream's own
-//! 'unavailable' shape, which the desktop reads as the feature being off.
+//! serves no wake word, voice chat or self-update. The wake word and the update check answer with
+//! upstream's own 'unavailable' shape, which the desktop reads as the feature being off; the
+//! voice-live status stays a 404, which the desktop reads as a backend without voice modes.
 
 use std::net::SocketAddr;
 
@@ -34,21 +35,13 @@ async fn get(addr: SocketAddr, path: &str, token: Option<&str>) -> (u16, Value) 
 }
 
 #[tokio::test]
-async fn voice_live_status_reports_gpt_live_unavailable_and_needs_the_token() {
+async fn voice_live_status_stays_unrouted_so_the_desktop_hides_its_engine_picker() {
+    // Every 200 reply in upstream's contract makes the desktop show its voice-engine picker with
+    // the chained engine on offer; a 404 makes it treat the backend as predating voice modes.
     let addr = start().await;
     let path = "/api/audio/voice-live/status?profile=default";
-    assert_eq!(get(addr, path, None).await.0, 401);
-    let (status, body) = get(addr, path, Some(TOKEN)).await;
-    assert_eq!(status, 200);
-    assert_eq!(body["ok"], true);
-    assert_eq!(body["mode"], "chained");
-    assert_eq!(body["available"], false);
-    assert!(
-        body["reason"].as_str().is_some_and(|r| !r.is_empty()),
-        "{body}"
-    );
-    assert_eq!(body["model"], "gpt-live-1");
-    assert_eq!(body["voice"], "marin");
+    assert_eq!(get(addr, path, None).await.0, 404);
+    assert_eq!(get(addr, path, Some(TOKEN)).await.0, 404);
 }
 
 #[tokio::test]
