@@ -247,7 +247,6 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
             vec![command.to_string()]
         } else {
             var("PATHEXT")
-                .filter(|exts| !exts.is_empty())
                 .unwrap_or(".COM;.EXE;.BAT;.CMD")
                 .split(';')
                 .filter_map(|ext| ext.strip_prefix('.'))
@@ -256,7 +255,7 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
                 .collect()
         };
         let dirs = std::env::split_paths(var("PATH").unwrap_or_default());
-        for dir in dirs.filter(|dir| dir.is_absolute()) {
+        for dir in dirs {
             for candidate in &candidates {
                 let path = dir.join(candidate);
                 if path.is_file() {
@@ -1590,43 +1589,76 @@ mod tests {
         assert_eq!(path_entries(&env), vec!["/configured/bin"]);
     }
 
+    /// Folders for the program lookup tests: `a` holds `probe.js`, `b` holds
+    /// `probe.bat` and `probe.cmd`, and `near`, under the working directory,
+    /// holds `probe.cmd`.
+    #[cfg(windows)]
+    fn lookup_dirs() -> [tempfile::TempDir; 3] {
+        let dirs = [
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir_in(".").unwrap(),
+        ];
+        std::fs::write(dirs[0].path().join("probe.js"), "").unwrap();
+        std::fs::write(dirs[1].path().join("probe.bat"), "").unwrap();
+        std::fs::write(dirs[1].path().join("probe.cmd"), "").unwrap();
+        std::fs::write(dirs[2].path().join("probe.cmd"), "").unwrap();
+        dirs
+    }
+
+    #[cfg(windows)]
+    fn find_probe(path: String, pathext: &str) -> PathBuf {
+        let env = HashMap::from([
+            ("Path".to_string(), path),
+            ("PATHEXT".to_string(), pathext.to_string()),
+        ]);
+        program_for("probe", &env)
+    }
+
+    /// The returned name takes PATHEXT's case; Windows paths ignore case.
+    #[cfg(windows)]
+    fn assert_same_path(found: PathBuf, expected: PathBuf) {
+        assert!(
+            found
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&expected.to_string_lossy()),
+            "found {found:?}, expected {expected:?}"
+        );
+    }
+
     /// A bare name resolves only to a file `Command` can start, in the
-    /// server's own `PATHEXT` order, from an absolute `PATH` entry.
+    /// server's own `PATHEXT` order rather than the parent's.
     #[cfg(windows)]
     #[test]
-    fn program_lookup_uses_the_servers_path_and_pathext() {
-        let a = tempfile::tempdir().unwrap();
-        let b = tempfile::tempdir().unwrap();
-        // A folder under the working directory, reachable by a relative entry.
-        let near = tempfile::tempdir_in(".").unwrap();
-        let near_name = near.path().file_name().unwrap().to_string_lossy();
-        std::fs::write(a.path().join("probe.js"), "").unwrap();
-        std::fs::write(b.path().join("probe.bat"), "").unwrap();
-        std::fs::write(b.path().join("probe.cmd"), "").unwrap();
-        std::fs::write(near.path().join("probe.cmd"), "").unwrap();
-        let env = |path: String, pathext: &str| {
-            HashMap::from([
-                ("Path".to_string(), path),
-                ("PATHEXT".to_string(), pathext.to_string()),
-            ])
-        };
-        let ab = format!("{};{}", a.path().display(), b.path().display());
+    fn program_lookup_follows_the_servers_pathext_and_skips_scripts() {
+        let [a, b, _near] = lookup_dirs();
+        let path = format!("{};{}", a.path().display(), b.path().display());
 
         // `.js` is in Windows' default PATHEXT but `Command` cannot start it.
-        let found = program_for("probe", &env(ab.clone(), ".JS;.BAT;.CMD"));
-        assert_eq!(found, b.path().join("probe.bat"));
-        // The server's PATHEXT order wins over the parent's.
-        let found = program_for("probe", &env(ab.clone(), ".CMD;.BAT"));
-        assert_eq!(found, b.path().join("probe.cmd"));
-        // An empty PATHEXT means the default list.
-        let found = program_for("probe", &env(ab, ""));
-        assert_eq!(found, b.path().join("probe.bat"));
-        // A relative entry would run a file planted in the working directory.
-        let found = program_for(
-            "probe",
-            &env(format!("{near_name};{}", b.path().display()), ".CMD"),
-        );
-        assert_eq!(found, b.path().join("probe.cmd"));
+        let found = find_probe(path.clone(), ".JS;.BAT;.CMD");
+        assert_same_path(found, b.path().join("probe.bat"));
+        let found = find_probe(path, ".CMD;.BAT");
+        assert_same_path(found, b.path().join("probe.cmd"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_treats_an_empty_pathext_as_unset() {
+        let [_a, b, _near] = lookup_dirs();
+
+        let found = find_probe(b.path().display().to_string(), "");
+        assert_same_path(found, b.path().join("probe.bat"));
+    }
+
+    /// A relative entry would run a file planted in the working directory.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_skips_relative_path_entries() {
+        let [_a, b, near] = lookup_dirs();
+        let near_name = near.path().file_name().unwrap().to_string_lossy();
+
+        let found = find_probe(format!("{near_name};{}", b.path().display()), ".CMD");
+        assert_same_path(found, b.path().join("probe.cmd"));
     }
 
     /// `npx` is `npx.cmd` on Windows, which Rust's `Command` does not find by
