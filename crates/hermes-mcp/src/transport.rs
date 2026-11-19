@@ -1588,6 +1588,45 @@ mod tests {
         assert_eq!(path_entries(&env), vec!["/configured/bin"]);
     }
 
+    /// A bare name resolves only to a file `Command` can start, in the
+    /// server's own `PATHEXT` order, from an absolute `PATH` entry.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_uses_the_servers_path_and_pathext() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        // A folder under the working directory, reachable by a relative entry.
+        let near = tempfile::tempdir_in(".").unwrap();
+        let near_name = near.path().file_name().unwrap().to_string_lossy();
+        std::fs::write(a.path().join("probe.js"), "").unwrap();
+        std::fs::write(b.path().join("probe.bat"), "").unwrap();
+        std::fs::write(b.path().join("probe.cmd"), "").unwrap();
+        std::fs::write(near.path().join("probe.cmd"), "").unwrap();
+        let env = |path: String, pathext: &str| {
+            HashMap::from([
+                ("Path".to_string(), path),
+                ("PATHEXT".to_string(), pathext.to_string()),
+            ])
+        };
+        let ab = format!("{};{}", a.path().display(), b.path().display());
+
+        // `.js` is in Windows' default PATHEXT but `Command` cannot start it.
+        let found = program_for("probe", &env(ab.clone(), ".JS;.BAT;.CMD"));
+        assert_eq!(found, b.path().join("probe.bat"));
+        // The server's PATHEXT order wins over the parent's.
+        let found = program_for("probe", &env(ab.clone(), ".CMD;.BAT"));
+        assert_eq!(found, b.path().join("probe.cmd"));
+        // An empty PATHEXT means the default list.
+        let found = program_for("probe", &env(ab, ""));
+        assert_eq!(found, b.path().join("probe.bat"));
+        // A relative entry would run a file planted in the working directory.
+        let found = program_for(
+            "probe",
+            &env(format!("{near_name};{}", b.path().display()), ".CMD"),
+        );
+        assert_eq!(found, b.path().join("probe.cmd"));
+    }
+
     /// `npx` is `npx.cmd` on Windows, which Rust's `Command` does not find by
     /// its bare name; the script also reports the `SystemRoot` it was given.
     #[cfg(windows)]
