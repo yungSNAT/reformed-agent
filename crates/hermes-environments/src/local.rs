@@ -28,14 +28,22 @@ const PROCESS_LOG_DEFAULT_LINES: usize = 200;
 const FOREGROUND_DRAIN_GRACE_MS: u64 = 120;
 
 /// Reaps `child` when its exit could not be seen unreaped, returning the
-/// lock's guard once it has.
+/// lock's guard once it has. Each non-blocking check runs under the lock, so
+/// the shell is never reaped whilst `kill_process` signals its group, and the
+/// lock is never held whilst the shell runs.
 #[cfg(unix)]
 async fn reap_under_lock(
     child: &mut tokio::process::Child,
-    _lock: &Arc<AsyncMutex<()>>,
+    lock: &Arc<AsyncMutex<()>>,
 ) -> Option<tokio::sync::OwnedMutexGuard<()>> {
-    let _ = child.wait().await;
-    None
+    loop {
+        let held = lock.clone().lock_owned().await;
+        match child.try_wait() {
+            Ok(Some(_)) | Err(_) => return Some(held),
+            Ok(None) => drop(held),
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }
 /// How long a process tree has to stop after SIGTERM before SIGKILL.
 #[cfg(unix)]
