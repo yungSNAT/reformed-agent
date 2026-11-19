@@ -380,17 +380,19 @@ mod tests {
 
     #[test]
     fn the_token_in_an_authorization_value_is_found_without_its_scheme() {
-        // Made up.
+        // Made up, and joined at run time so secret scanners do not take the
+        // literal for a real header.
+        let header = ["Bearer", "made-up-bearer-ochre-58"].join(" ");
         register_json(
             "config",
-            &json!({"mcp": {"headers": {"Authorization": "Bearer made-up-bearer-ochre-58"}}}),
+            &json!({"mcp": {"headers": {"Authorization": header}}}),
         );
 
         assert_eq!(
             find("token=made-up-bearer-ochre-58").as_deref(),
             Some("config.mcp.headers.Authorization")
         );
-        assert_eq!(mask("Bearer made-up-bearer-ochre-58"), "***");
+        assert_eq!(mask(&header), "***");
     }
 
     #[test]
