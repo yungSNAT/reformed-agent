@@ -8,12 +8,13 @@
 //! credential is left out and reported; the API keys in `.env` are the
 //! exception, merged into this home's own `.env`, written owner-only.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use crate::agent_import::{
-    check_destination, copy_tree, holds_secret, is_link, list_dir, looks_secret, read_regular,
-    read_regular_to_string, write_file, HIDDEN_NAME,
+    check_destination, looks_secret, read_regular_to_string, write_file, HIDDEN_NAME,
 };
+use crate::source_tree::{read_all, Entry, SourceDir, Tree};
 
 /// Known OpenClaw directory names (current + legacy).
 const OPENCLAW_DIR_NAMES: &[&str] = &[".openclaw", ".clawdbot", ".moldbot"];
@@ -149,123 +150,115 @@ pub fn run_migration(options: &MigrateOptions) -> MigrationResult {
         let _ = std::fs::create_dir_all(&hermes_home);
     }
 
+    // Every entry is opened relative to this, never through a link.
+    let root = match SourceDir::open(&source_dir) {
+        Ok(root) => root,
+        Err(err) => {
+            let reason = format!("could not open it: {err}");
+            let failed = Err((MigrationStatus::Error, reason));
+            record(
+                &mut result,
+                "source".to_string(),
+                Some(source_dir),
+                None,
+                failed,
+            );
+            return result;
+        }
+    };
+
     // Personality files (SOUL.md, MEMORY.md, USER.md)
     for &filename in PERSONALITY_FILES {
-        let src = source_dir.join(filename);
-        let kind = format!("personality:{}", filename);
-        let missing = match present(&src) {
-            Ok(true) => None,
-            Ok(false) => Some((
+        let dst = hermes_home.join(filename);
+        let outcome = match look_up(&root, filename) {
+            Ok(None) => Err((
                 MigrationStatus::Skipped,
                 "Source file not found".to_string(),
             )),
-            Err(failed) => Some(failed),
+            Ok(Some(entry)) => migrate_file(entry, &hermes_home, &dst, options),
+            Err(failed) => Err(failed),
         };
-        if let Some(why) = missing {
-            let dst = hermes_home.join(filename);
-            record(&mut result, kind, Some(src), Some(dst), Err(why));
-            continue;
-        }
-        migrate_file(
-            kind,
-            src,
-            &hermes_home,
-            Path::new(filename),
-            options,
-            &mut result,
-        );
+        let kind = format!("personality:{}", filename);
+        let src = source_dir.join(filename);
+        record(&mut result, kind, Some(src), Some(dst), outcome);
     }
 
     // Skills, each to skills/openclaw-imports/
+    let skills = hermes_home.join("skills").join("openclaw-imports");
     for_each_entry(
+        &root,
         &source_dir,
         "skills",
         "skill",
         &mut result,
-        |path, kind, result| migrate_skill(path, kind, &hermes_home, options, result),
+        |entry, name| {
+            let dst = skills.join(name);
+            let outcome = match entry {
+                Entry::Dir(skill) => migrate_skill(&skill, &hermes_home, &dst, options),
+                entry => migrate_file(entry, &hermes_home, &dst, options),
+            };
+            (Some(dst), outcome)
+        },
     );
 
     // Session files, each to sessions/
+    let sessions = hermes_home.join("sessions");
     for_each_entry(
+        &root,
         &source_dir,
         "sessions",
         "session",
         &mut result,
-        |path, kind, result| {
-            if !is_link(&path) && path.is_dir() {
+        |entry, name| {
+            if let Entry::Dir(_) = entry {
                 let reason = "it is a folder; only session files are copied".to_string();
-                record(
-                    result,
-                    kind,
-                    Some(path),
-                    None,
-                    Err((MigrationStatus::Skipped, reason)),
-                );
-                return;
+                return (None, Err((MigrationStatus::Skipped, reason)));
             }
-            let name = path.file_name().unwrap_or_default().to_owned();
-            let relative = Path::new("sessions").join(name);
-            migrate_file(kind, path, &hermes_home, &relative, options, result);
+            let dst = sessions.join(name);
+            let outcome = migrate_file(entry, &hermes_home, &dst, options);
+            (Some(dst), outcome)
         },
     );
 
     // .env file (API keys): this home keeps its keys in its own .env.
-    let src_env = source_dir.join(".env");
-    let env = present(&src_env);
-    if !matches!(env, Ok(false)) {
-        let dst_env = hermes_home.join(".env");
-        let outcome = if let Err(failed) = env {
-            Err(failed)
-        } else if is_link(&src_env) {
-            Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
-        } else if let Err(err) = check_destination(&hermes_home, &dst_env) {
-            Err((MigrationStatus::Error, err))
-        } else if dst_env.exists() && !options.overwrite {
-            Err((
-                MigrationStatus::Conflict,
-                "Already exists (use --overwrite)".to_string(),
-            ))
-        } else if options.dry_run {
-            Ok(Some("(dry run)".to_string()))
-        } else {
-            merge_env_files(&src_env, &dst_env)
-                .map(|count| Some(format!("{} keys imported", count)))
-                .map_err(|err| (MigrationStatus::Error, err))
-        };
+    let dst_env = hermes_home.join(".env");
+    let outcome = match look_up(&root, ".env") {
+        Ok(None) => None,
+        Ok(Some(entry)) => Some(migrate_env(entry, &hermes_home, &dst_env, options)),
+        Err(failed) => Some(Err(failed)),
+    };
+    if let Some(outcome) = outcome {
+        let src_env = source_dir.join(".env");
         let kind = "api-keys".to_string();
         record(&mut result, kind, Some(src_env), Some(dst_env), outcome);
     }
 
     // Platform configs (config.yaml / gateway.json)
     for config_name in ["config.yaml", "gateway.json"] {
-        let src_cfg = source_dir.join(config_name);
+        let dst = hermes_home.join(config_name);
+        let outcome = match look_up(&root, config_name) {
+            Ok(None) => continue,
+            Ok(Some(entry)) => migrate_file(entry, &hermes_home, &dst, options),
+            Err(failed) => Err(failed),
+        };
         let kind = format!("config:{}", config_name);
-        let relative = Path::new(config_name);
-        match present(&src_cfg) {
-            Ok(false) => {}
-            Ok(true) => migrate_file(kind, src_cfg, &hermes_home, relative, options, &mut result),
-            Err(failed) => {
-                let dst = hermes_home.join(relative);
-                record(&mut result, kind, Some(src_cfg), Some(dst), Err(failed));
-            }
-        }
+        let src = source_dir.join(config_name);
+        record(&mut result, kind, Some(src), Some(dst), outcome);
     }
 
     result
 }
 
-/// Whether `path` is there, a link included, without following it. A lookup
-/// that fails other than with not-found is an error, so an entry that cannot
-/// be looked up is never taken for a missing one.
-fn present(path: &Path) -> Result<bool, (MigrationStatus, String)> {
-    match std::fs::symlink_metadata(path) {
-        Ok(_) => Ok(true),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(false),
-        Err(err) => Err((
+/// The entry `name` of `dir`, opened without following a link. A lookup that
+/// fails other than with not-found is an error, so an entry that cannot be
+/// looked up is never taken for a missing one.
+fn look_up(dir: &SourceDir, name: impl AsRef<OsStr>) -> Result<Option<Entry>, Failure> {
+    dir.entry(name).map_err(|err| {
+        (
             MigrationStatus::Error,
             format!("could not look it up: {err}"),
-        )),
-    }
+        )
+    })
 }
 
 /// Why a link is skipped.
@@ -273,9 +266,10 @@ const LINK_REASON: &str = "it is a link, which this migration does not follow";
 /// Why a file or folder holding what looks like a credential is skipped.
 const SECRET_REASON: &str = "it looks like it holds a credential; add it yourself";
 
-/// What became of one item: migrated (with an optional note), or a status
-/// and the reason.
-type Outcome = Result<Option<String>, (MigrationStatus, String)>;
+/// Why an item was not migrated: a status and the reason.
+type Failure = (MigrationStatus, String);
+/// What became of one item: migrated (with an optional note), or why not.
+type Outcome = Result<Option<String>, Failure>;
 
 /// Files `outcome` under migrated, errors or skipped (skips and conflicts).
 fn record(
@@ -301,69 +295,71 @@ fn record(
     });
 }
 
-/// Copies the file `src` to `home/relative`, owner-only. A link, a file that
-/// looks like it holds a credential and a destination reached through a link
-/// are refused.
-fn migrate_file(
-    kind: String,
-    src: PathBuf,
-    home: &Path,
-    relative: &Path,
-    options: &MigrateOptions,
-    result: &mut MigrationResult,
-) {
-    let dst = home.join(relative);
-    let outcome = if is_link(&src) {
-        Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
-    } else {
-        read_regular(&src)
-            .map_err(|e| (MigrationStatus::Error, e.to_string()))
-            .and_then(|content| {
-                if looks_secret(&String::from_utf8_lossy(&content)) {
-                    return Err((MigrationStatus::Skipped, SECRET_REASON.to_string()));
-                }
-                check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err))?;
-                if dst.exists() && !options.overwrite {
-                    return Err((MigrationStatus::Conflict, "Already exists".to_string()));
-                }
-                if options.dry_run {
-                    return Ok(Some("(dry run)".to_string()));
-                }
-                write_file(&dst, &content)
-                    .map(|()| None)
-                    .map_err(|err| (MigrationStatus::Error, err))
-            })
-    };
-    record(result, kind, Some(src), Some(dst), outcome);
+/// The bytes of the source file `entry`. A link is skipped; a folder, FIFO,
+/// socket or device is an error.
+fn read_file(entry: Entry) -> Result<Vec<u8>, Failure> {
+    match entry {
+        Entry::File(file) => read_all(file).map_err(|e| (MigrationStatus::Error, e.to_string())),
+        Entry::Link => Err((MigrationStatus::Skipped, LINK_REASON.to_string())),
+        Entry::Dir(_) => Err((MigrationStatus::Error, "it is a folder".to_string())),
+        Entry::Other => Err((
+            MigrationStatus::Error,
+            "it is not a regular file".to_string(),
+        )),
+    }
 }
 
-/// Hands each entry of the folder `folder` in `source` to `migrate`, with its
-/// kind (`<item>:<name>`). The folder is passed over when missing; a folder
+/// Copies the source file `entry` to `dst` in `home`, owner-only. A link, a
+/// file that looks like it holds a credential and a destination reached
+/// through a link are refused.
+fn migrate_file(entry: Entry, home: &Path, dst: &Path, options: &MigrateOptions) -> Outcome {
+    let content = read_file(entry)?;
+    if looks_secret(&String::from_utf8_lossy(&content)) {
+        return Err((MigrationStatus::Skipped, SECRET_REASON.to_string()));
+    }
+    check_destination(home, dst).map_err(|err| (MigrationStatus::Error, err))?;
+    if dst.exists() && !options.overwrite {
+        return Err((MigrationStatus::Conflict, "Already exists".to_string()));
+    }
+    if options.dry_run {
+        return Ok(Some("(dry run)".to_string()));
+    }
+    write_file(dst, &content)
+        .map(|()| None)
+        .map_err(|err| (MigrationStatus::Error, err))
+}
+
+/// Hands each entry of the folder `folder` in `root` (at `source`) to
+/// `migrate`, which gives the destination and outcome to record under the
+/// kind `<item>:<name>`. The folder is passed over when missing; a folder
 /// that is a link or cannot be looked up or listed is recorded instead, as is
 /// an entry whose name looks like a credential (under a hidden name).
 fn for_each_entry(
+    root: &SourceDir,
     source: &Path,
     folder: &str,
     item: &str,
     result: &mut MigrationResult,
-    mut migrate: impl FnMut(PathBuf, String, &mut MigrationResult),
+    mut migrate: impl FnMut(Entry, &OsStr) -> (Option<PathBuf>, Outcome),
 ) {
     let src = source.join(folder);
-    let entries = match present(&src) {
-        Ok(false) => return,
-        Ok(true) if is_link(&src) => Err((MigrationStatus::Skipped, LINK_REASON.to_string())),
-        Ok(true) => {
-            list_dir(&src).map_err(|e| (MigrationStatus::Error, format!("could not read it: {e}")))
-        }
+    let listed = match look_up(root, folder) {
+        Ok(None) => return,
+        Ok(Some(Entry::Dir(dir))) => dir
+            .names()
+            .map(|names| (dir, names))
+            .map_err(|e| (MigrationStatus::Error, format!("could not read it: {e}"))),
+        Ok(Some(Entry::Link)) => Err((MigrationStatus::Skipped, LINK_REASON.to_string())),
+        Ok(Some(_)) => Err((MigrationStatus::Error, "it is not a folder".to_string())),
         Err(failed) => Err(failed),
     };
-    let entries = match entries {
-        Ok(entries) => entries,
+    let (dir, names) = match listed {
+        Ok(listed) => listed,
         Err(why) => return record(result, folder.to_string(), Some(src), None, Err(why)),
     };
-    for path in entries {
-        let name = path.file_name().unwrap_or_default().to_string_lossy();
-        if looks_secret(&name) {
+    for name in names {
+        let shown = name.to_string_lossy();
+        if looks_secret(&shown) {
             let reason = "its name looks like a credential; add it yourself".to_string();
             let kind = format!("{item}:{HIDDEN_NAME}");
             record(
@@ -375,59 +371,79 @@ fn for_each_entry(
             );
             continue;
         }
-        let kind = format!("{item}:{name}");
-        migrate(path, kind, result);
+        let kind = format!("{item}:{shown}");
+        let path = src.join(&name);
+        let (dst, outcome) = match look_up(&dir, &name) {
+            Ok(Some(entry)) => migrate(entry, &name),
+            Ok(None) => (
+                None,
+                Err((
+                    MigrationStatus::Error,
+                    "it went away while it was read".to_string(),
+                )),
+            ),
+            Err(failed) => (None, Err(failed)),
+        };
+        record(result, kind, Some(path), dst, outcome);
     }
 }
 
-/// Copies the skill folder `path` to `home/skills/openclaw-imports/<name>/`
-/// (links inside it are not copied), or a file there. A link, a folder holding
-/// what looks like a credential and an existing folder are skipped: a folder
-/// is never replaced.
-fn migrate_skill(
-    path: PathBuf,
-    kind: String,
-    home: &Path,
-    options: &MigrateOptions,
-    result: &mut MigrationResult,
-) {
-    let name = path.file_name().unwrap_or_default().to_owned();
-    let relative = Path::new("skills").join("openclaw-imports").join(name);
-    if is_link(&path) || !path.is_dir() {
-        return migrate_file(kind, path, home, &relative, options, result);
-    }
-    let dst = home.join(&relative);
-    let outcome = match holds_secret(&path) {
-        Ok(true) => Err((MigrationStatus::Skipped, SECRET_REASON.to_string())),
-        Ok(false) => check_destination(home, &dst).map_err(|err| (MigrationStatus::Error, err)),
-        Err(e) => Err((
+/// Copies the skill folder `skill` to the new folder `dst` in `home` (links
+/// inside it are not copied). A folder holding what looks like a credential
+/// and an existing folder are skipped: a folder is never replaced. What is
+/// checked for credentials is what is copied.
+fn migrate_skill(skill: &SourceDir, home: &Path, dst: &Path, options: &MigrateOptions) -> Outcome {
+    let tree = Tree::read(skill).map_err(|e| {
+        (
             MigrationStatus::Error,
             format!("could not check it for credentials: {e}"),
-        )),
+        )
+    })?;
+    if tree.holds_secret() {
+        return Err((MigrationStatus::Skipped, SECRET_REASON.to_string()));
     }
-    .and_then(|()| {
-        if dst.exists() {
-            return Err((MigrationStatus::Conflict, "Already exists".to_string()));
-        }
-        if options.dry_run {
-            return Ok(Some("(dry run)".to_string()));
-        }
-        let mut links = 0;
-        dst.parent()
-            .map_or(Ok(()), std::fs::create_dir_all)
-            .and_then(|()| copy_tree(&path, &dst, &mut links))
-            .map_err(|e| (MigrationStatus::Error, format!("could not copy it: {e}")))?;
-        Ok((links > 0).then(|| format!("{links} links inside it are not copied")))
-    });
-    record(result, kind, Some(path), Some(dst), outcome);
+    check_destination(home, dst).map_err(|err| (MigrationStatus::Error, err))?;
+    if dst.exists() {
+        return Err((MigrationStatus::Conflict, "Already exists".to_string()));
+    }
+    if options.dry_run {
+        return Ok(Some("(dry run)".to_string()));
+    }
+    dst.parent()
+        .map_or(Ok(()), std::fs::create_dir_all)
+        .and_then(|()| tree.write(dst))
+        .map_err(|e| (MigrationStatus::Error, format!("could not copy it: {e}")))?;
+    let links = tree.links;
+    Ok((links > 0).then(|| format!("{links} links inside it are not copied")))
 }
 
-/// Merge environment variables from source .env into destination .env,
-/// written owner-only. Returns the number of keys imported.
-fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
-    let src_content =
-        read_regular_to_string(src).map_err(|e| format!("Failed to read source .env: {}", e))?;
+/// Merges the source `.env` file `entry` into this home's `.env` at `dst`,
+/// written owner-only.
+fn migrate_env(entry: Entry, home: &Path, dst: &Path, options: &MigrateOptions) -> Outcome {
+    let content = String::from_utf8(read_file(entry)?).map_err(|e| {
+        (
+            MigrationStatus::Error,
+            format!("Failed to read source .env: {e}"),
+        )
+    })?;
+    check_destination(home, dst).map_err(|err| (MigrationStatus::Error, err))?;
+    if dst.exists() && !options.overwrite {
+        return Err((
+            MigrationStatus::Conflict,
+            "Already exists (use --overwrite)".to_string(),
+        ));
+    }
+    if options.dry_run {
+        return Ok(Some("(dry run)".to_string()));
+    }
+    merge_env_files(&content, dst)
+        .map(|count| Some(format!("{} keys imported", count)))
+        .map_err(|err| (MigrationStatus::Error, err))
+}
 
+/// Merge environment variables from the source .env text into destination
+/// .env, written owner-only. Returns the number of keys imported.
+fn merge_env_files(src_content: &str, dst: &Path) -> Result<usize, String> {
     let existing = if dst.exists() {
         read_regular_to_string(dst).map_err(|e| format!("Failed to read .env: {}", e))?
     } else {
@@ -544,13 +560,11 @@ mod tests {
     #[test]
     fn test_merge_env_files() {
         let tmp = tempfile::tempdir().unwrap();
-        let src = tmp.path().join("src.env");
         let dst = tmp.path().join("dst.env");
 
-        std::fs::write(&src, "KEY1=value1\nKEY2=value2\n").unwrap();
         std::fs::write(&dst, "KEY1=existing\n").unwrap();
 
-        let count = merge_env_files(&src, &dst).unwrap();
+        let count = merge_env_files("KEY1=value1\nKEY2=value2\n", &dst).unwrap();
         assert_eq!(count, 1); // Only KEY2 should be imported
 
         let content = std::fs::read_to_string(&dst).unwrap();
@@ -984,6 +998,58 @@ mod tests {
         };
         assert_eq!(mode("SKILL.md"), 0o600);
         assert_eq!(mode("run.sh"), 0o700);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_entry_swapped_for_a_link_while_it_is_read_is_never_followed() {
+        use std::os::unix::fs::symlink;
+        use std::sync::atomic::{AtomicBool, Ordering};
+        use std::sync::Arc;
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let outside = tmp.path().join("outside.md");
+        std::fs::create_dir_all(source.join("skills/notes")).unwrap();
+        std::fs::write(source.join("skills/notes/SKILL.md"), "A skill.\n").unwrap();
+        std::fs::write(&outside, "OUTSIDE THE SOURCE\n").unwrap();
+        // Each entry keeps flipping between a file and a link out of the source.
+        let flipped = [source.join("SOUL.md"), source.join("skills/notes/data.md")];
+        let stop = Arc::new(AtomicBool::new(false));
+        let flipper = {
+            let (stop, outside) = (stop.clone(), outside.clone());
+            std::thread::spawn(move || {
+                while !stop.load(Ordering::Relaxed) {
+                    for path in &flipped {
+                        let _ = std::fs::remove_file(path);
+                        if let Ok(mut file) = std::fs::File::options()
+                            .write(true)
+                            .create_new(true)
+                            .open(path)
+                        {
+                            let _ = std::io::Write::write_all(&mut file, b"inside\n");
+                        }
+                        let _ = std::fs::remove_file(path);
+                        let _ = symlink(&outside, path);
+                    }
+                }
+            })
+        };
+
+        let mut followed = Vec::new();
+        for run in 0..300 {
+            let home = tmp.path().join(format!("home-{run}"));
+            std::fs::create_dir_all(&home).unwrap();
+            migrate_into(&source, &home);
+            if all_text(&home).contains("OUTSIDE") {
+                followed.push(run);
+            }
+        }
+        stop.store(true, Ordering::Relaxed);
+        flipper.join().unwrap();
+        assert!(
+            followed.is_empty(),
+            "a link was followed in runs {followed:?}"
+        );
     }
 
     #[test]
