@@ -95,6 +95,44 @@ fn file_identity(path: &Path) -> std::io::Result<(u64, u64)> {
     Ok((meta.dev(), meta.ino()))
 }
 
+/// The uid of the process at the other end of `stream`.
+fn peer_uid(stream: &std::os::unix::net::UnixStream) -> std::io::Result<u32> {
+    #[cfg(any(target_os = "linux", target_os = "android"))]
+    {
+        let mut cred = libc::ucred {
+            pid: 0,
+            uid: 0,
+            gid: 0,
+        };
+        let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+        // SAFETY: getsockopt writes at most `len` bytes into `cred`, which outlives the call.
+        let rc = unsafe {
+            libc::getsockopt(
+                stream.as_raw_fd(),
+                libc::SOL_SOCKET,
+                libc::SO_PEERCRED,
+                (&mut cred as *mut libc::ucred).cast(),
+                &mut len,
+            )
+        };
+        if rc == 0 {
+            Ok(cred.uid)
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+    #[cfg(not(any(target_os = "linux", target_os = "android")))]
+    {
+        let (mut uid, mut gid) = (0, 0);
+        // SAFETY: getpeereid writes the 2 ids it is given.
+        if unsafe { libc::getpeereid(stream.as_raw_fd(), &mut uid, &mut gid) } == 0 {
+            Ok(uid)
+        } else {
+            Err(std::io::Error::last_os_error())
+        }
+    }
+}
+
 fn own_uid() -> u32 {
     // SAFETY: getuid has no preconditions and cannot fail.
     unsafe { libc::getuid() }
@@ -141,54 +179,94 @@ fn create_private(path: &Path, contents: &[u8]) -> std::io::Result<(u64, u64)> {
     Ok((file.metadata()?.dev(), file.metadata()?.ino()))
 }
 
-/// Tries a non-blocking `flock` of `operation` (`LOCK_EX` or `LOCK_SH`) on `file`.
-fn try_flock(file: &std::fs::File, operation: libc::c_int) -> bool {
+/// A non-blocking `flock` of `operation` (`LOCK_EX` or `LOCK_SH`) on `file`: true when taken,
+/// false when another descriptor holds it.
+fn try_flock(file: &std::fs::File, operation: libc::c_int) -> std::io::Result<bool> {
     // SAFETY: flock on a descriptor `file` keeps open; LOCK_NB makes it return at once.
-    unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) == 0 }
+    if unsafe { libc::flock(file.as_raw_fd(), operation | libc::LOCK_NB) } == 0 {
+        return Ok(true);
+    }
+    let err = std::io::Error::last_os_error();
+    if err.raw_os_error() == Some(libc::EWOULDBLOCK) {
+        Ok(false)
+    } else {
+        Err(err)
+    }
+}
+
+/// Opens `gateway.lock` without following a link or blocking on a FIFO, and accepts only a
+/// regular, single-link file this user owns (upstream's rule), so a planted link cannot turn the
+/// record this writes on another file.
+fn open_lock(path: &Path, create: bool) -> std::io::Result<std::fs::File> {
+    let file = std::fs::OpenOptions::new()
+        .read(true)
+        .write(create)
+        .create(create)
+        .truncate(false)
+        .mode(0o600)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(path)?;
+    let meta = file.metadata()?;
+    if !meta.is_file() || meta.uid() != own_uid() || meta.nlink() != 1 {
+        return Err(std::io::Error::other(format!(
+            "{} is not a regular, single-link file owned by this user",
+            path.display()
+        )));
+    }
+    Ok(file)
 }
 
 /// True while a runtime holds `<home>/gateway.lock`. A lock that cannot be tested reads as held,
 /// so ensure waits rather than starting a second owner.
-fn lock_held(home: &Path) -> bool {
-    match std::fs::File::open(home.join(LOCK)) {
+pub fn lock_held(home: &Path) -> bool {
+    match open_lock(&home.join(LOCK), false) {
         // A shared lock taken here is released when `file` closes.
-        Ok(file) => !try_flock(&file, libc::LOCK_SH),
+        Ok(file) => !matches!(try_flock(&file, libc::LOCK_SH), Ok(true)),
         Err(e) => e.kind() != std::io::ErrorKind::NotFound,
     }
 }
 
+/// How many times a claim tries a lock held by another descriptor, 20 ms apart: an ensure probing
+/// it, or a child forked elsewhere in this process that has not exec'd yet, holds it a moment.
+const CLAIM_ATTEMPTS: u32 = 10;
+
 /// Claims the home: an exclusive `flock` on `<home>/gateway.lock`, held for the runtime's life
 /// and released by the kernel when the process ends, so neither a crash nor a reused pid leaves a
 /// lock that reads as live. The file names the owner's pid, which upstream's e2e census reads.
-fn claim_lock(home: &Path) -> Result<std::fs::File, String> {
+/// None when the file system has no `flock` (some network mounts).
+fn claim_lock(home: &Path) -> Result<Option<std::fs::File>, String> {
     let path = home.join(LOCK);
-    for _ in 0..2 {
-        let mut file = std::fs::OpenOptions::new()
-            .read(true)
-            .write(true)
-            .create(true)
-            .truncate(false)
-            .mode(0o600)
-            .open(&path)
-            .map_err(|e| format!("cannot open {}: {e}", path.display()))?;
-        if !try_flock(&file, libc::LOCK_EX) {
-            let mut record = String::new();
-            let _ = file.read_to_string(&mut record);
-            let pid = serde_json::from_str::<Value>(&record)
-                .ok()
-                .and_then(|r| r["pid"].as_u64());
-            return Err(format!(
-                "a gateway is already running for {}{}",
-                home.display(),
-                pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
-            ));
+    for attempt in 1..=CLAIM_ATTEMPTS {
+        let mut file =
+            open_lock(&path, true).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+        match try_flock(&file, libc::LOCK_EX) {
+            Ok(true) => {}
+            Ok(false) if attempt < CLAIM_ATTEMPTS => {
+                std::thread::sleep(Duration::from_millis(20));
+                continue;
+            }
+            Ok(false) => {
+                let mut record = String::new();
+                let _ = file.read_to_string(&mut record);
+                let pid = serde_json::from_str::<Value>(&record)
+                    .ok()
+                    .and_then(|r| r["pid"].as_u64());
+                return Err(format!(
+                    "a gateway is already running for {}{}",
+                    home.display(),
+                    pid.map(|p| format!(" (pid {p})")).unwrap_or_default()
+                ));
+            }
+            Err(e) => {
+                tracing::warn!("cannot lock {}: {e}", path.display());
+                return Ok(None);
+            }
         }
         let meta = file
             .metadata()
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        let identity = (meta.dev(), meta.ino());
         // Someone may have removed or replaced the file this opened: lock the one at the path.
-        if file_identity(&path).ok() != Some(identity) {
+        if file_identity(&path).ok() != Some((meta.dev(), meta.ino())) {
             continue;
         }
         let record =
@@ -197,7 +275,7 @@ fn claim_lock(home: &Path) -> Result<std::fs::File, String> {
             .and_then(|()| file.write_all(record.to_string().as_bytes()))
             .and_then(|()| file.sync_all())
             .map_err(|e| format!("cannot write {}: {e}", path.display()))?;
-        return Ok(file);
+        return Ok(Some(file));
     }
     Err(format!(
         "cannot claim {}: it was replaced while claiming",
@@ -259,35 +337,43 @@ fn bind_control(home: &Path) -> Result<(tokio::net::UnixListener, (u64, u64)), S
 }
 
 /// Starts the local runtime for `home`: lock, listener, control socket, then state file.
-pub async fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
-    let mut runtime = claim(home)?;
-    runtime.serve(chat).await?;
+pub fn start(home: &Path, chat: Chat) -> Result<LocalRuntime, String> {
+    let mut runtime = claim(home)?
+        .ok_or_else(|| format!("{} has no file locks for gateway.lock", home.display()))?;
+    runtime.serve(chat)?;
     Ok(runtime)
 }
 
 /// Claims `home` for one runtime without serving it yet. While claimed and unserved, ensure
 /// waits, so a host can finish starting (say, write the pid file `gateway stop` reads) before
 /// [`LocalRuntime::serve`] makes it ready.
-pub fn claim(home: &Path) -> Result<LocalRuntime, String> {
+/// None when the home's file system has no `flock`: the host then runs without local mode.
+pub fn claim(home: &Path) -> Result<Option<LocalRuntime>, String> {
     let home = std::fs::canonicalize(home)
         .map_err(|e| format!("cannot resolve the Hermes home {}: {e}", home.display()))?;
-    let lock = claim_lock(&home)?;
-    Ok(LocalRuntime {
+    let Some(lock) = claim_lock(&home)? else {
+        return Ok(None);
+    };
+    Ok(Some(LocalRuntime {
         home,
         api_origin: String::new(),
         instance_id: uuid::Uuid::new_v4().simple().to_string(),
         files: Vec::new(),
         tasks: Vec::new(),
         lock,
-    })
+    }))
 }
 
 impl LocalRuntime {
-    /// Serves the claimed home: listener, control socket, then state file.
-    pub async fn serve(&mut self, chat: Chat) -> Result<(), String> {
+    /// Serves the claimed home: listener, control socket, then state file. Call it inside a Tokio
+    /// runtime, which runs the servers.
+    pub fn serve(&mut self, chat: Chat) -> Result<(), String> {
         let home = self.home.clone();
-        let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0))
-            .await
+        let listener = std::net::TcpListener::bind(("127.0.0.1", 0))
+            .and_then(|listener| {
+                listener.set_nonblocking(true)?;
+                tokio::net::TcpListener::from_std(listener)
+            })
             .map_err(|e| format!("cannot bind 127.0.0.1: {e}"))?;
         let port = listener
             .local_addr()
@@ -530,7 +616,10 @@ enum Discovery {
 /// appended to `<home>/logs/gateway-stdio.log`; it runs in its own process group with no stdin,
 /// so it outlives this call.
 pub fn ensure(home: &Path, timeout: Duration, mut command: Command) -> Verdict {
-    let deadline = Instant::now() + timeout;
+    // A timeout past what an Instant holds waits a year instead.
+    let deadline = Instant::now()
+        .checked_add(timeout)
+        .unwrap_or_else(|| Instant::now() + Duration::from_secs(365 * 86_400));
     let home = match std::fs::canonicalize(home) {
         Ok(home) => home,
         Err(e) => {
@@ -610,6 +699,7 @@ fn spawn(
         .stdin(Stdio::null())
         .stdout(log.try_clone()?)
         .stderr(log)
+        .current_dir(home)
         .process_group(0)
         .spawn()?;
     Ok((child, log_path, offset))
@@ -684,6 +774,20 @@ fn discover(home: &Path) -> Discovery {
             ))
         }
     };
+    // connect() follows whatever is at the path by now, so authenticate the listener itself.
+    match peer_uid(&stream) {
+        Ok(uid) if uid == own_uid() => {}
+        found => {
+            return Discovery::Found(Verdict::refused(
+                "inaccessible",
+                "invalid_control_peer",
+                Some(match found {
+                    Ok(uid) => format!("{} is served by uid {uid}", path.display()),
+                    Err(e) => format!("cannot read the peer of {}: {e}", path.display()),
+                }),
+            ))
+        }
+    }
     let reply = (|| -> std::io::Result<Vec<u8>> {
         stream.set_read_timeout(Some(CONTROL_TIMEOUT))?;
         stream.set_write_timeout(Some(CONTROL_TIMEOUT))?;
@@ -725,7 +829,7 @@ fn endpoint_verdict(line: &[u8], home: &Path) -> Verdict {
     let Ok(reply) = serde_json::from_slice::<Value>(line) else {
         return peer("the control socket's reply is not JSON");
     };
-    if reply["ok"] != true || reply["protocol"] != 1 {
+    if reply["ok"] != true || reply["protocol"] != 1 || reply["id"] != 1 {
         return peer("the control socket refused identify");
     }
     let p = &reply["result"];

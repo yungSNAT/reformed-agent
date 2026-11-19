@@ -6,9 +6,14 @@ type ToolCompleteCallback = Box<dyn Fn(&str, &str) + Send + Sync>;
 fn run_gateway_ensure(timeout: &str) -> ! {
     const INVALID: &str =
         r#"{"endpoint":null,"reason_code":"invalid_invocation","state":"inaccessible"}"#;
-    let (line, code) = match timeout.trim().parse::<f64>() {
-        Ok(seconds) if seconds.is_finite() && seconds >= 0.0 => ensure_verdict(seconds),
-        _ => (INVALID.to_string(), 2),
+    let timeout = timeout
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .and_then(|seconds| std::time::Duration::try_from_secs_f64(seconds).ok());
+    let (line, code) = match timeout {
+        Some(timeout) => ensure_verdict(timeout),
+        None => (INVALID.to_string(), 2),
     };
     println!("{line}");
     let _ = std::io::Write::flush(&mut std::io::stdout());
@@ -16,7 +21,7 @@ fn run_gateway_ensure(timeout: &str) -> ! {
 }
 
 #[cfg(unix)]
-fn ensure_verdict(seconds: f64) -> (String, i32) {
+fn ensure_verdict(timeout: std::time::Duration) -> (String, i32) {
     let home = hermes_config::hermes_home();
     let mut command = std::process::Command::new(
         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("hermes-agent-ultra")),
@@ -24,17 +29,13 @@ fn ensure_verdict(seconds: f64) -> (String, i32) {
     command
         .args(["gateway", "run", "--quiet"])
         .env("HERMES_HOME", &home);
-    let verdict = hermes_desktop_gateway::local::ensure(
-        &home,
-        std::time::Duration::from_secs_f64(seconds),
-        command,
-    );
+    let verdict = hermes_desktop_gateway::local::ensure(&home, timeout, command);
     (verdict.to_json(), verdict.exit_code())
 }
 
 /// Upstream reaches its Windows gateway over a named pipe with SID checks, not ported here.
 #[cfg(not(unix))]
-fn ensure_verdict(_seconds: f64) -> (String, i32) {
+fn ensure_verdict(_timeout: std::time::Duration) -> (String, i32) {
     (
         r#"{"client_code_sha":null,"detail":"the local desktop gateway runs on Linux and macOS only","endpoint":null,"reason_code":"unsupported_platform","state":"inaccessible"}"#.to_string(),
         7,
@@ -103,6 +104,17 @@ async fn run_gateway(
                     let _ = gateway_pid_terminate(pid);
                     cleanup_stale_gateway_metadata(&pid_path);
                     println!("Stopped existing gateway process {}.", pid);
+                }
+            }
+            // The old owner holds the home until it has shut down; give it time to finish.
+            #[cfg(unix)]
+            {
+                let home = hermes_state_root(&cli);
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+                while hermes_desktop_gateway::local::lock_held(&home)
+                    && std::time::Instant::now() < deadline
+                {
+                    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                 }
             }
             return Box::pin(run_gateway(
@@ -186,7 +198,13 @@ async fn run_gateway(
                 if hermes_desktop_gateway::local::control_socket_fits(&home) {
                     let claim = hermes_desktop_gateway::local::claim(&home)
                         .map_err(|e| AgentError::Config(format!("Desktop local runtime: {e}")))?;
-                    Some(claim)
+                    if claim.is_none() {
+                        eprintln!(
+                            "Desktop local mode is off: {} has no file locks for gateway.lock.",
+                            home.display()
+                        );
+                    }
+                    claim
                 } else {
                     eprintln!(
                         "Desktop local mode is off: the control socket path under {} is too long for a Unix socket.",
@@ -997,7 +1015,7 @@ async fn run_gateway(
             #[cfg(unix)]
             if let Some(runtime) = desktop.as_mut() {
                 let chat = hermes_desktop_gateway::Chat::new(config.clone());
-                if let Err(e) = runtime.serve(chat).await {
+                if let Err(e) = runtime.serve(chat) {
                     let _ = tokio::fs::remove_file(&pid_path).await;
                     return Err(AgentError::Config(format!("Desktop local runtime: {e}")));
                 }
@@ -1064,7 +1082,7 @@ async fn run_gateway(
             if !gateway_pid_is_alive(pid) {
                 cleanup_stale_gateway_metadata(&pid_path);
                 println!(
-                    "Gateway stop: process {} not running; removed stale PID/lock metadata for {}.",
+                    "Gateway stop: process {} not running; removed the stale PID file {}.",
                     pid,
                     pid_path.display()
                 );
