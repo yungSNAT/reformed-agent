@@ -1,3 +1,4 @@
+import type * as ChildProcessModule from 'node:child_process'
 import { spawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { existsSync, mkdtempSync, rmSync } from 'node:fs'
@@ -11,7 +12,7 @@ import { GatewayClient } from '../gatewayClient.js'
 
 // Real spawn unless a test replaces it with mockImplementationOnce.
 vi.mock('node:child_process', async importOriginal => {
-  const actual = await importOriginal<typeof import('node:child_process')>()
+  const actual = await importOriginal<typeof ChildProcessModule>()
 
   return { ...actual, spawn: vi.fn(actual.spawn) }
 })
@@ -449,6 +450,7 @@ describe('GatewayClient spawned Rust gateway', () => {
     gw.start()
 
     expect(spawn).toHaveBeenCalledTimes(1)
+
     const [command, args, options] = vi.mocked(spawn).mock.calls[0] as unknown as [
       string,
       string[],
@@ -597,5 +599,8 @@ describe.skipIf(!realGateway)('GatewayClient with the real Rust gateway', () => 
 
     gw.kill()
     await vi.waitFor(() => expect(exits).toHaveLength(1), { timeout: 10_000 })
+    // The gateway was given its token, so it writes nothing to stderr, and the socket this
+    // client closed on kill() is not reported as a transport error.
+    expect(events).not.toContain('gateway.stderr')
   }, 30_000)
 })
