@@ -439,6 +439,7 @@ describe('GatewayClient spawned Rust gateway', () => {
       'PATH'
     ]) {
       saved.set(name, process.env[name])
+
       if (name !== 'PATH') {
         delete process.env[name]
       }
@@ -692,6 +693,7 @@ describe('GatewayClient spawned Rust gateway', () => {
       gw.drain()
 
       const req = gw.request('setup.runtime_check')
+
       const outcome = req.then(
         () => 'resolved',
         (err: Error) => err.message

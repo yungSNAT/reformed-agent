@@ -59,6 +59,7 @@ const resolveGatewayBinary = (root: string): { bin: string } | { problem: string
   }
 
   const pathDirs = (process.env.PATH ?? '').split(delimiter).filter(isRootedPath)
+
   const bin = [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
     .map(dir => join(dir, GATEWAY_BIN))
     .find(p => existsSync(p))
