@@ -11,8 +11,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::agent_import::{
-    check_destination, copy_tree, holds_secret, is_link, list_dir, looks_secret, write_file,
-    HIDDEN_NAME,
+    check_destination, copy_tree, holds_secret, is_link, list_dir, looks_secret, read_regular,
+    read_regular_to_string, write_file, HIDDEN_NAME,
 };
 
 /// Known OpenClaw directory names (current + legacy).
@@ -316,7 +316,7 @@ fn migrate_file(
     let outcome = if is_link(&src) {
         Err((MigrationStatus::Skipped, LINK_REASON.to_string()))
     } else {
-        std::fs::read(&src)
+        read_regular(&src)
             .map_err(|e| (MigrationStatus::Error, e.to_string()))
             .and_then(|content| {
                 if looks_secret(&String::from_utf8_lossy(&content)) {
@@ -426,10 +426,10 @@ fn migrate_skill(
 /// written owner-only. Returns the number of keys imported.
 fn merge_env_files(src: &Path, dst: &Path) -> Result<usize, String> {
     let src_content =
-        std::fs::read_to_string(src).map_err(|e| format!("Failed to read source .env: {}", e))?;
+        read_regular_to_string(src).map_err(|e| format!("Failed to read source .env: {}", e))?;
 
     let existing = if dst.exists() {
-        std::fs::read_to_string(dst).map_err(|e| format!("Failed to read .env: {}", e))?
+        read_regular_to_string(dst).map_err(|e| format!("Failed to read .env: {}", e))?
     } else {
         String::new()
     };
@@ -708,6 +708,47 @@ mod tests {
             "skills",
             "api-keys",
             "config:config.yaml",
+        ] {
+            assert!(
+                result.errors.iter().any(|item| item.kind == kind),
+                "no error for {kind}: {report}"
+            );
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_fifo_in_the_source_is_an_error_not_a_hang() {
+        use crate::agent_import::fifo_fixture::{make_fifo, run_unblocking};
+        let tmp = tempfile::tempdir().unwrap();
+        let source = tmp.path().join("openclaw");
+        let home = tmp.path().join("home");
+        std::fs::create_dir_all(source.join("skills/piped")).unwrap();
+        std::fs::create_dir_all(source.join("sessions")).unwrap();
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(source.join("skills/piped/SKILL.md"), "piped\n").unwrap();
+        let fifos = [
+            "SOUL.md",
+            ".env",
+            "config.yaml",
+            "sessions/s1.jsonl",
+            "skills/piped/pipe",
+        ]
+        .map(|name| source.join(name));
+        for fifo in &fifos {
+            make_fifo(fifo);
+        }
+
+        let (from, to) = (source.clone(), home.clone());
+        let result = run_unblocking(fifos.to_vec(), move || migrate_into(&from, &to)).unwrap();
+        let report = items(&result);
+        assert!(result.migrated.is_empty(), "{report}");
+        for kind in [
+            "personality:SOUL.md",
+            "api-keys",
+            "config:config.yaml",
+            "session:s1.jsonl",
+            "skill:piped",
         ] {
             assert!(
                 result.errors.iter().any(|item| item.kind == kind),
