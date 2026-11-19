@@ -830,6 +830,40 @@ mod tests {
     }
 
     #[test]
+    fn a_loaded_secret_value_is_masked_whatever_its_shape() {
+        // Made up; it matches no secret pattern, only the loaded value.
+        let value = "plain-words-cobalt-quartz";
+        std::env::set_var("REFORMED_REDACT_TEST_TOKEN", value);
+        let free = redact_sensitive_text(format!("the reply was {value}, then done"));
+        let redactor = Redactor::new().redact(&format!("value: {value}"));
+        std::env::remove_var("REFORMED_REDACT_TEST_TOKEN");
+
+        for out in [&free, &redactor] {
+            assert!(!out.contains(value), "{out}");
+        }
+        assert!(free.contains("the reply was"), "{free}");
+        assert!(free.contains("then done"), "{free}");
+    }
+
+    #[test]
+    fn a_secret_loaded_from_config_yaml_is_masked() {
+        // Made up; given literally in config.yaml, never in the environment.
+        let value = "made-up-config-key-velvet-otter";
+        let home = tempfile::tempdir().expect("tempdir");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!("llm_providers:\n  custom:\n    api_key: {value}\n"),
+        )
+        .expect("write config");
+
+        hermes_config::load_config(Some(home.path().to_string_lossy().as_ref()))
+            .expect("load config");
+
+        let out = redact_sensitive_text(format!("key {value} here"));
+        assert!(!out.contains(value), "{out}");
+    }
+
+    #[test]
     fn test_empty_redactor() {
         let redactor = Redactor::empty();
         let text = "Nothing to redact here";
