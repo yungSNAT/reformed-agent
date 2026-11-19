@@ -763,7 +763,7 @@ fn parse_github_spec(spec: &str) -> Result<(String, String, String), ToolError> 
         .collect::<Vec<_>>();
     match parts.as_slice() {
         [number] => {
-            let (owner, repo) = github_repo_from_remote()?;
+            let (owner, repo) = github_repo_from_remote(Path::new("."))?;
             Ok((owner, repo, (*number).into()))
         }
         [owner, repo, number] => Ok(((*owner).into(), (*repo).into(), (*number).into())),
@@ -773,11 +773,19 @@ fn parse_github_spec(spec: &str) -> Result<(String, String, String), ToolError> 
     }
 }
 
-fn github_repo_from_remote() -> Result<(String, String), ToolError> {
-    let out = std::process::Command::new("git")
-        .args(["config", "--get", "remote.origin.url"])
-        .output()
-        .map_err(|e| ToolError::ExecutionFailed(format!("git remote lookup failed: {e}")))?;
+fn github_repo_from_remote(root: &Path) -> Result<(String, String), ToolError> {
+    let mut git = hermes_core::git::read_only_git(root).ok_or_else(|| {
+        ToolError::ExecutionFailed(
+            "git could not be run safely here: it is missing, older than 2.39.1, \
+             or this repository's configuration could not be read"
+                .into(),
+        )
+    })?;
+    let out = hermes_core::git::output_within_timeout(
+        git.args(["config", "--get", "remote.origin.url"]),
+        hermes_core::git::GIT_SNAPSHOT_TIMEOUT,
+    )
+    .ok_or_else(|| ToolError::ExecutionFailed("git remote lookup failed or timed out".into()))?;
     let raw = String::from_utf8_lossy(&out.stdout)
         .trim()
         .trim_end_matches(".git")
@@ -2886,5 +2894,58 @@ mod tests {
         let result = ultra_feature_benchmark(&state).await.unwrap();
         assert!(result.contains("all_smokes_completed"));
         assert!(result.contains("ultra-feature-2"));
+    }
+
+    fn git(dir: &Path, args: &[&str]) {
+        let output = std::process::Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    }
+
+    #[test]
+    fn github_repo_comes_from_the_origin_remote() {
+        let tmp = tempfile::tempdir().unwrap();
+        git(tmp.path(), &["init", "-q"]);
+        git(
+            tmp.path(),
+            &[
+                "remote",
+                "add",
+                "origin",
+                "https://github.com/croft/manor.git",
+            ],
+        );
+        assert_eq!(
+            github_repo_from_remote(tmp.path()).unwrap(),
+            ("croft".to_string(), "manor".to_string())
+        );
+    }
+
+    /// A config key naming a FIFO makes git wait for a writer that never
+    /// comes; the remote lookup must give up on it.
+    #[cfg(unix)]
+    #[test]
+    fn github_repo_lookup_gives_up_on_a_git_call_that_hangs() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+        let fifo = tmp.path().join("fifo");
+        assert!(std::process::Command::new("mkfifo")
+            .arg(&fifo)
+            .status()
+            .unwrap()
+            .success());
+        git(&repo, &["config", "include.path", fifo.to_str().unwrap()]);
+
+        let (done, finished) = std::sync::mpsc::channel();
+        std::thread::spawn(move || done.send(github_repo_from_remote(&repo).is_err()));
+        assert!(finished
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the remote lookup hung"));
     }
 }

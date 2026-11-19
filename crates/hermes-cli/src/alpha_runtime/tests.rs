@@ -2,6 +2,7 @@ use super::*;
 use crate::test_env_lock;
 use std::ffi::OsString;
 use std::path::Path;
+use std::process::Command;
 use tempfile::tempdir;
 use tokio::sync::MutexGuard;
 
@@ -351,6 +352,128 @@ fn repo_drift_marks_missing_project() {
     };
     let drift = collect_repo_drift(&spec, &TradingDriftBaseline::default());
     assert_eq!(drift.drift_state, "missing-project");
+}
+
+#[cfg(unix)]
+#[test]
+fn repo_drift_runs_no_program_the_repository_config_names() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempdir().unwrap();
+    let repo = tmp.path().join("repo");
+    std::fs::create_dir_all(&repo).unwrap();
+    let git = |args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(&repo)
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "-c",
+        "user.name=T",
+        "-c",
+        "user.email=t@example.com",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "init",
+    ]);
+    let marker = tmp.path().join("fsmonitor-ran");
+    let program = tmp.path().join("fsmonitor.sh");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(&["config", "core.fsmonitor", program.to_str().unwrap()]);
+    std::fs::write(repo.join("new.txt"), "new").unwrap();
+
+    let spec = TradingProjectSpec {
+        id: "croft".to_string(),
+        path: repo.display().to_string(),
+        enabled: true,
+    };
+    let drift = collect_repo_drift(&spec, &TradingDriftBaseline::default());
+
+    assert!(
+        !marker.exists(),
+        "the drift check ran the repository's core.fsmonitor program"
+    );
+    assert!(!drift.git_head.is_empty(), "{drift:?}");
+    assert_eq!(drift.dirty_files, 1, "{drift:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn repo_drift_runs_no_filter_inside_a_dirty_submodule() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempdir().unwrap();
+    let git = |dir: &Path, args: &[&str]| {
+        let output = Command::new("git")
+            .arg("-C")
+            .arg(dir)
+            .args(["-c", "user.name=T", "-c", "user.email=t@example.com"])
+            .args(args)
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "git {args:?}: {output:?}");
+    };
+    let repo = tmp.path().join("repo");
+    let source = tmp.path().join("source");
+    for dir in [&repo, &source] {
+        std::fs::create_dir_all(dir).unwrap();
+        std::fs::write(dir.join("README.md"), "test").unwrap();
+        git(dir, &["init", "-q"]);
+        git(dir, &["add", "README.md"]);
+        git(dir, &["commit", "-qm", "init"]);
+    }
+    git(
+        &repo,
+        &[
+            "-c",
+            "protocol.file.allow=always",
+            "submodule",
+            "add",
+            source.to_str().unwrap(),
+            "nested",
+        ],
+    );
+    git(&repo, &["commit", "-qm", "add submodule"]);
+    let nested = repo.join("nested");
+    let marker = tmp.path().join("filter-ran");
+    let program = tmp.path().join("filter.sh");
+    std::fs::write(
+        &program,
+        format!("#!/bin/sh\ntouch '{}'\nexit 1\n", marker.display()),
+    )
+    .unwrap();
+    std::fs::set_permissions(&program, std::fs::Permissions::from_mode(0o755)).unwrap();
+    git(
+        &nested,
+        &["config", "filter.croft.clean", program.to_str().unwrap()],
+    );
+    git(&nested, &["config", "filter.croft.required", "true"]);
+    std::fs::write(nested.join(".gitattributes"), "README.md filter=croft\n").unwrap();
+    // The same size, so status must hash the file through its filter.
+    std::fs::write(nested.join("README.md"), "best").unwrap();
+
+    let spec = TradingProjectSpec {
+        id: "croft".to_string(),
+        path: repo.display().to_string(),
+        enabled: true,
+    };
+    let drift = collect_repo_drift(&spec, &TradingDriftBaseline::default());
+
+    assert!(
+        !marker.exists(),
+        "the drift check ran a filter of the submodule"
+    );
+    assert!(!drift.git_head.is_empty(), "{drift:?}");
 }
 
 #[test]
