@@ -76,6 +76,7 @@ hermes-agent = { workspace = true }
 hermes-tools = { workspace = true }
 hermes-config = { workspace = true }
 hermes-gateway = { workspace = true }
+hermes-desktop-gateway = { workspace = true }
 hermes-cli-ui = { workspace = true }
 hermes-cron = { workspace = true }
 # Backends that run through a local CLI (docker, ssh, singularity). Modal and
@@ -124,6 +125,7 @@ rusqlite = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
+rustix = { version = "1", features = ["fs"] }
 
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = [

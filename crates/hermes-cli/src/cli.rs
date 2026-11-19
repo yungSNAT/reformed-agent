@@ -293,7 +293,9 @@ pub struct ConfigArgs {
 
 #[derive(Debug, Clone, Args)]
 pub struct GatewayArgs {
-    /// Action: "run", "start", "stop", "restart", "status", "install", "uninstall", "setup", or "migrate-legacy".
+    /// Action: "run", "start", "stop", "restart", "status", "install", "uninstall", "setup",
+    /// "migrate-legacy", or "ensure" (find or start the gateway Hermes Desktop's local mode attaches
+    /// to and print its verdict as one JSON line).
     pub action: Option<String>,
     /// Compatibility flag for stale upstream docs; gateway lifecycle commands operate on all configured adapters.
     #[arg(long, hide = true)]
@@ -322,6 +324,15 @@ pub struct GatewayArgs {
     /// Deep status checks.
     #[arg(long)]
     pub deep: bool,
+    /// `ensure`: print the verdict as one JSON line (it always does; upstream's flag).
+    #[arg(long)]
+    pub json: bool,
+    /// `ensure`: seconds to wait for the gateway to answer.
+    #[arg(long, default_value = "60", allow_hyphen_values = true)]
+    pub timeout: String,
+    /// `run`: accepted for the detached start `ensure` makes, whose output goes to a log file.
+    #[arg(long)]
+    pub quiet: bool,
 }
 
 #[derive(Debug, Clone, Args)]
@@ -1098,6 +1109,11 @@ pub struct Cli {
     /// Override the configuration directory path.
     #[arg(short = 'C', long, global = true)]
     pub config_dir: Option<String>,
+
+    /// Use a Hermes profile home: `default` is the root home, another name its
+    /// `profiles/<name>` folder (upstream Hermes's profiles; `-p` is `--personality` here).
+    #[arg(long, global = true, value_name = "NAME")]
+    pub profile: Option<String>,
 
     /// Override the default model (e.g. "openai:gpt-4o").
     #[arg(short = 'm', long, global = true)]
