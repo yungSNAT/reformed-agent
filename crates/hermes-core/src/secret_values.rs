@@ -324,6 +324,38 @@ mod tests {
     }
 
     #[test]
+    fn settings_about_a_credential_are_not_secrets() {
+        for name in [
+            "OPENVIKING_API_KEY_TYPE",
+            "HERMES_CHRONOS_TOKEN_LEEWAY_SECONDS",
+            "HERMES_ALLOW_SECRET_STDOUT",
+        ] {
+            assert!(!is_secret_name(name), "{name} was taken for a credential");
+        }
+    }
+
+    #[test]
+    fn a_scheme_is_stripped_only_from_an_authorization_value_with_a_real_credential() {
+        // Made up.
+        register("config.mcp.headers.Authorization", "Bearer not-needed");
+        register("config.proxy.Authorization", "basic abc");
+        register("config.db.password", "Basic ordinary-settings-2");
+        register("config.api.Authorization", "bEaReR made-up-mixed-case-71");
+
+        assert_eq!(find("Bearer not-needed"), None);
+        assert_eq!(find("basic abc"), None);
+        assert_eq!(find("ordinary-settings-2"), None);
+        assert_eq!(
+            find("Basic ordinary-settings-2").as_deref(),
+            Some("config.db.password")
+        );
+        assert_eq!(
+            find("made-up-mixed-case-71").as_deref(),
+            Some("config.api.Authorization")
+        );
+    }
+
+    #[test]
     fn the_token_in_an_authorization_value_is_found_without_its_scheme() {
         // Made up.
         register_json(
