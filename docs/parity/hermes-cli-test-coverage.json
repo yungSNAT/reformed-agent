@@ -329,18 +329,52 @@
       "not_rechecked_at_pin": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
     },
     {
-      "coverage_kind": "none",
+      "coverage_kind": "rust_contract_or_documented_divergence",
       "coverage_tags": [
         "auth/oauth/credential",
         "model/provider/models_dev"
       ],
       "path": "tests/hermes_cli/test_auth_nous_provider.py",
-      "rationale": "Rechecked in the re-pin review against upstream's v0.23.2 test: it has 30 test functions, 7 of them absent at b51fbc73, including test_device_login_refuses_portal_inference_url_outside_allowlist and test_device_login_refuses_non_https_portal_inference_url (the Nous host allowlist and HTTPS check on the device login's inference URL). The Rust device login takes inference_base_url from the token payload unchecked (crates/hermes-cli/src/auth/provider_oauth/anthropic_nous_openai.rs), and the Rust tests this row cited test the provider registry and aliases, not device login. Deferred until ported.",
-      "rust_tests": [],
-      "status": "deferred_not_covered",
-      "ticket": 3524,
-      "ledger": "R3847",
-      "review_date": "2027-02-18"
+      "rationale": "Rechecked at v0.23.2 (R3847). The listed Rust tests exercise 5 of the file's 30 tests: test_device_login_refuses_portal_inference_url_outside_allowlist, test_device_login_refuses_non_https_portal_inference_url and test_device_login_keeps_allowlisted_portal_inference_url (the device login checks the Portal-returned inference URL against the Nous host allowlist and HTTPS, falling back to the requested URL), test_migrates_stale_portal_url_on_load and test_runtime_credentials_rejects_http_for_production_portal (a stale or plain-HTTP stored Portal URL heals to the default; Rust heals it when the stored state is read, before the refresh that posts to it). They also apply the same inference URL check on refresh and to stored state, as upstream's refresh and routing do. The other 25 tests (CA bundle, credential pool, shared store, refresh error classification and the poll timeout) are not claimed by these citations.",
+      "rust_tests": [
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_device_login_refuses_portal_inference_url_outside_allowlist"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_device_login_refuses_non_https_portal_inference_url"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_device_login_keeps_allowlisted_portal_inference_url"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_device_login_keeps_inference_host_named_by_operator_override"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_refresh_refuses_portal_inference_url_outside_allowlist"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "nous_runtime_credentials_heal_stored_inference_url_outside_allowlist"
+        },
+        {
+          "file": "crates/hermes-cli/src/auth/tests.rs",
+          "name": "read_nous_auth_state_heals_stored_portal_url_outside_allowlist"
+        },
+        {
+          "file": "crates/hermes-core/src/nous_urls.rs",
+          "name": "inference_url_needs_https_and_a_nous_host"
+        },
+        {
+          "file": "crates/hermes-core/src/nous_urls.rs",
+          "name": "portal_url_needs_a_portal_host_and_https_off_loopback"
+        }
+      ],
+      "status": "covered_by_rust_contracts"
     },
     {
       "coverage_kind": "rust_contract_or_documented_divergence",
@@ -4588,11 +4622,11 @@
   "schema_version": 1,
   "source_backlog": "docs/parity/shared-diff-backlog.json",
   "summary": {
-    "covered_paths": 0,
+    "covered_paths": 1,
     "guard_test": "crates/hermes-source-parity-tests/tests/hermes_cli_test_coverage_contract.rs",
     "provider_api_mode_bridge_added": true,
     "required_backlog_classification_path": "tests/hermes_cli",
-    "deferred_paths": 37,
+    "deferred_paths": 36,
     "not_rechecked_paths": 110
   }
 }
