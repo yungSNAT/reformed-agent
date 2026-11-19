@@ -399,8 +399,10 @@ fn git_snapshot(root: &Path) -> Value {
     let Some(git_root) = git_root(root) else {
         return json!({"present": false});
     };
-    let branch = git_output(&git_root, &["branch", "--show-current"]);
-    let head = git_output(&git_root, &["rev-parse", "--short", "HEAD"]);
+    let branch =
+        git_output(&git_root, &["branch", "--show-current"]).filter(|text| !text.is_empty());
+    let head =
+        git_output(&git_root, &["rev-parse", "--short", "HEAD"]).filter(|text| !text.is_empty());
     // A submodule has its own config and filter drivers, which the overrides
     // do not reach: never run status inside its dirty worktree.
     let status = git_output(
@@ -436,14 +438,13 @@ fn git_snapshot(root: &Path) -> Value {
 
 /// The trimmed output of a git command that the repository's own
 /// configuration cannot use to run a program, or `None` when git cannot run
-/// safely, fails, times out or prints nothing.
+/// safely, fails or times out.
 fn git_output(root: &Path, args: &[&str]) -> Option<String> {
     let output = output_within_timeout(read_only_git(root)?.args(args), GIT_SNAPSHOT_TIMEOUT)?;
-    if !output.status.success() {
-        return None;
-    }
-    let text = String::from_utf8_lossy(&output.stdout).trim().to_string();
-    (!text.is_empty()).then_some(text)
+    output
+        .status
+        .success()
+        .then(|| String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
 fn ignored_tree_entry(name: &str, include_hidden: bool) -> bool {
