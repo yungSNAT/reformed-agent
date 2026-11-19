@@ -227,8 +227,8 @@ fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<Str
 /// The program to start for `command`. On Windows, Rust's `Command` finds
 /// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`. A bare
 /// name is looked up on the server's own `PATH` through its `PATHEXT`,
-/// keeping only the kinds `Command` can start: Node installs an extensionless
-/// shell script named `npx` beside `npx.cmd`.
+/// keeping only the kinds `Command` can start (not `.js` or `.vbs`) and only
+/// absolute entries, so a file planted in the working folder cannot run.
 fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
     #[cfg(windows)]
     if !command.contains(['/', '\\']) {
@@ -247,6 +247,7 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
             vec![command.to_string()]
         } else {
             var("PATHEXT")
+                .filter(|exts| !exts.is_empty())
                 .unwrap_or(".COM;.EXE;.BAT;.CMD")
                 .split(';')
                 .filter_map(|ext| ext.strip_prefix('.'))
@@ -254,7 +255,8 @@ fn program_for(command: &str, env: &HashMap<String, String>) -> PathBuf {
                 .map(|ext| format!("{command}.{ext}"))
                 .collect()
         };
-        for dir in std::env::split_paths(var("PATH").unwrap_or_default()) {
+        let dirs = std::env::split_paths(var("PATH").unwrap_or_default());
+        for dir in dirs.filter(|dir| dir.is_absolute()) {
             for candidate in &candidates {
                 let path = dir.join(candidate);
                 if path.is_file() {
