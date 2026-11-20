@@ -121,18 +121,15 @@ impl BrowserbaseBrowserBackend {
         config: &BrowserbaseConfig,
         session_id: &str,
     ) -> Result<bool, ToolError> {
-        let resp = client
+        let request = client
             .post(format!("{}/v1/sessions/{session_id}", config.base_url))
             .header("Content-Type", "application/json")
             .header("X-BB-API-Key", &config.api_key)
             .json(&json!({
                 "projectId": config.project_id,
                 "status": "REQUEST_RELEASE",
-            }))
-            .send()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Browserbase close failed: {e}")))?;
-        Ok(release_accepted(resp.status()))
+            }));
+        release_session_request(request, "Browserbase").await
     }
 }
 
@@ -301,11 +298,7 @@ impl BrowserUseBrowserBackend {
         for (name, value) in browser_use_headers(config, None) {
             request = request.header(name, value);
         }
-        let resp = request
-            .send()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed(format!("Browser Use close failed: {e}")))?;
-        Ok(release_accepted(resp.status()))
+        release_session_request(request, "Browser Use").await
     }
 }
 
@@ -423,15 +416,10 @@ impl FirecrawlBrowserBackend {
         config: &FirecrawlBrowserConfig,
         session_id: &str,
     ) -> Result<bool, ToolError> {
-        let resp = client
+        let request = client
             .delete(format!("{}/v2/browser/{session_id}", config.base_url))
-            .header("Authorization", format!("Bearer {}", config.api_key))
-            .send()
-            .await
-            .map_err(|e| {
-                ToolError::ExecutionFailed(format!("Firecrawl browser close failed: {e}"))
-            })?;
-        Ok(release_accepted(resp.status()))
+            .header("Authorization", format!("Bearer {}", config.api_key));
+        release_session_request(request, "Firecrawl browser").await
     }
 }
 
@@ -449,6 +437,40 @@ impl CloudBrowserSession for FirecrawlBrowserBackend {
     async fn release_session(&self) -> Result<bool, ToolError> {
         self.close_active_session().await
     }
+}
+
+const RELEASE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Retry one transient failure. Both requests can only close the same session ID.
+/// A provider's Retry-After can exceed the teardown budget, so leave it to expire.
+async fn release_session_request(
+    request: reqwest::RequestBuilder,
+    provider: &str,
+) -> Result<bool, ToolError> {
+    let request = request.timeout(RELEASE_ATTEMPT_TIMEOUT);
+    let retry = request.try_clone();
+    let mut outcome = request.send().await;
+    let transient = match &outcome {
+        Ok(response) => {
+            matches!(
+                response.status(),
+                reqwest::StatusCode::REQUEST_TIMEOUT
+                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+                    | reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                    | reqwest::StatusCode::BAD_GATEWAY
+                    | reqwest::StatusCode::SERVICE_UNAVAILABLE
+                    | reqwest::StatusCode::GATEWAY_TIMEOUT
+            ) && !response.headers().contains_key(reqwest::header::RETRY_AFTER)
+        }
+        // A connection can close before the response even when dialing succeeded.
+        Err(error) => error.is_request() || error.is_timeout(),
+    };
+    if let Some(retry) = retry.filter(|_| transient) {
+        outcome = retry.send().await;
+    }
+    let response = outcome
+        .map_err(|error| ToolError::ExecutionFailed(format!("{provider} close failed: {error}")))?;
+    Ok(release_accepted(response.status()))
 }
 
 /// Whether a vendor accepted a request to end a session.

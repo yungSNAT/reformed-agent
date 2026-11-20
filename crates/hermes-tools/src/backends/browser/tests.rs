@@ -2668,6 +2668,190 @@ async fn dropping_a_cloud_backend_releases_its_session() {
     assert_eq!(requests.len(), 3, "only the 3 held sessions are released");
 }
 
+#[tokio::test]
+async fn dropping_a_cloud_backend_retries_a_transient_release_once() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let server = MockServer::builder().start().await;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let responses = attempts.clone();
+    Mock::given(method("POST"))
+        .and(path("/v1/sessions/retry_fixture"))
+        .and(body_partial_json(json!({"status": "REQUEST_RELEASE"})))
+        .respond_with(move |_: &Request| {
+            let attempt = responses.fetch_add(1, Ordering::SeqCst);
+            ResponseTemplate::new(if attempt == 0 { 503 } else { 200 })
+        })
+        .mount(&server)
+        .await;
+
+    let mut config = BrowserbaseConfig::new("fixture-key".into(), "fixture-project".into());
+    config.base_url = server.uri();
+    let backend = BrowserbaseBrowserBackend::new(config);
+    *backend.session.lock().await = Some(BrowserbaseSession {
+        bb_session_id: "retry_fixture".into(),
+        cdp_url: "wss://browserbase.example/fixture".into(),
+    });
+    drop(backend);
+
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cloud_release_retries_the_same_session_after_a_timeout() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let server = MockServer::builder().start().await;
+    let attempts = Arc::new(AtomicUsize::new(0));
+    let responses = attempts.clone();
+    Mock::given(method("PATCH"))
+        .and(path("/browsers/timeout_fixture"))
+        .and(body_partial_json(json!({"action": "stop"})))
+        .respond_with(move |_: &Request| {
+            let response = ResponseTemplate::new(204);
+            if responses.fetch_add(1, Ordering::SeqCst) == 0 {
+                return response.set_delay(RELEASE_ATTEMPT_TIMEOUT + Duration::from_secs(1));
+            }
+            response
+        })
+        .mount(&server)
+        .await;
+    let backend = BrowserUseBrowserBackend::new(BrowserUseConfig {
+        api_key: "fixture-key".into(),
+        base_url: server.uri(),
+        managed_mode: false,
+        task_id: "fixture-task".into(),
+    });
+    *backend.session.lock().await = Some(BrowserUseSession {
+        bb_session_id: "timeout_fixture".into(),
+        cdp_url: "wss://browser-use.example/fixture".into(),
+    });
+
+    assert!(backend.close_active_session().await.unwrap());
+    assert_eq!(attempts.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn cloud_release_retries_request_timeout_and_rate_limit_without_retry_after() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let mut results = Vec::new();
+    for status in [408, 429] {
+        let server = MockServer::builder().start().await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let responses = attempts.clone();
+        Mock::given(method("DELETE"))
+            .and(path("/v2/browser/transient_fixture"))
+            .respond_with(move |_: &Request| {
+                let attempt = responses.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(if attempt == 0 { status } else { 204 })
+            })
+            .mount(&server)
+            .await;
+
+        let backend = firecrawl_release_fixture(server.uri(), "transient_fixture").await;
+        let released = backend.close_active_session().await.unwrap();
+        results.push((status, released, attempts.load(Ordering::SeqCst)));
+    }
+    assert_eq!(results, [(408, true, 2), (429, true, 2)]);
+}
+
+#[tokio::test]
+async fn cloud_release_retries_when_the_server_closes_before_answering() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for round in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            assert!(reader.read_line(&mut request).await.unwrap() > 0);
+            requests.push(request);
+            loop {
+                let mut header = String::new();
+                assert!(reader.read_line(&mut header).await.unwrap() > 0);
+                if header == "\r\n" {
+                    break;
+                }
+            }
+            if round == 1 {
+                reader
+                    .get_mut()
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            // The first connection closes after the complete request.
+        }
+        requests
+    });
+
+    let backend = firecrawl_release_fixture(format!("http://{address}"), "closed_fixture").await;
+    assert!(backend.close_active_session().await.unwrap());
+    let requests = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server did not see both attempts")
+        .unwrap();
+    assert_eq!(
+        requests,
+        ["DELETE /v2/browser/closed_fixture HTTP/1.1\r\n"; 2]
+    );
+}
+
+async fn firecrawl_release_fixture(base_url: String, id: &str) -> FirecrawlBrowserBackend {
+    let backend = FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+        api_key: "fixture-key".into(),
+        base_url,
+        ttl_secs: 300,
+        task_id: "fixture-task".into(),
+    });
+    *backend.session.lock().await = Some(FirecrawlBrowserSession {
+        bb_session_id: id.into(),
+        cdp_url: "wss://firecrawl.example/fixture".into(),
+    });
+    backend
+}
+
+#[tokio::test]
+async fn cloud_release_honours_retry_after_and_permanent_refusal() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::builder().start().await;
+    for (id, response) in [
+        (
+            "retry_later",
+            ResponseTemplate::new(503).insert_header("retry-after", "60"),
+        ),
+        (
+            "rate_limit",
+            ResponseTemplate::new(429).insert_header("retry-after", "60"),
+        ),
+        ("denied", ResponseTemplate::new(403)),
+        ("not_implemented", ResponseTemplate::new(501)),
+    ] {
+        Mock::given(method("DELETE"))
+            .and(path(format!("/v2/browser/{id}")))
+            .respond_with(response)
+            .mount(&server)
+            .await;
+        let backend = firecrawl_release_fixture(server.uri(), id).await;
+        assert!(!backend.close_active_session().await.unwrap());
+    }
+
+    let requests = server.received_requests().await.expect("recorded requests");
+    assert_eq!(requests.len(), 4);
+}
+
 /// A local CDP backend at the fixture WebSocket `addr`, in its own context.
 fn isolated_backend(addr: std::net::SocketAddr) -> CdpBrowserBackend {
     let mut backend = CdpBrowserBackend::new(format!("ws://{addr}/devtools/browser/B"));
@@ -2803,6 +2987,94 @@ async fn isolated_cdp_backend_replaces_a_tab_that_has_gone() {
     assert_eq!(used[6]["params"]["targetId"], "T2");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_cdp_backend_disposes_a_context_after_target_creation_is_cancelled() {
+    let contexts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let browser = Arc::new(move |command: &Value| {
+        let result = match command["method"].as_str() {
+            Some("Target.createBrowserContext") => {
+                let next = contexts.fetch_add(1, Ordering::SeqCst) + 1;
+                json!({"browserContextId": format!("C{next}")})
+            }
+            Some("Target.createTarget") if command["params"]["browserContextId"] == "C1" => {
+                return None;
+            }
+            Some("Target.createTarget") => json!({"targetId": "T2"}),
+            Some("Target.attachToTarget") => json!({"sessionId": "S2"}),
+            _ => json!({"nodes": []}),
+        };
+        Some(vec![cdp_result(command, result)])
+    });
+    let (addr, mut commands) = spawn_cdp_websocket(browser).await;
+    let backend = isolated_backend(addr);
+    let reached_target_creation = async {
+        let (_, context) = commands.recv().await.expect("context request");
+        assert_eq!(context["method"], "Target.createBrowserContext");
+        let (_, tab) = commands.recv().await.expect("target request");
+        assert_eq!(tab["method"], "Target.createTarget");
+        assert_eq!(tab["params"]["browserContextId"], "C1");
+    };
+    tokio::select! {
+        result = backend.snapshot() => panic!("snapshot finished before the target replied: {result:?}"),
+        reached = tokio::time::timeout(Duration::from_secs(5), reached_target_creation) => {
+            reached.expect("target creation was reached");
+        }
+    }
+
+    backend.snapshot().await.expect("fresh isolated tab");
+    drop(backend);
+    let used = drain_commands(&mut commands);
+    assert_eq!(
+        methods(&used),
+        [
+            "Target.disposeBrowserContext",
+            "Target.createBrowserContext",
+            "Target.createTarget",
+            "Target.attachToTarget",
+            "Accessibility.getFullAXTree",
+            "Target.disposeBrowserContext",
+        ]
+    );
+    assert_eq!(used[0]["params"]["browserContextId"], "C1");
+    assert_eq!(used[5]["params"]["browserContextId"], "C2");
+}
+
+#[tokio::test]
+async fn isolated_context_disposal_accepts_absence_only_from_a_valid_context_list() {
+    for (ids, absent) in [
+        (json!(["unrelated"]), true),
+        (json!(["owned", "unrelated"]), false),
+        (json!([null]), false),
+    ] {
+        let (addr, mut commands) = spawn_cdp_websocket(Arc::new(move |command| {
+            let response = match command["method"].as_str() {
+                Some("Target.disposeBrowserContext") => json!({
+                    "id": command["id"],
+                    "error": {"code": -32_000, "message": "cannot dispose context"},
+                }),
+                Some("Target.getBrowserContexts") => {
+                    cdp_result(command, json!({"browserContextIds": ids}))
+                }
+                other => panic!("unexpected command {other:?}"),
+            };
+            Some(vec![response])
+        }))
+        .await;
+        let mut connection = CdpConnection::open(&format!("ws://{addr}/devtools/browser/B"))
+            .await
+            .map_err(CdpFailure::message)
+            .expect("fixture connection");
+        let disposed = connection.dispose_owned_context("owned").await;
+        assert_eq!(disposed.is_ok(), absent);
+        let used = drain_commands(&mut commands);
+        assert_eq!(
+            methods(&used),
+            ["Target.disposeBrowserContext", "Target.getBrowserContexts"]
+        );
+        assert_eq!(used[0]["params"]["browserContextId"], "owned");
+    }
+}
+
 /// How many cookies `backend`'s tab holds for `https://example.com/`.
 async fn example_cookies(backend: &CdpBrowserBackend) -> usize {
     backend
@@ -2887,7 +3159,10 @@ async fn the_isolated_factory_isolates_every_local_backend() {
 async fn tab_ids(backend: &CdpBrowserBackend) -> (String, String) {
     let tab = backend.tab.lock().await;
     let tab = tab.as_ref().expect("the backend has a tab");
-    (tab.context_id.clone(), tab.target_id.clone())
+    (
+        tab.context_id.clone(),
+        tab.target_id.clone().expect("the tab has a target"),
+    )
 }
 
 /// Against a real Chrome or Chromium, for example

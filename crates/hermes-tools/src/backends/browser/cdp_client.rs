@@ -122,10 +122,8 @@ impl CdpConnection {
         Ok(())
     }
 
-    /// Create a browser context, like an incognito profile, holding one blank
-    /// tab. It outlives this connection. A browser that refuses leaves the
-    /// browser tools off rather than on a shared page.
-    async fn create_isolated_tab(&mut self) -> Result<IsolatedTab, CdpFailure> {
+    /// Create a private context that outlives this connection.
+    async fn create_isolated_context(&mut self) -> Result<String, CdpFailure> {
         let (created, _) = self
             .call(
                 "Target.createBrowserContext",
@@ -139,34 +137,25 @@ impl CdpConnection {
                     failure.message()
                 ))
             })?;
-        let context_id = created["browserContextId"]
+        created["browserContextId"]
             .as_str()
+            .map(str::to_string)
             .ok_or_else(|| {
                 CdpFailure::Lost("Target.createBrowserContext returned no browserContextId".into())
-            })?
-            .to_string();
-        let target = self
+            })
+    }
+
+    async fn create_context_target(&mut self, context_id: &str) -> Result<String, CdpFailure> {
+        let (target, _) = self
             .call(
                 "Target.createTarget",
                 json!({"url": "about:blank", "browserContextId": context_id}),
                 &[],
             )
-            .await
-            .and_then(|(target, _)| {
-                target["targetId"].as_str().map(str::to_string).ok_or_else(|| {
-                    CdpFailure::Lost("Target.createTarget returned no targetId".into())
-                })
-            });
-        match target {
-            Ok(target_id) => Ok(IsolatedTab {
-                context_id,
-                target_id,
-            }),
-            Err(failure) => {
-                let _ = self.dispose_context(&context_id).await;
-                Err(failure)
-            }
-        }
+            .await?;
+        target["targetId"].as_str().map(str::to_string).ok_or_else(|| {
+            CdpFailure::Lost("Target.createTarget returned no targetId".into())
+        })
     }
 
     /// Dispose of a browser context, closing its pages.
@@ -178,6 +167,25 @@ impl CdpConnection {
         )
         .await
         .map(|_| ())
+    }
+
+    /// A browser restart can remove the context before we send the disposal.
+    async fn dispose_owned_context(&mut self, context_id: &str) -> Result<(), CdpFailure> {
+        match self.dispose_context(context_id).await {
+            Err(rejected @ CdpFailure::Rejected(_)) => {
+                let contexts = self.call("Target.getBrowserContexts", json!({}), &[]).await;
+                if let Ok((result, _)) = contexts {
+                    if result["browserContextIds"].as_array().is_some_and(|ids| {
+                        ids.iter().all(Value::is_string)
+                            && !ids.iter().any(|id| id.as_str() == Some(context_id))
+                    }) {
+                        return Ok(());
+                    }
+                }
+                Err(rejected)
+            }
+            outcome => outcome,
+        }
     }
 
     /// [`Self::call_once`]. A command in [`CDP_RESENT_METHODS`] refused as
@@ -460,7 +468,7 @@ async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
 }
 
 /// How long a dropped cloud backend waits for its session to be released.
-const RELEASE_ON_DROP_TIMEOUT: Duration = Duration::from_secs(10);
+const RELEASE_ON_DROP_TIMEOUT: Duration = RELEASE_ATTEMPT_TIMEOUT.saturating_mul(2);
 
 /// Release a cloud session as its backend is dropped, at the end of the
 /// tool registry or the process, since a session with keepAlive outlives
