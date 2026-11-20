@@ -7,6 +7,7 @@ repository.workspace = true
 description = "Skills system for Hermes Agent"
 
 [dependencies]
+hermes-config = { workspace = true }
 hermes-core = { workspace = true }
 tokio = { workspace = true }
 serde = { workspace = true }

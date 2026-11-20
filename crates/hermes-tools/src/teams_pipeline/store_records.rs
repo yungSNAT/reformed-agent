@@ -524,15 +524,8 @@ impl TeamsPipelineStore {
 
     fn persist(&self) -> TeamsPipelineResult<()> {
         let state = self.lock_state()?.clone();
-        if let Some(parent) = self.path.parent() {
-            std::fs::create_dir_all(parent)?;
-        }
         let body = serde_json::to_vec_pretty(&state)?;
-        let tmp = self
-            .path
-            .with_extension(format!("json.tmp-{}", Uuid::new_v4().simple()));
-        std::fs::write(&tmp, body)?;
-        std::fs::rename(&tmp, &self.path)?;
+        hermes_config::atomic_write_bytes(&self.path, &body).map_err(std::io::Error::other)?;
         Ok(())
     }
 }

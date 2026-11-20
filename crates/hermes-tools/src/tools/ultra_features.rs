@@ -2495,7 +2495,17 @@ fn truncate_chars(input: &str, max_chars: usize) -> String {
     out
 }
 
+/// A tool's `path` made absolute where the local backend would write it
+/// (`local_write_path`), so these tools read, judge and write the file
+/// `write_file` writes. It is not folded: `..` after a symlink is left to the
+/// file system, as `write_file` leaves it. A `~user` path is kept as written,
+/// and the write rule refuses it.
 fn clean_path(path: PathBuf) -> PathBuf {
+    crate::credential_guard::local_write_path(&path).unwrap_or(path)
+}
+
+/// `path` with `.` and `..` folded.
+fn fold_path(path: PathBuf) -> PathBuf {
     let mut cleaned = PathBuf::new();
     for component in path.components() {
         match component {
@@ -2515,7 +2525,7 @@ fn clean_path(path: PathBuf) -> PathBuf {
 }
 
 fn clean_join(base: &Path, rel: &str) -> PathBuf {
-    clean_path(base.join(rel))
+    fold_path(base.join(rel))
 }
 
 fn io_err(context: &'static str) -> impl FnOnce(std::io::Error) -> ToolError {
@@ -2686,6 +2696,180 @@ fn shell_quote(input: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use crate::test_env::with_env;
+
+    /// Drives one edit family at `path` (a relative path) to change `Thing`.
+    async fn edit_with(
+        family: &str,
+        path: &str,
+        state: &UltraFeatureState,
+    ) -> Result<String, ToolError> {
+        match family {
+            "hash_edit" => {
+                hash_edit(json!({"path": path, "old_string": "Thing", "new_string": "Other"})).await
+            }
+            "resolve_conflict" => {
+                resolve_conflict(
+                    json!({"action": "resolve", "path": path, "index": 0, "choice": "ours"}),
+                )
+                .await
+            }
+            "lsp rename_apply" => {
+                lsp_inspect(json!({"action": "rename_apply", "path": path, "symbol": "Thing", "replacement": "Other"}))
+                    .await
+            }
+            "ast replace" => {
+                ast_search(json!({"action": "replace", "path": path, "pattern": "Thing", "replacement": "Other", "dry_run": false}))
+                    .await
+            }
+            kind => {
+                let payload = if kind == "file_write" {
+                    json!({"path": path, "content": "planted\n"})
+                } else {
+                    json!({"path": path, "old_string": "Thing", "new_string": "Other"})
+                };
+                let created = transaction_preview(
+                    json!({"action": "create", "kind": kind, "payload": payload}),
+                    state,
+                )
+                .await?;
+                let id = serde_json::from_str::<Value>(&created).unwrap()["id"]
+                    .as_str()
+                    .unwrap()
+                    .to_string();
+                transaction_preview(json!({"action": "accept", "id": id}), state).await
+            }
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn edit_tools_refuse_a_protected_file_named_by_a_relative_path() {
+        // A relative path is taken against `TERMINAL_CWD`, as `write_file`
+        // takes it, so `.docker/lib.rs` from a work folder at the home is
+        // `~/.docker`, denied by the path rule alone.
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let target = home.join(".docker").join("lib.rs");
+        fs::create_dir_all(target.parent().unwrap()).unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        let original = "pub struct Thing;\n<<<<<<< ours\nleft\n=======\nright\n>>>>>>> theirs\n";
+
+        for family in [
+            "hash_edit",
+            "resolve_conflict",
+            "lsp rename_apply",
+            "file_write",
+            "content_replace",
+            "ast replace",
+        ] {
+            fs::write(&target, original).unwrap();
+            let result = with_env(
+                &[
+                    ("HOME", Some(&home)),
+                    ("TERMINAL_CWD", Some(&home)),
+                    ("HERMES_WRITE_SAFE_ROOT", None),
+                ],
+                || {
+                    tokio::runtime::Runtime::new().unwrap().block_on(edit_with(
+                        family,
+                        ".docker/lib.rs",
+                        &state,
+                    ))
+                },
+            );
+
+            let err = result.expect_err(&format!("{family} wrote a protected file"));
+            assert!(
+                err.to_string()
+                    .contains("protected system or credential path"),
+                "{family}: {err}"
+            );
+            assert_eq!(fs::read_to_string(&target).unwrap(), original, "{family}");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_edit_does_not_fold_a_tilde_user_path_into_another_file() {
+        // `~other/..` cannot be judged, so it must not become a relative
+        // path that lands on `~/.bashrc` whilst the rule looks elsewhere.
+        // The home sits under the process folder for that to be reachable.
+        let cwd = std::env::current_dir().unwrap();
+        let home = tempfile::Builder::new()
+            .prefix(".tilde-fold-test-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let name = home
+            .path()
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .to_string();
+        let profile = home.path().join(".bashrc");
+        fs::write(&profile, "export MADE_UP=1\n").unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let result = with_env(
+            &[
+                ("HOME", Some(home.path())),
+                ("TERMINAL_CWD", Some(elsewhere.path())),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(hash_edit(json!({
+                        "path": format!("~other/../{name}/.bashrc"),
+                        "old_string": "MADE_UP=1",
+                        "new_string": "PLANTED=1"
+                    })))
+            },
+        );
+
+        assert!(result.is_err(), "the edit applied: {result:?}");
+        assert_eq!(fs::read_to_string(&profile).unwrap(), "export MADE_UP=1\n");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn hash_edit_follows_a_linked_work_folder_as_write_file_does() {
+        // `link/..` is where the link's target sits, not `work`, as the file
+        // system resolves it and `write_file` hands it the path unfolded.
+        let tmp = tempfile::tempdir().unwrap();
+        let work = tmp.path().join("work");
+        let vault = tmp.path().join("vault");
+        fs::create_dir_all(vault.join("subdir")).unwrap();
+        fs::create_dir_all(&work).unwrap();
+        std::os::unix::fs::symlink(vault.join("subdir"), work.join("link")).unwrap();
+        fs::write(vault.join("notes.md"), "vault one\n").unwrap();
+        fs::write(work.join("notes.md"), "work one\n").unwrap();
+        let terminal_cwd = work.join("link").join("..");
+
+        with_env(
+            &[
+                ("TERMINAL_CWD", Some(&terminal_cwd)),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new().unwrap().block_on(hash_edit(
+                    json!({"path": "notes.md", "old_string": "one", "new_string": "two"}),
+                ))
+            },
+        )
+        .unwrap();
+
+        assert_eq!(
+            fs::read_to_string(vault.join("notes.md")).unwrap(),
+            "vault two\n"
+        );
+        assert_eq!(
+            fs::read_to_string(work.join("notes.md")).unwrap(),
+            "work one\n"
+        );
+    }
 
     #[tokio::test]
     async fn hash_edit_rejects_stale_hash_and_applies_prefix_hash() {

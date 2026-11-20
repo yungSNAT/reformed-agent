@@ -249,21 +249,23 @@ impl SuggestionStore {
             updated_at: Some(Timestamp::now()),
         };
         let raw = serde_json::to_string_pretty(&file)?;
-        let tmp = parent.join(format!(
+        // A symlinked store keeps its link: the temp file is staged beside the
+        // link's target, whose folder a dangling link may not have created yet.
+        let path = hermes_config::resolve_symlink_target(&self.path);
+        let target_dir = path.parent().unwrap_or(parent);
+        std::fs::create_dir_all(target_dir)?;
+        let tmp = target_dir.join(format!(
             ".suggestions.{}.tmp",
             uuid::Uuid::new_v4().simple()
         ));
         let write_result = (|| -> Result<(), SuggestionError> {
-            let mut handle = std::fs::OpenOptions::new()
-                .create_new(true)
-                .write(true)
-                .open(&tmp)?;
+            let mut handle = create_staged_file(&tmp)?;
             handle.write_all(raw.as_bytes())?;
             handle.flush()?;
             handle.sync_all()?;
             secure_file(&tmp)?;
-            std::fs::rename(&tmp, &self.path)?;
-            secure_file(&self.path)?;
+            std::fs::rename(&tmp, &path)?;
+            secure_file(&path)?;
             Ok(())
         })();
         if write_result.is_err() {
@@ -390,6 +392,19 @@ fn with_suggestion_lock<T>(
     f()
 }
 
+/// Creates a new staging file, owner-only from the start on Unix: it is staged
+/// in a linked target's folder, which others may be able to read.
+fn create_staged_file(path: &std::path::Path) -> Result<std::fs::File, std::io::Error> {
+    let mut options = std::fs::OpenOptions::new();
+    options.create_new(true).write(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
 #[cfg(unix)]
 fn secure_dir(path: &std::path::Path) -> Result<(), std::io::Error> {
     use std::os::unix::fs::PermissionsExt;
@@ -416,6 +431,19 @@ fn secure_file(_path: &std::path::Path) -> Result<(), std::io::Error> {
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
+    #[test]
+    fn a_staged_suggestions_file_is_owner_only_from_creation() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(".suggestions.staged.tmp");
+
+        let file = create_staged_file(&path).expect("created");
+
+        let mode = file.metadata().unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
+    }
+
     #[test]
     fn suggestion_file_keeps_its_timestamp_form() {
         let file: SuggestionFile =
@@ -435,6 +463,25 @@ mod tests {
         let dir = tempfile::tempdir().expect("tempdir");
         let store = SuggestionStore::with_path(dir.path().join("cron").join("suggestions.json"));
         (store, dir)
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn saving_through_a_symlinked_store_keeps_the_link() {
+        use std::os::unix::fs::PermissionsExt;
+        let (store, dir) = temp_store();
+        let real = dir.path().join("dotfiles").join("suggestions.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(store.path().parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real, store.path()).unwrap();
+
+        store.seed_catalog_suggestions().expect("seed");
+
+        assert!(store.path().is_symlink(), "the store link was replaced");
+        let saved = std::fs::read_to_string(&real).expect("target written");
+        assert!(saved.contains("suggestions"));
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[test]

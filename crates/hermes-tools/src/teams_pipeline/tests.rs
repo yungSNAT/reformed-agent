@@ -191,6 +191,28 @@ fn notification_receipt_hash_matches_canonical_shape() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn store_writes_through_a_symlink_and_keeps_it() {
+    let tmp = tempfile::tempdir().unwrap();
+    let real = tmp
+        .path()
+        .join("dotfiles")
+        .join("teams_pipeline_store.json");
+    std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+    let link = tmp.path().join("teams_pipeline_store.json");
+    std::os::unix::fs::symlink(&real, &link).unwrap();
+    let store = TeamsPipelineStore::new(&link).unwrap();
+
+    store
+        .upsert_subscription("sub-1", json!({"client_state": "abc"}))
+        .unwrap();
+
+    assert!(link.is_symlink(), "the store link was replaced");
+    let reloaded = TeamsPipelineStore::new(&real).unwrap();
+    assert!(reloaded.get_subscription("sub-1").unwrap().is_some());
+}
+
 #[test]
 fn store_persists_state() {
     let tmp = tempfile::tempdir().unwrap();

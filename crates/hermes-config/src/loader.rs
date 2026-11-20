@@ -47,14 +47,14 @@ fn target_parent(path: &Path) -> &Path {
 
 fn atomic_temp_path(path: &Path) -> Result<PathBuf, ConfigError> {
     let parent = target_parent(path);
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .ok_or_else(|| {
-            ConfigError::ParseError(format!("invalid config path: {}", path.display()))
-        })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        ConfigError::ParseError(format!("invalid config path: {}", path.display()))
+    })?;
     let nonce = ATOMIC_WRITE_COUNTER.fetch_add(1, Ordering::Relaxed);
-    Ok(parent.join(format!(".{file_name}.tmp.{}.{}", std::process::id(), nonce)))
+    let mut temp_name = std::ffi::OsString::from(".");
+    temp_name.push(file_name);
+    temp_name.push(format!(".tmp.{}.{}", std::process::id(), nonce));
+    Ok(parent.join(temp_name))
 }
 
 /// The file an atomic write to `path` must replace.
@@ -84,8 +84,9 @@ pub fn resolve_symlink_target(path: &Path) -> PathBuf {
 /// A symlinked `path` keeps its link: the temp file is staged beside the
 /// link's target, on the target's filesystem, and renamed over the target.
 ///
-/// A rewritten file keeps its access: on Unix the temp file takes the
-/// existing file's permission bits before any bytes are written (the owner
+/// A rewritten file keeps its access: on Unix the temp file is created with
+/// the existing file's permission bits, set again past the umask before any
+/// bytes are written (the owner
 /// becomes the writer; where the filesystem refuses the change, the file gets
 /// the default mode, as before); on Windows the replacement keeps the
 /// existing file's DACL.
@@ -98,12 +99,11 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
     let mut written = false;
 
     let result = (|| -> Result<(), ConfigError> {
-        let mut options = std::fs::OpenOptions::new();
-        options.write(true).create_new(true);
-        let mut file = options.open(&tmp_path).map_err(io_to_config_error)?;
+        let mut file = create_temp_file(&tmp_path, path).map_err(io_to_config_error)?;
         #[cfg(unix)]
         if let Ok(existing) = std::fs::metadata(path) {
             use std::os::unix::fs::PermissionsExt;
+            // The umask may have cleared bits the target has.
             let mode = existing.permissions().mode() & 0o777;
             if let Err(err) = file.set_permissions(std::fs::Permissions::from_mode(mode)) {
                 tracing::warn!("could not keep mode {mode:o} for {}: {err}", path.display());
@@ -132,6 +132,23 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
         }
         Ok(()) => Ok(()),
     }
+}
+
+/// Creates the temp file for a write to `target`. On Unix it is created with
+/// the existing target's permission bits (less the umask), so a file staged
+/// beside a linked target never starts readable by an account the target
+/// shuts out.
+fn create_temp_file(tmp_path: &Path, target: &Path) -> std::io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    if let Ok(existing) = std::fs::metadata(target) {
+        use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
+        options.mode(existing.permissions().mode() & 0o777);
+    }
+    #[cfg(not(unix))]
+    let _ = target;
+    options.open(tmp_path)
 }
 
 fn replace_temp_file(tmp_path: &Path, path: &Path) -> Result<(), ConfigError> {
