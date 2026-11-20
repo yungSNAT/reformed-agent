@@ -193,6 +193,61 @@ async fn committed_reset_delivers_all_hooks_after_request_cancellation() {
 }
 
 #[tokio::test]
+async fn committed_policy_reset_delivers_all_hooks_after_request_cancellation() {
+    let manager = Arc::new(SessionManager::new(SessionConfig {
+        reset_policy: hermes_config::SessionResetPolicy::Idle { timeout_minutes: 0 },
+        ..SessionConfig::default()
+    }));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
+    let pause = Arc::new(PauseHook::default());
+    let completed = Arc::new(PauseHook::default());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register_in_process("on_session_finalize", pause.clone());
+    for event in ["on_session_finalize", "session:start"] {
+        hooks.register_in_process(event, Arc::new(RecordingHook { seen: seen.clone() }));
+    }
+    hooks.register_in_process("session:start", completed.clone());
+    gateway.set_hook_registry(Arc::new(hooks)).await;
+
+    let mut request = test_incoming("/help");
+    request.chat_id = "paused-policy-reset".into();
+    let key = manager.compose_session_key(&request.platform, &request.chat_id, &request.user_id);
+    let before = manager
+        .get_or_create_session(&request.platform, &request.chat_id, &request.user_id)
+        .await;
+    {
+        let mut pending = std::pin::pin!(gateway.route_message(&request));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                () = pause.entered.notified() => {}
+                result = &mut pending => panic!("Admission completed before its hook: {result:?}"),
+            }
+        })
+        .await
+        .expect("Policy reset never reached its post-transition hook");
+        assert_ne!(manager.get_session(&key).await.unwrap().id, before.id);
+    }
+
+    pause.resume.notify_one();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        completed.entered.notified(),
+    )
+    .await
+    .expect("Committed policy reset lost lifecycle callbacks after cancellation");
+    completed.resume.notify_one();
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 2);
+    assert_eq!(seen[0].0, "on_session_finalize");
+    assert_eq!(seen[0].1["session_id"], before.id);
+    assert_eq!(seen[1].0, "session:start");
+    assert_eq!(seen[1].1["reason"], "auto_reset");
+}
+
+#[tokio::test]
 async fn delayed_yolo_cannot_restore_permissions_after_reset_or_switch() {
     use hermes_tools::approval;
 

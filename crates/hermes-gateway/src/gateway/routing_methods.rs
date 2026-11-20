@@ -180,6 +180,7 @@ impl Gateway {
         };
 
         // 2. Get or create session
+        let registry = self.hook_registry.read().await.clone();
         let admission = self
             .session_manager
             .admit_session(
@@ -190,27 +191,21 @@ impl Gateway {
             )
             .await
             .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-        let session_start_reason = match admission.transition {
-            SessionTransition::Created => Some("new"),
-            SessionTransition::PolicyReset(previous) => {
-                self.emit_session_finalize(&session_key, Arc::from(previous), "auto_reset")
-                    .await;
-                Some("auto_reset")
+        if let Some(registry) = registry {
+            let transition = admission.transition;
+            if !matches!(transition, SessionTransition::Existing) {
+                let incoming = incoming.clone();
+                let session_key = session_key.clone();
+                // Once admission commits, the full hook sequence survives a cancelled route.
+                if let Err(error) = tokio::spawn(async move {
+                    Self::run_admission_lifecycle(&registry, &incoming, &session_key, transition)
+                        .await;
+                })
+                .await
+                {
+                    tracing::warn!(%error, "Gateway admission lifecycle task failed");
+                }
             }
-            SessionTransition::Existing => None,
-        };
-        if let Some(reason) = session_start_reason {
-            self.emit_hook_event(
-                "session:start",
-                serde_json::json!({
-                    "platform": incoming.platform,
-                    "chat_id": incoming.chat_id,
-                    "user_id": incoming.user_id,
-                    "session_id": session_key,
-                    "reason": reason
-                }),
-            )
-            .await;
         }
 
         let mut agent_text_override: Option<String> = None;

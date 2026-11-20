@@ -244,6 +244,35 @@ impl Gateway {
         }
     }
 
+    async fn run_admission_lifecycle(
+        registry: &HookRegistry,
+        incoming: &IncomingMessage,
+        session_key: &str,
+        transition: SessionTransition,
+    ) {
+        let reason = match transition {
+            SessionTransition::Created => "new",
+            SessionTransition::PolicyReset(previous) => {
+                Self::notify_finalized_session(registry, session_key, Arc::from(previous), "auto_reset")
+                    .await;
+                "auto_reset"
+            }
+            SessionTransition::Existing => return,
+        };
+        registry
+            .emit(&HookEvent::new(
+                "session:start",
+                serde_json::json!({
+                    "platform": incoming.platform,
+                    "chat_id": incoming.chat_id,
+                    "user_id": incoming.user_id,
+                    "session_id": session_key,
+                    "reason": reason,
+                }),
+            ))
+            .await;
+    }
+
     async fn run_reset_lifecycle(
         registry: &HookRegistry,
         incoming: &IncomingMessage,
