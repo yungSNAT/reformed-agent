@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-20T12:37:25.099810+00:00",
+  "generated_at_utc": "2026-11-20T13:33:03.306344+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -811,7 +811,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 82,
+      "direct_test_evidence_count": 83,
       "direct_test_evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/config.rs",
@@ -823,6 +823,7 @@
         "crates/hermes-agent/src/agent_loop/tests/prompt_cache_prefix.rs",
         "crates/hermes-agent/src/agent_loop/tests/runtime_provider_resolution.rs",
         "crates/hermes-agent/src/agent_loop/tests/runtime_smart_routing.rs",
+        "crates/hermes-agent/src/agent_loop/tests/session_end_flush.rs",
         "crates/hermes-agent/src/agent_loop/tests_core.rs",
         "crates/hermes-agent/src/agent_loop/tests_runtime.rs",
         "crates/hermes-agent/src/api_bridge.rs",
@@ -836,10 +837,9 @@
         "crates/hermes-agent/src/compression/tests.rs",
         "crates/hermes-agent/src/context.rs",
         "crates/hermes-agent/src/context/tests.rs",
-        "crates/hermes-agent/src/context_files.rs",
-        "crates/hermes-agent/src/context_references.rs"
+        "crates/hermes-agent/src/context_files.rs"
       ],
-      "evidence_count": 117,
+      "evidence_count": 118,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
@@ -1182,8 +1182,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 496,
-    "rust_test_functions": 9113,
+    "rust_test_files": 497,
+    "rust_test_functions": 9135,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
