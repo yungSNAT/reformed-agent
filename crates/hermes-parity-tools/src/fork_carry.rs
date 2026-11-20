@@ -248,18 +248,14 @@ mod tests {
         let json = include_str!("../../../docs/parity/fork-carry-contracts.v1.json");
         let parsed = py::loads(json).unwrap();
         let registry = registry(&parsed).unwrap();
-        assert!(
-            registry
-                .required
-                .iter()
-                .any(|entry| entry.id == "carry-replay-hash-chain")
-        );
-        assert!(
-            registry
-                .uncovered
-                .iter()
-                .any(|entry| entry.id == "carry-launchd-webhook-lifecycle")
-        );
+        assert!(registry
+            .required
+            .iter()
+            .any(|entry| entry.id == "carry-replay-hash-chain"));
+        assert!(registry
+            .uncovered
+            .iter()
+            .any(|entry| entry.id == "carry-launchd-webhook-lifecycle"));
     }
 
     #[test]
@@ -273,19 +269,15 @@ mod tests {
             "uncovered": []
         }"#;
         let document = py::loads(json).unwrap();
-        assert!(
-            registry(&document)
-                .err()
-                .unwrap()
-                .contains("duplicate library test")
-        );
+        assert!(registry(&document)
+            .err()
+            .unwrap()
+            .contains("duplicate library test"));
         let duplicate = json.replacen("carry-second", "carry-first", 1);
         let document = py::loads(&duplicate).unwrap();
-        assert!(
-            registry(&document)
-                .err()
-                .unwrap()
-                .contains("duplicate carry ID")
-        );
+        assert!(registry(&document)
+            .err()
+            .unwrap()
+            .contains("duplicate carry ID"));
     }
 }
