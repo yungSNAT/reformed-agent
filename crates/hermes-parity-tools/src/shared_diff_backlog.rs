@@ -108,12 +108,22 @@ fn action_for(classification: &str, requirement: &str) -> &'static str {
     match classification {
         "branding_only" | "policy_only" => "No runtime implementation; keep rationale current.",
         "intentional_divergence" => "No vendoring; verify approved divergence remains current.",
-        "deferred" => "Review against upstream by the review date; see the rationale and ledger line.",
+        "deferred" => {
+            "Review against upstream by the review date; see the rationale and ledger line."
+        }
         "functional" => match requirement {
-            "rust_equivalent_or_contract_test_required" => "Map upstream test intent to Rust/Python contract coverage; add missing regression tests.",
-            "rust_primary_ux_or_documented_divergence_required" => "Compare UX behavior; port necessary interaction semantics or document stronger local UX.",
-            "skill_catalog_contract_required_if_needed" => "Verify skill catalog/runtime loader coverage; add native contract tests if missing.",
-            _ => "Inspect upstream/local behavior; implement Rust-native parity only if local coverage is missing.",
+            "rust_equivalent_or_contract_test_required" => {
+                "Map upstream test intent to Rust/Python contract coverage; add missing regression tests."
+            }
+            "rust_primary_ux_or_documented_divergence_required" => {
+                "Compare UX behavior; port necessary interaction semantics or document stronger local UX."
+            }
+            "skill_catalog_contract_required_if_needed" => {
+                "Verify skill catalog/runtime loader coverage; add native contract tests if missing."
+            }
+            _ => {
+                "Inspect upstream/local behavior; implement Rust-native parity only if local coverage is missing."
+            }
         },
         _ => "Add classification, owner, issue, and surgical plan before implementation.",
     }
@@ -260,7 +270,10 @@ impl<'a> Summary<'a> {
 }
 
 fn render_markdown(generated: &str, entries: &[Entry<'_>], summary: &Summary<'_>) -> String {
-    let mut report = format!("# Shared-Different Backlog\n\nGenerated: `{generated}`\n\n## Summary\n\n- Total shared-different paths: `{}`\n", entries.len());
+    let mut report = format!(
+        "# Shared-Different Backlog\n\nGenerated: `{generated}`\n\n## Summary\n\n- Total shared-different paths: `{}`\n",
+        entries.len()
+    );
     for (metric, title) in STATUS_METRICS {
         writeln!(report, "- {title}: `{}`", summary.status_count(metric)).unwrap();
     }
@@ -328,32 +341,18 @@ fn render_markdown(generated: &str, entries: &[Entry<'_>], summary: &Summary<'_>
     report
 }
 
-pub fn run(args: SharedDiffBacklogArgs) -> Result<i32, String> {
-    let root = resolve_argument(Path::new(&args.repo_root))?;
-    ensure_remote(&root, &args.upstream_remote, &args.upstream_url)?;
-    if !args.no_fetch {
-        let branch = &args.upstream_branch;
-        let remote = &args.upstream_remote;
-        let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
-        git_text(&root, &["fetch", "--no-tags", remote, &refspec], true)?;
-    }
+fn fetch_branch(root: &Path, remote: &str, branch: &str) -> Result<(), String> {
+    let refspec = format!("+refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    git_text(root, &["fetch", "--no-tags", remote, &refspec], true)?;
+    Ok(())
+}
 
-    let classification = resolve_argument(&py::join(&root, &args.classification))?;
-    let document = fs::read_to_string(&classification)
-        .map_err(|error| format!("{}: {error}", classification.display()))?;
-    let document = py::loads(&document)?;
-    if !document.is_dict() {
-        return Err("expected a classification object".to_owned());
-    }
-    let items: &[Py] = match document.get("items") {
-        Some(Py::List(items)) if items.iter().all(Py::is_dict) => items,
-        Some(_) => return Err("expected classification items to be objects".to_owned()),
-        None => &[],
-    };
-    let upstream_ref = format!("{}/{}", args.upstream_remote, args.upstream_branch);
-    let local = ls_tree_blobs(&root, &args.local_ref, false)?;
-    let upstream = ls_tree_blobs(&root, &upstream_ref, false)?;
-    let entries: Vec<_> = local
+fn build_entries<'a>(
+    local: &'a BTreeMap<String, String>,
+    upstream: &'a BTreeMap<String, String>,
+    items: &'a [Py],
+) -> Vec<Entry<'a>> {
+    local
         .iter()
         .filter_map(|(path, local_blob)| {
             let upstream_blob = upstream
@@ -372,7 +371,32 @@ pub fn run(args: SharedDiffBacklogArgs) -> Result<i32, String> {
                 upstream_blob,
             })
         })
-        .collect();
+        .collect()
+}
+
+pub fn run(args: SharedDiffBacklogArgs) -> Result<i32, String> {
+    let root = resolve_argument(Path::new(&args.repo_root))?;
+    ensure_remote(&root, &args.upstream_remote, &args.upstream_url)?;
+    if !args.no_fetch {
+        fetch_branch(&root, &args.upstream_remote, &args.upstream_branch)?;
+    }
+
+    let classification = resolve_argument(&py::join(&root, &args.classification))?;
+    let document = fs::read_to_string(&classification)
+        .map_err(|error| format!("{}: {error}", classification.display()))?;
+    let document = py::loads(&document)?;
+    if !document.is_dict() {
+        return Err("expected a classification object".to_owned());
+    }
+    let items: &[Py] = match document.get("items") {
+        Some(Py::List(items)) if items.iter().all(Py::is_dict) => items,
+        Some(_) => return Err("expected classification items to be objects".to_owned()),
+        None => &[],
+    };
+    let upstream_ref = format!("{}/{}", args.upstream_remote, args.upstream_branch);
+    let local = ls_tree_blobs(&root, &args.local_ref, false)?;
+    let upstream = ls_tree_blobs(&root, &upstream_ref, false)?;
+    let entries = build_entries(&local, &upstream, items);
     let summary = Summary::build(&entries);
     let generated = py::utc_isoformat();
     let refs = Py::dict([
@@ -406,4 +430,106 @@ pub fn run(args: SharedDiffBacklogArgs) -> Result<i32, String> {
     )?;
     println!("{}", py::dumps(&summary_json, None, true));
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn classification(path: &str, kind: &str) -> Py {
+        Py::dict([("path", path.into()), ("classification", kind.into())])
+    }
+
+    #[test]
+    fn longest_prefix_match_prefers_specific_prefix() {
+        let items = [
+            classification("tests", "functional"),
+            classification("tests/gateway", "policy_only"),
+        ];
+        let matching = longest_prefix_match("tests/gateway/test_slack.py", &items).unwrap();
+        assert!(std::ptr::eq(matching, &items[1]));
+    }
+
+    #[test]
+    fn fetch_branch_updates_tracking_ref_after_upstream_rewind() {
+        let upstream = tempfile::tempdir().unwrap();
+        let local = tempfile::tempdir().unwrap();
+        let git = |root: &Path, args: &[&str]| git_text(root, args, true).unwrap();
+        let upstream = upstream.path();
+        let local = local.path();
+        git(upstream, &["init", "-b", "main"]);
+        for message in ["first", "second"] {
+            git(
+                upstream,
+                &[
+                    "-c",
+                    "user.name=Fixture",
+                    "-c",
+                    "user.email=fixture@example.invalid",
+                    "commit",
+                    "--no-gpg-sign",
+                    "--allow-empty",
+                    "-m",
+                    message,
+                ],
+            );
+        }
+        git(local, &["init"]);
+        // Give this fixture no default fetch refspec, so only the explicit one can force the update.
+        git(
+            local,
+            &["config", "remote.upstream.url", upstream.to_str().unwrap()],
+        );
+        fetch_branch(local, "upstream", "main").unwrap();
+        let tracking = "refs/remotes/upstream/main";
+        let second = git(upstream, &["rev-parse", "HEAD"]);
+        assert_eq!(git(local, &["rev-parse", tracking]), second);
+        git(
+            upstream,
+            &["update-ref", "refs/heads/main", "HEAD^", &second],
+        );
+        fetch_branch(local, "upstream", "main").unwrap();
+        assert_eq!(
+            git(local, &["rev-parse", tracking]),
+            git(upstream, &["rev-parse", "HEAD"])
+        );
+    }
+
+    #[test]
+    fn only_shared_different_blobs_are_classified() {
+        let tree = |entries: &[(&str, &str)]| {
+            entries
+                .iter()
+                .map(|(path, blob)| (path.to_string(), blob.to_string()))
+                .collect()
+        };
+        let local = tree(&[
+            ("README.md", "local-readme"),
+            ("tests/gateway/test_a.py", "local-test"),
+            ("tests/unchanged.py", "same"),
+            ("only-local.py", "local-only"),
+        ]);
+        let upstream = tree(&[
+            ("README.md", "upstream-readme"),
+            ("tests/gateway/test_a.py", "upstream-test"),
+            ("tests/unchanged.py", "same"),
+            ("only-upstream.py", "upstream-only"),
+        ]);
+        let items = [
+            classification("README.md", "policy_only"),
+            classification("tests/gateway", "functional"),
+        ];
+        let entries = build_entries(&local, &upstream, &items);
+        let summary = Summary::build(&entries);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(summary.status_count("cleared_non_runtime"), 1);
+        assert_eq!(summary.status_count("pending_review"), 1);
+        assert_eq!(entries[0].path, "README.md");
+        assert_eq!(entries[0].status(), "cleared_non_runtime");
+        assert_eq!(entries[1].path, "tests/gateway/test_a.py");
+        assert_eq!(
+            entries[1].requirement(),
+            "rust_equivalent_or_contract_test_required"
+        );
+    }
 }

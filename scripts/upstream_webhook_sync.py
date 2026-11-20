@@ -917,7 +917,10 @@ def maybe_check_global_parity_drift(
             "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
             "generate-parity-matrix",
         ],
-        ["scripts/generate-workstream-status.py"],
+        [
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-workstream-status",
+        ],
         [
             "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
             "generate-test-intent-mapping",

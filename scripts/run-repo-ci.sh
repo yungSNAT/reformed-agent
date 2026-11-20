@@ -79,13 +79,13 @@ refresh_upstream
 run bash scripts/run-python-parity-governance-tests.sh
 
 run cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
-run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- generate-workstream-status --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
 run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
-run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
+run cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
 run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-global-parity-proof.py
 run python3 scripts/generate-release-readiness-summary.py --check
@@ -106,7 +106,6 @@ for script in \
   scripts/upstream_webhook_sync.py \
   scripts/publish_automation_summary.py \
   scripts/run-golden-parity-harness.py \
-  scripts/generate-shared-diff-backlog.py \
   scripts/generate-release-readiness-summary.py \
   scripts/release_secret_scan.py; do
   run python3 -m py_compile "${script}"

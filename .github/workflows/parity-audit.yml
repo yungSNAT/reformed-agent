@@ -28,13 +28,13 @@ jobs:
       - name: Generate global parity artifacts
         run: |
           cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref origin/main
-          python3 scripts/generate-workstream-status.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-workstream-status
           cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
-          python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
+          cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref origin/main --no-fetch
           python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
           python3 scripts/generate-global-parity-proof.py
           # Gate the proof's local metrics; the 4 upstream drift metrics are only reported.

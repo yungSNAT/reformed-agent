@@ -9,7 +9,8 @@ From repository root:
 
 ```bash
 cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix
-python3 scripts/generate-workstream-status.py
+cargo run --locked -q -p hermes-parity-tools -- generate-workstream-status
+cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog
 cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
 cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
