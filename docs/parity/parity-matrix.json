@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-11-20T11:23:05.033237+00:00",
+  "generated_at_utc": "2026-11-20T11:47:47.984629+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "b2adc38828e33e3016ccb1283ded234ab5bd9034",
+    "local_sha": "671f357b52b609e155d1727eb01265ce3c2d5c99",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
@@ -12,14 +12,14 @@
     "commits_ahead": 1641,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1370,
+    "local_patch_unique": 1371,
     "files_only_upstream": 24117,
     "files_only_local": 2038,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
     "tree_files_changed": 27392,
     "tree_insertions": 4528858,
-    "tree_deletions": 944165
+    "tree_deletions": 944162
   },
   "top_upstream_only": [
     {
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1370,
+    "local_patch_unique": 1371,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
