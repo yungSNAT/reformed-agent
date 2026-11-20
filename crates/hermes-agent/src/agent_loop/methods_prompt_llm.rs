@@ -84,46 +84,18 @@ impl AgentLoop {
         {
             messages.push(Message::system(ephemeral));
         }
-        self.apply_prompt_cache_markers(&mut messages);
         messages
     }
 
-    fn apply_prompt_cache_markers(&self, messages: &mut [Message]) {
-        use hermes_core::types::{CacheControl, CacheType, MessageRole};
-        if messages.is_empty() {
-            return;
-        }
-        let provider = self
-            .config
-            .provider
-            .as_deref()
-            .unwrap_or("")
-            .to_ascii_lowercase();
-        let is_anthropic = provider.contains("anthropic") || provider.contains("claude");
-        if !is_anthropic {
-            return;
-        }
-        for msg in messages.iter_mut() {
-            if msg.role == MessageRole::System {
-                msg.cache_control = Some(CacheControl {
-                    cache_type: CacheType::Persistent,
-                });
-                break;
+    fn tool_schemas_for_turn(&self, tools: Option<Vec<ToolSchema>>) -> Vec<ToolSchema> {
+        tools.unwrap_or_else(|| {
+            let mut registered = self.tool_registry.schemas();
+            let (provider, _) = self.extract_provider_and_model(&self.config.model);
+            if self.config.api_mode == ApiMode::AnthropicMessages || provider == "anthropic" {
+                registered.sort_by(|a, b| a.name.cmp(&b.name));
             }
-        }
-        let ephemeral_budget = 4;
-        let mut marked = 0;
-        for msg in messages.iter_mut().rev() {
-            if marked >= ephemeral_budget {
-                break;
-            }
-            if msg.role == MessageRole::User || msg.role == MessageRole::Assistant {
-                msg.cache_control = Some(CacheControl {
-                    cache_type: CacheType::Ephemeral,
-                });
-                marked += 1;
-            }
-        }
+            registered
+        })
     }
 
     /// Build the full system prompt including identity, memory, and plugin context.
