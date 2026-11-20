@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-20T21:22:10.526606+00:00`
+Generated: `2026-11-20T21:50:26.171733+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`f050d57f4104fe2e291d1dc6b1bbff4438cea7a6`)
+- Local ref: `HEAD` (`e43492bc053638926f612a4ea37b8f56a19e4aa6`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-20T21:22:10.526606+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1661 |
+| Commits ahead local (`local` ancestry only) | 1683 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1392 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1409 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2045 |
+| Files only in local tree | 2046 |
 | Shared files identical content | 565 |
 | Shared files different content | 1508 |
-| Total files changed (`local` vs `upstream`) | 27399 |
+| Total files changed (`local` vs `upstream`) | 27400 |
 | Insertions (`local` vs `upstream`) | 4528861 |
-| Deletions (`local` vs `upstream`) | 947253 |
+| Deletions (`local` vs `upstream`) | 949434 |
 
 ## Top 40 upstream-only buckets
 
@@ -121,7 +121,7 @@ Generated: `2026-11-20T21:22:10.526606+00:00`
 | --- | ---: |
 | `crates/hermes-cli` | 199 |
 | `skills/creative` | 142 |
-| `crates/hermes-tools` | 134 |
+| `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 119 |
 | `crates/hermes-gateway` | 114 |
 | `tests/run_agent` | 88 |
@@ -176,7 +176,7 @@ Generated: `2026-11-20T21:22:10.526606+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1392`
+- Local unique by patch-id: `1409`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
