@@ -154,6 +154,11 @@ impl SharedBrowser {
         drop_backend(state.backend.take()).await;
     }
 
+    #[cfg(test)]
+    pub(crate) fn backend_lock_available(&self) -> bool {
+        self.inner.state.try_lock().is_ok()
+    }
+
     /// Drop the backend if no call has finished within `max_idle`, unless it
     /// is in use. The next call builds a new one, except after a retired
     /// backend: the browser then refuses every call, so the refusal lasts.

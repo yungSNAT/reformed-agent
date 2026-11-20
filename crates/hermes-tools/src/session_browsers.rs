@@ -411,18 +411,22 @@ mod tests {
 
         let mut shutdown = std::pin::pin!(sessions.close_all());
         assert!(futures::poll!(shutdown.as_mut()).is_pending());
-        drop(active);
-
-        // Active releases have already queued for the mutex. A handler for a
-        // browser queued behind that batch must already refuse new work.
-        let mut releasing = 0;
+        // Every browser refuses new work whilst the active calls hold the locks.
         for browser in &browsers {
             match browser.lock().now_or_never() {
                 Some(Err(error)) => assert!(error.to_string().contains("browser was closed")),
                 Some(Ok(_)) => panic!("a queued browser was still open"),
-                None => releasing += 1,
+                None => panic!("a retired browser waited for the backend lock"),
             }
         }
+
+        // The first release batch has queued for its locks. Dropping the active
+        // calls wakes those releases and leaves the next batch's lock available.
+        drop(active);
+        let releasing = browsers
+            .iter()
+            .filter(|browser| !browser.backend_lock_available())
+            .count();
         assert_eq!(
             releasing, 4,
             "unexpected number of concurrent browser releases"
