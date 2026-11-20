@@ -112,62 +112,6 @@ fn official_pricing_db() -> HashMap<(&'static str, &'static str), PricingEntry> 
         );
     };
 
-    // Anthropic
-    add(
-        &mut db,
-        "anthropic",
-        "claude-opus-4-20250514",
-        15.0,
-        75.0,
-        Some(1.50),
-        Some(18.75),
-    );
-    add(
-        &mut db,
-        "anthropic",
-        "claude-sonnet-4-20250514",
-        3.0,
-        15.0,
-        Some(0.30),
-        Some(3.75),
-    );
-    add(
-        &mut db,
-        "anthropic",
-        "claude-3-5-sonnet-20241022",
-        3.0,
-        15.0,
-        Some(0.30),
-        Some(3.75),
-    );
-    add(
-        &mut db,
-        "anthropic",
-        "claude-3-5-haiku-20241022",
-        0.80,
-        4.0,
-        Some(0.08),
-        Some(1.00),
-    );
-    add(
-        &mut db,
-        "anthropic",
-        "claude-3-opus-20240229",
-        15.0,
-        75.0,
-        Some(1.50),
-        Some(18.75),
-    );
-    add(
-        &mut db,
-        "anthropic",
-        "claude-3-haiku-20240307",
-        0.25,
-        1.25,
-        Some(0.03),
-        Some(0.30),
-    );
-
     // OpenAI
     add(&mut db, "openai", "gpt-4o", 2.50, 10.0, Some(1.25), None);
     add(
@@ -307,6 +251,85 @@ pub fn resolve_billing_route(
     }
 }
 
+// Anthropic pricing in USD per 1M tokens. Source and access date:
+// https://platform.claude.com/docs/en/about-claude/pricing (20 November 2026).
+// The four columns are base input, output, cache reads and 5-minute writes.
+const ANTHROPIC_PRICES: &[(&str, [f64; 4])] = &[
+    ("claude-fable-5-2", [8.0, 40.0, 0.20, 10.0]),
+    ("claude-mythos-5-2", [8.0, 40.0, 0.20, 10.0]),
+    ("claude-fable-5-1", [10.0, 50.0, 0.25, 12.50]),
+    ("claude-mythos-5-1", [10.0, 50.0, 0.25, 12.50]),
+    ("claude-fable-5", [10.0, 50.0, 1.00, 12.50]),
+    ("claude-mythos-5", [10.0, 50.0, 1.00, 12.50]),
+    ("claude-opus-5-5", [4.0, 20.0, 0.20, 5.0]),
+    ("claude-opus-5", [5.0, 25.0, 0.50, 6.25]),
+    ("claude-opus-4-8", [5.0, 25.0, 0.50, 6.25]),
+    ("claude-opus-4-7", [5.0, 25.0, 0.50, 6.25]),
+    ("claude-opus-4-6", [5.0, 25.0, 0.50, 6.25]),
+    ("claude-opus-4-5", [5.0, 25.0, 0.50, 6.25]),
+    ("claude-opus-4-1", [15.0, 75.0, 1.50, 18.75]),
+    ("claude-opus-4", [15.0, 75.0, 1.50, 18.75]),
+    ("claude-sonnet-5-5", [2.0, 10.0, 0.10, 2.50]),
+    ("claude-sonnet-5", [2.0, 10.0, 0.20, 2.50]),
+    ("claude-sonnet-4-6", [3.0, 15.0, 0.30, 3.75]),
+    ("claude-sonnet-4-5", [3.0, 15.0, 0.30, 3.75]),
+    ("claude-sonnet-4", [3.0, 15.0, 0.30, 3.75]),
+    ("claude-haiku-5-5", [0.10, 0.50, 0.01, 0.125]),
+    ("claude-haiku-4-5", [1.0, 5.0, 0.10, 1.25]),
+    // Historical snapshot rates retained for old usage and cloud routes.
+    ("claude-3-5-sonnet", [3.0, 15.0, 0.30, 3.75]),
+    ("claude-3-5-haiku", [0.80, 4.0, 0.08, 1.00]),
+    ("claude-3-opus", [15.0, 75.0, 1.50, 18.75]),
+    ("claude-3-haiku", [0.25, 1.25, 0.03, 0.30]),
+];
+
+/// Cache read and five-minute write ratios for custom Anthropic-compatible models.
+pub const ANTHROPIC_STANDARD_CACHE_RATIOS: (f64, f64) = (0.10, 1.25);
+
+/// Look up the Anthropic list price for one prompt, including any cached input.
+/// Cache write estimates use the default five-minute TTL.
+pub fn anthropic_pricing_for_prompt(model_name: &str, prompt_tokens: u64) -> Option<PricingEntry> {
+    let lower = model_name.trim().to_ascii_lowercase();
+    let bare = lower.rsplit('/').next().unwrap_or(&lower);
+    let bare = bare.strip_prefix("anthropic:").unwrap_or(bare);
+    let cloud = bare.strip_prefix("anthropic.").or_else(|| {
+        let (region, name) = bare.split_once(".anthropic.")?;
+        matches!(region, "global" | "ap" | "apac" | "au" | "eu" | "jp" | "us").then_some(name)
+    });
+    let bare = cloud.map_or(bare, |model| {
+        model
+            .strip_suffix("-v1:0")
+            .or_else(|| model.strip_suffix("-v2:0"))
+            .unwrap_or(model)
+    });
+    let bare = bare.strip_suffix("-latest").unwrap_or(bare);
+    let family = match bare.rsplit_once(['-', '@']) {
+        Some((family, suffix))
+            if suffix.len() == 8 && suffix.bytes().all(|b| b.is_ascii_digit()) =>
+        {
+            family
+        }
+        _ => bare,
+    };
+    let family = family.replace('.', "-");
+    let [input, output, read, write] = if family == "claude-haiku-5-5" && prompt_tokens > 100_000 {
+        [0.50, 2.50, 0.05, 0.625]
+    } else {
+        ANTHROPIC_PRICES
+            .iter()
+            .find(|(model, _)| *model == family)?
+            .1
+    };
+    Some(PricingEntry {
+        input_cost_per_million: Some(input),
+        output_cost_per_million: Some(output),
+        cache_read_cost_per_million: Some(read),
+        cache_write_cost_per_million: Some(write),
+        request_cost: None,
+        source: CostSource::OfficialDocsSnapshot,
+    })
+}
+
 /// Look up pricing for a model.
 pub fn get_pricing_entry(
     model_name: &str,
@@ -324,6 +347,10 @@ pub fn get_pricing_entry(
             request_cost: None,
             source: CostSource::None,
         });
+    }
+
+    if route.provider == "anthropic" {
+        return anthropic_pricing_for_prompt(&route.model, 0);
     }
 
     let db = official_pricing_db();
@@ -361,7 +388,12 @@ pub fn calculate_cost(
         };
     }
 
-    let entry = match get_pricing_entry(model_name, provider, base_url) {
+    let entry = if route.provider == "anthropic" {
+        anthropic_pricing_for_prompt(&route.model, usage.prompt_tokens())
+    } else {
+        get_pricing_entry(model_name, provider, base_url)
+    };
+    let entry = match entry {
         Some(e) => e,
         None => {
             return CostResult {
@@ -583,6 +615,64 @@ pub fn normalize_usage(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anthropic_model_snapshot_ids_select_the_whole_version() {
+        for (model, expected_read) in [
+            ("claude-fable-5-2", 0.20),
+            ("global.anthropic.claude-fable-5-2", 0.20),
+            ("claude-fable-5-2@20261001", 0.20),
+            ("anthropic/claude-mythos-5.1", 0.25),
+            ("claude-fable-5-1-20261001", 0.25),
+            ("claude-fable-5-20260101", 1.00),
+            ("anthropic:claude-sonnet-5.5", 0.10),
+            ("claude-sonnet-5", 0.20),
+            ("anthropic.claude-haiku-4-5-20251001-v1:0", 0.10),
+            ("us.anthropic.claude-haiku-4-5-20251001-v1:0", 0.10),
+            ("ap.anthropic.claude-3-5-sonnet-20241022-v2:0", 0.30),
+            ("apac.anthropic.claude-haiku-4-5-20251001-v1:0", 0.10),
+            ("anthropic.claude-3-5-sonnet-20241022-v2:0", 0.30),
+            ("claude-opus-5-5", 0.20),
+            ("claude-opus-5", 0.50),
+        ] {
+            let entry = get_pricing_entry(model, Some("anthropic"), None)
+                .unwrap_or_else(|| panic!("missing pricing for {model}"));
+            assert_eq!(
+                entry.cache_read_cost_per_million,
+                Some(expected_read),
+                "{model}"
+            );
+        }
+        for model in [
+            "claude-fable-5-20",
+            "claude-opus-5-50",
+            "other-claude-opus-5",
+        ] {
+            assert!(
+                get_pricing_entry(model, Some("anthropic"), None).is_none(),
+                "{model}"
+            );
+        }
+    }
+
+    #[test]
+    fn haiku_prompt_size_includes_all_cached_tokens_in_the_rate_tier() {
+        let mut usage = CanonicalUsage {
+            input_tokens: 10_000,
+            cache_read_tokens: 80_000,
+            cache_write_tokens: 10_000,
+            output_tokens: 10_000,
+            ..CanonicalUsage::default()
+        };
+        let estimate = |usage: &CanonicalUsage| {
+            calculate_cost("claude-haiku-5-5", usage, Some("anthropic"), None)
+                .amount_usd
+                .expect("known Haiku pricing")
+        };
+        assert!((estimate(&usage) - 0.00805).abs() < 1e-9);
+        usage.cache_read_tokens += 1;
+        assert!((estimate(&usage) - 0.040_250_05).abs() < 1e-9);
+    }
 
     #[test]
     fn test_calculate_cost_openai() {
