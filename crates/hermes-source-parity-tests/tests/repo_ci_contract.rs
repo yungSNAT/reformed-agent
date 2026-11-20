@@ -85,6 +85,7 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
         "cargo test -p hermes-source-parity-tests --test rust_module_size_policy -- --nocapture",
         "bash scripts/check-runtime-placeholders.sh",
         "cargo test --workspace",
+        "cargo run --locked -q -p hermes-parity-tools -- check-fork-carry",
         "cargo test -p hermes-parity-tests",
         "cargo test -p hermes-source-parity-tests --test cli_command_contract",
         "cargo test -p hermes-protocol-parity-tests --test protocol_differential_contracts",

@@ -55,6 +55,9 @@ jobs:
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
           printf '\n[Upstream refresh plan](%s/%s/blob/%s/docs/upstream-sync.md#subsystem-refresh-for-v0232)\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Report fork carry contracts
+        shell: bash
+        run: cargo run --locked -q -p hermes-parity-tools -- check-fork-carry | tee -a "$GITHUB_STEP_SUMMARY"
       - name: Upstream surface coverage report
         run: |
           report=.sync-reports/upstream-surface-coverage-gate.json

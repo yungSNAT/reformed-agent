@@ -54,6 +54,8 @@ jobs:
         run: bash scripts/check-runtime-placeholders.sh
       - name: Tests
         run: cargo test --workspace
+      - name: Verify fork carry contracts
+        run: cargo run --locked -q -p hermes-parity-tools -- check-fork-carry
       - name: Parity fixture tests
         run: cargo test -p hermes-parity-tests
       - name: CLI command/action parity contract

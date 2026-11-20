@@ -7,6 +7,7 @@ mod adapter_matrix;
 mod coverage_audit;
 mod coverage_tests;
 mod divergence;
+mod fork_carry;
 mod git;
 mod parity_matrix;
 mod report_io;
@@ -67,6 +68,8 @@ enum Command {
         infer_long_args = true
     )]
     WorkstreamStatus(workstream_status::WorkstreamStatusArgs),
+    /// Verify the required fork behaviour contracts by executing their exact Rust tests.
+    CheckForkCarry(fork_carry::ForkCarryArgs),
 }
 
 fn main() {
@@ -81,6 +84,7 @@ fn main() {
         Command::ParityMatrix(args) => parity_matrix::run(args),
         Command::SharedDiffBacklog(args) => shared_diff_backlog::run(args),
         Command::WorkstreamStatus(args) => workstream_status::run(args),
+        Command::CheckForkCarry(args) => fork_carry::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
