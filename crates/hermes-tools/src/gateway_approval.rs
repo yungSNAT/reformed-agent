@@ -43,11 +43,36 @@ where
     Arc::new(move |text| Box::pin(send(text)))
 }
 
+/// Revocable permission scope shared by the turns of one gateway session generation.
+#[derive(Clone, Debug, Default)]
+pub struct SessionGeneration(Arc<Mutex<bool>>);
+
+impl SessionGeneration {
+    /// Revoke the old scope before clearing session permission state.
+    pub fn retire(&self) {
+        *self.0.lock().unwrap_or_else(|e| e.into_inner()) = true;
+    }
+
+    pub(crate) fn while_current<T>(&self, action: impl FnOnce() -> T) -> Option<T> {
+        let retired = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        (!*retired).then(action)
+    }
+}
+
+impl PartialEq for SessionGeneration {
+    fn eq(&self, other: &Self) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for SessionGeneration {}
+
 /// The session and requesting user of one gateway turn.
 #[derive(Clone)]
 pub struct GatewayApprovalBinding {
     pub session_key: String,
     pub user_id: String,
+    pub generation: SessionGeneration,
     pub notify: Notify,
 }
 
@@ -105,10 +130,18 @@ async fn authorise_at(
     params: &Value,
     now: Instant,
 ) -> Result<(), String> {
-    let Some((id, prompt)) = consume_or_reserve(binding, command, params, now)? else {
+    let result = binding
+        .generation
+        .while_current(|| consume_or_reserve(binding, command, params, now))
+        .ok_or_else(|| refusal("the conversation has ended", command))?;
+    let Some((id, prompt)) = result? else {
         return Ok(());
     };
-    if (binding.notify)(prompt).await {
+    let shown = (binding.notify)(prompt).await;
+    if binding.generation.while_current(|| ()).is_none() {
+        return Err(refusal("the conversation has ended", command));
+    }
+    if shown {
         return Err("Command requires explicit user approval and was not executed. The user has been shown it and can reply /approve or /deny. Do NOT run anything else to the same end. If they approve, you will be asked to run it again: then run exactly the same command with the same parameters.".to_string());
     }
     // Withdraw the request, and any grant made from it, which the user never saw.
@@ -325,6 +358,7 @@ mod tests {
         let binding = GatewayApprovalBinding {
             session_key: session_key.to_string(),
             user_id: user_id.to_string(),
+            generation: Default::default(),
             notify: notify_with(move |text| {
                 sink.lock().unwrap().push(text);
                 async move { sent }
@@ -339,6 +373,28 @@ mod tests {
 
     fn rm(path: &str) -> Value {
         json!({"command": format!("rm -rf {path}"), "workdir": "/srv"})
+    }
+
+    #[tokio::test]
+    async fn retired_turn_cannot_mutate_replacement_permissions() {
+        let key = "t:replacement";
+        let command = "echo fixture";
+        let params = json!({"command": command});
+        let (old, old_prompts) = binding(key, "alice");
+        old.generation.retire();
+        clear(key);
+
+        let error = authorise(&old, command, &params).await.unwrap_err();
+        assert!(error.contains("conversation has ended"));
+        assert_eq!(approve(key, "alice"), Resolution::NothingPending);
+        assert!(old_prompts.lock().unwrap().is_empty());
+
+        let (current, _) = binding(key, "alice");
+        assert!(authorise(&current, command, &params).await.is_err());
+        assert_eq!(approve(key, "alice"), Resolution::Resolved);
+        assert!(authorise(&old, command, &params).await.is_err());
+        assert_eq!(authorise(&current, command, &params).await, Ok(()));
+        clear(key);
     }
 
     #[tokio::test]

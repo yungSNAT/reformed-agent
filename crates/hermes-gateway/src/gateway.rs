@@ -208,6 +208,8 @@ pub struct GatewayRuntimeContext {
     pub session_key: String,
     /// Browser tools pinned to the session generation admitted for this turn.
     pub browser: Option<BrowserLease>,
+    /// Permission scope of the conversation that admitted this turn.
+    pub session_generation: Option<SessionGeneration>,
     pub platform: String,
     pub chat_id: String,
     pub thread_id: Option<String>,

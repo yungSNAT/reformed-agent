@@ -1216,12 +1216,25 @@ impl ApprovalManager {
     /// Check approval using process environment toggles such as
     /// `HERMES_YOLO_MODE` and `SUDO_PASSWORD`.
     pub fn check_approval_from_env(&self, command: &str, environment: &str) -> ApprovalDecision {
+        self.check_env_policy(command, environment, current_session_yolo_from_env())
+    }
+
+    pub(crate) fn check_gateway_approval(&self, command: &str, key: &str) -> ApprovalDecision {
+        self.check_env_policy(command, "local", is_session_yolo_enabled(key))
+    }
+
+    fn check_env_policy(
+        &self,
+        command: &str,
+        environment: &str,
+        session_yolo: bool,
+    ) -> ApprovalDecision {
         let cron_approve =
             env_var_enabled("HERMES_CRON_SESSION") && cron_approval_mode_approves_from_env();
         self.check_approval_with_context(
             command,
             environment,
-            yolo_mode_from_env() || current_session_yolo_from_env() || cron_approve,
+            yolo_mode_from_env() || session_yolo || cron_approve,
             has_sudo_password_env(),
         )
     }

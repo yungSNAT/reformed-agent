@@ -229,7 +229,20 @@ impl ToolHandler for TerminalHandler {
             }
         }
 
-        match self.approval.check_approval_from_env(command, "local") {
+        let decision = if let Some(binding) = &self.gateway_approval {
+            binding
+                .generation
+                .while_current(|| {
+                    self.approval
+                        .check_gateway_approval(command, &binding.session_key)
+                })
+                .ok_or_else(|| {
+                    ToolError::ExecutionFailed("The gateway conversation has ended.".into())
+                })?
+        } else {
+            self.approval.check_approval_from_env(command, "local")
+        };
+        match decision {
             ApprovalDecision::Denied => {
                 return Err(ToolError::ExecutionFailed(format!(
                     "Command denied by security policy: {}",

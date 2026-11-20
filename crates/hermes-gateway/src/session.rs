@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use hermes_config::session::{SessionResetPolicy, SessionType};
 use hermes_core::types::Message;
+pub(crate) use hermes_tools::gateway_approval::SessionGeneration;
 use hermes_tools::session_browsers::{BrowserLease, BrowserReleaseSlot, BrowserRetirer};
 
 // ---------------------------------------------------------------------------
@@ -277,15 +278,6 @@ pub(crate) struct SessionAdmission {
     pub(crate) generation: SessionGeneration,
 }
 
-#[derive(Clone, Copy, Eq, PartialEq)]
-pub(crate) struct SessionGeneration(Uuid);
-
-impl SessionGeneration {
-    fn new() -> Self {
-        Self(Uuid::new_v4())
-    }
-}
-
 struct SessionEntry {
     session: Session,
     generation: SessionGeneration,
@@ -297,7 +289,7 @@ impl SessionEntry {
         let mut previous = self.session.clone();
         previous.messages = messages;
         self.session.reset_history();
-        self.generation = SessionGeneration::new();
+        self.generation = SessionGeneration::default();
         previous
     }
 
@@ -305,7 +297,7 @@ impl SessionEntry {
         self.session.messages = messages;
         self.session.title = normalize_session_title(title.as_deref());
         self.session.touch();
-        self.generation = SessionGeneration::new();
+        self.generation = SessionGeneration::default();
     }
 }
 
@@ -326,9 +318,16 @@ impl<'a> SessionBoundary<'a> {
 
     // Called under the session write lock. A full queue leaves the session
     // untouched, so the caller can wait outside the lock and recheck policy.
-    fn try_finish(&mut self, session_key: &str) -> Result<bool, &'static str> {
+    fn try_finish(
+        &mut self,
+        session_key: &str,
+        generation: Option<&SessionGeneration>,
+    ) -> Result<bool, &'static str> {
         if !self.try_retire_browser(session_key)? {
             return Ok(false);
+        }
+        if let Some(generation) = generation {
+            generation.retire();
         }
         (self.clear_approvals)(session_key);
         Ok(true)
@@ -471,7 +470,7 @@ impl SessionManager {
             if let Some(entry) = sessions.get_mut(&session_key) {
                 let session = &mut entry.session;
                 let transition = if session.should_reset() {
-                    if !boundary.try_finish(&session_key)? {
+                    if !boundary.try_finish(&session_key, Some(&entry.generation))? {
                         drop(sessions);
                         boundary.wait_for_slot().await?;
                         continue;
@@ -481,7 +480,7 @@ impl SessionManager {
                     previous.messages = messages;
                     session.created_at = Timestamp::now();
                     session.last_active_at = Timestamp::now();
-                    entry.generation = SessionGeneration::new();
+                    entry.generation = SessionGeneration::default();
                     SessionTransition::PolicyReset(previous)
                 } else {
                     session.touch();
@@ -491,7 +490,7 @@ impl SessionManager {
                     session: session.clone(),
                     transition,
                     browser: boundary.pin(&session_key),
-                    generation: entry.generation,
+                    generation: entry.generation.clone(),
                 });
             }
 
@@ -514,12 +513,12 @@ impl SessionManager {
         session_key: &str,
         session: &Session,
     ) -> SessionGeneration {
-        let generation = SessionGeneration::new();
+        let generation = SessionGeneration::default();
         sessions.insert(
             session_key.to_string(),
             SessionEntry {
                 session: session.clone(),
-                generation,
+                generation: generation.clone(),
             },
         );
         user_sessions
@@ -537,6 +536,8 @@ impl SessionManager {
     ) -> Option<(Session, Session)> {
         let mut sessions = self.sessions.write().await;
         let entry = sessions.get_mut(session_id)?;
+        entry.generation.retire();
+        hermes_tools::approval::clear_session(session_id);
         Some((entry.reset(), entry.session.clone()))
     }
 
@@ -555,12 +556,12 @@ impl SessionManager {
             let current = sessions.get_mut(&session_key);
             // Waiting for queue capacity must not let this request reset a
             // different conversation in the same chat.
-            let generation = current.as_ref().map(|entry| entry.generation);
-            if *initial_generation.get_or_insert(generation) != generation {
+            let generation = current.as_ref().map(|entry| entry.generation.clone());
+            if initial_generation.get_or_insert_with(|| generation.clone()) != &generation {
                 return Err("Session changed before reset");
             }
             if let Some(entry) = current {
-                if boundary.try_finish(&session_key)? {
+                if boundary.try_finish(&session_key, Some(&entry.generation))? {
                     return Ok((Some(entry.reset()), entry.session.clone()));
                 }
                 drop(sessions);
@@ -570,7 +571,7 @@ impl SessionManager {
             // Hold the user index before committing so a cancelled first reset
             // cannot clear approvals or retire a lease without creating the session.
             let mut user_sessions = self.user_sessions.write().await;
-            if !boundary.try_finish(&session_key)? {
+            if !boundary.try_finish(&session_key, None)? {
                 drop(user_sessions);
                 drop(sessions);
                 boundary.wait_for_slot().await?;
@@ -611,6 +612,31 @@ impl SessionManager {
         }
     }
 
+    pub(crate) async fn update_turn_messages<T>(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        update: impl FnOnce(&mut Vec<Message>) -> T,
+    ) -> Option<T> {
+        let mut sessions = self.sessions.write().await;
+        let entry = sessions.get_mut(session_key)?;
+        if &entry.generation != generation {
+            return None;
+        }
+        entry.session.last_active_at = Timestamp::now();
+        Some(update(&mut entry.session.messages))
+    }
+
+    pub(crate) async fn turn_messages(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+    ) -> Option<Vec<Message>> {
+        let sessions = self.sessions.read().await;
+        let entry = sessions.get(session_key)?;
+        (&entry.generation == generation).then(|| entry.session.messages.clone())
+    }
+
     /// Retrieve all messages for a session.
     pub async fn get_messages(&self, session_id: &str) -> Vec<Message> {
         let sessions = self.sessions.read().await;
@@ -642,6 +668,8 @@ impl SessionManager {
     ) -> bool {
         let mut sessions = self.sessions.write().await;
         if let Some(entry) = sessions.get_mut(session_id) {
+            entry.generation.retire();
+            hermes_tools::approval::clear_session(session_id);
             entry.replace_context(messages, title);
             return true;
         }
@@ -659,9 +687,10 @@ impl SessionManager {
         let Some(entry) = sessions.get_mut(session_key) else {
             return false;
         };
-        if Some(entry.generation) != expected {
+        if Some(&entry.generation) != expected.as_ref() {
             return false;
         }
+        entry.generation.retire();
         hermes_tools::approval::clear_session(session_key);
         entry.replace_context(messages, title);
         true
@@ -761,6 +790,8 @@ impl SessionManager {
     pub async fn remove_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
         if let Some(entry) = sessions.remove(session_id) {
+            entry.generation.retire();
+            hermes_tools::approval::clear_session(session_id);
             // Clean up user_sessions index
             let mut user_sessions = self.user_sessions.write().await;
             if let Some(ids) = user_sessions.get_mut(&entry.session.user_id) {
@@ -784,7 +815,9 @@ impl SessionManager {
                 session.messages.clear();
                 session.created_at = Timestamp::now();
                 session.last_active_at = Timestamp::now();
-                entry.generation = SessionGeneration::new();
+                entry.generation.retire();
+                hermes_tools::approval::clear_session(session_id);
+                entry.generation = SessionGeneration::default();
                 return true;
             }
         }
@@ -813,7 +846,14 @@ impl SessionManager {
     /// Returns all sessions that were flushed.
     pub async fn flush_memories(&self) -> Vec<Session> {
         let mut sessions = self.sessions.write().await;
-        let all = sessions.drain().map(|(_, entry)| entry.session).collect();
+        let all = sessions
+            .drain()
+            .map(|(key, entry)| {
+                entry.generation.retire();
+                hermes_tools::approval::clear_session(&key);
+                entry.session
+            })
+            .collect();
 
         let mut user_sessions = self.user_sessions.write().await;
         user_sessions.clear();
@@ -854,6 +894,7 @@ impl SessionManager {
         let mut expired = Vec::with_capacity(stale_ids.len());
         for id in stale_ids {
             if let Some(entry) = sessions.remove(&id) {
+                entry.generation.retire();
                 let session = entry.session;
                 clear_approvals(&id);
                 if let Some(ids) = user_sessions.get_mut(&session.user_id) {
@@ -866,19 +907,20 @@ impl SessionManager {
         expired
     }
 
-    pub(crate) async fn idle_session_keys(&self) -> Vec<String> {
+    pub(crate) async fn idle_session_generations(&self) -> Vec<(String, SessionGeneration)> {
         self.sessions
             .read()
             .await
             .iter()
             .filter(|(_, entry)| entry.session.should_reset())
-            .map(|(key, _)| key.clone())
+            .map(|(key, entry)| (key.clone(), entry.generation.clone()))
             .collect()
     }
 
     pub(crate) async fn expire_idle_session_with_browser(
         &self,
         key: &str,
+        generation: &SessionGeneration,
         browsers: &BrowserRetirer,
         clear_approvals: fn(&str),
     ) -> Result<Option<Session>, &'static str> {
@@ -889,11 +931,11 @@ impl SessionManager {
                 return Ok(None);
             };
             let session = &entry.session;
-            if !session.should_reset() {
+            if &entry.generation != generation || !session.should_reset() {
                 return Ok(None);
             }
             let mut user_sessions = self.user_sessions.write().await;
-            if !boundary.try_finish(key)? {
+            if !boundary.try_finish(key, Some(&entry.generation))? {
                 drop(user_sessions);
                 drop(sessions);
                 boundary.wait_for_slot().await?;

@@ -451,6 +451,7 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ResetSession(reply) => {
+                let registry = self.hook_registry.read().await.clone();
                 let (old_session, reset_session) = self
                     .session_manager
                     .reset_session_for_command(
@@ -461,48 +462,17 @@ impl Gateway {
                     )
                     .await
                     .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-                if let Some(old_session) = old_session {
-                    let ended = Arc::new(old_session);
-                    self.emit_finalized_session_event(
-                        "session:end",
-                        serde_json::json!({
-                            "platform": incoming.platform,
-                            "chat_id": incoming.chat_id,
-                            "user_id": incoming.user_id,
-                            "session_id": session_key,
-                            "logical_session_id": ended.id
-                        }),
-                        ended.clone(),
-                    )
-                    .await;
-                    self.emit_session_finalize(session_key, ended, "reset")
-                        .await;
-                } else {
-                    self.emit_hook_event(
-                        "session:start",
-                        serde_json::json!({
-                            "platform": incoming.platform,
-                            "chat_id": incoming.chat_id,
-                            "user_id": incoming.user_id,
-                            "session_id": session_key,
-                            "reason": "new"
-                        }),
-                    )
-                    .await;
+                if let Some(registry) = registry {
+                    let session_key = session_key.to_owned();
+                    let incoming = incoming.clone();
+                    // A committed reset owns its complete lifecycle even if
+                    // the adapter request stops waiting for the reply.
+                    if let Err(error) = tokio::spawn(async move {
+                        Self::run_reset_lifecycle(&registry, &incoming, &session_key, old_session, reset_session).await;
+                    }).await {
+                        tracing::warn!(%error, "Gateway reset lifecycle task failed");
+                    }
                 }
-                self.emit_hook_event(
-                    "session:reset",
-                    serde_json::json!({
-                        "platform": incoming.platform,
-                        "chat_id": incoming.chat_id,
-                        "user_id": incoming.user_id,
-                        "session_id": session_key,
-                        "logical_session_id": reset_session.id
-                    }),
-                )
-                .await;
-                self.emit_session_reset_lifecycle(session_key, &reset_session, "reset")
-                    .await;
                 self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
                     .await?;
                 Ok(true)
@@ -858,6 +828,7 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::BackgroundTask { prompt } => {
+                let Some(generation) = generation.as_ref() else { return Ok(true); };
                 let handled = self
                     .handle_background_command(
                         incoming,
@@ -865,11 +836,13 @@ impl Gateway {
                         &prompt,
                         false,
                         browser.cloned(),
+                        generation,
                     )
                     .await?;
                 Ok(handled)
             }
             GatewayCommandResult::BtwTask { prompt } => {
+                let Some(generation) = generation.as_ref() else { return Ok(true); };
                 let handled = self
                     .handle_background_command(
                         incoming,
@@ -877,6 +850,7 @@ impl Gateway {
                         &prompt,
                         true,
                         browser.cloned(),
+                        generation,
                     )
                     .await?;
                 Ok(handled)
@@ -909,13 +883,13 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::Retry => {
-                let mut messages = self.session_manager.get_messages(session_key).await;
-                if matches!(
-                    messages.last().map(|m| m.role),
-                    Some(MessageRole::Assistant)
-                ) {
-                    messages.pop();
-                }
+                let Some(generation) = generation.as_ref() else { return Ok(true); };
+                let Some(messages) = self.session_manager.update_turn_messages(session_key, generation, |messages| {
+                    if messages.last().is_some_and(|message| message.role == MessageRole::Assistant) {
+                        messages.pop();
+                    }
+                    messages.clone()
+                }).await else { return Ok(true); };
                 if messages.is_empty() {
                     self.send_message(
                         &incoming.platform,
@@ -926,10 +900,9 @@ impl Gateway {
                     .await?;
                     return Ok(true);
                 }
-                self.session_manager
-                    .replace_messages(session_key, messages.clone())
-                    .await;
-                self.route_non_streaming(incoming, messages, session_key, browser.cloned())
+                self.route_non_streaming(
+                    incoming, messages, session_key, browser.cloned(), generation,
+                )
                     .await?;
                 Ok(true)
             }

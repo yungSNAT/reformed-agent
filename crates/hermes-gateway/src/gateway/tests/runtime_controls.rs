@@ -1481,6 +1481,7 @@ async fn a_command_needing_confirmation_runs_once_after_its_requester_approves()
                 .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {
                     session_key: ctx.session_key.clone(),
                     user_id: ctx.user_id.clone(),
+                    generation: ctx.session_generation.unwrap(),
                     notify: hermes_tools::gateway_approval::notify_with(move |text| {
                         shown.lock().unwrap().push(text);
                         async { true }

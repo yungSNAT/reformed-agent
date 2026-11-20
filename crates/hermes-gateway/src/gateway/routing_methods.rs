@@ -254,7 +254,7 @@ impl Gateway {
                     &text,
                     result,
                     admission.browser.as_ref(),
-                    Some(admission.generation),
+                    Some(admission.generation.clone()),
                 )
                 .await?
             {
@@ -264,6 +264,26 @@ impl Gateway {
                 }
             }
         }
+
+        let agent_text = agent_text_override.as_deref().unwrap_or(&incoming.text);
+        let enriched_text =
+            self.enrich_message_with_transcription(&self.enrich_message_with_vision(agent_text));
+        self.maybe_apply_smart_model_routing(&session_key, &enriched_text)
+            .await;
+
+        // Append and snapshot together so a delayed turn cannot enter the
+        // replacement conversation or receive its messages.
+        let Some(messages) = self
+            .session_manager
+            .update_turn_messages(&session_key, &admission.generation, |messages| {
+                messages.push(Message::user(enriched_text));
+                messages.clone()
+            })
+            .await
+        else {
+            return Ok(None);
+        };
+        self.bump_input_usage(&session_key, agent_text.chars().count()).await;
 
         let reaction_plan = Self::reaction_lifecycle_plan(incoming, access_policy.as_ref());
         let reaction_adapter = if reaction_plan.is_some() {
@@ -290,37 +310,24 @@ impl Gateway {
             }
         }
 
-        let agent_text = agent_text_override.as_deref().unwrap_or(&incoming.text);
-        let enriched_text =
-            self.enrich_message_with_transcription(&self.enrich_message_with_vision(agent_text));
-        self.maybe_apply_smart_model_routing(&session_key, &enriched_text)
-            .await;
-
-        // 3. Add the user message to the session
-        self.session_manager
-            .add_message(&session_key, Message::user(enriched_text))
-            .await;
-        self.bump_input_usage(&session_key, agent_text.chars().count())
-            .await;
-
-        // 4. Get all session messages for the agent loop
-        let messages = self.session_manager.get_messages(&session_key).await;
-
-        // 5. Process through agent loop (streaming or non-streaming)
         let turn_started = std::time::Instant::now();
         {
             let mut busy = self.busy_sessions.write().await;
             busy.mark_active(&session_key, None);
         }
         let processing_result = if self.config.streaming_enabled {
-            self.route_streaming(incoming, messages, &session_key, admission.browser)
+            self.route_streaming(incoming, messages, &session_key, admission.browser, &admission.generation)
                 .await
         } else {
-            self.route_non_streaming(incoming, messages, &session_key, admission.browser)
+            self.route_non_streaming(incoming, messages, &session_key, admission.browser, &admission.generation)
                 .await
         };
         // A command approval is good only for the turn that retries it.
-        hermes_tools::gateway_approval::end_turn(&session_key, turn_started);
+        self.session_manager
+            .with_current_generation(&session_key, Some(admission.generation), || {
+                hermes_tools::gateway_approval::end_turn(&session_key, turn_started);
+            })
+            .await;
 
         if let (Some(adapter), Some(message_id), Some(plan)) = (
             &reaction_adapter,

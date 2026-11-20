@@ -20,7 +20,80 @@ impl HookHandler for PauseHook {
 }
 
 #[tokio::test]
-async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
+async fn completed_old_turn_leaves_replacement_transcript_intact() {
+    for streaming_enabled in [false, true] {
+        let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+        let mut dm = DmManager::with_pair_behavior();
+        dm.authorize_user("user1");
+        let gateway = Gateway::new(
+            manager.clone(),
+            dm,
+            GatewayConfig {
+                streaming_enabled,
+                ..GatewayConfig::default()
+            },
+        );
+        gateway
+            .register_adapter(
+                "test",
+                Arc::new(TestAdapter {
+                    messages: Arc::default(),
+                }),
+            )
+            .await;
+        let pause = Arc::new(PauseHook::default());
+        let handler: MessageHandlerWithContext = Arc::new({
+            let pause = pause.clone();
+            move |_, _| {
+                let pause = pause.clone();
+                Box::pin(async move {
+                    pause.entered.notify_one();
+                    pause.resume.notified().await;
+                    Ok("old answer".into())
+                })
+            }
+        });
+        gateway
+            .set_message_handler_with_context(handler.clone())
+            .await;
+        gateway
+            .set_streaming_handler_with_context(Arc::new(move |messages, context, _| {
+                handler(messages, context)
+            }))
+            .await;
+
+        let incoming = test_incoming("old question");
+        let key =
+            manager.compose_session_key(&incoming.platform, &incoming.chat_id, &incoming.user_id);
+        let mut old = std::pin::pin!(gateway.route_message(&incoming));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                () = pause.entered.notified() => {}
+                result = &mut old => panic!("turn completed before its model response: {result:?}"),
+            }
+            gateway
+                .route_message(&test_incoming("/reset"))
+                .await
+                .unwrap();
+            manager
+                .add_message(&key, Message::user("replacement question"))
+                .await;
+            pause.resume.notify_one();
+            old.await.unwrap();
+        })
+        .await
+        .expect("turn and reset did not finish");
+        let messages = manager.get_messages(&key).await;
+        assert_eq!(messages.len(), 1, "streaming_enabled={streaming_enabled}");
+        assert_eq!(
+            messages[0].content,
+            Message::user("replacement question").content
+        );
+    }
+}
+
+#[tokio::test]
+async fn committed_reset_delivers_all_hooks_after_request_cancellation() {
     use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
 
     let manager = Arc::new(SessionManager::new(SessionConfig::default()));
@@ -29,7 +102,13 @@ async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
     let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
     let pause = Arc::new(PauseHook::default());
     let mut hooks = HookRegistry::new();
-    hooks.register_in_process("on_session_reset", pause.clone());
+    let completed = Arc::new(PauseHook::default());
+    let seen = Arc::new(Mutex::new(Vec::new()));
+    hooks.register_in_process("session:end", pause.clone());
+    for event in ["on_session_finalize", "session:reset", "on_session_reset"] {
+        hooks.register_in_process(event, Arc::new(RecordingHook { seen: seen.clone() }));
+    }
+    hooks.register_in_process("on_session_reset", completed.clone());
     gateway.set_hook_registry(Arc::new(hooks)).await;
     let mut reset = test_incoming("/reset");
     reset.chat_id = "paused-reset-approval".into();
@@ -40,6 +119,7 @@ async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
     let binding = GatewayApprovalBinding {
         session_key: key.clone(),
         user_id: reset.user_id.clone(),
+        generation: Default::default(),
         notify: gateway_approval::notify_with(|_| async { true }),
     };
     let command = "echo fixture";
@@ -73,6 +153,21 @@ async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
         Resolution::NothingPending,
         "a reset session retained its previous gateway approval"
     );
+    tokio::time::timeout(
+        std::time::Duration::from_secs(5),
+        completed.entered.notified(),
+    )
+    .await
+    .expect("committed reset lost lifecycle callbacks after cancellation");
+    completed.resume.notify_one();
+    let seen = seen.lock().unwrap();
+    assert_eq!(
+        seen.iter()
+            .map(|(event, _)| event.as_str())
+            .collect::<Vec<_>>(),
+        ["on_session_finalize", "session:reset", "on_session_reset"],
+    );
+    assert_eq!(seen[0].1["session_id"], before.id);
 }
 
 #[tokio::test]
@@ -188,6 +283,7 @@ async fn delayed_approval_commands_cannot_resolve_the_replacement_conversation()
         let binding = GatewayApprovalBinding {
             session_key: key.clone(),
             user_id: command.user_id.clone(),
+            generation: Default::default(),
             notify: gateway_approval::notify_with(|_| async { true }),
         };
         let fixture_command = "echo fixture";
@@ -253,7 +349,14 @@ async fn automatic_reset_clears_previous_approval_bypass() {
 
 #[tokio::test]
 async fn expiry_clears_all_pending_approvals_before_finalizing_any_session() {
+    assert_expiry_batch_retires_before_hooks(false).await;
+    assert_expiry_batch_retires_before_hooks(true).await;
+}
+
+async fn assert_expiry_batch_retires_before_hooks(with_browser: bool) {
+    use hermes_tools::backends::browser::unavailable_browser_backend;
     use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
+    use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
 
     let manager = Arc::new(SessionManager::new(SessionConfig {
         reset_policy: hermes_config::SessionResetPolicy::Idle { timeout_minutes: 0 },
@@ -264,6 +367,13 @@ async fn expiry_clears_all_pending_approvals_before_finalizing_any_session() {
         DmManager::with_pair_behavior(),
         GatewayConfig::default(),
     );
+    let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+    let queue = with_browser.then(|| BrowserReleaseQueue::start(browsers.clone()));
+    let gateway = if let Some(queue) = &queue {
+        gateway.with_browser_retirement(queue.retirer())
+    } else {
+        gateway
+    };
     let pause = Arc::new(PauseHook::default());
     let mut hooks = HookRegistry::new();
     hooks.register_in_process("on_session_finalize", pause.clone());
@@ -276,6 +386,7 @@ async fn expiry_clears_all_pending_approvals_before_finalizing_any_session() {
         let binding = GatewayApprovalBinding {
             session_key: key.clone(),
             user_id: "user1".to_string(),
+            generation: Default::default(),
             notify: gateway_approval::notify_with(|_| async { true }),
         };
         gateway_approval::authorise(
@@ -294,6 +405,7 @@ async fn expiry_clears_all_pending_approvals_before_finalizing_any_session() {
             () = pause.entered.notified() => {}
             count = &mut expiry => panic!("expiry completed before its hook: {count}"),
         }
+        let remaining_sessions = manager.session_count().await;
         let remaining = keys
             .iter()
             .any(|key| gateway_approval::approve(key, "user1") != Resolution::NothingPending);
@@ -311,9 +423,13 @@ async fn expiry_clears_all_pending_approvals_before_finalizing_any_session() {
             !remaining,
             "one expired session kept its previous pending approval"
         );
+        assert_eq!(remaining_sessions, 0);
     })
     .await
     .expect("expiry hooks failed to finish");
+    if let Some(queue) = queue {
+        queue.drain().await.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -515,7 +631,7 @@ async fn delayed_policy_finalization_keeps_the_admitted_browser_generation() {
     }));
     let mut dm = DmManager::with_pair_behavior();
     dm.authorize_user("user1");
-    let gateway = Gateway::new(manager, dm, GatewayConfig::default())
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default())
         .with_browser_retirement(queue.retirer());
     let pause = Arc::new(PauseFirstPolicyFinalize::default());
     let mut hooks = HookRegistry::new();
@@ -572,7 +688,10 @@ async fn delayed_policy_finalization_keeps_the_admitted_browser_generation() {
         .await
         .expect("another route waited for the paused finalization hook");
     first_result.unwrap();
-    let delayed = turns.try_recv().unwrap();
+    assert!(turns.try_recv().is_err(), "a stale turn reached the model");
+    let shared = manager.get_messages("test:shared").await;
+    assert_eq!(shared.len(), 2);
+    assert_eq!(shared[0].content, Message::user("second reset").content);
     let snapshot_error = |browser: BrowserLease| async move {
         browser.tool_overrides()["browser_snapshot"]
             .execute(serde_json::json!({}))
@@ -580,10 +699,8 @@ async fn delayed_policy_finalization_keeps_the_admitted_browser_generation() {
             .unwrap_err()
             .to_string()
     };
-    for browser in [oldest, delayed] {
-        let error = snapshot_error(browser).await;
-        assert!(error.contains("browser was closed"), "{error}");
-    }
+    let error = snapshot_error(oldest).await;
+    assert!(error.contains("browser was closed"), "{error}");
     for browser in [current, unrelated] {
         let error = snapshot_error(browser).await;
         assert!(error.contains("fixture browser"), "{error}");

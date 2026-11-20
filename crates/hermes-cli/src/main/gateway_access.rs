@@ -139,6 +139,9 @@ fn gateway_turn_tool_overrides(
     {
         return overrides;
     }
+    let Some(generation) = ctx.session_generation.clone() else {
+        return overrides;
+    };
     let gateway = gateway.clone();
     let (platform, chat_id, thread_id) = (
         ctx.platform.clone(),
@@ -167,6 +170,7 @@ fn gateway_turn_tool_overrides(
         .with_gateway_approval(hermes_tools::gateway_approval::GatewayApprovalBinding {
             session_key: ctx.session_key.clone(),
             user_id: ctx.user_id.clone(),
+            generation,
             notify,
         });
     overrides.insert("terminal".to_string(), Arc::new(terminal));

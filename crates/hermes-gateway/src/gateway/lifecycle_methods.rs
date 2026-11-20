@@ -224,40 +224,64 @@ impl Gateway {
         })
     }
 
-    async fn emit_finalized_session_event(
-        &self,
-        event_type: &str,
-        context: serde_json::Value,
+    async fn notify_finalized_session(
+        registry: &HookRegistry,
+        session_key: &str,
         session: Arc<Session>,
+        reason: &str,
     ) {
-        let registry = self.hook_registry.read().await.clone();
-        if let Some(registry) = registry {
-            registry
-                .emit_finalized_session(&HookEvent::new(event_type, context), session)
-                .await;
-        }
+        let event = HookEvent::new(
+            "on_session_finalize",
+            Self::session_lifecycle_context(session_key, &session, reason),
+        );
+        registry.emit_finalized_session(&event, session).await;
     }
 
     async fn emit_session_finalize(&self, session_key: &str, session: Arc<Session>, reason: &str) {
-        self.emit_finalized_session_event(
-            "on_session_finalize",
-            Self::session_lifecycle_context(session_key, &session, reason),
-            session,
-        )
-        .await;
+        let registry = self.hook_registry.read().await.clone();
+        if let Some(registry) = registry {
+            Self::notify_finalized_session(&registry, session_key, session, reason).await;
+        }
     }
 
-    async fn emit_session_reset_lifecycle(
-        &self,
+    async fn run_reset_lifecycle(
+        registry: &HookRegistry,
+        incoming: &IncomingMessage,
         session_key: &str,
-        session: &Session,
-        reason: &str,
+        old_session: Option<Session>,
+        reset_session: Session,
     ) {
-        self.emit_hook_event(
+        if let Some(old_session) = old_session {
+            let ended = Arc::new(old_session);
+            let event = HookEvent::new("session:end", serde_json::json!({
+                "platform": incoming.platform,
+                "chat_id": incoming.chat_id,
+                "user_id": incoming.user_id,
+                "session_id": session_key,
+                "logical_session_id": ended.id,
+            }));
+            registry.emit_finalized_session(&event, ended.clone()).await;
+            Self::notify_finalized_session(registry, session_key, ended, "reset").await;
+        } else {
+            registry.emit(&HookEvent::new("session:start", serde_json::json!({
+                "platform": incoming.platform,
+                "chat_id": incoming.chat_id,
+                "user_id": incoming.user_id,
+                "session_id": session_key,
+                "reason": "new",
+            }))).await;
+        }
+        registry.emit(&HookEvent::new("session:reset", serde_json::json!({
+            "platform": incoming.platform,
+            "chat_id": incoming.chat_id,
+            "user_id": incoming.user_id,
+            "session_id": session_key,
+            "logical_session_id": reset_session.id,
+        }))).await;
+        registry.emit(&HookEvent::new(
             "on_session_reset",
-            Self::session_lifecycle_context(session_key, session, reason),
-        )
-        .await;
+            Self::session_lifecycle_context(session_key, &reset_session, "reset"),
+        )).await;
     }
 
     async fn finalize_active_sessions(&self, reason: &str) -> usize {
