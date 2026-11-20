@@ -10,12 +10,20 @@ impl AgentLoop {
         tools: Option<Vec<ToolSchema>>,
         on_chunk: Option<Box<dyn Fn(StreamChunk) + Send + Sync>>,
     ) -> Result<AgentResult, AgentError> {
-        let on_chunk = match on_chunk {
-            Some(cb) => cb,
-            None => {
-                return self.run(messages, tools).await;
+        match on_chunk {
+            Some(on_chunk) => {
+                Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk)).await
             }
-        };
+            None => self.run(messages, tools).await,
+        }
+    }
+
+    async fn run_stream_inner(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolSchema>>,
+        on_chunk: Box<dyn Fn(StreamChunk) + Send + Sync>,
+    ) -> Result<AgentResult, AgentError> {
         let stream_mute = Arc::new(AtomicBool::new(false));
         let stream_needs_break = Arc::new(AtomicBool::new(false));
         let raw_emit = on_chunk;
@@ -105,7 +113,7 @@ impl AgentLoop {
             .and_then(|m| m.content.clone())
             .unwrap_or_default();
 
-        let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
+        let tool_schemas = self.tool_schemas_for_turn(tools);
         // Five finalizer contracts below re-ask for a final answer backed by tool evidence or
         // execution. A turn offered no tools cannot gather any, so its first answer stands; the
         // output-quality rewrite needs no tools and still applies.
@@ -967,6 +975,7 @@ impl AgentLoop {
                 self.memory_sync(&u, &a, session_id, msgs);
                 self.spawn_background_review(total_turns, &ctx, review_memory_at_end);
                 self.memory_on_session_end(ctx.get_messages());
+                Self::flush_ending_memory().await;
                 replay.record(
                     "session_end",
                     serde_json::json!({

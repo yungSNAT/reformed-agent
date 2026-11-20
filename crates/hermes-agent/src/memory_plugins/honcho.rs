@@ -896,6 +896,59 @@ impl HonchoMemoryPlugin {
         session_key_fallback_peer_id(session_key)
     }
 
+    fn session_flush(&self) -> Option<(HonchoConfig, String, Value)> {
+        let config = self.config_snapshot().ok()?;
+        let session_id = self.session_key.lock().unwrap().clone();
+        let template = config.endpoint("flush", "/v1/sessions/{session}/flush");
+        let path = Self::apply_template(&template, "user", &session_id);
+        let body = json!({
+            "workspace_id": config.workspace_id,
+            "session_id": session_id
+        });
+        Some((config, path, body))
+    }
+
+    async fn flush_session(
+        mut config: HonchoConfig,
+        path: String,
+        body: Value,
+    ) -> Result<(), String> {
+        // Refresh still uses the shared credential-file lock and blocking token exchange.
+        let config = tokio::task::spawn_blocking(move || {
+            config.refresh_oauth_if_needed()?;
+            Ok::<_, String>(config)
+        })
+        .await
+        .map_err(|error| format!("Honcho OAuth refresh task failed: {error}"))??;
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_secs_f64(config.timeout_secs))
+            .build()
+            .map_err(|error| format!("Honcho HTTP client build failed: {error}"))?;
+        let mut request = client.post(Self::build_url(&config, &path)).json(&body);
+        if !config.api_key.is_empty() {
+            request = request
+                .bearer_auth(&config.api_key)
+                .header("X-API-Key", &config.api_key);
+        }
+        let response = request
+            .send()
+            .await
+            .map_err(|error| format!("Honcho flush request failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("Honcho flush returned HTTP {status}"));
+        }
+        let response_body = response
+            .text()
+            .await
+            .map_err(|error| format!("Honcho flush response body read failed: {error}"))?;
+        if !response_body.trim().is_empty() {
+            serde_json::from_str::<Value>(&response_body)
+                .map_err(|error| format!("Honcho flush response parse error: {error}"))?;
+        }
+        Ok(())
+    }
+
     fn client(config: &HonchoConfig) -> Result<reqwest::blocking::Client, String> {
         reqwest::blocking::Client::builder()
             .timeout(Duration::from_secs_f64(config.timeout_secs))
@@ -1317,20 +1370,24 @@ impl MemoryProviderPlugin for HonchoMemoryPlugin {
     }
 
     fn on_session_end(&self, _messages: &[Value]) {
-        let config = match self.config_snapshot() {
-            Ok(c) => c,
-            Err(_) => return,
+        let Some((config, path, body)) = self.session_flush() else {
+            return;
         };
-        let session_id = self.session_key.lock().unwrap().clone();
-        let template = config.endpoint("flush", "/v1/sessions/{session}/flush");
-        let path = Self::apply_template(&template, "user", &session_id);
-        let body = json!({
-            "workspace_id": config.workspace_id,
-            "session_id": session_id
-        });
         if let Err(e) = Self::send_json(&config, Method::POST, &path, Some(&body), None) {
             tracing::debug!("Honcho session end flush failed: {}", e);
         }
+    }
+
+    fn prepare_session_end(
+        &self,
+        _messages: &[Value],
+    ) -> Option<futures::future::BoxFuture<'static, ()>> {
+        let (config, path, body) = self.session_flush()?;
+        Some(Box::pin(async move {
+            if let Err(error) = Self::flush_session(config, path, body).await {
+                tracing::debug!(%error, "Honcho session end flush failed");
+            }
+        }))
     }
 
     fn on_session_switch(&self, new_session_id: &str, parent_session_id: &str, reset: bool) {

@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-20T11:47:47.984629+00:00",
+  "generated_at_utc": "2026-11-20T13:53:38.803844+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "671f357b52b609e155d1727eb01265ce3c2d5c99",
+    "local_sha": "6981a5adea2492d8b59a0c5720434fd2a8403cc9",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1641,
+    "commits_ahead": 1655,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1371,
+    "local_patch_unique": 1381,
     "files_only_upstream": 24117,
-    "files_only_local": 2038,
+    "files_only_local": 2040,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27392,
+    "tree_files_changed": 27394,
     "tree_insertions": 4528858,
-    "tree_deletions": 944162
+    "tree_deletions": 945174
   },
   "top_upstream_only": [
     {
@@ -360,7 +360,7 @@
     },
     {
       "path": "crates/hermes-agent",
-      "count": 117
+      "count": 119
     },
     {
       "path": "crates/hermes-gateway",
@@ -684,7 +684,7 @@
     },
     {
       "path": "crates/hermes-agent",
-      "count": 117
+      "count": 119
     },
     {
       "path": "crates/hermes-gateway",
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 413,
       "shared_different": 0,
-      "local_only": 453,
+      "local_only": 455,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1371,
+    "local_patch_unique": 1381,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

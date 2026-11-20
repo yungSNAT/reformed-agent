@@ -14,8 +14,10 @@ use crate::skill_orchestrator::extract_user_instruction_from_skill_message;
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::Write as _;
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 
+use futures::future::BoxFuture;
 use hermes_core::Message;
 use regex::Regex;
 use serde_json::Value;
@@ -99,6 +101,12 @@ pub trait MemoryProviderPlugin: Send + Sync {
 
     fn on_session_end(&self, messages: &[Value]) {
         let _ = messages;
+    }
+
+    /// Capture the ending session before the manager can switch providers to another session.
+    fn prepare_session_end(&self, messages: &[Value]) -> Option<BoxFuture<'static, ()>> {
+        let _ = messages;
+        None
     }
 
     fn on_session_switch(&self, new_session_id: &str, parent_session_id: &str, reset: bool) {
@@ -339,6 +347,7 @@ pub fn build_memory_context_block(raw_context: &str) -> String {
 pub struct MemoryManager {
     providers: Vec<Arc<dyn MemoryProviderPlugin>>,
     tool_to_provider: HashMap<String, Arc<dyn MemoryProviderPlugin>>,
+    session_generation: AtomicU64,
     /// Tracks turns since last memory write for the nudge mechanism.
     turns_since_memory_write: u32,
     /// After this many turns without a memory write, inject a nudge.
@@ -351,6 +360,7 @@ impl MemoryManager {
         Self {
             providers: Vec::new(),
             tool_to_provider: HashMap::new(),
+            session_generation: AtomicU64::new(0),
             turns_since_memory_write: 0,
             memory_nudge_threshold: 8,
         }
@@ -579,12 +589,64 @@ impl MemoryManager {
         }
     }
 
+    pub(crate) fn session_end_tasks(
+        shared: &Arc<Mutex<Self>>,
+        messages: &[Message],
+    ) -> Vec<BoxFuture<'static, ()>> {
+        let Ok(manager) = shared.lock() else {
+            return Vec::new();
+        };
+        if manager.providers.is_empty() {
+            return Vec::new();
+        }
+        let messages = Arc::new(
+            messages
+                .iter()
+                .filter_map(|message| serde_json::to_value(message).ok())
+                .map(|message| redact_memory_value(&message))
+                .collect::<Vec<_>>(),
+        );
+        let generation = manager.session_generation.load(Ordering::Relaxed);
+        manager
+            .providers
+            .iter()
+            .map(|provider| {
+                provider.prepare_session_end(&messages).unwrap_or_else(|| {
+                    let provider = provider.clone();
+                    let messages = messages.clone();
+                    let shared = shared.clone();
+                    Box::pin(async move {
+                        let task = tokio::task::spawn_blocking(move || {
+                            if let Ok(manager) = shared.lock() {
+                                // Legacy hooks read live provider state. Discard a stale
+                                // transcript rather than write it under the new session.
+                                if manager.session_generation.load(Ordering::Relaxed) == generation
+                                {
+                                    provider.on_session_end(&messages);
+                                } else {
+                                    tracing::warn!(
+                                        provider = provider.name(),
+                                        "Skipped a session-end hook after its session changed"
+                                    );
+                                }
+                            }
+                        });
+                        if let Err(error) = task.await {
+                            tracing::warn!(%error, "Memory provider session-end hook failed");
+                        }
+                    })
+                })
+            })
+            .collect()
+    }
+
     /// Notify all providers that the active session id changed.
     pub fn on_session_switch(&self, new_session_id: &str, parent_session_id: &str, reset: bool) {
         let new_session_id = new_session_id.trim();
         if new_session_id.is_empty() {
             return;
         }
+        self.session_generation.fetch_add(1, Ordering::Relaxed);
         for provider in &self.providers {
             provider.on_session_switch(new_session_id, parent_session_id, reset);
         }
@@ -646,6 +708,7 @@ impl MemoryManager {
 
     /// Initialize all providers.
     pub fn initialize_all(&self, session_id: &str, hermes_home: &str) {
+        self.session_generation.fetch_add(1, Ordering::Relaxed);
         for provider in &self.providers {
             provider.initialize(session_id, hermes_home);
         }
