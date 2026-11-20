@@ -177,12 +177,7 @@ pub async fn handle_cli_plugins(
                     .unwrap_or("");
 
                 // Security scan of cloned files
-                let suspicious = scan_plugin_security(&target);
-                let hard_block = suspicious.iter().any(|s| {
-                    s.contains("curl piped to shell")
-                        || s.contains("wget piped to shell")
-                        || s.contains("curl|sh style install")
-                });
+                let (suspicious, hard_block) = inspect_plugin_install(&target);
                 if hard_block && !allow_untrusted_git_host {
                     println!("\n  ✗ High-risk install patterns detected — clone removed.");
                     for warning in &suspicious {
@@ -271,12 +266,7 @@ pub async fn handle_cli_plugins(
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
 
-                let suspicious = scan_plugin_security(&target);
-                let hard_block = suspicious.iter().any(|s| {
-                    s.contains("curl piped to shell")
-                        || s.contains("wget piped to shell")
-                        || s.contains("curl|sh style install")
-                });
+                let (suspicious, hard_block) = inspect_plugin_install(&target);
                 if hard_block && !allow_untrusted_git_host {
                     println!("\n  ✗ High-risk install patterns detected — clone removed.");
                     for warning in &suspicious {
@@ -356,12 +346,7 @@ pub async fn handle_cli_plugins(
                                             return Ok(());
                                         }
                                     }
-                                    let suspicious = scan_plugin_security(&target);
-                                    let hard_block = suspicious.iter().any(|s| {
-                                        s.contains("curl piped to shell")
-                                            || s.contains("wget piped to shell")
-                                            || s.contains("curl|sh style install")
-                                    });
+                                    let (suspicious, hard_block) = inspect_plugin_install(&target);
                                     if hard_block && !allow_untrusted_git_host {
                                         println!("  ✗ High-risk patterns — removed clone.");
                                         let _ = tokio::fs::remove_dir_all(&target).await;

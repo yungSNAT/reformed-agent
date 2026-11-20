@@ -132,9 +132,17 @@ impl SharedBrowser {
     /// End the browser for good: later calls, through any clone, fail and
     /// build no backend. Waits for a running call, then drops the backend.
     pub async fn close(&self) {
+        self.mark_closed();
+        self.release_closed_backend().await;
+    }
+
+    pub(crate) fn mark_closed(&self) {
         self.inner
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) async fn release_closed_backend(&self) {
         let mut state = self.inner.state.lock().await;
         drop_backend(state.backend.take()).await;
     }
@@ -804,6 +812,26 @@ mod tests {
         let err = snapshot.execute(json!({})).await.unwrap_err().to_string();
         assert!(err.contains("browser was closed"), "{err}");
         assert_eq!(built(&count), 1, "a closed browser built another backend");
+    }
+
+    #[tokio::test]
+    async fn closing_a_browser_refuses_a_call_that_is_already_queued() {
+        let (browser, count) = counted();
+        let active = browser.lock().await.expect("initial browser call");
+        let snapshot = BrowserSnapshotHandler::new(browser.clone());
+        let queued = snapshot.execute(json!({}));
+        tokio::pin!(queued);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+
+        let closing = browser.close();
+        tokio::pin!(closing);
+        assert!(futures::poll!(closing.as_mut()).is_pending());
+        drop(active);
+
+        let err = queued.await.unwrap_err().to_string();
+        assert!(err.contains("browser was closed"), "{err}");
+        closing.await;
+        assert_eq!(built(&count), 1);
     }
 
     #[tokio::test]

@@ -655,9 +655,34 @@
         );
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn runtime_cron_scheduler_uses_configured_provider_not_minimal_fallback() {
         let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-cron-browser-test",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-live-cron",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [{
+                            "id": "cron-browser",
+                            "type": "function",
+                            "function": {"name": "browser_navigate", "arguments": "{}"}
+                        }]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            })))
+            .with_priority(1)
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
         Mock::given(method("POST"))
             .and(path("/chat/completions"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -681,6 +706,7 @@
                     "total_tokens": 2
                 }
             })))
+            .with_priority(2)
             .mount(&server)
             .await;
 
@@ -700,6 +726,7 @@
 
         let temp = tempfile::tempdir().expect("cron tempdir");
         let tools = ToolRegistry::new();
+        register_test_tool_in_toolset(&tools, "browser_navigate", "browser");
         let scheduler = build_runtime_cron_scheduler(
             &config,
             "openai:gpt-live-cron",
@@ -723,6 +750,15 @@
 
         assert!(final_text.contains("live-cron-provider-ok"));
         assert!(!final_text.contains("fallback LLM path"));
+        let browser_output = result.messages.iter().find_map(|message| {
+            (message.tool_call_id.as_deref() == Some("cron-browser"))
+                .then_some(message.content.as_deref())
+                .flatten()
+        });
+        assert!(
+            browser_output.is_some_and(|text| text.contains("Missing 'url' parameter")),
+            "cron must use its own browser handler: {browser_output:?}"
+        );
         server.verify().await;
     }
 
@@ -732,7 +768,7 @@
         register_test_tool(&tools, "cronjob");
         register_test_tool(&tools, "terminal");
 
-        let agent_registry = bridge_tool_registry_for_cron(&tools);
+        let agent_registry = bridge_tool_registry_for_cron(&tools, hermes_tools::ToolOverrides::new());
         let names = agent_registry.names();
 
         assert!(!names.contains(&"cronjob".to_string()));
