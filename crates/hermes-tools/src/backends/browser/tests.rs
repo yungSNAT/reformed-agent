@@ -2905,6 +2905,94 @@ async fn isolated_cdp_backend_replaces_a_tab_that_has_gone() {
     assert_eq!(used[6]["params"]["targetId"], "T2");
 }
 
+#[tokio::test(flavor = "multi_thread")]
+async fn isolated_cdp_backend_disposes_a_context_after_target_creation_is_cancelled() {
+    let contexts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let browser = Arc::new(move |command: &Value| {
+        let result = match command["method"].as_str() {
+            Some("Target.createBrowserContext") => {
+                let next = contexts.fetch_add(1, Ordering::SeqCst) + 1;
+                json!({"browserContextId": format!("C{next}")})
+            }
+            Some("Target.createTarget") if command["params"]["browserContextId"] == "C1" => {
+                return None;
+            }
+            Some("Target.createTarget") => json!({"targetId": "T2"}),
+            Some("Target.attachToTarget") => json!({"sessionId": "S2"}),
+            _ => json!({"nodes": []}),
+        };
+        Some(vec![cdp_result(command, result)])
+    });
+    let (addr, mut commands) = spawn_cdp_websocket(browser).await;
+    let backend = isolated_backend(addr);
+    let reached_target_creation = async {
+        let (_, context) = commands.recv().await.expect("context request");
+        assert_eq!(context["method"], "Target.createBrowserContext");
+        let (_, tab) = commands.recv().await.expect("target request");
+        assert_eq!(tab["method"], "Target.createTarget");
+        assert_eq!(tab["params"]["browserContextId"], "C1");
+    };
+    tokio::select! {
+        result = backend.snapshot() => panic!("snapshot finished before the target replied: {result:?}"),
+        reached = tokio::time::timeout(Duration::from_secs(5), reached_target_creation) => {
+            reached.expect("target creation was reached");
+        }
+    }
+
+    backend.snapshot().await.expect("fresh isolated tab");
+    drop(backend);
+    let used = drain_commands(&mut commands);
+    assert_eq!(
+        methods(&used),
+        [
+            "Target.disposeBrowserContext",
+            "Target.createBrowserContext",
+            "Target.createTarget",
+            "Target.attachToTarget",
+            "Accessibility.getFullAXTree",
+            "Target.disposeBrowserContext",
+        ]
+    );
+    assert_eq!(used[0]["params"]["browserContextId"], "C1");
+    assert_eq!(used[5]["params"]["browserContextId"], "C2");
+}
+
+#[tokio::test]
+async fn isolated_context_disposal_accepts_absence_only_from_a_valid_context_list() {
+    for (ids, absent) in [
+        (json!(["unrelated"]), true),
+        (json!(["owned", "unrelated"]), false),
+        (json!([null]), false),
+    ] {
+        let (addr, mut commands) = spawn_cdp_websocket(Arc::new(move |command| {
+            let response = match command["method"].as_str() {
+                Some("Target.disposeBrowserContext") => json!({
+                    "id": command["id"],
+                    "error": {"code": -32_000, "message": "cannot dispose context"},
+                }),
+                Some("Target.getBrowserContexts") => {
+                    cdp_result(command, json!({"browserContextIds": ids}))
+                }
+                other => panic!("unexpected command {other:?}"),
+            };
+            Some(vec![response])
+        }))
+        .await;
+        let mut connection = CdpConnection::open(&format!("ws://{addr}/devtools/browser/B"))
+            .await
+            .map_err(CdpFailure::message)
+            .expect("fixture connection");
+        let disposed = connection.dispose_owned_context("owned").await;
+        assert_eq!(disposed.is_ok(), absent);
+        let used = drain_commands(&mut commands);
+        assert_eq!(
+            methods(&used),
+            ["Target.disposeBrowserContext", "Target.getBrowserContexts"]
+        );
+        assert_eq!(used[0]["params"]["browserContextId"], "owned");
+    }
+}
+
 /// How many cookies `backend`'s tab holds for `https://example.com/`.
 async fn example_cookies(backend: &CdpBrowserBackend) -> usize {
     backend
@@ -2989,7 +3077,10 @@ async fn the_isolated_factory_isolates_every_local_backend() {
 async fn tab_ids(backend: &CdpBrowserBackend) -> (String, String) {
     let tab = backend.tab.lock().await;
     let tab = tab.as_ref().expect("the backend has a tab");
-    (tab.context_id.clone(), tab.target_id.clone())
+    (
+        tab.context_id.clone(),
+        tab.target_id.clone().expect("the tab has a target"),
+    )
 }
 
 /// Against a real Chrome or Chromium, for example
