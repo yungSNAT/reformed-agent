@@ -507,6 +507,31 @@
         assert_eq!(token_requests(&server).await, 1);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn linked_store_uses_the_target_lock_and_keeps_the_link() {
+        let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let auth = home.path().join("auth");
+        let link = auth.join("tokens.json");
+        let target = auth.join("shared-store");
+        std::fs::rename(&link, &target).expect("move the fixture store");
+        std::os::unix::fs::symlink("shared-store", &link).expect("link the fixture store");
+        std::fs::remove_file(auth.join("tokens.json.lock")).expect("remove the original lock");
+
+        let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
+        agent
+            .call_llm_with_retry(&user_context(), &[], None, None)
+            .await
+            .expect("the linked store refreshes normally");
+
+        assert_eq!(token_requests(&server).await, 1);
+        assert_eq!(stored_anthropic_token(&home).0, "new-access");
+        assert_eq!(std::fs::read_link(&link).expect("keep the original link"), Path::new("shared-store"));
+        assert!(auth.join("shared-store.lock").is_file());
+        assert!(!auth.join("tokens.json.lock").exists());
+    }
+
     #[tokio::test]
     async fn store_lock_that_cannot_be_taken_stops_the_refresh() {
         let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;

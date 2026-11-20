@@ -84,6 +84,77 @@ jobs:
           cd skills/creative/comfyui
           "${RUNNER_TEMP}/comfyui/bin/python" -m pytest tests -c tests/pytest.ini -q
 
+  # The workspace tests once more under instrumentation, for Codecov. The test
+  # job above is the gate.
+  coverage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    env:
+      CARGO_INCREMENTAL: 0
+      # Coverage comes from instrumentation, not DWARF; debuginfo is most of target/.
+      CARGO_PROFILE_DEV_DEBUG: "0"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      # The tests run with the same upstream reference as in the test job.
+      - name: Fetch upstream parity reference
+        run: |
+          git remote add upstream https://github.com/NousResearch/hermes-agent.git || true
+          git fetch --no-tags --depth=1 upstream \
+            "+$(tr -d '[:space:]' < docs/parity/upstream-reference.txt):refs/remotes/upstream/parity-reference"
+      - name: Install the pinned Rust toolchain
+        run: |
+          rustup toolchain install
+          rustup component add llvm-tools
+      - name: Install cargo-llvm-cov
+        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-llvm-cov@0.9.1
+          fallback: none
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Run the tests with line coverage
+        run: cargo llvm-cov --locked --workspace --no-fail-fast --lcov --output-path coverage-rust.lcov
+      - name: Keep the coverage report for the Codecov upload
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: coverage-rust
+          path: coverage-rust.lcov
+          retention-days: 1
+
+  # The upload runs apart from the tests so the OIDC token is never available
+  # whilst test code runs. A Codecov outage must not block merges.
+  codecov:
+    name: upload coverage to Codecov
+    needs: coverage
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    permissions:
+      contents: read
+      id-token: write # Authenticate the Codecov upload with OIDC; no stored token.
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: coverage-rust
+      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          use_oidc: true
+          files: coverage-rust.lcov
+          disable_search: true
+          fail_ci_if_error: true
+
   ui-tui:
     runs-on: ubuntu-latest
     defaults:
@@ -209,3 +280,36 @@ jobs:
         run: cargo test --locked -p hermes-desktop-gateway
       - name: Desktop gateway clippy
         run: cargo clippy --locked -p hermes-desktop-gateway --all-targets -- -D warnings
+      # The Ink TUI starts this binary when HERMES_TUI_GATEWAY_URL is unset; `cargo test`
+      # above built it in target/debug.
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 26
+          cache: npm
+          cache-dependency-path: ui-tui/package-lock.json
+      - name: TUI starts the desktop gateway
+        working-directory: ui-tui
+        shell: bash
+        env:
+          HERMES_TUI_GATEWAY_IT_BIN: ${{ github.workspace }}/target/debug/hermes-desktop-gateway${{ runner.os == 'Windows' && '.exe' || '' }}
+        run: |
+          npm ci --ignore-scripts
+          npm run build --prefix packages/hermes-ink
+          npm test -- src/__tests__/gatewayClient.test.ts
+
+  # Process trees, command lines and program lookup differ on Windows; the
+  # cross build above compiles for Windows but runs nothing there.
+  windows-test:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Install the pinned Rust toolchain
+        run: rustup toolchain install
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Native tests
+        run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp

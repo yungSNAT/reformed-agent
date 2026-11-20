@@ -1,3 +1,9 @@
+struct LockedOAuthStore {
+    path: PathBuf,
+    _file_lock: std::fs::File,
+    _process_lock: tokio::sync::MutexGuard<'static, ()>,
+}
+
 impl AgentLoop {
     fn extract_provider_and_model<'a>(&self, model: &'a str) -> (String, &'a str) {
         Self::provider_and_model(self.config.provider.as_deref(), model)
@@ -249,7 +255,7 @@ impl AgentLoop {
 
     fn resolve_oauth_store_api_key(&self, provider: &str) -> Option<String> {
         let provider_key = Self::oauth_store_provider_key(provider)?;
-        let path = self.auth_tokens_path();
+        let path = std::fs::canonicalize(self.auth_tokens_path()).ok()?;
         let raw = std::fs::read_to_string(&path).ok()?;
         let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
         Self::overlay_unsaved_oauth_credentials(&path, &mut entries);
@@ -268,28 +274,32 @@ impl AgentLoop {
     }
 
     async fn refresh_oauth_store_tokens_if_needed(&self) {
-        let Some(_store) = self.lock_oauth_store().await else {
+        let Some(store) = self.lock_oauth_store().await else {
             return;
         };
-        self.store_unsaved_oauth_credentials().await;
+        Self::store_unsaved_oauth_credentials(&store).await;
         // Keep this list explicit so behavior is deterministic and parity-scoped.
-        self.refresh_single_oauth_store_token_if_needed("openai")
+        self.refresh_single_oauth_store_token_if_needed(&store, "openai")
             .await;
-        self.refresh_single_oauth_store_token_if_needed("openai-codex")
+        self.refresh_single_oauth_store_token_if_needed(&store, "openai-codex")
             .await;
-        self.refresh_single_oauth_store_token_if_needed("nous")
+        self.refresh_single_oauth_store_token_if_needed(&store, "nous")
             .await;
-        self.refresh_single_oauth_store_token_if_needed("qwen-oauth")
+        self.refresh_single_oauth_store_token_if_needed(&store, "qwen-oauth")
             .await;
-        self.refresh_single_oauth_store_token_if_needed("anthropic")
+        self.refresh_single_oauth_store_token_if_needed(&store, "anthropic")
             .await;
     }
 
-    async fn refresh_single_oauth_store_token_if_needed(&self, provider_key: &str) {
+    async fn refresh_single_oauth_store_token_if_needed(
+        &self,
+        store: &LockedOAuthStore,
+        provider_key: &str,
+    ) {
         if !self.can_attempt_oauth_refresh(provider_key) {
             return;
         }
-        let Some(entries) = self.read_oauth_store().await else {
+        let Some(entries) = Self::read_oauth_store(&store.path).await else {
             return;
         };
         let Some(current) = entries.get(provider_key) else {
@@ -301,7 +311,7 @@ impl AgentLoop {
         if expires_at > Timestamp::now() {
             return;
         }
-        self.refresh_oauth_store_entry(provider_key, current).await;
+        self.refresh_oauth_store_entry(store, provider_key, current).await;
     }
 
     /// After a 401 to a request from `provider` that sent `sent`: when `sent`
@@ -321,10 +331,10 @@ impl AgentLoop {
         let Some(provider_key) = Self::oauth_store_provider_key(provider_name) else {
             return false;
         };
-        let Some(_store) = self.lock_oauth_store().await else {
+        let Some(store) = self.lock_oauth_store().await else {
             return false;
         };
-        let Some(entries) = self.read_oauth_store().await else {
+        let Some(entries) = Self::read_oauth_store(&store.path).await else {
             return false;
         };
         let Some(current) = entries.get(provider_key) else {
@@ -340,7 +350,7 @@ impl AgentLoop {
             return false;
         }
         let Some(access_token) = self
-            .refresh_oauth_store_entry(provider_key, current)
+            .refresh_oauth_store_entry(&store, provider_key, current)
             .await
             .filter(|token| !token.trim().is_empty() && token != sent)
         else {
@@ -350,18 +360,16 @@ impl AgentLoop {
     }
 
     /// Takes this process's store lock, then an exclusive advisory lock on
-    /// `tokens.json.lock` beside the store, so loops and agent processes
-    /// sharing a Hermes home read, exchange and write it one at a time. Both
+    /// lock file beside the resolved store, so loops and agent processes
+    /// sharing that file read, exchange and write it one at a time. Both
     /// are released when the result is dropped. None when there is no store,
     /// or when the lock file cannot be taken: then nothing is exchanged, as
     /// another process could be spending the same refresh token.
-    async fn lock_oauth_store(&self) -> Option<(tokio::sync::MutexGuard<'static, ()>, std::fs::File)> {
-        let in_process = OAUTH_STORE_LOCK.lock().await;
-        let path = self.auth_tokens_path();
-        if !path.exists() {
-            return None;
-        }
-        let lock_path = path.with_extension("json.lock");
+    async fn lock_oauth_store(&self) -> Option<LockedOAuthStore> {
+        let process_lock = OAUTH_STORE_LOCK.lock().await;
+        let path = tokio::fs::canonicalize(self.auth_tokens_path()).await.ok()?;
+        let mut lock_path = path.as_os_str().to_os_string();
+        lock_path.push(".lock");
         let locked = tokio::task::spawn_blocking(move || {
             let file = std::fs::OpenOptions::new()
                 .read(true)
@@ -376,7 +384,11 @@ impl AgentLoop {
         .map_err(|e| std::io::Error::other(e.to_string()))
         .and_then(|locked| locked);
         match locked {
-            Ok(file) => Some((in_process, file)),
+            Ok(file_lock) => Some(LockedOAuthStore {
+                path,
+                _file_lock: file_lock,
+                _process_lock: process_lock,
+            }),
             Err(e) => {
                 tracing::warn!(error = %e, "oauth store lock file unavailable; not refreshing");
                 None
@@ -386,11 +398,10 @@ impl AgentLoop {
 
     /// `tokens.json` as it is now, with any credential exchanged but not
     /// written in place of its entry.
-    async fn read_oauth_store(&self) -> Option<HashMap<String, OAuthStoreCredential>> {
-        let path = self.auth_tokens_path();
-        let raw = tokio::fs::read_to_string(&path).await.ok()?;
+    async fn read_oauth_store(path: &Path) -> Option<HashMap<String, OAuthStoreCredential>> {
+        let raw = tokio::fs::read_to_string(path).await.ok()?;
         let mut entries: HashMap<String, OAuthStoreCredential> = serde_json::from_str(&raw).ok()?;
-        Self::overlay_unsaved_oauth_credentials(&path, &mut entries);
+        Self::overlay_unsaved_oauth_credentials(path, &mut entries);
         Some(entries)
     }
 
@@ -422,12 +433,12 @@ impl AgentLoop {
 
     /// Writes the unsaved credentials into `tokens.json`, read afresh so that
     /// another writer's entries survive, and forgets those it wrote.
-    async fn store_unsaved_oauth_credentials(&self) {
-        let path = self.auth_tokens_path();
+    async fn store_unsaved_oauth_credentials(store: &LockedOAuthStore) {
+        let path = store.path.as_path();
         let pending: Vec<String> = match UNSAVED_OAUTH_CREDENTIALS.lock() {
             Ok(unsaved) => unsaved
                 .keys()
-                .filter(|(store, _)| *store == path)
+                .filter(|(store, _)| store == path)
                 .map(|(_, key)| key.clone())
                 .collect(),
             Err(_) => return,
@@ -435,9 +446,9 @@ impl AgentLoop {
         if pending.is_empty() {
             return;
         }
-        let stored = match self.read_oauth_store().await {
+        let stored = match Self::read_oauth_store(path).await {
             Some(entries) => match serde_json::to_vec_pretty(&entries) {
-                Ok(content) => write_file_private(&path, &content).await.map(|()| entries),
+                Ok(content) => write_file_private(path, &content).await.map(|()| entries),
                 Err(e) => Err(AgentError::Config(e.to_string())),
             },
             None => Err(AgentError::Io(format!("{} is unreadable", path.display()))),
@@ -448,7 +459,7 @@ impl AgentLoop {
                     // Keep any exchanged since the read.
                     for key in pending {
                         let written = entries.get(&key).map(|c| (&c.access_token, &c.refresh_token));
-                        let slot = (path.clone(), key);
+                        let slot = (path.to_path_buf(), key);
                         if unsaved.get(&slot).map(|(_, c)| (&c.access_token, &c.refresh_token))
                             == written
                         {
@@ -470,6 +481,7 @@ impl AgentLoop {
     /// in memory, used in place of its entry, until a later write succeeds.
     async fn refresh_oauth_store_entry(
         &self,
+        store: &LockedOAuthStore,
         provider_key: &str,
         current: &OAuthStoreCredential,
     ) -> Option<String> {
@@ -499,7 +511,7 @@ impl AgentLoop {
         if let Ok(mut unsaved) = UNSAVED_OAUTH_CREDENTIALS.lock() {
             // After an earlier exchange that was not written either, the
             // replaced entry is still the one the store holds.
-            match unsaved.entry((self.auth_tokens_path(), provider_key.to_string())) {
+            match unsaved.entry((store.path.clone(), provider_key.to_string())) {
                 BTreeEntry::Occupied(mut slot) => slot.get_mut().1 = refreshed,
                 BTreeEntry::Vacant(slot) => {
                     slot.insert((current.clone(), refreshed));
@@ -507,7 +519,7 @@ impl AgentLoop {
             }
         }
         self.mark_oauth_refresh_success(provider_key);
-        self.store_unsaved_oauth_credentials().await;
+        Self::store_unsaved_oauth_credentials(store).await;
         Some(access_token)
     }
 

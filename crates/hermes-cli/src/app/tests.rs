@@ -515,6 +515,24 @@ mod tests {
         assert!(persistence.load_session("session-b").unwrap().is_empty());
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn composer_drafts_write_through_a_symlink_and_keep_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let mut app = build_minimal_test_app_with_state_root(tmp.path().join("state"));
+        let link = app.composer_drafts_path();
+        let real = tmp.path().join("dotfiles").join("drafts.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        app.session_id = "session-a".to_string();
+
+        app.persist_current_composer_draft("alpha draft").unwrap();
+
+        assert!(link.is_symlink(), "the drafts link was replaced");
+        assert!(std::fs::read_to_string(&real).unwrap().contains("alpha draft"));
+    }
+
     #[test]
     fn composer_drafts_keep_mru_cap() {
         let tmp = tempfile::tempdir().unwrap();

@@ -432,6 +432,46 @@ max_turns: 50
     );
 }
 
+#[cfg(unix)]
+#[tokio::test]
+async fn profile_import_over_a_symlinked_profile_keeps_the_link() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let cli = cli_for_temp_state_root(tmp.path());
+    let profiles_dir = tmp.path().join("profiles");
+    std::fs::create_dir_all(&profiles_dir).expect("create profiles dir");
+    let source_profile = tmp.path().join("source.yaml");
+    std::fs::write(&source_profile, "name: source\nmodel: openai:gpt-4o\n")
+        .expect("write source profile");
+    let real = tmp.path().join("dotfiles").join("target.yaml");
+    std::fs::create_dir_all(real.parent().expect("parent")).expect("dotfiles dir");
+    std::fs::write(&real, "name: target\nmodel: old\n").expect("seed target");
+    let link = profiles_dir.join("target.yaml");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+
+    run_profile(
+        cli,
+        Some("import".to_string()),
+        Some(source_profile.to_string_lossy().into_owned()),
+        None,
+        None,
+        Some("target".to_string()),
+        None,
+        false,
+        true,
+        false,
+        false,
+        None,
+        true,
+        false,
+    )
+    .await
+    .expect("import over the linked profile");
+
+    assert!(link.is_symlink(), "the profile link was replaced");
+    let saved = std::fs::read_to_string(&real).expect("target written");
+    assert!(saved.contains("openai:gpt-4o"), "{saved}");
+}
+
 #[test]
 fn qqbot_connect_url_encodes_task_id() {
     let url = qqbot_connect_url("task id/+");

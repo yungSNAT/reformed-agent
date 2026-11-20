@@ -157,6 +157,129 @@ fn is_sensitive_env_key(key: &str) -> bool {
         || upper.contains("SESSION")
 }
 
+/// Variables a stdio server inherits from Hermes, as upstream's
+/// `_build_safe_env` passes them; none holds a secret.
+const INHERITED_ENV_KEYS: &[&str] = &[
+    "PATH", "HOME", "USER", "LANG", "LC_ALL", "TERM", "SHELL", "TMPDIR",
+];
+
+/// Windows process and location variables, matched case-insensitively.
+/// A Windows server often fails without them: `cmd.exe` needs `PATHEXT` to
+/// run a bare `node`, and networking fails without `SYSTEMROOT`.
+const INHERITED_WINDOWS_ENV_KEYS: &[&str] = &[
+    "ALLUSERSPROFILE",
+    "APPDATA",
+    "COMMONPROGRAMFILES",
+    "COMMONPROGRAMFILES(X86)",
+    "COMMONPROGRAMW6432",
+    "COMPUTERNAME",
+    "COMSPEC",
+    "HOMEDRIVE",
+    "HOMEPATH",
+    "LOCALAPPDATA",
+    "NUMBER_OF_PROCESSORS",
+    "OS",
+    "PATHEXT",
+    "PROCESSOR_ARCHITECTURE",
+    "PROGRAMDATA",
+    "PROGRAMFILES",
+    "PROGRAMFILES(X86)",
+    "PROGRAMW6432",
+    "PUBLIC",
+    "SYSTEMDRIVE",
+    "SYSTEMROOT",
+    "TEMP",
+    "TMP",
+    "USERDOMAIN",
+    "USERNAME",
+    "USERPROFILE",
+    "WINDIR",
+];
+
+fn is_windows_env_key(key: &str) -> bool {
+    INHERITED_WINDOWS_ENV_KEYS.contains(&key.to_ascii_uppercase().as_str())
+}
+
+fn is_inherited_env_key(key: &str) -> bool {
+    // Windows variable names are case-insensitive, and `Path` is the usual
+    // spelling there. A sensitive name such as `XDG_SESSION_COOKIE` is never
+    // inherited, whatever the profile.
+    let upper = key.to_ascii_uppercase();
+    let name = if cfg!(windows) { upper.as_str() } else { key };
+    !is_sensitive_env_key(key)
+        && (INHERITED_ENV_KEYS.contains(&name)
+            || is_windows_env_key(key)
+            || name.starts_with("XDG_"))
+}
+
+/// A server's environment before sanitising: the inherited variables, then
+/// its configured `env`, which wins.
+fn child_env_with_inherited(configured: &HashMap<String, String>) -> HashMap<String, String> {
+    let mut env: HashMap<String, String> = std::env::vars_os()
+        .filter_map(|(key, value)| Some((key.into_string().ok()?, value.into_string().ok()?)))
+        .filter(|(key, _)| is_inherited_env_key(key))
+        .collect();
+    for (key, value) in configured {
+        if cfg!(windows) {
+            env.retain(|inherited, _| !inherited.eq_ignore_ascii_case(key));
+        }
+        env.insert(key.clone(), value.clone());
+    }
+    env
+}
+
+/// The program to start for `command`. On Windows, Rust's `Command` finds
+/// only `.exe` files for a bare name, so `npx` would miss `npx.cmd`. A bare
+/// name is looked up on the server's own `PATH` through its `PATHEXT`,
+/// keeping only the kinds `Command` can start (not `.js` or `.vbs`) and only
+/// absolute entries, so a file planted in the working folder cannot run. A
+/// bare name not found that way is refused: `Command`'s own search would take
+/// an `.exe` from the parent's `PATH` or the folder Hermes runs from.
+fn program_for(command: &str, env: &HashMap<String, String>) -> std::io::Result<PathBuf> {
+    #[cfg(windows)]
+    if !command.contains(['/', '\\']) {
+        const STARTABLE: [&str; 4] = ["com", "exe", "bat", "cmd"];
+        let startable = |ext: &str| STARTABLE.iter().any(|s| s.eq_ignore_ascii_case(ext));
+        let var = |name: &str| {
+            env.iter()
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .map(|(_, value)| value.as_str())
+        };
+        let named_extension = std::path::Path::new(command)
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .is_some_and(startable);
+        let candidates: Vec<String> = if named_extension {
+            vec![command.to_string()]
+        } else {
+            var("PATHEXT")
+                .filter(|exts| !exts.is_empty())
+                .unwrap_or(".COM;.EXE;.BAT;.CMD")
+                .split(';')
+                .filter_map(|ext| ext.strip_prefix('.'))
+                .filter(|ext| startable(ext))
+                .map(|ext| format!("{command}.{ext}"))
+                .collect()
+        };
+        let dirs = std::env::split_paths(var("PATH").unwrap_or_default());
+        for dir in dirs.filter(|dir| dir.is_absolute()) {
+            for candidate in &candidates {
+                let path = dir.join(candidate);
+                if path.is_file() {
+                    return Ok(path);
+                }
+            }
+        }
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            "not found on the server's PATH with an extension from its PATHEXT",
+        ));
+    }
+    #[cfg(not(windows))]
+    let _ = env;
+    Ok(PathBuf::from(command))
+}
+
 fn sanitize_child_env(
     env: &HashMap<String, String>,
     profile: McpSandboxProfile,
@@ -183,7 +306,8 @@ fn sanitize_child_env(
                 || key_upper == "TERM"
                 || key_upper.starts_with("LC_")
                 || key_upper.starts_with("MCP_")
-                || key_upper.starts_with("HERMES_MCP_");
+                || key_upper.starts_with("HERMES_MCP_")
+                || is_windows_env_key(k);
             if !allowed_strict {
                 continue;
             }
@@ -349,7 +473,7 @@ impl StdioTransport {
     }
 
     fn effective_child_env(&self, profile: McpSandboxProfile) -> HashMap<String, String> {
-        let mut env = sanitize_child_env(&self.env, profile);
+        let mut env = sanitize_child_env(&child_env_with_inherited(&self.env), profile);
         if self.suppress_interactive_oauth {
             env.insert(
                 "HERMES_MCP_BACKGROUND_DISCOVERY".to_string(),
@@ -395,7 +519,10 @@ impl McpTransport for StdioTransport {
             self.command, self.args
         );
 
-        let mut cmd = Command::new(&self.command);
+        let program = program_for(&self.command, &sanitized_env).map_err(|e| {
+            McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
+        })?;
+        let mut cmd = Command::new(program);
         cmd.args(&self.args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -1442,6 +1569,182 @@ mod tests {
         assert_eq!(
             child_env.get("MCP_NONINTERACTIVE").map(String::as_str),
             Some("1")
+        );
+    }
+
+    fn path_entries(env: &HashMap<String, String>) -> Vec<&String> {
+        env.iter()
+            .filter(|(key, _)| key.eq_ignore_ascii_case("PATH"))
+            .map(|(_, value)| value)
+            .collect()
+    }
+
+    #[test]
+    fn stdio_child_inherits_path_and_no_other_hermes_variable() {
+        let transport = StdioTransport::new("echo", &[], &HashMap::new(), false);
+        let env = transport.effective_child_env(McpSandboxProfile::Balanced);
+
+        let parent_path = std::env::var("PATH").expect("the test runs with a PATH");
+        assert_eq!(path_entries(&env), vec![&parent_path]);
+        let foreign: Vec<_> = env.keys().filter(|k| !is_inherited_env_key(k)).collect();
+        assert!(
+            foreign.is_empty(),
+            "variables outside the inherited set: {foreign:?}"
+        );
+    }
+
+    #[test]
+    fn stdio_child_inherits_no_sensitive_name() {
+        assert!(is_inherited_env_key("XDG_CONFIG_HOME"));
+        assert!(!is_inherited_env_key("XDG_SESSION_COOKIE"));
+        assert!(!is_inherited_env_key("XDG_SESSION_ID"));
+    }
+
+    #[test]
+    fn stdio_child_configured_path_replaces_the_inherited_one() {
+        let mut configured = HashMap::new();
+        configured.insert("PATH".to_string(), "/configured/bin".to_string());
+        let transport = StdioTransport::new("echo", &[], &configured, false);
+        let env = transport.effective_child_env(McpSandboxProfile::Balanced);
+
+        assert_eq!(path_entries(&env), vec!["/configured/bin"]);
+    }
+
+    /// Folders for the program lookup tests: `a` holds `probe.js`, `b` holds
+    /// `probe.bat` and `probe.cmd`, and `near`, under the working directory,
+    /// holds `probe.cmd`.
+    #[cfg(windows)]
+    fn lookup_dirs() -> [tempfile::TempDir; 3] {
+        let dirs = [
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir().unwrap(),
+            tempfile::tempdir_in(".").unwrap(),
+        ];
+        std::fs::write(dirs[0].path().join("probe.js"), "").unwrap();
+        std::fs::write(dirs[1].path().join("probe.bat"), "").unwrap();
+        std::fs::write(dirs[1].path().join("probe.cmd"), "").unwrap();
+        std::fs::write(dirs[2].path().join("probe.cmd"), "").unwrap();
+        dirs
+    }
+
+    #[cfg(windows)]
+    fn find_probe(path: String, pathext: &str) -> std::io::Result<PathBuf> {
+        let env = HashMap::from([
+            ("Path".to_string(), path),
+            ("PATHEXT".to_string(), pathext.to_string()),
+        ]);
+        program_for("probe", &env)
+    }
+
+    /// The returned name takes PATHEXT's case; Windows paths ignore case.
+    #[cfg(windows)]
+    fn assert_same_path(found: PathBuf, expected: PathBuf) {
+        assert!(
+            found
+                .to_string_lossy()
+                .eq_ignore_ascii_case(&expected.to_string_lossy()),
+            "found {found:?}, expected {expected:?}"
+        );
+    }
+
+    /// A bare name resolves only to a file `Command` can start, in the
+    /// server's own `PATHEXT` order rather than the parent's.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_follows_the_servers_pathext_and_skips_scripts() {
+        let [a, b, _near] = lookup_dirs();
+        let path = format!("{};{}", a.path().display(), b.path().display());
+
+        // `.js` is in Windows' default PATHEXT but `Command` cannot start it.
+        let found = find_probe(path.clone(), ".JS;.BAT;.CMD").unwrap();
+        assert_same_path(found, b.path().join("probe.bat"));
+        let found = find_probe(path, ".CMD;.BAT").unwrap();
+        assert_same_path(found, b.path().join("probe.cmd"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_treats_an_empty_pathext_as_unset() {
+        let [_a, b, _near] = lookup_dirs();
+
+        let found = find_probe(b.path().display().to_string(), "").unwrap();
+        assert_same_path(found, b.path().join("probe.bat"));
+    }
+
+    /// A relative entry would run a file planted in the working directory.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_skips_relative_path_entries() {
+        let [_a, b, near] = lookup_dirs();
+        let near_name = near.path().file_name().unwrap().to_string_lossy();
+
+        let found = find_probe(format!("{near_name};{}", b.path().display()), ".CMD").unwrap();
+        assert_same_path(found, b.path().join("probe.cmd"));
+    }
+
+    /// A bare name found nowhere the lookup allows is refused, rather than
+    /// handed to `Command`, whose own search takes any `.exe` on the parent's
+    /// `PATH` or beside Hermes.
+    #[cfg(windows)]
+    #[test]
+    fn program_lookup_refuses_a_name_it_cannot_find() {
+        let [_a, b, near] = lookup_dirs();
+        std::fs::write(near.path().join("probe.exe"), "").unwrap();
+        std::fs::write(b.path().join("probe.exe"), "").unwrap();
+        let near_name = near
+            .path()
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .into_owned();
+
+        // Only a relative entry holds the program.
+        let found = find_probe(near_name, ".EXE");
+        assert_eq!(
+            found.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::NotFound)
+        );
+        // The server's PATHEXT does not admit the `.exe` that is there.
+        let found = find_probe(b.path().display().to_string(), ".COM");
+        assert_eq!(
+            found.map_err(|e| e.kind()),
+            Err(std::io::ErrorKind::NotFound)
+        );
+    }
+
+    /// `npx` is `npx.cmd` on Windows, which Rust's `Command` does not find by
+    /// its bare name; the script also reports the `SystemRoot` it was given.
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn stdio_transport_starts_a_cmd_script_named_without_its_extension() {
+        let bin = tempfile::tempdir().unwrap();
+        let marker = bin.path().join("started.txt");
+        std::fs::write(
+            bin.path().join("hermes-mcp-probe.cmd"),
+            format!("@echo %SystemRoot%> \"{}\"\r\n", marker.display()),
+        )
+        .unwrap();
+        // Node installs an extensionless shell script beside `npx.cmd`.
+        std::fs::write(bin.path().join("hermes-mcp-probe"), "#!/bin/sh\n").unwrap();
+        let mut configured = HashMap::new();
+        configured.insert("PATH".to_string(), bin.path().display().to_string());
+        let mut transport = StdioTransport::new("hermes-mcp-probe", &[], &configured, false);
+
+        transport.start().await.expect("start the .cmd server");
+        let mut written = None;
+        for _ in 0..100 {
+            if let Ok(text) = std::fs::read_to_string(&marker) {
+                written = Some(text);
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        transport.close().await.unwrap();
+
+        let written = written.expect("the .cmd server ran");
+        assert!(
+            !written.trim().is_empty() && !written.contains('%'),
+            "the server had no SystemRoot: {written:?}"
         );
     }
 

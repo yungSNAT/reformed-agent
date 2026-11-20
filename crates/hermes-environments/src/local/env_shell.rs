@@ -1,24 +1,13 @@
-#[cfg(unix)]
-fn configure_foreground_process_group(cmd: &mut TokioCommand) {
-    use std::os::unix::process::CommandExt;
-
-    cmd.as_std_mut().process_group(0);
-}
-
-#[cfg(not(unix))]
-fn configure_foreground_process_group(_cmd: &mut TokioCommand) {}
-
 struct ForegroundChildGuard {
     child: Option<tokio::process::Child>,
-    pid: Option<u32>,
+    tree: ProcessTree,
 }
 
 impl ForegroundChildGuard {
-    fn new(child: tokio::process::Child) -> Self {
-        let pid = child.id();
+    fn new(child: tokio::process::Child, tree: ProcessTree) -> Self {
         Self {
             child: Some(child),
-            pid,
+            tree,
         }
     }
 
@@ -29,6 +18,24 @@ impl ForegroundChildGuard {
     fn disarm(&mut self) {
         self.child.take();
     }
+
+    /// Ends the child's whole process tree and reaps the child. The guard
+    /// stays armed until then, so a caller cancelled midway still ends it.
+    async fn terminate(&mut self) {
+        let _ = self.tree.terminate();
+        let child = self.child.as_mut().expect("foreground child present");
+        // The group is killed even when the shell has exited: a descendant
+        // that ignores SIGTERM outlives it. The unreaped shell keeps its
+        // group id from being reused meanwhile.
+        #[cfg(unix)]
+        {
+            tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
+            let _ = self.tree.kill();
+        }
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        self.disarm();
+    }
 }
 
 impl Drop for ForegroundChildGuard {
@@ -36,51 +43,14 @@ impl Drop for ForegroundChildGuard {
         let Some(mut child) = self.child.take() else {
             return;
         };
-        terminate_child_process_sync(self.pid);
+        let _ = self.tree.terminate();
+        #[cfg(unix)]
+        {
+            std::thread::sleep(std::time::Duration::from_millis(150));
+            let _ = self.tree.kill();
+        }
         let _ = child.start_kill();
     }
-}
-
-#[cfg(unix)]
-fn terminate_child_process_sync(pid: Option<u32>) {
-    if let Some(pid) = pid {
-        let pgid = -(pid as i32);
-        unsafe {
-            libc::kill(pgid, libc::SIGTERM);
-        }
-        std::thread::sleep(std::time::Duration::from_millis(150));
-        unsafe {
-            libc::kill(pgid, libc::SIGKILL);
-        }
-    }
-}
-
-#[cfg(not(unix))]
-fn terminate_child_process_sync(_pid: Option<u32>) {}
-
-#[cfg(unix)]
-async fn terminate_child_process(child: &mut tokio::process::Child) {
-    if let Some(pid) = child.id() {
-        let pgid = -(pid as i32);
-        unsafe {
-            libc::kill(pgid, libc::SIGTERM);
-        }
-        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
-        match child.try_wait() {
-            Ok(Some(_)) => return,
-            Ok(None) | Err(_) => unsafe {
-                libc::kill(pgid, libc::SIGKILL);
-            },
-        }
-    }
-    let _ = child.kill().await;
-    let _ = child.wait().await;
-}
-
-#[cfg(not(unix))]
-async fn terminate_child_process(child: &mut tokio::process::Child) {
-    let _ = child.kill().await;
-    let _ = child.wait().await;
 }
 
 fn home_dir() -> Option<PathBuf> {
@@ -641,6 +611,39 @@ else printf '%s\n' \"Hermes could not find bash or zsh in PATH. Run 'exec zsh -l
         let _ = subprocess_home;
         command.to_string()
     }
+}
+
+/// CreateProcess takes at most 32,767 UTF-16 units for the whole command
+/// line, and quoting can double a script, so a longer script goes to a file.
+#[cfg(windows)]
+const WINDOWS_INLINE_SCRIPT_MAX_UTF16: usize = 16_000;
+
+/// `sh -c <script>`, or on Windows `sh <file>` when the script is too long
+/// for a command line. Keep the returned file until the shell has exited.
+fn shell_command(script: &str) -> Result<(TokioCommand, Option<tempfile::TempPath>), AgentError> {
+    let mut cmd = TokioCommand::new("sh");
+    #[cfg(windows)]
+    if script.encode_utf16().count() > WINDOWS_INLINE_SCRIPT_MAX_UTF16 {
+        use std::io::Write;
+
+        let script_error = |e: std::io::Error| {
+            AgentError::Io(format!("Failed to write the command to a script file: {e}"))
+        };
+        // shortcut: the file takes `%TEMP%`'s permissions and outlives a
+        // crash, so a shared `TEMP` exposes the command to other local
+        // users. The upgrade is a folder with an owner-only ACL.
+        let mut file = tempfile::Builder::new()
+            .prefix("hermes-command-")
+            .suffix(".sh")
+            .tempfile()
+            .map_err(script_error)?;
+        file.write_all(script.as_bytes()).map_err(script_error)?;
+        let path = file.into_temp_path();
+        cmd.arg(&*path);
+        return Ok((cmd, Some(path)));
+    }
+    cmd.arg("-c").arg(script);
+    Ok((cmd, None))
 }
 
 fn rewrite_compound_background(command: &str) -> String {

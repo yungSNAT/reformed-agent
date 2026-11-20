@@ -137,13 +137,10 @@ pub fn save_usage(
     usage: &BTreeMap<String, SkillUsageRecord>,
 ) -> Result<(), SkillError> {
     fs::create_dir_all(skills_dir)?;
-    let path = usage_file(skills_dir);
-    let tmp = skills_dir.join(format!(".usage_{}.tmp", std::process::id()));
     let body = serde_json::to_string_pretty(usage)
         .map_err(|e| SkillError::Parse(format!("Failed to encode usage sidecar: {e}")))?;
-    fs::write(&tmp, body)?;
-    fs::rename(&tmp, &path)?;
-    Ok(())
+    hermes_config::atomic_write_bytes(&usage_file(skills_dir), body.as_bytes())
+        .map_err(|e| SkillError::Io(e.to_string()))
 }
 
 fn mutate_usage<F>(skills_dir: &Path, skill_name: &str, mut f: F) -> Result<(), SkillError>
@@ -519,6 +516,25 @@ mod tests {
         )
         .unwrap();
         dir
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_usage_through_a_symlink_keeps_the_link() {
+        let dir = tempdir().unwrap();
+        let skills = dir.path().join("skills");
+        fs::create_dir_all(&skills).unwrap();
+        let real = dir.path().join("dotfiles").join("usage.json");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = usage_file(&skills);
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let mut data = BTreeMap::new();
+        data.insert("skill-a".to_string(), SkillUsageRecord::default());
+
+        save_usage(&skills, &data).unwrap();
+
+        assert!(link.is_symlink(), "the usage link was replaced");
+        assert!(fs::read_to_string(&real).unwrap().contains("skill-a"));
     }
 
     #[test]

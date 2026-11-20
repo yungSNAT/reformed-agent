@@ -1269,3 +1269,27 @@ fn read_nous_auth_state_heals_stored_portal_url_outside_allowlist() {
         assert_eq!(read.portal_base_url, expected, "{stored}");
     }
 }
+
+#[cfg(unix)]
+#[test]
+fn owner_only_credential_write_keeps_a_symlinked_store() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let real = tmp.path().join("vault").join("google_oauth.json");
+    std::fs::create_dir_all(real.parent().expect("parent")).expect("vault dir");
+    let link = tmp.path().join("google_oauth.json");
+    std::os::unix::fs::symlink(&real, &link).expect("link");
+
+    write_owner_only_atomic(&link, "{\"refresh\":\"made-up\"}\n").expect("write store");
+
+    assert!(link.is_symlink(), "the credential link was replaced");
+    assert_eq!(
+        std::fs::read_to_string(&real).expect("read target"),
+        "{\"refresh\":\"made-up\"}\n"
+    );
+    let mode = std::fs::metadata(&real)
+        .expect("metadata")
+        .permissions()
+        .mode();
+    assert_eq!(mode & 0o777, 0o600);
+}

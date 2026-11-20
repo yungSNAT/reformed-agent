@@ -109,23 +109,30 @@ impl FileMemoryBackend {
 
     async fn write_file(&self, path: &std::path::Path, content: &str) -> Result<(), ToolError> {
         self.ensure_dir().await?;
-        let tmp = Self::temp_path_for(path);
-        if let Err(e) = tokio::fs::write(&tmp, content).await {
+        // A symlinked memory file keeps its link and the target's mode, but
+        // the entries are text the model chose, so the link may not lead into
+        // a protected path. The memory folder can be relative (a relative
+        // `HERMES_HOME`), so the path is made absolute against the process
+        // folder, where it is written, before its target is judged.
+        let path = &std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+        let target = hermes_config::resolve_symlink_target(path);
+        if target != *path && crate::credential_guard::is_link_target_write_denied(&target) {
             return Err(ToolError::ExecutionFailed(format!(
-                "Failed to write temporary memory file '{}': {}",
-                tmp.display(),
-                e
-            )));
-        }
-        if let Err(e) = tokio::fs::rename(&tmp, path).await {
-            let _ = tokio::fs::remove_file(&tmp).await;
-            return Err(ToolError::ExecutionFailed(format!(
-                "Failed to atomically replace '{}': {}",
+                "Write denied: memory file '{}' links to the protected path '{}'",
                 path.display(),
-                e
+                target.display()
             )));
         }
-        Ok(())
+        let content = content.as_bytes().to_vec();
+        tokio::task::spawn_blocking(move || hermes_config::atomic_write_bytes(&target, &content))
+            .await
+            .map_err(|e| ToolError::ExecutionFailed(format!("Memory write task failed: {e}")))?
+            .map_err(|e| {
+                ToolError::ExecutionFailed(format!(
+                    "Failed to write memory file '{}': {e}",
+                    path.display()
+                ))
+            })
     }
 
     fn parse_entries(content: &str) -> Vec<String> {
@@ -198,18 +205,6 @@ impl FileMemoryBackend {
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_nanos())
             .unwrap_or(0)
-    }
-
-    fn temp_path_for(path: &Path) -> PathBuf {
-        let file_name = path
-            .file_name()
-            .and_then(|s| s.to_str())
-            .unwrap_or("memory");
-        path.with_file_name(format!(
-            ".{file_name}.{}.{}.tmp",
-            std::process::id(),
-            Self::now_nanos()
-        ))
     }
 
     fn backup_path_for(path: &Path) -> PathBuf {
@@ -542,6 +537,156 @@ mod tests {
             .unwrap_err();
         assert!(err.to_string().contains("Refusing to write USER.md"));
         assert_eq!(path.read_to_string().unwrap(), drift);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_writes_through_a_symlinked_memory_file_and_keeps_it() {
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("dotfiles").join("MEMORY.md");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend.add("memory", "Kept in dotfiles.").await.unwrap();
+
+        assert!(link.is_symlink(), "the memory link was replaced");
+        assert!(real.read_to_string().unwrap().contains("Kept in dotfiles."));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_keeps_the_mode_of_a_linked_memory_file() {
+        use std::os::unix::fs::PermissionsExt;
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("dotfiles").join("MEMORY.md");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        std::fs::write(&real, "").unwrap();
+        std::fs::set_permissions(&real, std::fs::Permissions::from_mode(0o600)).unwrap();
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend.add("memory", "Kept private.").await.unwrap();
+
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600, "the linked file's mode widened");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_refuses_a_memory_link_into_a_protected_path() {
+        let temp = tempfile::tempdir().unwrap();
+        let home = temp.path().join("home");
+        let keys = home.join(".ssh").join("authorized_keys");
+        std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        std::os::unix::fs::symlink(&keys, memories.join("MEMORY.md")).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved = std::env::var_os("HOME");
+        std::env::set_var("HOME", &home);
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(backend.add("memory", "Planted."));
+        match saved {
+            Some(value) => std::env::set_var("HOME", value),
+            None => std::env::remove_var("HOME"),
+        }
+
+        let err = result.expect_err("a memory write followed a link into ~/.ssh");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert!(!keys.exists(), "the protected file was written");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn add_judges_a_relative_memory_link_where_it_writes_it() {
+        // A relative memory folder (a relative `HERMES_HOME`) with a
+        // relative link: the write lands under the process folder, so the
+        // link's target is judged there, not under `TERMINAL_CWD`.
+        let cwd = std::env::current_dir().unwrap();
+        let local = tempfile::Builder::new()
+            .prefix(".memory-link-test-")
+            .tempdir_in(&cwd)
+            .unwrap();
+        let name = local.path().file_name().unwrap().to_owned();
+        let home = local.path().join("home");
+        let keys = home.join(".ssh").join("authorized_keys");
+        std::fs::create_dir_all(keys.parent().unwrap()).unwrap();
+        let memories = local.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        std::os::unix::fs::symlink("../home/.ssh/authorized_keys", memories.join("MEMORY.md"))
+            .unwrap();
+        let backend = FileMemoryBackend::with_dir(Path::new(&name).join("memories"));
+        let elsewhere = tempfile::tempdir().unwrap();
+
+        let result = crate::test_env::with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(elsewhere.path())),
+            ],
+            || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(backend.add("memory", "Planted."))
+            },
+        );
+
+        let err = result.expect_err("a relative memory link reached ~/.ssh");
+        assert!(err.to_string().contains("Write denied"), "{err}");
+        assert!(!keys.exists(), "the protected file was written");
+    }
+
+    #[test]
+    fn add_works_whilst_a_write_safe_root_is_set() {
+        let temp = tempfile::tempdir().unwrap();
+        let project = temp.path().join("project");
+        std::fs::create_dir_all(&project).unwrap();
+        let backend = FileMemoryBackend::with_dir(temp.path().join("memories"));
+
+        let _lock = hermes_config::managed_gateway::test_lock::lock();
+        let saved = std::env::var_os("HERMES_WRITE_SAFE_ROOT");
+        std::env::set_var("HERMES_WRITE_SAFE_ROOT", &project);
+        let result = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(backend.add("memory", "Outside the project."));
+        match saved {
+            Some(value) => std::env::set_var("HERMES_WRITE_SAFE_ROOT", value),
+            None => std::env::remove_var("HERMES_WRITE_SAFE_ROOT"),
+        }
+
+        result.expect("the safe root refused a memory write");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn add_creates_the_missing_folder_of_a_linked_memory_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let memories = temp.path().join("memories");
+        std::fs::create_dir_all(&memories).unwrap();
+        let real = temp.path().join("not-yet").join("MEMORY.md");
+        let link = memories.join("MEMORY.md");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let backend = FileMemoryBackend::with_dir(memories);
+
+        backend
+            .add("memory", "Kept in a new folder.")
+            .await
+            .unwrap();
+
+        assert!(link.is_symlink(), "the memory link was replaced");
+        assert!(real
+            .read_to_string()
+            .unwrap()
+            .contains("Kept in a new folder."));
     }
 
     #[tokio::test]
