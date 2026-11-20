@@ -461,7 +461,7 @@ def cmd_token(args):
     supply_raw   = int(parsed.get("supply", 0))
     supply_human = supply_raw / (10 ** decimals) if decimals else supply_raw
 
-    largest = rpc("getTokenLargestAccounts", [mint])
+    largest = rpc("getTokenLargestAccounts", [mint]) or {}
     holders = []
     for acct in (largest.get("value") or [])[:5]:
         amount = float(acct.get("uiAmountString") or 0)

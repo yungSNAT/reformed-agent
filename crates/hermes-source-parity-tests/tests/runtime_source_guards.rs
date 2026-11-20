@@ -6,6 +6,7 @@
 //! the set ripgrep searched when the guards were shell scripts.
 
 use std::fs;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -46,8 +47,10 @@ fn repo_files(root: &Path, dirs: &[&str]) -> Vec<String> {
 fn hits(root: &Path, files: &[String], pattern: &Regex) -> Vec<String> {
     let mut found = Vec::new();
     for path in files {
-        let Ok(bytes) = fs::read(root.join(path)) else {
-            continue;
+        let bytes = match fs::read(root.join(path)) {
+            Ok(bytes) => bytes,
+            Err(error) if error.kind() == ErrorKind::NotFound => continue,
+            Err(error) => panic!("could not read runtime source {path}: {error}"),
         };
         let text = String::from_utf8_lossy(&bytes);
         for (index, line) in text.lines().enumerate() {
@@ -61,6 +64,13 @@ fn hits(root: &Path, files: &[String], pattern: &Regex) -> Vec<String> {
 
 fn assert_clean(what: &str, found: Vec<String>) {
     assert!(found.is_empty(), "{what} detected:\n{}", found.join("\n"));
+}
+
+#[test]
+#[should_panic(expected = "could not read runtime source")]
+fn a_runtime_source_read_error_fails_the_guard() {
+    let pattern = Regex::new("unused pattern").unwrap();
+    hits(&repo_root(), &["crates".to_owned()], &pattern);
 }
 
 #[test]

@@ -222,12 +222,9 @@
             .expect("agent run");
 
         let seen = provider.seen_messages.lock().expect("seen messages lock");
-        assert!(seen
-            .iter()
-            .any(|m| m.content.as_deref() == Some("ephemeral test-only system prompt")));
-        assert!(seen
-            .iter()
-            .any(|m| m.content.as_deref() == Some("real question")));
+        let question = seen.iter().position(|m| m.content.as_deref() == Some("real question"));
+        let extra = seen.iter().position(|m| m.content.as_deref() == Some("ephemeral test-only system prompt"));
+        assert!(question.expect("user question") < extra.expect("ephemeral system prompt"));
 
         assert!(!result
             .messages
@@ -1672,6 +1669,7 @@
 
     include!("tests/llm_retry_stream.rs");
     include!("tests/oauth_unauthorized_refresh.rs");
+    include!("tests/prompt_cache_prefix.rs");
 
     #[test]
     fn quiet_mode_suppresses_status_callback() {
@@ -2192,6 +2190,7 @@
     #[derive(Default)]
     struct RecordingProvider {
         seen: Mutex<Vec<Vec<Message>>>,
+        housekeeping_first: AtomicBool,
     }
     #[async_trait::async_trait]
     impl LlmProvider for RecordingProvider {
@@ -2223,11 +2222,89 @@
             _extra_body: Option<&serde_json::Value>,
         ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
             self.seen.lock().expect("seen lock").push(messages.to_vec());
+            if self.housekeeping_first.swap(false, Ordering::AcqRel) {
+                return futures::stream::iter([
+                    Ok(stream_chunk_content("read it")),
+                    Ok(stream_chunk_tool_name(0, "cleanup", "todo")),
+                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ])
+                .boxed();
+            }
             futures::stream::iter(vec![
                 Ok(stream_chunk_content("read it")),
                 Ok(stream_chunk_finish("stop")),
             ])
             .boxed()
+        }
+    }
+
+    #[tokio::test]
+    async fn plain_and_streamed_runs_wait_for_their_session_end_hook() {
+        struct FlushRecorder(Arc<Mutex<Vec<Value>>>);
+
+        impl crate::memory_manager::MemoryProviderPlugin for FlushRecorder {
+            fn name(&self) -> &str {
+                "test-flush"
+            }
+
+            fn prepare_session_end(
+                &self,
+                messages: &[Value],
+            ) -> Option<futures::future::BoxFuture<'static, ()>> {
+                let recorded = self.0.clone();
+                let messages = messages.to_vec();
+                Some(Box::pin(async move {
+                    tokio::task::yield_now().await;
+                    recorded.lock().unwrap().extend(messages);
+                }))
+            }
+        }
+
+        for (streamed, input) in [(false, "plain session"), (true, "streamed session")] {
+            let observed = Arc::new(Mutex::new(Vec::new()));
+            let mut memory = MemoryManager::new();
+            memory.add_provider(Arc::new(FlushRecorder(observed.clone())));
+            let mut config = AgentConfig {
+                skip_context_files: true,
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut config);
+            let mut registry = ToolRegistry::new();
+            registry.register(
+                "todo",
+                ToolSchema::new("todo", "Update the list", JsonSchema::new("object")),
+                Arc::new(|_| Ok("updated".into())),
+            );
+            let provider = RecordingProvider {
+                housekeeping_first: AtomicBool::new(streamed),
+                ..RecordingProvider::default()
+            };
+            let agent = AgentLoop::new(config, Arc::new(registry), Arc::new(provider))
+                .with_memory(Arc::new(Mutex::new(memory)));
+            let messages = vec![Message::user(input)];
+            if streamed {
+                let callback_transcript = observed.clone();
+                let unmuted = Arc::new(AtomicBool::new(false));
+                let callback_unmuted = unmuted.clone();
+                agent
+                    .run_stream(messages, None, Some(Box::new(move |chunk| {
+                        let extra = chunk.delta.and_then(|delta| delta.extra);
+                        if extra.is_some_and(|value| {
+                            value["control"] == "mute_post_response" && value["enabled"] == false
+                        }) {
+                            assert!(!callback_transcript.lock().unwrap().is_empty());
+                            callback_unmuted.store(true, Ordering::Release);
+                        }
+                    })))
+                    .await
+                    .unwrap();
+                assert!(unmuted.load(Ordering::Acquire));
+            } else {
+                agent.run(messages, None).await.unwrap();
+            }
+            let observed = observed.lock().unwrap();
+            assert!(observed.iter().any(|message| message["content"] == input));
         }
     }
 
@@ -2323,3 +2400,4 @@
     }
 
     include!("tests/coding_route_learning.rs");
+    include!("tests/session_end_flush.rs");

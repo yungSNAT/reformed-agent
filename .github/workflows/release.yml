@@ -21,6 +21,7 @@ permissions:
 jobs:
   qualify:
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     permissions:
       contents: read
       actions: read
@@ -63,6 +64,7 @@ jobs:
   security-release-gate:
     needs: qualify
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:
@@ -127,6 +129,7 @@ jobs:
   cross-build:
     needs: security-release-gate
     runs-on: ubuntu-latest
+    timeout-minutes: 75
     strategy:
       matrix:
         include:
@@ -187,6 +190,7 @@ jobs:
             target: x86_64-apple-darwin
             artifact: hermes-macos-x86_64.tar.gz
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 75
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -213,6 +217,7 @@ jobs:
   stage:
     needs: [qualify, security-release-gate, cross-build, macos-build]
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: read
     steps:
@@ -259,6 +264,7 @@ jobs:
       matrix:
         runner: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15-intel]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
@@ -299,6 +305,7 @@ jobs:
             artifact: hermes-windows-x86_64.zip
             binary: hermes.exe
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
     env:
       ARTIFACT: ${{ matrix.artifact }}
       BINARY: ${{ matrix.binary }}
@@ -340,6 +347,7 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/')
     needs: [qualify, stage, smoke, smoke-direct]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
       id-token: write
@@ -394,9 +402,13 @@ jobs:
           path: dist/
 
   publish:
+    concurrency:
+      group: release-publish
+      queue: max
     if: startsWith(github.ref, 'refs/tags/')
     needs: sign
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     permissions:
       contents: write
     steps:
@@ -425,6 +437,7 @@ jobs:
   release-smoke:
     needs: publish
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     permissions:
       contents: read
     steps:

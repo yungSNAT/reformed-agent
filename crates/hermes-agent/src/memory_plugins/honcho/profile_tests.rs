@@ -576,6 +576,184 @@ mod tests {
         assert!(api_request_lower.contains("x-api-key: hch-at-new"));
     }
 
+    #[tokio::test]
+    async fn session_end_flushes_honcho_from_a_tokio_worker() {
+        use wiremock::matchers::{body_json, header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "hch-at-new",
+                "refresh_token": "hch-rt-new",
+                "expires_in": 3600
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/configured/sessions/ending-session/flush"))
+            .and(header("authorization", "Bearer hch-at-new"))
+            .and(header("x-api-key", "hch-at-new"))
+            .and(body_json(json!({
+                "workspace_id": "fixture-workspace",
+                "session_id": "ending-session"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let tmp = tempfile::tempdir().expect("fixture home");
+        let config_path = tmp.path().join("honcho.json");
+        let oauth_endpoint = format!("{}/oauth/token", server.uri());
+        let host = oauth_host_block("hch-at-old", "hch-rt-old", 100, &oauth_endpoint);
+        std::fs::write(
+            &config_path,
+            json!({"hosts": {"hermes": host.clone()}}).to_string(),
+        )
+        .expect("fixture config");
+
+        let plugin = Arc::new(HonchoMemoryPlugin::new());
+        *plugin.config.lock().unwrap() = Some(HonchoConfig {
+            api_key: "hch-at-old".into(),
+            base_url: server.uri(),
+            enabled: true,
+            recall_mode: String::new(),
+            context_tokens: None,
+            workspace_id: "fixture-workspace".into(),
+            peer_name: None,
+            ai_peer: String::new(),
+            pin_user_peer: false,
+            user_peer_aliases: HashMap::new(),
+            runtime_peer_prefix: String::new(),
+            timeout_secs: 2.0,
+            endpoints: HashMap::from([(
+                "flush".into(),
+                "/configured/sessions/{session}/flush".into(),
+            )]),
+            host_had_explicit_api_key: false,
+            host: "hermes".into(),
+            config_path: config_path.clone(),
+            oauth: Some(HonchoOAuthCredential::from_host_block(&host).expect("fixture grant")),
+        });
+        plugin.on_session_switch("ending-session", "", false);
+        let mut manager = crate::memory_manager::MemoryManager::new();
+        manager.add_provider(plugin);
+        let manager = Arc::new(std::sync::Mutex::new(manager));
+        let tasks = crate::memory_manager::MemoryManager::session_end_tasks(&manager, &[]);
+        manager
+            .lock()
+            .unwrap()
+            .on_session_switch("new-session", "ending-session", false);
+        for task in tasks {
+            task.await;
+        }
+        server.verify().await;
+        let saved = read_oauth_credential(&config_path, "hermes").expect("persisted grant");
+        assert_eq!(saved.refresh_token, "hch-rt-new");
+    }
+
+    #[tokio::test]
+    async fn session_end_flush_preserves_http_outcomes() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = json!({"session_id": "fixture"});
+        let cases = [
+            ("/empty", ResponseTemplate::new(204), true),
+            (
+                "/json",
+                ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+                true,
+            ),
+            ("/not-modified", ResponseTemplate::new(304), false),
+            ("/unavailable", ResponseTemplate::new(503), false),
+            (
+                "/invalid-json",
+                ResponseTemplate::new(200).set_body_string("invalid JSON"),
+                false,
+            ),
+            (
+                "/timeout",
+                ResponseTemplate::new(204).set_delay(StdDuration::from_secs(1)),
+                false,
+            ),
+        ];
+        let mut differences = Vec::new();
+        for (route, template, expected) in cases {
+            Mock::given(method("POST"))
+                .and(path(route))
+                .respond_with(template)
+                .expect(2)
+                .mount(&server)
+                .await;
+            let config = HonchoConfig {
+                base_url: server.uri(),
+                timeout_secs: 0.25,
+                ..test_config()
+            };
+            let old_config = config.clone();
+            let old_body = body.clone();
+            let old = tokio::task::spawn_blocking(move || {
+                HonchoMemoryPlugin::send_json(
+                    &old_config,
+                    Method::POST,
+                    route,
+                    Some(&old_body),
+                    None,
+                )
+                .is_ok()
+            })
+            .await
+            .unwrap();
+            let new = HonchoMemoryPlugin::flush_session(config, route.into(), body.clone())
+                .await
+                .is_ok();
+            assert_eq!(old, expected, "existing flush outcome for {route}");
+            if new != old {
+                differences.push(route);
+            }
+        }
+        server.verify().await;
+        assert!(differences.is_empty(), "changed outcomes: {differences:?}");
+    }
+
+    #[tokio::test]
+    async fn session_end_flush_reports_a_response_body_timeout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::with_capacity(1024);
+            while !http_request_complete(&request) {
+                assert!(stream.read_buf(&mut request).await.unwrap() > 0);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n{")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        let config = HonchoConfig {
+            base_url: format!("http://{addr}"),
+            timeout_secs: 0.5,
+            ..test_config()
+        };
+        let result = HonchoMemoryPlugin::flush_session(config, "/flush".into(), json!({})).await;
+        server.abort();
+        let _ = server.await;
+        let error = result.expect_err("a stalled success body must fail");
+        assert!(
+            error.contains("Honcho flush response body read failed"),
+            "{error}"
+        );
+    }
+
     #[test]
     fn test_honcho_pin_user_peer_wins_over_runtime_identity() {
         let mut config = test_config();

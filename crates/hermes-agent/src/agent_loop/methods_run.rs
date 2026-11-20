@@ -57,6 +57,14 @@ impl AgentLoop {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
+        Self::complete_memory_flush(self.run_inner(messages, tools)).await
+    }
+
+    async fn run_inner(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolSchema>>,
+    ) -> Result<AgentResult, AgentError> {
         let mut ctx = ContextManager::default_budget();
         let mut tool_errors: Vec<hermes_core::ToolErrorRecord> = Vec::new();
         let session_id = self.config.session_id.as_deref().unwrap_or("");
@@ -77,7 +85,7 @@ impl AgentLoop {
             .unwrap_or_default();
 
         // Determine which tools to expose
-        let tool_schemas: Vec<ToolSchema> = tools.unwrap_or_else(|| self.tool_registry.schemas());
+        let tool_schemas = self.tool_schemas_for_turn(tools);
         // Five finalizer contracts below re-ask for a final answer backed by tool evidence or
         // execution. A turn offered no tools cannot gather any, so its first answer stands; the
         // output-quality rewrite needs no tools and still applies.
