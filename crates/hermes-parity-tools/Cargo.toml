@@ -12,6 +12,7 @@ jiff = { workspace = true }
 clap = { workspace = true }
 regex = { workspace = true }
 hermes-py = { workspace = true }
+syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
 serde_json = { workspace = true }

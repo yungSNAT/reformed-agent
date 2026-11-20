@@ -924,6 +924,10 @@ def maybe_check_global_parity_drift(
         ],
         [
             "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-test-coverage-audit",
+        ],
+        [
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
             "generate-test-coverage-audit", "--check",
         ],
         [

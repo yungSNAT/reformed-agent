@@ -82,6 +82,7 @@ run cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --loc
 run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
 run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
