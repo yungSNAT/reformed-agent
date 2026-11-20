@@ -36,6 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fallback-cmd",
         default=(
+            "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit && "
             "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check && "
             "python3 scripts/generate-global-parity-proof.py --check-ci"
         ),
