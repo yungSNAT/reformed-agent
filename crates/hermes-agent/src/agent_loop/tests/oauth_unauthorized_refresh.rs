@@ -321,13 +321,21 @@
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn refreshed_token_that_cannot_be_stored_is_kept_and_stored_later() {
-        use std::os::unix::fs::PermissionsExt;
+    async fn pending_refresh_is_shared_across_homes_that_use_one_store() {
+        use std::os::unix::fs::{PermissionsExt, symlink};
 
         let (home, server, cfg) = anthropic_oauth_fixture("old-access").await;
         let auth_dir = home.path().join("auth");
+        let alias_home = tempfile::tempdir().expect("second Hermes home");
+        let alias_auth = alias_home.path().join("auth");
+        std::fs::create_dir(&alias_auth).expect("second auth directory");
+        symlink(auth_dir.join("tokens.json"), alias_auth.join("tokens.json"))
+            .expect("both homes use the same store");
+        let mut alias_cfg = cfg.clone();
+        alias_cfg.hermes_home = Some(alias_home.path().to_string_lossy().into_owned());
         let provider = UnauthorizedUntilRefreshed::new("old-access", "new-access");
-        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+        let agent = AgentLoop::new(alias_cfg, Arc::new(ToolRegistry::new()), provider.clone());
+        let second_agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
 
         // Neither a write in place nor a new file beside it can succeed.
         let store = auth_dir.join("tokens.json");
@@ -344,8 +352,12 @@
         result.expect("the refreshed token is used although it was not stored");
         assert_eq!(stored_anthropic_token(&home).0, "old-access");
 
-        // The next turn writes the kept credential, without another exchange.
-        agent.refresh_oauth_store_tokens_if_needed().await;
+        // The other home sees and stores the kept credential without another exchange.
+        assert_eq!(
+            second_agent.resolve_oauth_store_api_key("anthropic").as_deref(),
+            Some("new-access")
+        );
+        second_agent.refresh_oauth_store_tokens_if_needed().await;
         assert_eq!(
             stored_anthropic_token(&home),
             ("new-access".to_string(), "new-refresh".to_string())
