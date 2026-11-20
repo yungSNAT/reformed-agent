@@ -74,6 +74,11 @@ jobs:
           python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
           python3 -m py_compile scripts/release_secret_scan.py
+      - name: Python parity governance tests
+        run: |
+          python3 -m venv "${RUNNER_TEMP:?}/parity-governance"
+          "${RUNNER_TEMP}/parity-governance/bin/python" -m pip install --quiet --disable-pip-version-check pytest==9.2.0
+          PARITY_PYTHON="${RUNNER_TEMP}/parity-governance/bin/python" bash scripts/run-python-parity-governance-tests.sh
       - name: Skill scripts never start programs from the working folder
         run: python3 -m unittest tests/skills/test_skill_program_lookup.py
       - name: GitNexus proxy listens on loopback and serves only its dist folder
