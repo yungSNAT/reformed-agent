@@ -15,27 +15,34 @@ jobs:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
         with:
+          fetch-depth: 0
           persist-credentials: false
-      - name: Fetch local parity reference
-        run: git fetch origin main --depth=1
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
-      - name: Checkout upstream hermes-agent snapshot
-        run: git clone --depth 1 https://github.com/NousResearch/hermes-agent.git ../hermes-agent
+      - name: Pin the local and upstream audit revisions
+        run: |
+          local_sha=$(git rev-parse HEAD)
+          test "$local_sha" = "$GITHUB_SHA"
+          git remote add -t main upstream https://github.com/NousResearch/hermes-agent.git
+          git fetch --no-tags upstream +refs/heads/main:refs/remotes/upstream/parity-audit
+          upstream_sha=$(git rev-parse refs/remotes/upstream/parity-audit)
+          git worktree add --detach ../hermes-agent "$upstream_sha"
+          printf 'LOCAL_SHA=%s\nUPSTREAM_SHA=%s\n' "$local_sha" "$upstream_sha" >> "$GITHUB_ENV"
       # Upstream's live main moves daily, so this audit reports drift in the job
       # summary instead of failing on it; PR CI gates on the pinned revision
       # (scripts/run-repo-ci.sh). Errors and script crashes still fail the run.
       - name: Generate global parity artifacts
         run: |
-          cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref origin/main
-          cargo run --locked -q -p hermes-parity-tools -- generate-workstream-status
+          cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch
+          cargo run --locked -q -p hermes-parity-tools -- generate-workstream-status --upstream-ref "$UPSTREAM_SHA" --no-fetch
           cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
-          cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
+          cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --upstream-ref "$UPSTREAM_SHA" --no-fetch --check --allow-warnings
+          cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
+          cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch
+          python3 scripts/generate-upstream-patch-queue.py --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch --max-commits 0
+          # The coverage audit consumes the refreshed intent, matrix, divergence and queue reports.
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
-          cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
-          cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref origin/main --no-fetch
-          python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
           python3 scripts/generate-global-parity-proof.py
           # Gate the proof's local metrics; the 4 upstream drift metrics are only reported.
           # The coverage ratio counts deferred and not-rechecked rows as uncovered, so it is
@@ -48,11 +55,17 @@ jobs:
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
           printf '\n[Upstream refresh plan](%s/%s/blob/%s/docs/upstream-sync.md#subsystem-refresh-for-v0232)\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Report fork carry contracts
+        shell: bash
+        run: |
+          cargo run --locked -q -p hermes-parity-tools -- check-fork-carry |
+            tee -a "$GITHUB_STEP_SUMMARY" > .sync-reports/fork-carry-contracts.md
       - name: Upstream surface coverage report
         run: |
           report=.sync-reports/upstream-surface-coverage-gate.json
-          cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-ref origin/main --report-path "$report" || test -f "$report"
-          jq -r '"- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
+          test ! -e "$report"
+          cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref "$UPSTREAM_SHA" --local-ref "$LOCAL_SHA" --report-path "$report" || test "$?" -eq 1
+          jq -er 'select(.summary.missing_total | type == "number") | "- Upstream surface files missing locally: `\(.summary.missing_total)` of `\(.summary.upstream_file_count)`"' "$report" >> "$GITHUB_STEP_SUMMARY"
       # The harness imports upstream's hermes_cli.commands, which needs upstream's
       # core dependencies. Upstream's uv.lock applies its dependency overrides,
       # which pip cannot, and the venv keeps them off the system Python.
@@ -63,18 +76,44 @@ jobs:
       - name: Golden parity harness
         run: |
           report=.sync-reports/golden-parity-harness.json
+          test ! -e "$report"
           ../hermes-agent/.venv/bin/python scripts/run-golden-parity-harness.py \
             --repo-root . \
             --upstream-root ../hermes-agent \
-            --report "$report" || test -f "$report"
+            --report "$report" || test "$?" -eq 1
           jq -r '"- Upstream slash commands missing locally: `\(.missing_commands | length)` (baseline `\(.allow_missing_commands)`)"' "$report" >> "$GITHUB_STEP_SUMMARY"
           # Missing upstream commands are drift; the local TUI test and command contract checks still gate.
           jq -e '.missing_tui_tests == [] and .command_contract_failures == []' "$report" > /dev/null
       - name: Behavioral parity suite
+        run: python3 scripts/run-behavioral-parity-suite.py --repo-root . --report .sync-reports/behavioral-parity.json
+      - name: Bind report artifacts to the audit revisions
+        shell: bash
         run: |
-          python3 scripts/run-behavioral-parity-suite.py --repo-root .
+          test "$(git rev-parse HEAD)" = "$LOCAL_SHA"
+          test "$(git rev-parse refs/remotes/upstream/parity-audit)" = "$UPSTREAM_SHA"
+          test "$(git -C ../hermes-agent rev-parse HEAD)" = "$UPSTREAM_SHA"
+          jq -se --arg local "$LOCAL_SHA" --arg upstream "$UPSTREAM_SHA" \
+            'length == 2 and all(.[]; .refs.local_sha == $local and .refs.upstream_sha == $upstream)' \
+            docs/parity/{parity-matrix,shared-diff-backlog}.json > /dev/null
+          jq -e --arg upstream "$UPSTREAM_SHA" '.upstream_sha == $upstream' docs/parity/workstream-status.json > /dev/null
+          jq -e --arg local "$LOCAL_SHA" '.refs.local_ref == $local and .refs.upstream_ref == "upstream/parity-audit"' \
+            docs/parity/upstream-missing-queue.json > /dev/null
+          jq -e --arg local "$LOCAL_SHA" --arg upstream "$UPSTREAM_SHA" \
+            '.local_ref == $local and .upstream_ref == $upstream' \
+            .sync-reports/upstream-surface-coverage-gate.json > /dev/null
+          grep -Fxq "Fork carry contracts at $LOCAL_SHA" .sync-reports/fork-carry-contracts.md
+          git diff --quiet "$LOCAL_SHA" -- docs/parity/sota-harness-matrix.{json,md}
+          sha256sum \
+            docs/parity/{parity-matrix,workstream-status,test-intent-mapping,test-coverage-audit,adapter-feature-matrix,shared-diff-backlog,global-parity-proof,upstream-missing-queue}.{json,md} \
+            docs/parity/divergence-validation.json \
+            .sync-reports/{release-readiness-summary.{json,md},upstream-surface-coverage-gate.json,golden-parity-harness.json,behavioral-parity.json,fork-carry-contracts.md} |
+            jq -nR --arg local "$LOCAL_SHA" --arg upstream "$UPSTREAM_SHA" \
+              '{version: 1, local_sha: $local, upstream_sha: $upstream,
+                committed_reports: ["docs/parity/sota-harness-matrix.json", "docs/parity/sota-harness-matrix.md"],
+                generated_reports: [inputs | capture("^(?<sha256>[0-9a-f]{64})  (?<path>.+)$")]}' \
+              > .sync-reports/parity-audit-snapshot.json
+          printf '\nAudit revisions: local %s, upstream %s.\n' "$LOCAL_SHA" "$UPSTREAM_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Upload parity artifacts
-        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: parity-audit-artifacts
@@ -103,4 +142,6 @@ jobs:
             .sync-reports/release-readiness-summary.md
             .sync-reports/upstream-surface-coverage-gate.json
             .sync-reports/golden-parity-harness.json
-            .sync-reports/behavioral-parity-*.json
+            .sync-reports/behavioral-parity.json
+            .sync-reports/parity-audit-snapshot.json
+            .sync-reports/fork-carry-contracts.md

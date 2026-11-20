@@ -1,0 +1,111 @@
+{
+  "version": 1,
+  "required": [
+    {
+      "id": "carry-contextlattice-auto-registration",
+      "behaviour": "Enabled ContextLattice is discovered and initialised in the preferred provider order.",
+      "package": "hermes-agent",
+      "test": "memory_plugins::tests::contextlattice_is_discovered_initialized_and_ordered"
+    },
+    {
+      "id": "carry-contextlattice-search-scope",
+      "behaviour": "Search payloads retain project and topic scope.",
+      "package": "hermes-agent",
+      "test": "memory_plugins::contextlattice::tests::test_build_search_payload_includes_project_and_topic"
+    },
+    {
+      "id": "carry-contextlattice-pressure-retrieval",
+      "behaviour": "Pressure tuning forces the fast mode and configured sources.",
+      "package": "hermes-agent",
+      "test": "memory_plugins::contextlattice::tests::test_apply_pressure_tuning_forces_fast_mode_and_sources"
+    },
+    {
+      "id": "carry-contextlattice-connect-guidance",
+      "behaviour": "The agent emits connection guidance when ContextLattice is requested.",
+      "package": "hermes-agent",
+      "test": "agent_loop::tests::test_contextlattice_connect_system_hint_emitted"
+    },
+    {
+      "id": "carry-contextlattice-audit-guidance",
+      "behaviour": "ContextLattice audit guidance requires suitable tools and intent.",
+      "package": "hermes-agent",
+      "test": "agent_loop::tests::test_contextlattice_intelligence_system_hint_requires_tools_and_intent"
+    },
+    {
+      "id": "carry-replay-hash-chain",
+      "behaviour": "Recorded replay entries contain hash-chain metadata.",
+      "package": "hermes-agent",
+      "test": "agent_loop::tests::test_replay_recorder_adds_hash_chain_metadata"
+    },
+    {
+      "id": "carry-adaptive-latency-governor",
+      "behaviour": "The tool governor reduces its budget when latency degrades.",
+      "package": "hermes-agent",
+      "test": "agent_loop::tests::test_governor_reduces_budget_under_latency_degradation"
+    },
+    {
+      "id": "carry-adaptive-error-governor",
+      "behaviour": "The tool governor reduces its budget when error rates rise.",
+      "package": "hermes-agent",
+      "test": "agent_loop::tests::test_governor_reduces_budget_under_error_degradation"
+    },
+    {
+      "id": "carry-autonomy-loop-detection",
+      "behaviour": "Repeated identical actions trigger the loop governor.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::loop_governor_flags_identical_repetition"
+    },
+    {
+      "id": "carry-autonomy-board-planning",
+      "behaviour": "Board planning respects dependencies, feedback and budget.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::board_plan_respects_dependencies_feedback_and_budget"
+    },
+    {
+      "id": "carry-autonomy-resource-admission",
+      "behaviour": "Resource admission honours the tightest limit.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::resource_governor_uses_tightest_limit"
+    },
+    {
+      "id": "carry-contextlattice-hot-memory",
+      "behaviour": "Memory lifecycle policy keeps ContextLattice hot.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::memory_lifecycle_keeps_contextlattice_hot"
+    },
+    {
+      "id": "carry-memory-conflict-resolution",
+      "behaviour": "A stronger conflicting memory supersedes the weaker entry.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::memory_resolution_supersedes_on_stronger_conflict"
+    },
+    {
+      "id": "carry-objective-board-persistence",
+      "behaviour": "Objective board changes survive persistence.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy::tests::handler_persists_objective_board"
+    },
+    {
+      "id": "carry-outcome-verification-gates",
+      "behaviour": "Outcome rehearsal rejects work without verification.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy_evals::tests::outcome_loop_rehearsal_rejects_unverified_work"
+    },
+    {
+      "id": "carry-recall-outcome-linkage",
+      "behaviour": "Recall quality requires a link to outcomes.",
+      "package": "hermes-tools",
+      "test": "tools::ultra_autonomy_evals::tests::recall_quality_requires_outcome_linkage_not_just_items"
+    }
+  ],
+  "uncovered": [
+    {
+      "id": "carry-webhook-queue-backends",
+      "behaviour": "SQLite, SQS and Kafka webhook queue behaviour has no mapped execution test."
+    },
+    {
+      "id": "carry-launchd-webhook-lifecycle",
+      "behaviour": "The launchd webhook lifecycle has no mapped start, restart and stop execution test."
+    }
+  ]
+}

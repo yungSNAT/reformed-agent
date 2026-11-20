@@ -21,7 +21,7 @@ Options:
   --no-strict-risk-gate     Disable strict high-risk path blocking (default)
   --allow-risk-paths        Override strict risk gate for this run
   --risk-paths-file <path>  Glob pattern file for high-risk path checks
-  --no-tests                Skip post-sync verification command
+  --no-tests                Skip the verification command and fork carry tests
   --test-cmd <command>      Verification command (default: cargo test -p hermes-gateway)
   --redteam-gate            Run adversarial red-team gate after verification (default)
   --no-redteam-gate         Skip adversarial red-team gate
@@ -546,6 +546,14 @@ fi
 if [[ "${RUN_TESTS}" == "1" ]]; then
   log "Running verification: ${TEST_CMD}"
   bash -lc "${TEST_CMD}"
+  log "Verifying fork carry contracts"
+  if ! cargo run --locked -q -p hermes-parity-tools -- check-fork-carry; then
+    append_report "status: fork-carry-failed"
+    die "Required fork carry contracts did not pass"
+  fi
+  append_report "fork_carry: required-contracts-passed"
+else
+  append_report "fork_carry: skipped"
 fi
 
 if [[ "${RUN_REDTEAM_GATE}" == "1" ]]; then
@@ -674,6 +682,7 @@ $(for p in "${DRIFT_ARTIFACTS[@]}"; do printf -- "- \`%s\`\n" "$p"; done)
 
 Test guidance:
 - Run \`cargo test -p hermes-gateway\` (or the configured \`--test-cmd\`) at minimum.
+- Run \`cargo run --locked -q -p hermes-parity-tools -- check-fork-carry\` to verify the required fork behaviour contracts.
 - If parity drift is detected, regenerate queue/proof artifacts before merge.
 
 Commits pending from upstream at sync start:

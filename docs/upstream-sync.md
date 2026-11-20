@@ -191,6 +191,9 @@ Default report path:
 - Cron installer defaults to `STRICT_RISK_GATE=1` so unattended syncs pause on sensitive upstream changes.
 - Default verification command is:
   - `cargo test -p hermes-gateway`
+- Post-sync verification also runs `cargo run --locked -q -p hermes-parity-tools -- check-fork-carry`.
+  The [fork carry registry](parity/fork-carry-contracts.v1.json) records the required library tests and known coverage gaps.
+  Each required test must run and pass. The sync report records `fork_carry: skipped` when `--no-tests` is used.
 
 ## Diverged / Unrelated History Handling
 

@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-20T22:43:28.666785+00:00`
+Generated: `2026-11-20T23:07:24.130180+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`afc35451f20d216abd8b42ece9029cdbf2009216`)
+- Local ref: `HEAD` (`7234eea5abfcd2f7549a1fd2b045ed662920c1a5`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-20T22:43:28.666785+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1662 |
+| Commits ahead local (`local` ancestry only) | 1666 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1393 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1397 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2046 |
+| Files only in local tree | 2048 |
 | Shared files identical content | 565 |
 | Shared files different content | 1508 |
-| Total files changed (`local` vs `upstream`) | 27400 |
+| Total files changed (`local` vs `upstream`) | 27402 |
 | Insertions (`local` vs `upstream`) | 4528861 |
-| Deletions (`local` vs `upstream`) | 949711 |
+| Deletions (`local` vs `upstream`) | 950264 |
 
 ## Top 40 upstream-only buckets
 
@@ -128,7 +128,7 @@ Generated: `2026-11-20T22:43:28.666785+00:00`
 | `website/docs` | 86 |
 | `skills/productivity` | 61 |
 | `skills/research` | 60 |
-| `docs/parity` | 58 |
+| `docs/parity` | 59 |
 | `tests/cli` | 56 |
 | `skills/mlops` | 45 |
 | `optional-skills/mlops` | 42 |
@@ -141,9 +141,9 @@ Generated: `2026-11-20T22:43:28.666785+00:00`
 | `plugins/memory` | 24 |
 | `tests/gateway` | 23 |
 | `crates/hermes-acp` | 22 |
+| `crates/hermes-parity-tools` | 19 |
 | `crates/hermes-environments` | 18 |
 | `crates/hermes-eval` | 18 |
-| `crates/hermes-parity-tools` | 18 |
 | `crates/hermes-cron` | 17 |
 | `docs/releases` | 17 |
 | `crates/hermes-source-parity-tests` | 16 |
@@ -176,7 +176,7 @@ Generated: `2026-11-20T22:43:28.666785+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1393`
+- Local unique by patch-id: `1397`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
