@@ -32,6 +32,7 @@ mod default_models {
     pub const MINIMAX: &str = "MiniMax-M3";
     pub const GEMINI: &str = "gemini-3.5-flash";
     pub const GMI: &str = "google/gemini-3.1-flash-lite-preview";
+    pub const KILOCODE: &str = "google/gemini-3.6-flash";
     pub const TENCENT_TOKENHUB: &str = "hy3-preview";
     pub const DEEPINFRA: &str = "deepseek-ai/DeepSeek-V4-Flash";
     pub const FIREWORKS: &str = "accounts/fireworks/models/glm-5p2";
@@ -279,6 +280,15 @@ pub fn build_auxiliary_client_with_main_runtime(
     register_direct_key(
         &mut builder,
         &mut summary,
+        "KILOCODE_API_KEY",
+        "kilocode",
+        provider_profiles::KILOCODE_BASE_URL,
+        default_models::KILOCODE,
+        main_label.as_deref(),
+    );
+    register_direct_key(
+        &mut builder,
+        &mut summary,
         "TOKENHUB_API_KEY",
         "tencent-tokenhub",
         default_base_urls::TENCENT_TOKENHUB,
@@ -412,7 +422,7 @@ fn build_main_runtime_candidate(
         ),
         _ => {
             let url = base_url.or_else(|| default_base_url(label).map(str::to_string))?;
-            Arc::new(GenericProvider::new(url, api_key, model))
+            Arc::new(direct_key_provider(label, url, api_key, model))
         }
     };
 
@@ -599,7 +609,7 @@ fn register_direct_key(
         }
     };
     let provider: Arc<dyn LlmProvider> =
-        Arc::new(GenericProvider::new(base_url, key, default_model));
+        Arc::new(direct_key_provider(label, base_url, key, default_model));
     add_candidate(
         builder,
         ProviderCandidate::new(
@@ -609,6 +619,22 @@ fn register_direct_key(
         ),
     );
     summary.registered.push(label.to_string());
+}
+
+/// An OpenAI-compatible auxiliary provider. GMI and xAI keep their profile so
+/// auxiliary requests carry upstream's User-Agent, as main-model requests do;
+/// other profiles' request shaping stays off in the auxiliary chain.
+pub(crate) fn direct_key_provider(
+    label: &str,
+    base_url: impl Into<String>,
+    api_key: impl Into<String>,
+    model: impl Into<String>,
+) -> GenericProvider {
+    let provider = GenericProvider::new(base_url, api_key, model);
+    match provider_profiles::canonical_provider_profile_id(label) {
+        Some(profile @ ("gmi" | "xai")) => provider.with_provider_profile(profile),
+        _ => provider,
+    }
 }
 
 fn register_kimi_direct_key(
@@ -667,6 +693,7 @@ mod tests {
         "CLAUDE_CODE_OAUTH_TOKEN",
         "NOUS_API_KEY",
         "GMI_API_KEY",
+        "KILOCODE_API_KEY",
         "TOKENHUB_API_KEY",
         "DEEPINFRA_API_KEY",
         "FIREWORKS_API_KEY",
@@ -889,6 +916,26 @@ mod tests {
         }
         std::env::remove_var("KIMI_CODING_API_KEY");
 
+        // Kilo Code alone: upstream's default auxiliary model for kilocode.
+        std::env::set_var("KILOCODE_API_KEY", "sk-kilo");
+        {
+            let (client, summary) = build_default_auxiliary_client(AuxiliaryConfig::default());
+            let entries: Vec<(String, String)> = client
+                .chain_entries()
+                .into_iter()
+                .map(|(label, model, _)| (label, model))
+                .collect();
+            assert_eq!(
+                entries,
+                vec![(
+                    "kilocode".to_string(),
+                    "google/gemini-3.6-flash".to_string()
+                )]
+            );
+            assert_eq!(summary.registered, vec!["kilocode"]);
+        }
+        std::env::remove_var("KILOCODE_API_KEY");
+
         // Scenario 10: full chain, deterministic order.
         std::env::set_var("OPENROUTER_API_KEY", "sk-or");
         std::env::set_var("HERMES_OPENAI_API_KEY", "sk-hermes-oa");
@@ -896,6 +943,7 @@ mod tests {
         std::env::set_var("ANTHROPIC_API_KEY", "sk-an");
         std::env::set_var("ZAI_API_KEY", "z");
         std::env::set_var("GMI_API_KEY", "sk-gmi");
+        std::env::set_var("KILOCODE_API_KEY", "sk-kilo");
         std::env::set_var("TOKENHUB_API_KEY", "sk-tokenhub");
         {
             let (client, _) = build_default_auxiliary_client(AuxiliaryConfig::default());
@@ -907,6 +955,7 @@ mod tests {
                     "anthropic",
                     "zai",
                     "gmi",
+                    "kilocode",
                     "tencent-tokenhub"
                 ]
             );

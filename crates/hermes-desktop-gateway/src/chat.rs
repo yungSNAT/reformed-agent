@@ -25,6 +25,9 @@ use tokio::time::Instant;
 
 use crate::attach::{ImageError, StagedImage, MAX_IMAGE_BYTES};
 
+mod canonical;
+use canonical::Admission;
+
 /// Marks a message whose content is a JSON array of text and image parts, which the agent's
 /// providers send as such (`ACP_MULTIMODAL_PREFIX` in hermes-agent).
 const PARTS_PREFIX: &str = "__hermes_acp_parts_json__:";
@@ -105,6 +108,8 @@ struct Streamed {
 struct LiveSession {
     /// Last event number sent for this session; the desktop orders and deduplicates by it.
     seq: AtomicU64,
+    /// Turns started in this session; the canonical wire's execution generation.
+    generation: AtomicU64,
     busy: AtomicBool,
     /// Images staged by `image.attach_bytes` for the next prompt.
     images: Mutex<Vec<StagedImage>>,
@@ -209,16 +214,21 @@ impl Chat {
         let id = uuid::Uuid::new_v4().to_string();
         self.lock_sessions()
             .insert(id.clone(), Arc::new(LiveSession::default()));
-        let cwd = std::env::current_dir()
-            .map(|dir| dir.display().to_string())
-            .unwrap_or_default();
         json!({
             "session_id": id,
             "stored_session_id": id,
             "message_count": 0,
             "messages": [],
-            "info": {"model": self.model().unwrap_or_default(), "tools": {}, "skills": {}, "cwd": cwd},
+            "info": self.session_info(),
         })
+    }
+
+    /// A session's `info`: the model, no tools or skills, and the working folder.
+    fn session_info(&self) -> Value {
+        let cwd = std::env::current_dir()
+            .map(|dir| dir.display().to_string())
+            .unwrap_or_default();
+        json!({"model": self.model().unwrap_or_default(), "tools": {}, "skills": {}, "cwd": cwd})
     }
 
     /// Stages a file the desktop sends as a `data_url` (upstream's reply shape). A `path`
@@ -339,14 +349,20 @@ impl Chat {
                     .into(),
             ));
         }
-        let Some(Value::String(id)) = params.get("session_id") else {
-            return Err((INVALID_PARAMS, "session_id must be a string".into()));
-        };
-        let text = match params.get("text") {
-            Some(Value::String(text)) if !text.trim().is_empty() => text.clone(),
-            None | Some(Value::String(_)) => return Err((TEXT_REQUIRED, "text required".into())),
-            Some(_) => return Err((INVALID_PARAMS, "text must be a string".into())),
-        };
+        let (id, text) = turn_request(params)?;
+        self.start_turn(id, text, outbox, None)?;
+        Ok(json!({"status": "streaming"}))
+    }
+
+    /// Starts a turn in session `id` that streams its events to `outbox`, stamped with
+    /// `admission` on the canonical wire; returns the turn's execution generation.
+    fn start_turn(
+        self: &Arc<Self>,
+        id: &str,
+        text: String,
+        outbox: &Outbox,
+        mut admission: Option<Admission>,
+    ) -> Result<u64, RpcError> {
         let Some(session) = self.lock_sessions().get(id).cloned() else {
             return Err((SESSION_NOT_FOUND, "session not found".into()));
         };
@@ -362,18 +378,23 @@ impl Chat {
         // The prompt takes every image staged so far; one staged during its turn waits for the
         // next prompt.
         let images = std::mem::take(&mut *session.images());
+        let generation = session.generation.fetch_add(1, Ordering::AcqRel) + 1;
+        if let Some(admission) = admission.as_mut() {
+            admission.generation = generation;
+        }
         let guard = TurnGuard(session);
         let turn = Turn {
             chat: Arc::clone(self),
-            id: id.clone(),
+            id: id.to_string(),
             turn_id: uuid::Uuid::new_v4().simple().to_string(),
             outbox: outbox.clone(),
             slot: Some(slot),
+            admission,
         };
         tokio::spawn(async move {
             turn.run(text, images, &guard.0).await;
         });
-        Ok(json!({"status": "streaming"}))
+        Ok(generation)
     }
 
     /// Runs `work` on the sessions database on the blocking pool. A turn's store calls block,
@@ -480,6 +501,18 @@ fn keep_words(rows: &mut [Message]) {
     }
 }
 
+/// A prompt's session id and text, refused as upstream refuses them.
+fn turn_request(params: &Map<String, Value>) -> Result<(&str, String), RpcError> {
+    let Some(Value::String(id)) = params.get("session_id") else {
+        return Err((INVALID_PARAMS, "session_id must be a string".into()));
+    };
+    match params.get("text") {
+        Some(Value::String(text)) if !text.trim().is_empty() => Ok((id, text.clone())),
+        None | Some(Value::String(_)) => Err((TEXT_REQUIRED, "text required".into())),
+        Some(_) => Err((INVALID_PARAMS, "text must be a string".into())),
+    }
+}
+
 /// No wake word is served: upstream's `WakeStatusResult` (tui_gateway/contracts/prompt_voice.py)
 /// for a detector that is unavailable and off, with upstream's default phrase, provider and frame
 /// format, so the desktop shows the wake word as off.
@@ -519,6 +552,8 @@ struct Turn {
     outbox: Outbox,
     /// The turn's slot, sent with its last event.
     slot: Option<OwnedSemaphorePermit>,
+    /// Set on the canonical wire.
+    admission: Option<Admission>,
 }
 
 impl Turn {
@@ -530,15 +565,16 @@ impl Turn {
         slot: Option<OwnedSemaphorePermit>,
     ) {
         let seq = session.seq.fetch_add(1, Ordering::AcqRel) + 1;
+        let mut params =
+            json!({"type": kind, "session_id": self.id, "payload": payload, "seq": seq});
+        if let Some(admission) = &self.admission {
+            admission.stamp(&mut params);
+        }
         // A closed socket drops the frame, and with it any slot; the turn still runs and is
         // saved.
         let _ = self.outbox.send(Outgoing {
             _slot: slot,
-            ..Outgoing::from(json!({
-                "jsonrpc": "2.0",
-                "method": "event",
-                "params": {"type": kind, "session_id": self.id, "payload": payload, "seq": seq},
-            }))
+            ..Outgoing::from(json!({"jsonrpc": "2.0", "method": "event", "params": params}))
         });
     }
 
@@ -549,8 +585,16 @@ impl Turn {
             json!({"turn_id": self.turn_id}),
             None,
         );
+        if let Some(admission) = &self.admission {
+            self.emit(
+                session,
+                "session.info",
+                admission.info(&self.id, true),
+                None,
+            );
+        }
         let streamed = Arc::new(Mutex::new(Streamed::default()));
-        let payload = match self.ask(text, images, session, &streamed).await {
+        let mut payload = match self.ask(text, images, session, &streamed).await {
             Ok((reply, None)) => json!({"text": reply, "status": "complete"}),
             Ok((reply, Some(warning))) => {
                 json!({"text": reply, "status": "complete", "warning": warning})
@@ -566,7 +610,19 @@ impl Turn {
             }
         };
         let slot = self.slot.take();
-        self.emit(session, "message.complete", payload, slot);
+        match &self.admission {
+            None => self.emit(session, "message.complete", payload, slot),
+            Some(admission) => {
+                admission.complete(&mut payload);
+                self.emit(session, "message.complete", payload, None);
+                self.emit(
+                    session,
+                    "session.info",
+                    admission.info(&self.id, false),
+                    slot,
+                );
+            }
+        }
     }
 
     /// Runs the turn; returns the reply and a warning when it could not be saved.
@@ -697,6 +753,7 @@ impl Turn {
             turn_id: self.turn_id.clone(),
             session: Arc::clone(session),
             streamed: Arc::clone(streamed),
+            admission: self.admission.clone(),
         };
         let on_chunk: Box<dyn Fn(StreamChunk) + Send + Sync> =
             Box::new(move |chunk| delta.send(chunk));
@@ -723,6 +780,7 @@ struct DeltaSink {
     turn_id: String,
     session: Arc<LiveSession>,
     streamed: Arc<Mutex<Streamed>>,
+    admission: Option<Admission>,
 }
 
 impl DeltaSink {
@@ -742,16 +800,18 @@ impl DeltaSink {
             offset
         };
         let seq = self.session.seq.fetch_add(1, Ordering::AcqRel) + 1;
-        let _ = self.outbox.send(Outgoing::from(json!({
-            "jsonrpc": "2.0",
-            "method": "event",
-            "params": {
-                "type": "message.delta",
-                "session_id": self.id,
-                "payload": {"text": text, "turn_id": self.turn_id, "segment": 0, "offset": offset},
-                "seq": seq,
-            },
-        })));
+        let mut params = json!({
+            "type": "message.delta",
+            "session_id": self.id,
+            "payload": {"text": text, "turn_id": self.turn_id, "segment": 0, "offset": offset},
+            "seq": seq,
+        });
+        if let Some(admission) = &self.admission {
+            admission.stamp(&mut params);
+        }
+        let _ = self.outbox.send(Outgoing::from(
+            json!({"jsonrpc": "2.0", "method": "event", "params": params}),
+        ));
     }
 }
 

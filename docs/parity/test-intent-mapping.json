@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-19T07:45:22.346696+00:00",
+  "generated_at_utc": "2026-11-19T22:04:56.127007+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "evidence_count": 189,
+      "evidence_count": 190,
       "evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "evidence_count": 16,
+      "evidence_count": 17,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -281,6 +281,7 @@
         "crates/hermes-environments/src/lib.rs",
         "crates/hermes-environments/src/local.rs",
         "crates/hermes-environments/src/local/env_shell.rs",
+        "crates/hermes-environments/src/local/process_tree.rs",
         "crates/hermes-environments/src/local/tests.rs",
         "crates/hermes-environments/src/managed_modal.rs",
         "crates/hermes-environments/src/manager.rs",

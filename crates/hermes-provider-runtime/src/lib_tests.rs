@@ -1297,4 +1297,60 @@ mod tests {
             Some("https://api.openai.com/v1")
         ));
     }
+
+    #[tokio::test]
+    async fn build_provider_sends_upstreams_user_agent_for_gmi_and_xai() {
+        for (provider, user_agent) in [
+            ("gmi", format!("HermesAgent/{}", env!("CARGO_PKG_VERSION"))),
+            ("xai", format!("Hermes-Agent/{}", env!("CARGO_PKG_VERSION"))),
+        ] {
+            let server = MockServer::start().await;
+            Mock::given(method("POST"))
+                .and(path("/chat/completions"))
+                .and(wiremock::matchers::header(
+                    "user-agent",
+                    user_agent.as_str(),
+                ))
+                .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "model": "m",
+                    "choices": [{
+                        "index": 0,
+                        "message": {"role": "assistant", "content": "ok"},
+                        "finish_reason": "stop"
+                    }]
+                })))
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let mut config = GatewayConfig::default();
+            config.llm_providers.insert(
+                provider.to_string(),
+                LlmProviderConfig {
+                    api_key: Some("key".to_string()),
+                    base_url: Some(server.uri()),
+                    ..LlmProviderConfig::default()
+                },
+            );
+            let response = build_provider(&config, &format!("{provider}:m"))
+                .chat_completion(
+                    &[hermes_core::Message::user("hello")],
+                    &[],
+                    None,
+                    None,
+                    Some("m"),
+                    None,
+                )
+                .await
+                .unwrap_or_else(|err| panic!("{provider}: {err}"));
+            assert_eq!(
+                response.message.content.as_deref(),
+                Some("ok"),
+                "{provider}"
+            );
+            server.verify().await;
+        }
+    }
 }

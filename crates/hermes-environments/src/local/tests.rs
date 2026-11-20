@@ -379,6 +379,7 @@ fn test_foreground_process_group_avoids_fork_hook() {
     let source = [
         include_str!("../local.rs"),
         include_str!("../local/env_shell.rs"),
+        include_str!("../local/process_tree.rs"),
     ]
     .join("\n");
     let forbidden = ["pre", "_exec"].concat();
@@ -466,13 +467,21 @@ async fn test_execute_command_with_stdin_data() {
 
 #[tokio::test]
 async fn test_execute_command_with_workdir() {
+    let dir = tempdir().unwrap();
+    // An MSYS shell prints `/c/...` for `C:\...`, so compare the last part.
+    let name = dir
+        .path()
+        .file_name()
+        .unwrap()
+        .to_string_lossy()
+        .to_string();
     let backend = LocalBackend::default();
     let output = backend
-        .execute_command("pwd", None, Some("/tmp"), false, false)
+        .execute_command("pwd", None, dir.path().to_str(), false, false)
         .await
         .unwrap();
     assert_eq!(output.exit_code, 0);
-    assert!(output.stdout.trim().contains("/tmp"));
+    assert!(output.stdout.trim().ends_with(&name), "{}", output.stdout);
 }
 
 // Shell init files are sourced only on Unix; see `with_login_profile_sources`.
@@ -685,14 +694,19 @@ fn test_relative_file_paths_use_terminal_cwd() {
 
 #[tokio::test]
 async fn test_file_exists() {
+    let dir = tempdir().unwrap();
     let backend = LocalBackend::default();
 
     // A path that should exist
-    assert!(backend.file_exists("/tmp").await.unwrap());
+    assert!(backend
+        .file_exists(dir.path().to_str().unwrap())
+        .await
+        .unwrap());
 
     // A path that should not exist
+    let missing = dir.path().join("hermes_nonexistent_test_file_xyz");
     assert!(!backend
-        .file_exists("/tmp/hermes_nonexistent_test_file_xyz")
+        .file_exists(missing.to_str().unwrap())
         .await
         .unwrap());
 }
@@ -1037,4 +1051,320 @@ fn scrubbing_survives_a_variable_that_is_not_utf8() {
             (not_utf8("REFORMED_TEST_BAD_NAME"), "x".into()),
         ],
     ));
+}
+
+/// A command whose inner shell, a grandchild of the backend's shell,
+/// ignores SIGTERM, writes `<marker>.ready` once running and `marker` after
+/// 4 seconds. The trailing `echo` stops the outer shell from replacing
+/// itself with the inner one.
+fn survivor_command(marker: &Path) -> String {
+    // Forward slashes, which both a native and an MSYS shell read.
+    let marker = marker.to_string_lossy().replace('\\', "/");
+    format!(
+        "sh -c 'trap \"\" TERM; echo > \"{marker}.ready\"; sleep 4; echo survived > \"{marker}\"'; echo unreachable"
+    )
+}
+
+async fn wait_until_ready(marker: &Path) {
+    let ready = marker.with_extension("ready");
+    for _ in 0..100 {
+        if ready.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the inner shell never started: {}", ready.display());
+}
+
+async fn assert_no_survivor(marker: &Path) {
+    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+    assert!(
+        !marker.exists(),
+        "a descendant of the ended shell kept running and wrote {}",
+        marker.display()
+    );
+}
+
+#[tokio::test]
+async fn test_timeout_ends_the_shells_descendants() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("survivor");
+    let backend = LocalBackend::new(60, 1_048_576);
+
+    let result = backend
+        .execute_command(&survivor_command(&marker), Some(2), None, false, false)
+        .await;
+
+    assert!(matches!(result, Err(AgentError::Timeout(_))), "{result:?}");
+    assert!(
+        marker.with_extension("ready").exists(),
+        "the inner shell never started"
+    );
+    assert_no_survivor(&marker).await;
+}
+
+#[tokio::test]
+async fn test_cancelled_command_ends_the_shells_descendants() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("survivor");
+    let backend = Arc::new(LocalBackend::new(60, 1_048_576));
+    let command = survivor_command(&marker);
+    let task = {
+        let backend = backend.clone();
+        tokio::spawn(async move {
+            backend
+                .execute_command(&command, Some(60), None, false, false)
+                .await
+        })
+    };
+
+    wait_until_ready(&marker).await;
+    task.abort();
+    let _ = task.await;
+    assert_no_survivor(&marker).await;
+}
+
+#[tokio::test]
+async fn test_kill_process_ends_the_shells_descendants() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("survivor");
+    let backend = LocalBackend::new(60, 1_048_576);
+    let started = backend
+        .execute_command(&survivor_command(&marker), None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+
+    wait_until_ready(&marker).await;
+    let killed = backend.kill_process(session_id).await.unwrap();
+
+    assert_eq!(killed["status"], "killed", "{killed}");
+    assert_no_survivor(&marker).await;
+}
+
+/// A caller that gives up on `kill_process` midway still ends the tree.
+#[tokio::test]
+async fn test_abandoned_kill_process_still_ends_the_shells_descendants() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("survivor");
+    let backend = LocalBackend::new(60, 1_048_576);
+    let started = backend
+        .execute_command(&survivor_command(&marker), None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+
+    wait_until_ready(&marker).await;
+    let abandoned = tokio::time::timeout(
+        std::time::Duration::from_millis(50),
+        backend.kill_process(session_id),
+    )
+    .await;
+
+    // Windows ends the job at once; Unix is still in its grace period.
+    if cfg!(unix) {
+        assert!(abandoned.is_err(), "kill_process finished within 50 ms");
+    }
+    assert_no_survivor(&marker).await;
+}
+
+/// When the exit cannot be seen unreaped, the shell is still reaped only
+/// whilst nobody holds the signal lock.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_an_unseen_exit_is_reaped_only_outside_a_held_signal_lock() {
+    let mut child = TokioCommand::new("sh")
+        .arg("-c")
+        .arg("sleep 0.2")
+        .spawn()
+        .unwrap();
+    let pid = child.id().expect("pid") as libc::pid_t;
+    let lock = Arc::new(AsyncMutex::new(()));
+    let held = lock.clone().lock_owned().await;
+    let reaper = tokio::spawn(async move {
+        let guard = reap_under_lock(&lock, || child.try_wait()).await;
+        (guard.is_some(), child)
+    });
+
+    tokio::time::sleep(std::time::Duration::from_millis(600)).await;
+    // SAFETY: signal 0 only checks that the process id exists.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+    drop(held);
+    let (guarded, mut child) = reaper.await.unwrap();
+
+    assert!(
+        exists,
+        "the child was reaped whilst the signal lock was held"
+    );
+    assert!(guarded, "the reap returned without the lock");
+    assert!(child.try_wait().unwrap().is_some());
+}
+
+/// A failed check gives the lock back: the child's state is unknown, and the
+/// waiter's blocking reap must not hold up `kill_process`.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_failed_reap_check_releases_the_signal_lock() {
+    let lock = Arc::new(AsyncMutex::new(()));
+
+    let guard = reap_under_lock(&lock, || {
+        Err(std::io::Error::from_raw_os_error(libc::ECHILD))
+    })
+    .await;
+
+    assert!(
+        guard.is_none(),
+        "the reap kept the lock after a failed check"
+    );
+    assert!(lock.try_lock().is_ok(), "the signal lock is still held");
+}
+
+/// The shell stays unreaped whilst `kill_process` signals its group, so the
+/// group id cannot pass to an unrelated process meanwhile.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_kill_process_keeps_the_shell_unreaped_until_it_has_signalled() {
+    let backend = std::sync::Arc::new(LocalBackend::new(60, 1_048_576));
+    let started = backend
+        .execute_command("sleep 30; echo unreachable", None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"]
+        .as_str()
+        .expect("session_id")
+        .to_string();
+    let pid = payload["pid"].as_i64().expect("pid") as libc::pid_t;
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    let killer = {
+        let backend = backend.clone();
+        tokio::spawn(async move { backend.kill_process(&session_id).await })
+    };
+    // Well inside the grace period; the shell ends on SIGTERM.
+    tokio::time::sleep(std::time::Duration::from_millis(120)).await;
+    // SAFETY: signal 0 only checks that the process id exists.
+    let exists = unsafe { libc::kill(pid, 0) } == 0;
+
+    let killed = killer.await.unwrap().unwrap();
+    assert_eq!(killed["status"], "killed", "{killed}");
+    assert!(exists, "the shell was reaped before the group was killed");
+}
+
+/// A group whose only member is the exited, still unreaped shell can be
+/// signalled, as `kill_process` does after the shell ends on SIGTERM.
+#[cfg(unix)]
+#[tokio::test]
+async fn test_a_group_left_with_only_its_unreaped_shell_can_be_signalled() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let terminated = tree.terminate();
+    let killed = tree.kill();
+    child.wait().await.unwrap();
+
+    assert!(terminated.is_ok(), "terminate: {terminated:?}");
+    assert!(killed.is_ok(), "kill: {killed:?}");
+}
+
+/// macOS answers EPERM both for a group of zombies and for one whose live
+/// members refused the signal; only the first counts as signalled.
+#[cfg(target_os = "macos")]
+#[tokio::test]
+async fn test_a_live_member_is_not_taken_for_a_zombie() {
+    let (mut child, tree) =
+        process_tree::spawn(TokioCommand::new("sh").arg("-c").arg("sleep 30 & exit 0")).unwrap();
+    let pid = child.id().expect("pid");
+    assert!(
+        process_tree::wait_unreaped(pid).await,
+        "the shell's exit was not seen"
+    );
+
+    let with_live_member = process_tree::group_has_exited(pid as libc::pid_t);
+    tree.kill().unwrap();
+    let mut after_kill = false;
+    for _ in 0..50 {
+        after_kill = process_tree::group_has_exited(pid as libc::pid_t);
+        if after_kill {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    child.wait().await.unwrap();
+
+    assert!(
+        !with_live_member,
+        "a live member was taken for one that has ended"
+    );
+    assert!(after_kill, "the group was not seen as ended");
+}
+
+#[tokio::test]
+async fn test_finished_command_leaves_its_background_child_running() {
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("alive");
+    let shell_marker = marker.to_string_lossy().replace('\\', "/");
+    let command = format!("sh -c 'sleep 1; echo alive > \"{shell_marker}\"' & echo started");
+    let backend = LocalBackend::new(30, 1_048_576);
+
+    let output = backend
+        .execute_command(&command, None, None, false, false)
+        .await
+        .unwrap();
+
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    for _ in 0..100 {
+        if marker.exists() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("the background child of a finished command was ended");
+}
+
+/// CreateProcess refuses a command line over 32,767 UTF-16 units. Linux
+/// caps one argument at 128 KiB, which the Unix wrapper reaches sooner: it
+/// repeats the command for each login shell it may run.
+#[cfg(windows)]
+#[tokio::test]
+async fn test_commands_longer_than_a_windows_command_line_run() {
+    let command = format!("x={}; read -r line; echo ${{#x}} $line", "a".repeat(40_000));
+    let backend = LocalBackend::new(30, 1_048_576);
+
+    let output = backend
+        .execute_command_with_stdin(&command, None, None, false, false, Some("piped\n"))
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    assert_eq!(output.stdout.trim(), "40000 piped");
+
+    let output = backend
+        .execute_command(&command, None, None, false, false)
+        .await
+        .unwrap();
+    assert_eq!(output.exit_code, 0, "stderr={}", output.stderr);
+    assert_eq!(output.stdout.trim(), "40000");
+
+    let started = backend
+        .execute_command(&command, None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+    backend.close_process_stdin(session_id).await.unwrap();
+    let wait = backend.wait_process(session_id, Some(20)).await.unwrap();
+    assert_eq!(wait["status"], "exited", "{wait}");
+    assert_eq!(wait["exit_code"], 0, "{wait}");
+    assert_eq!(
+        wait["output"].as_str().map(str::trim),
+        Some("40000"),
+        "{wait}"
+    );
 }
