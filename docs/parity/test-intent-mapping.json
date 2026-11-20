@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-20T11:47:48.318826+00:00",
+  "generated_at_utc": "2026-11-20T12:08:39.132733+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "evidence_count": 116,
+      "evidence_count": 117,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
