@@ -241,6 +241,55 @@
     }
 
     #[tokio::test]
+    async fn native_anthropic_oauth_retry_replays_the_same_cached_prompt_body() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let (_home, token_server, cfg) = anthropic_oauth_fixture("old-access").await;
+        let api = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(401))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&api)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/messages"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "model": "claude-test",
+                "content": [{"type": "text", "text": "ok"}],
+                "stop_reason": "end_turn"
+            })))
+            .with_priority(2)
+            .mount(&api)
+            .await;
+        let provider = Arc::new(
+            crate::provider::AnthropicProvider::new("old-access")
+                .with_model("claude-test")
+                .with_base_url(api.uri()),
+        );
+        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
+        let mut ctx = ContextManager::default_budget();
+        ctx.add_message(Message::system("Stable instructions."));
+        ctx.add_message(Message::user("hello"));
+        let response = agent
+            .call_llm_with_retry(&ctx, &[], None, None)
+            .await
+            .expect("same prompt sent with the refreshed token");
+        assert_eq!(response.message.content.as_deref(), Some("ok"));
+        assert_eq!(token_requests(&token_server).await, 1);
+        let requests = api
+            .received_requests()
+            .await
+            .expect("two requests received");
+        assert_eq!(requests.len(), 2);
+        assert_eq!(requests[0].body, requests[1].body);
+        let wire: serde_json::Value = serde_json::from_slice(&requests[0].body).expect("JSON body");
+        assert_eq!(wire["system"][0]["cache_control"]["type"], "ephemeral");
+    }
+
+    #[tokio::test]
     async fn unauthorized_key_that_is_not_the_stored_token_is_not_refreshed() {
         let (home, server, cfg) = anthropic_oauth_fixture("stored-access").await;
         let provider = UnauthorizedUntilRefreshed::new("sk-ant-env-key", "new-access");
