@@ -2,6 +2,18 @@ use super::*;
 use clap::Parser;
 
 #[test]
+fn version_identifies_reformed_agent() {
+    for alias in ["hermes", "hermes-ultra", "hermes-agent-ultra"] {
+        let version = Cli::try_parse_from([alias, "--version"]).unwrap_err();
+        assert_eq!(version.kind(), clap::error::ErrorKind::DisplayVersion);
+        assert_eq!(
+            version.to_string(),
+            concat!("Reformed Agent ", env!("CARGO_PKG_VERSION"), "\n")
+        );
+    }
+}
+
+#[test]
 fn cli_parse_fits_in_one_mib_stack() {
     // A debug build once needed 1.8 MiB of stack to build the clap command, which
     // overflowed the 2 MiB test threads.

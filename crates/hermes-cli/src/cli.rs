@@ -1090,6 +1090,7 @@ pub struct LumioArgs {
 #[derive(Debug, Clone, Parser)]
 #[command(
     name = "hermes-agent-ultra",
+    display_name = "Reformed Agent",
     version,
     about = "Reformed Agent · Printing press 2.0",
     long_about = "Reformed Agent is an autonomous AI agent that can use tools, execute code, \

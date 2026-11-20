@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-20T10:15:12.312510+00:00",
+  "generated_at_utc": "2026-11-20T10:21:36.559365+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -111,7 +111,7 @@
       ]
     },
     {
-      "evidence_count": 116,
+      "evidence_count": 115,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
@@ -137,7 +137,7 @@
         "crates/hermes-agent/src/agent_loop/tests/governor_finalizer.rs",
         "crates/hermes-agent/src/agent_loop/tests/llm_retry_stream.rs",
         "crates/hermes-agent/src/agent_loop/tests/oauth_unauthorized_refresh.rs",
-        "crates/hermes-agent/src/agent_loop/tests/prompt_cache_prefix.rs"
+        "crates/hermes-agent/src/agent_loop/tests/runtime_provider_resolution.rs"
       ],
       "id": "agent-loop-and-runtime",
       "mapped": true,
