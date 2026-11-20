@@ -440,12 +440,11 @@ impl Gateway {
                     .reset_session_with_browser(
                         session_key,
                         self.browser_retirer.as_ref(),
-                        hermes_tools::gateway_approval::clear,
+                        hermes_tools::approval::clear_session,
                     )
                     .await
                     .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-                self.clear_session_boundary_security_state(session_key)
-                    .await;
+                self.clear_session_yolo_state(session_key).await;
                 let old_session = reset_snapshot.as_ref().map(|(old, _)| old);
                 self.emit_hook_event(
                     "session:end",
@@ -998,8 +997,8 @@ impl Gateway {
                         )
                         .await;
                     if copied {
-                        self.clear_session_boundary_security_state(session_key)
-                            .await;
+                        self.clear_session_yolo_state(session_key).await;
+                        hermes_tools::approval::clear_session(session_key);
                         format!(
                             "🔁 Switched to session `{}`.\nLoaded {} message(s) into this chat context.",
                             session_id,

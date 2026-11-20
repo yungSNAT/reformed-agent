@@ -1,37 +1,13 @@
 use super::*;
 
-#[derive(Default)]
-struct PauseSessionEnd {
-    entered: tokio::sync::Notify,
-    resume: tokio::sync::Notify,
-}
-
-#[async_trait::async_trait]
-impl HookHandler for PauseSessionEnd {
-    async fn handle(&self, _: &HookEvent) -> Result<(), String> {
-        self.entered.notify_one();
-        self.resume.notified().await;
-        Ok(())
-    }
-
-    fn name(&self) -> &str {
-        "pause-session-end"
-    }
-}
-
 #[tokio::test]
-async fn cancelled_reset_clears_previous_gateway_approval_before_the_end_hook() {
+async fn cancelled_reset_clears_previous_approval_before_waiting_for_runtime_state() {
     use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
 
     let manager = Arc::new(SessionManager::new(SessionConfig::default()));
     let mut dm = DmManager::with_pair_behavior();
     dm.authorize_user("user1");
     let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
-    let pause = Arc::new(PauseSessionEnd::default());
-    let mut hooks = HookRegistry::new();
-    hooks.register_in_process("session:end", pause.clone());
-    gateway.set_hook_registry(Arc::new(hooks)).await;
-
     let mut reset = test_incoming("/reset");
     reset.chat_id = "paused-reset-approval".into();
     let key = manager.compose_session_key(&reset.platform, &reset.chat_id, &reset.user_id);
@@ -50,19 +26,18 @@ async fn cancelled_reset_clears_previous_gateway_approval_before_the_end_hook() 
             .unwrap_err();
     assert!(error.contains("shown it"), "{error}");
 
+    let runtime_state = gateway.runtime_state.write().await;
     {
-        let mut request = std::pin::pin!(gateway.route_message(&reset));
-        tokio::time::timeout(std::time::Duration::from_secs(2), async {
-            tokio::select! {
-                result = request.as_mut() => panic!("reset finished before its session:end hook: {result:?}"),
-                () = pause.entered.notified() => {}
-            }
-        })
-        .await
-        .expect("reset never reached its end hook");
+        let mut request = std::pin::pin!(gateway.apply_command_result(
+            &reset,
+            &key,
+            GatewayCommandResult::ResetSession("fixture response".into()),
+            None,
+        ));
+        assert!(futures::poll!(request.as_mut()).is_pending());
         assert_ne!(manager.get_session(&key).await.unwrap().id, before.id);
     }
-    pause.resume.notify_one();
+    drop(runtime_state);
     assert_eq!(
         gateway_approval::approve(&key, &reset.user_id),
         Resolution::NothingPending,
