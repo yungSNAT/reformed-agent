@@ -32,7 +32,7 @@ fn sources(
         let path = relative.join(entry.file_name());
         if kind.is_dir() {
             sources(root, &path, files)?;
-        } else if path.extension() == Some(OsStr::new("rs")) && entry.path().is_file() {
+        } else if rust_source(&path) && entry.path().is_file() {
             let bytes =
                 fs::read(entry.path()).map_err(|error| format!("{}: {error}", path.display()))?;
             let text = String::from_utf8_lossy(&bytes)
@@ -42,6 +42,18 @@ fn sources(
         }
     }
     Ok(())
+}
+
+fn rust_source(path: &Path) -> bool {
+    path.extension()
+        .and_then(OsStr::to_str)
+        .is_some_and(|extension| {
+            if cfg!(windows) {
+                extension.eq_ignore_ascii_case("rs")
+            } else {
+                extension == "rs"
+            }
+        })
 }
 
 fn children(file: &Path, module: &str) -> Vec<PathBuf> {
@@ -121,8 +133,10 @@ pub(crate) fn scan(root: &Path) -> Result<TestCatalogue, String> {
             if !names.is_empty() {
                 if file.file_name() == Some(OsStr::new("mod.rs")) {
                     if let Some(parent) = file.parent() {
+                        let mut alias = parent.as_os_str().to_owned();
+                        alias.push(".rs");
                         tests
-                            .entry(parent.with_extension("rs"))
+                            .entry(PathBuf::from(alias))
                             .or_default()
                             .extend(names.iter().cloned());
                     }
@@ -132,4 +146,17 @@ pub(crate) fn scan(root: &Path) -> Result<TestCatalogue, String> {
         }
     }
     Ok(tests)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rust_extension_uses_platform_glob_case_rules() {
+        assert!(rust_source(Path::new("module.rs")));
+        assert_eq!(rust_source(Path::new("module.RS")), cfg!(windows));
+        assert_eq!(rust_source(Path::new("module.Rs")), cfg!(windows));
+        assert!(!rust_source(Path::new("module.txt")));
+    }
 }

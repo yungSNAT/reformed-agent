@@ -159,9 +159,11 @@ impl Manifest {
                 if identified {
                     manifest.referenced.insert((file.clone(), name.clone()));
                 }
+                let path_key = Path::new(&file);
                 if !identified
+                    || path_string(path_key) != file
                     || !tests
-                        .get(Path::new(&file))
+                        .get(path_key)
                         .is_some_and(|names| names.contains(&name))
                 {
                     manifest
