@@ -917,7 +917,10 @@ def maybe_check_global_parity_drift(
         ["scripts/generate-workstream-status.py"],
         ["scripts/generate-test-intent-mapping.py"],
         ["scripts/generate-test-coverage-audit.py", "--check"],
-        ["scripts/generate-adapter-matrix.py"],
+        [
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-adapter-matrix",
+        ],
         [
             "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
             "validate-intentional-divergence", "--check", "--allow-warnings",

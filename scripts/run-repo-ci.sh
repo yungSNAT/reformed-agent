@@ -81,7 +81,7 @@ run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF
 run python3 scripts/generate-test-intent-mapping.py
 run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-coverage-audit.py --check
-run python3 scripts/generate-adapter-matrix.py
+run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
 run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-global-parity-proof.py
