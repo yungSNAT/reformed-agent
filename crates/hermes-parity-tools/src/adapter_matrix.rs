@@ -52,18 +52,34 @@ fn resolve_argument(path: &Path) -> Result<PathBuf, String> {
         path
     };
     let absolute = std::path::absolute(path).map_err(|error| error.to_string())?;
+    let resolved = follow_links(&absolute, 40)?;
+    Ok(py::resolve(&resolved))
+}
+
+fn follow_links(path: &Path, remaining_links: usize) -> Result<PathBuf, String> {
     let mut resolved = PathBuf::new();
-    for part in absolute.components() {
-        if part == Component::ParentDir {
-            // Resolve symlinks before stepping back. A missing directory can
-            // still be cancelled by `..` without creating it first.
-            resolved = py::resolve(&resolved);
-            resolved.pop();
-        } else {
-            resolved.push(part);
+    for part in path.components() {
+        match part {
+            Component::ParentDir => {
+                resolved.pop();
+            }
+            Component::Normal(name) => {
+                let candidate = resolved.join(name);
+                if let Ok(target) = fs::read_link(&candidate) {
+                    let remaining = remaining_links.checked_sub(1).ok_or_else(|| {
+                        format!("{}: too many symbolic links", candidate.display())
+                    })?;
+                    // Read the link itself even if its target directory has
+                    // not been created yet.
+                    resolved = follow_links(&resolved.join(target), remaining)?;
+                } else {
+                    resolved = candidate;
+                }
+            }
+            _ => resolved.push(part),
         }
     }
-    Ok(py::resolve(&resolved))
+    Ok(resolved)
 }
 
 fn write_report(path: &Path, contents: String) -> Result<(), String> {
