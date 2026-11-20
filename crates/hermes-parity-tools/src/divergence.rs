@@ -7,7 +7,7 @@ use std::path::Path;
 use clap::Args;
 use jiff::civil::{Date, ISOWeekDate, Weekday};
 
-use crate::git::{ensure_remote, fetch_remote_branch, git};
+use crate::git::{branch_from_remote_ref, ensure_remote, fetch_remote_branch, git};
 use crate::py::{self, Py};
 
 const ALLOWED_STATUS: [&str; 4] = ["approved", "temporary", "pending_review", "deprecated"];
@@ -245,16 +245,6 @@ fn ls_tree_paths(repo_root: &Path, rev: &str) -> Result<BTreeSet<String>, String
         .filter(|line| !line.is_empty())
         .map(str::to_string)
         .collect())
-}
-
-fn branch_from_remote_ref<'a>(remote: &str, upstream_ref: &'a str) -> &'a str {
-    match upstream_ref
-        .strip_prefix(remote)
-        .and_then(|r| r.strip_prefix('/'))
-    {
-        Some(branch) if !branch.is_empty() => branch,
-        _ => "main",
-    }
 }
 
 fn repo_relative(path: &Path, repo_root: &Path) -> String {
