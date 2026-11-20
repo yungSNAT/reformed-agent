@@ -460,7 +460,7 @@ async fn release_lost_session<T: CloudBrowserSession>(cloud: &T) {
 }
 
 /// How long a dropped cloud backend waits for its session to be released.
-const RELEASE_ON_DROP_TIMEOUT: Duration = Duration::from_secs(10);
+const RELEASE_ON_DROP_TIMEOUT: Duration = RELEASE_ATTEMPT_TIMEOUT.saturating_mul(2);
 
 /// Release a cloud session as its backend is dropped, at the end of the
 /// tool registry or the process, since a session with keepAlive outlives
