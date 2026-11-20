@@ -47,7 +47,7 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
     let workflow = read(".github/workflows/ci.yml");
     for command in [
         "bash scripts/run-python-parity-governance-tests.sh",
-        "python3 scripts/generate-parity-matrix.py --local-ref HEAD",
+        "cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref HEAD",
         "python3 scripts/generate-workstream-status.py",
         "cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping",
         "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check",

@@ -222,7 +222,7 @@ strict risk gating.
 To generate a reproducible parity snapshot against `upstream/main`:
 
 ```bash
-python3 scripts/generate-parity-matrix.py
+cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix
 ```
 
 Artifacts are written to:

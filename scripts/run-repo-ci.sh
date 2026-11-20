@@ -78,7 +78,7 @@ cd "${REPO_ROOT}"
 refresh_upstream
 run bash scripts/run-python-parity-governance-tests.sh
 
-run python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
 run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch

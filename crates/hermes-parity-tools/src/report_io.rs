@@ -40,7 +40,7 @@ fn follow_links(path: &Path, remaining_links: usize) -> Result<PathBuf, String> 
     Ok(resolved)
 }
 
-fn write_report(path: &Path, contents: String) -> Result<(), String> {
+pub(crate) fn write_report(path: &Path, contents: String) -> Result<(), String> {
     let contents = if cfg!(windows) {
         contents.replace('\n', "\r\n")
     } else {
