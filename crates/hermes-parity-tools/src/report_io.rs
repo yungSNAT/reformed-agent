@@ -69,3 +69,23 @@ pub(crate) fn write_reports(
     println!("Wrote {}", py::path_str(&out_md));
     Ok(())
 }
+
+pub(crate) fn write_coverage_reports(
+    root: &Path,
+    out_json: &str,
+    out_md: &str,
+    json: String,
+    markdown: String,
+) -> Result<(), String> {
+    let out_json = resolve_argument(&py::join(root, out_json))?;
+    let out_md = resolve_argument(&py::join(root, out_md))?;
+    for (path, contents) in [(&out_json, json), (&out_md, markdown)] {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
+        }
+        write_report(path, contents)?;
+    }
+    println!("Wrote {}", py::path_str(&out_json));
+    println!("Wrote {}", py::path_str(&out_md));
+    Ok(())
+}

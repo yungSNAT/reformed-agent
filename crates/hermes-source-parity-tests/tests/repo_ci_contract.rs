@@ -50,7 +50,7 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
         "python3 scripts/generate-parity-matrix.py --local-ref HEAD",
         "python3 scripts/generate-workstream-status.py",
         "cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping",
-        "python3 scripts/generate-test-coverage-audit.py --check",
+        "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check",
         "cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix",
         "cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings",
         "python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch",

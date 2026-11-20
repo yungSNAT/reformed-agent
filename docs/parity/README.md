@@ -11,7 +11,7 @@ From repository root:
 python3 scripts/generate-parity-matrix.py
 python3 scripts/generate-workstream-status.py
 cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
-python3 scripts/generate-test-coverage-audit.py --check
+cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
 python3 scripts/generate-upstream-patch-queue.py --max-commits 0

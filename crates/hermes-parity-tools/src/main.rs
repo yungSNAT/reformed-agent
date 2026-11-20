@@ -4,6 +4,8 @@
 //! `cargo run --locked -q -p hermes-parity-tools -- <script name> <flags>`.
 
 mod adapter_matrix;
+mod coverage_audit;
+mod coverage_tests;
 mod divergence;
 mod git;
 mod report_io;
@@ -38,6 +40,9 @@ enum Command {
     /// Map upstream test domains to evidence in the local tree.
     #[command(name = "generate-test-intent-mapping")]
     TestIntentMapping(test_intent_mapping::TestIntentMappingArgs),
+    /// Audit the cited local tests and mapped upstream behaviour.
+    #[command(name = "generate-test-coverage-audit")]
+    CoverageAudit(coverage_audit::CoverageAuditArgs),
 }
 
 fn main() {
@@ -48,6 +53,7 @@ fn main() {
         Command::ValidateDivergence(args) => divergence::run(args),
         Command::AdapterMatrix(args) => adapter_matrix::run(args),
         Command::TestIntentMapping(args) => test_intent_mapping::run(args),
+        Command::CoverageAudit(args) => coverage_audit::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
