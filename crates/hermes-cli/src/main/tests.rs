@@ -326,6 +326,7 @@ mod tests {
             let session_key = format!("{platform}:cli-turn");
             GatewayRuntimeContext {
                 browser: Some(retirer.lease(&session_key)),
+                session_generation: Some(Default::default()),
                 session_key,
                 platform: platform.into(),
                 chat_id: "cli-turn".into(),
@@ -352,6 +353,11 @@ mod tests {
             gateway_approval::approve("telegram:cli-turn", "4242"),
             Resolution::NothingPending
         );
+
+        let mut without_generation = ctx("telegram", "4242");
+        without_generation.session_generation = None;
+        assert!(!gateway_turn_tool_overrides(&terminal_backend, &gateway, &without_generation)
+            .contains_key("terminal"));
 
         // Anywhere else, or for a sender id shared by many people, the
         // registry's terminal, which refuses outright, stays in place.

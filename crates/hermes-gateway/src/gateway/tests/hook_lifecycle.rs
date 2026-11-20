@@ -21,6 +21,8 @@ impl HookHandler for PauseHook {
 
 #[tokio::test]
 async fn completed_old_turn_leaves_replacement_transcript_intact() {
+    use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
+
     for streaming_enabled in [false, true] {
         let manager = Arc::new(SessionManager::new(SessionConfig::default()));
         let mut dm = DmManager::with_pair_behavior();
@@ -44,11 +46,31 @@ async fn completed_old_turn_leaves_replacement_transcript_intact() {
         let pause = Arc::new(PauseHook::default());
         let handler: MessageHandlerWithContext = Arc::new({
             let pause = pause.clone();
-            move |_, _| {
+            move |_, context| {
                 let pause = pause.clone();
                 Box::pin(async move {
+                    let permissions = GatewayApprovalBinding {
+                        session_key: context.session_key,
+                        user_id: context.user_id,
+                        generation: context.session_generation.unwrap(),
+                        notify: gateway_approval::notify_with(|_| async {
+                            panic!("A retired turn tried to send a new approval prompt")
+                        }),
+                    };
                     pause.entered.notify_one();
                     pause.resume.notified().await;
+                    let error = gateway_approval::authorise(
+                        &permissions,
+                        "echo fixture",
+                        &serde_json::json!({"command": "echo fixture"}),
+                    )
+                    .await
+                    .unwrap_err();
+                    assert!(error.contains("conversation has ended"), "{error}");
+                    assert_eq!(
+                        gateway_approval::approve(&permissions.session_key, &permissions.user_id),
+                        Resolution::NothingPending
+                    );
                     Ok("old answer".into())
                 })
             }
