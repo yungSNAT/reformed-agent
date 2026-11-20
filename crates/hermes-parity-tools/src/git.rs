@@ -88,3 +88,39 @@ pub fn objects_exist(repo_root: &Path, rev: &str, paths: &[String]) -> Result<Ve
         .map(|line| !(line.ends_with(" missing") || line.ends_with(" ambiguous")))
         .collect())
 }
+
+pub(crate) fn ensure_remote(repo_root: &Path, remote: &str, url: &str) -> Result<(), String> {
+    let out = git(repo_root, &["remote"])?;
+    if crate::py::strip(&out.stdout)
+        .lines()
+        .any(|line| line == remote)
+    {
+        return Ok(());
+    }
+    git_checked(repo_root, &["remote", "add", remote, url]).map(|_| ())
+}
+
+pub(crate) fn fetch_remote_branch(
+    repo_root: &Path,
+    remote: &str,
+    branch: &str,
+) -> Result<(), String> {
+    let remote_ref = format!("{remote}/{branch}");
+    let refspec = format!("refs/heads/{branch}:refs/remotes/{remote}/{branch}");
+    let out = git(repo_root, &["fetch", "--no-tags", remote, &refspec])?;
+    if out.ok {
+        return Ok(());
+    }
+    let existing = git(repo_root, &["rev-parse", "--verify", &remote_ref])?;
+    if !crate::py::strip(&existing.stdout).is_empty() {
+        eprintln!(
+            "warning: scoped fetch for {remote_ref} failed; using existing ref: {}",
+            crate::py::strip(&out.stderr)
+        );
+        return Ok(());
+    }
+    Err(format!(
+        "git fetch {remote} {branch} failed: {}",
+        crate::py::strip(&out.stderr)
+    ))
+}

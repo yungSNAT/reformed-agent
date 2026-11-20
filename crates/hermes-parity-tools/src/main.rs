@@ -8,6 +8,7 @@ mod coverage_audit;
 mod coverage_tests;
 mod divergence;
 mod git;
+mod parity_matrix;
 mod report_io;
 mod slash_gate;
 mod surface_gate;
@@ -43,6 +44,9 @@ enum Command {
     /// Audit the cited local tests and mapped upstream behaviour.
     #[command(name = "generate-test-coverage-audit")]
     CoverageAudit(coverage_audit::CoverageAuditArgs),
+    /// Generate a parity gap matrix for local vs upstream.
+    #[command(name = "generate-parity-matrix")]
+    ParityMatrix(parity_matrix::ParityMatrixArgs),
 }
 
 fn main() {
@@ -54,6 +58,7 @@ fn main() {
         Command::AdapterMatrix(args) => adapter_matrix::run(args),
         Command::TestIntentMapping(args) => test_intent_mapping::run(args),
         Command::CoverageAudit(args) => coverage_audit::run(args),
+        Command::ParityMatrix(args) => parity_matrix::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

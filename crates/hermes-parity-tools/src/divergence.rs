@@ -7,7 +7,7 @@ use std::path::Path;
 use clap::Args;
 use jiff::civil::{Date, ISOWeekDate, Weekday};
 
-use crate::git::{git, git_checked};
+use crate::git::{ensure_remote, fetch_remote_branch, git};
 use crate::py::{self, Py};
 
 const ALLOWED_STATUS: [&str; 4] = ["approved", "temporary", "pending_review", "deprecated"];
@@ -247,14 +247,6 @@ fn ls_tree_paths(repo_root: &Path, rev: &str) -> Result<BTreeSet<String>, String
         .collect())
 }
 
-fn ensure_remote(repo_root: &Path, remote: &str, url: &str) -> Result<(), String> {
-    let out = git(repo_root, &["remote"])?;
-    if py::strip(&out.stdout).lines().any(|line| line == remote) {
-        return Ok(());
-    }
-    git_checked(repo_root, &["remote", "add", remote, url]).map(|_| ())
-}
-
 fn branch_from_remote_ref<'a>(remote: &str, upstream_ref: &'a str) -> &'a str {
     match upstream_ref
         .strip_prefix(remote)
@@ -263,27 +255,6 @@ fn branch_from_remote_ref<'a>(remote: &str, upstream_ref: &'a str) -> &'a str {
         Some(branch) if !branch.is_empty() => branch,
         _ => "main",
     }
-}
-
-fn fetch_remote_branch(repo_root: &Path, remote: &str, branch: &str) -> Result<(), String> {
-    let remote_ref = format!("{remote}/{branch}");
-    let refspec = format!("refs/heads/{branch}:refs/remotes/{remote}/{branch}");
-    let out = git(repo_root, &["fetch", "--no-tags", remote, &refspec])?;
-    if out.ok {
-        return Ok(());
-    }
-    let existing = git(repo_root, &["rev-parse", "--verify", &remote_ref])?;
-    if !py::strip(&existing.stdout).is_empty() {
-        eprintln!(
-            "warning: scoped fetch for {remote_ref} failed; using existing ref: {}",
-            py::strip(&out.stderr)
-        );
-        return Ok(());
-    }
-    Err(format!(
-        "git fetch {remote} {branch} failed: {}",
-        py::strip(&out.stderr)
-    ))
 }
 
 fn repo_relative(path: &Path, repo_root: &Path) -> String {
