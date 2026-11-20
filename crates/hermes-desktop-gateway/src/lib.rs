@@ -3,8 +3,8 @@
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
-//! a session's saved messages at `GET /api/sessions/{id}/messages`. Other methods get
-//! JSON-RPC 'method not found'.
+//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
+//! self-update as off. Other methods get JSON-RPC 'method not found'.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
@@ -141,6 +141,7 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     });
     let private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
+        .route("/api/hermes/update/check", get(update_check))
         .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
     Router::new()
         .route("/api/health", get(health))
@@ -214,6 +215,24 @@ async fn status() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "auth_required": false,
         "gateway_running": true,
+    }))
+}
+
+// Self-update is not served: this answers in the shape of upstream's
+// hermes_cli/web_routers/actions.py `check_hermes_update` with nothing to apply. Voice chat is not
+// served either, and `/api/audio/voice-live/status` is left unrouted on purpose: every 200 reply in
+// upstream's contract shows the desktop's voice-engine picker, whilst a 404 is read as a backend
+// that predates voice modes and hides it (apps/desktop/src/lib/voice-live.ts).
+
+async fn update_check() -> Json<Value> {
+    Json(json!({
+        "install_method": "unknown",
+        "current_version": env!("CARGO_PKG_VERSION"),
+        "behind": null,
+        "update_available": false,
+        "can_apply": false,
+        "update_command": "",
+        "message": "This gateway does not check for updates; update it the way it was installed.",
     }))
 }
 

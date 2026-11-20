@@ -183,6 +183,7 @@ impl Chat {
         };
         match method {
             "setup.runtime_check" => named.map(|_| self.runtime_check()),
+            "wake.status" => named.map(|_| wake_status()),
             "session.create" => named.map(|_| self.create()),
             "file.attach" => self.attach(named?),
             "image.attach_bytes" => self.attach_image(named?),
@@ -510,6 +511,29 @@ fn turn_request(params: &Map<String, Value>) -> Result<(&str, String), RpcError>
         None | Some(Value::String(_)) => Err((TEXT_REQUIRED, "text required".into())),
         Some(_) => Err((INVALID_PARAMS, "text must be a string".into())),
     }
+}
+
+/// No wake word is served: upstream's `WakeStatusResult` (tui_gateway/contracts/prompt_voice.py)
+/// for a detector that is unavailable and off, with upstream's default phrase, provider and frame
+/// format, so the desktop shows the wake word as off.
+fn wake_status() -> Value {
+    json!({
+        "listening": false,
+        "owned_by_caller": false,
+        "owner_surface": null,
+        "phrase": "hey hermes",
+        "provider": "openwakeword",
+        "configured_surface": "auto",
+        "input_device": {"selector": null, "error": null},
+        "available": false,
+        "hint": "The wake word is not served by this gateway.",
+        "enabled": false,
+        "audio_silent": false,
+        "capture": "client",
+        "local_input_available": false,
+        "sample_rate": 16000,
+        "frame_length": 1280,
+    })
 }
 
 /// Session ids are this gateway's UUIDs or the CLI's; anything else names no session.
