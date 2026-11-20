@@ -51,7 +51,7 @@ jobs:
           jq -e '[.ci_gate.checks[] | select(.metric | IN("max_commits_behind", "max_upstream_patch_missing", "max_files_only_upstream", "max_queue_pending_commits", "min_test_coverage_tracked_behavior_ratio") | not) | select(.status == "fail" or .status == "missing")] == []' docs/parity/global-parity-proof.json > /dev/null
       - name: Generate public release readiness summary
         run: |
-          python3 scripts/generate-release-readiness-summary.py --repo-root .
+          cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root .
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
           printf '\n[Upstream refresh plan](%s/%s/blob/%s/docs/upstream-sync.md#subsystem-refresh-for-v0232)\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
