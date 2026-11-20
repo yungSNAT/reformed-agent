@@ -1107,19 +1107,23 @@ mod tests {
         assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
 
-    #[tokio::test]
-    async fn patch_allows_a_file_named_like_a_credential() {
+    #[test]
+    fn patch_allows_a_file_named_like_a_credential() {
         let tmp = tempfile::tempdir().unwrap();
         let backend = Arc::new(CountingPatch::default());
         let handler = PatchHandler::new(backend.clone());
 
-        for name in ["credential_guard.rs", "fixture.pem"] {
-            let path = tmp.path().join(name);
-            handler
-                .execute(json!({"path": path, "old_string": "a", "new_string": "b"}))
-                .await
-                .unwrap_or_else(|e| panic!("{name} was refused: {e}"));
-        }
+        crate::test_env::with_env(&[("HERMES_WRITE_SAFE_ROOT", None)], || {
+            tokio::runtime::Runtime::new().unwrap().block_on(async {
+                for name in ["credential_guard.rs", "fixture.pem"] {
+                    let path = tmp.path().join(name);
+                    handler
+                        .execute(json!({"path": path, "old_string": "a", "new_string": "b"}))
+                        .await
+                        .unwrap_or_else(|e| panic!("{name} was refused: {e}"));
+                }
+            });
+        });
         assert_eq!(backend.0.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 
