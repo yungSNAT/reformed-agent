@@ -31,7 +31,7 @@ This runbook maps each GPAR ticket to executable artifacts and checks.
   - `docs/parity/divergence-validation.json`
 - `#28 GPAR-09` final parity proof gate + release checklist
   - `scripts/generate-global-parity-proof.py`
-  - `scripts/generate-test-coverage-audit.py`
+  - `cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit`
   - `docs/parity/global-parity-proof.json`
   - `docs/parity/test-coverage-audit.json`
   - `.github/workflows/parity-audit.yml`
