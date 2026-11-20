@@ -942,7 +942,8 @@ def maybe_check_global_parity_drift(
             "validate-intentional-divergence", "--check", "--allow-warnings",
         ],
         [
-            "scripts/generate-upstream-patch-queue.py",
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-upstream-patch-queue",
             "--max-commits",
             str(max(0, max_queue_commits)),
         ],

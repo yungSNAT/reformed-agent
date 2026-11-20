@@ -39,7 +39,7 @@ jobs:
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --upstream-ref "$UPSTREAM_SHA" --no-fetch --check --allow-warnings
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch
-          python3 scripts/generate-upstream-patch-queue.py --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch --max-commits 0
+          cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch --max-commits 0
           # The coverage audit consumes the refreshed intent, matrix, divergence and queue reports.
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
