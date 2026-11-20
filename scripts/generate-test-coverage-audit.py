@@ -5,10 +5,8 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
-import importlib.util
 import json
 import re
-import sys
 from collections import Counter
 from pathlib import Path
 from typing import Any
@@ -132,26 +130,15 @@ def rust_test_exists(tests_by_file: dict[str, set[str]], file: str, name: str) -
 
 
 def load_intent_specs(repo_root: Path) -> list[dict[str, Any]]:
-    script = repo_root / "scripts" / "generate-test-intent-mapping.py"
-    spec = importlib.util.spec_from_file_location("generate_test_intent_mapping", script)
-    if spec is None or spec.loader is None:
-        raise RuntimeError(f"failed loading {script}")
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    spec.loader.exec_module(module)
-
-    rows: list[dict[str, Any]] = []
-    for intent in module.INTENTS:
-        evidence = module.collect_matches(repo_root, intent.local_evidence_globs)
-        rows.append(
-            {
-                "id": intent.id,
-                "upstream_scope": list(intent.upstream_scope),
-                "local_evidence_globs": list(intent.local_evidence_globs),
-                "evidence": evidence,
-            }
-        )
-    return rows
+    domains = json.loads((repo_root / "docs/parity/test-intent-domains.json").read_text(encoding="utf-8"))
+    for domain in domains:
+        domain["evidence"] = sorted({
+            rel(path, repo_root)
+            for pattern in domain["local_evidence_globs"]
+            for path in repo_root.glob(pattern)
+            if path.is_file()
+        })
+    return domains
 
 
 def evidence_has_direct_test(path: str, tests_by_file: dict[str, set[str]]) -> bool:

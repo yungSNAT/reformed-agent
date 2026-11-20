@@ -6,8 +6,10 @@
 mod adapter_matrix;
 mod divergence;
 mod git;
+mod report_io;
 mod slash_gate;
 mod surface_gate;
+mod test_intent_mapping;
 
 use clap::{Parser, Subcommand};
 use hermes_py as py;
@@ -33,6 +35,9 @@ enum Command {
     /// Generate the gateway platform and memory plugin feature matrix.
     #[command(name = "generate-adapter-matrix")]
     AdapterMatrix(adapter_matrix::AdapterMatrixArgs),
+    /// Map upstream test domains to evidence in the local tree.
+    #[command(name = "generate-test-intent-mapping")]
+    TestIntentMapping(test_intent_mapping::TestIntentMappingArgs),
 }
 
 fn main() {
@@ -42,6 +47,7 @@ fn main() {
         Command::SurfaceGate(args) => surface_gate::run(args),
         Command::ValidateDivergence(args) => divergence::run(args),
         Command::AdapterMatrix(args) => adapter_matrix::run(args),
+        Command::TestIntentMapping(args) => test_intent_mapping::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
