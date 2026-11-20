@@ -45,7 +45,11 @@ enum Command {
     #[command(name = "generate-test-coverage-audit")]
     CoverageAudit(coverage_audit::CoverageAuditArgs),
     /// Generate a parity gap matrix for local vs upstream.
-    #[command(name = "generate-parity-matrix")]
+    #[command(
+        name = "generate-parity-matrix",
+        args_override_self = true,
+        infer_long_args = true
+    )]
     ParityMatrix(parity_matrix::ParityMatrixArgs),
 }
 

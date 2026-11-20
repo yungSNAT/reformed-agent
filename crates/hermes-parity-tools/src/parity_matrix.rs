@@ -35,8 +35,8 @@ pub struct ParityMatrixArgs {
     #[arg(long, default_value = "main")]
     upstream_branch: String,
     /// Top bucket rows per section
-    #[arg(long, default_value_t = 40, allow_hyphen_values = true)]
-    top_n: i128,
+    #[arg(long, default_value = "40", allow_hyphen_values = true, value_parser = parse_bucket_limit)]
+    top_n: BucketLimit,
     /// Do not fetch upstream before computing
     #[arg(long)]
     no_fetch: bool,
@@ -49,6 +49,44 @@ pub struct ParityMatrixArgs {
     /// Output Markdown path relative to repository root
     #[arg(long, default_value = "docs/parity/parity-matrix.md")]
     output_md: String,
+}
+
+#[derive(Clone, Debug)]
+struct BucketLimit {
+    count: usize,
+    label: String,
+}
+
+fn parse_bucket_limit(input: &str) -> Result<BucketLimit, String> {
+    let input = py::strip(input);
+    let negative = input.starts_with('-');
+    let digits = input.strip_prefix(['+', '-']).unwrap_or(input);
+    let is_decimal_group =
+        |group: &str| !group.is_empty() && group.bytes().all(|byte| byte.is_ascii_digit());
+    if !digits.split('_').all(is_decimal_group) {
+        return Err("expected an integer".to_owned());
+    }
+    let digits = digits.replace('_', "");
+    if digits.len() > 4300 {
+        return Err("too many decimal digits".to_owned());
+    }
+    let digits = digits.trim_start_matches('0');
+    if digits.is_empty() {
+        return Ok(BucketLimit {
+            count: 0,
+            label: "0".to_owned(),
+        });
+    }
+    if negative {
+        return Ok(BucketLimit {
+            count: 0,
+            label: format!("-{digits}"),
+        });
+    }
+    Ok(BucketLimit {
+        count: digits.parse().unwrap_or(usize::MAX),
+        label: digits.to_owned(),
+    })
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -272,7 +310,7 @@ impl<'a> TreeComparison<'a> {
     }
 }
 
-fn top_buckets(paths: &[&str], limit: i128) -> Py {
+fn top_buckets(paths: &[&str], limit: usize) -> Py {
     // Counter.most_common preserves the first encounter when counts tie.
     let mut positions = HashMap::new();
     let mut buckets: Vec<(&str, usize)> = Vec::new();
@@ -292,11 +330,10 @@ fn top_buckets(paths: &[&str], limit: i128) -> Py {
         buckets[position].1 += 1;
     }
     buckets.sort_by_key(|&(_, count)| Reverse(count));
-    let count = usize::try_from(limit.max(0)).unwrap_or(usize::MAX);
     Py::List(
         buckets
             .into_iter()
-            .take(count)
+            .take(limit)
             .map(|(bucket, count)| Py::dict([("path", bucket.into()), ("count", count.into())]))
             .collect(),
     )
@@ -455,8 +492,8 @@ pub fn run(args: ParityMatrixArgs) -> Result<i32, String> {
     let registry = resolve_argument(&py::join(&root, &args.intentional_divergence))?;
     let (divergences, covered_files) = divergence_coverage(&registry, &trees)?;
 
-    let top_upstream = top_buckets(&trees.upstream_only, args.top_n);
-    let top_local = top_buckets(&trees.local_only, args.top_n);
+    let top_upstream = top_buckets(&trees.upstream_only, args.top_n.count);
+    let top_local = top_buckets(&trees.local_only, args.top_n.count);
     let report = Py::dict([
         ("generated_at_utc", py::utc_isoformat().into()),
         (
@@ -505,7 +542,7 @@ pub fn run(args: ParityMatrixArgs) -> Result<i32, String> {
         ("top_upstream_only", top_upstream.clone()),
         (
             "top_shared_different",
-            top_buckets(&trees.shared_different, args.top_n),
+            top_buckets(&trees.shared_different, args.top_n.count),
         ),
         ("top_local_only", top_local.clone()),
         ("top_missing_from_local", top_upstream),
@@ -557,7 +594,7 @@ pub fn run(args: ParityMatrixArgs) -> Result<i32, String> {
         }
     }
     write_report(&json_path, py::dumps(&report, Some(2), false) + "\n")?;
-    write_report(&md_path, markdown::render(&report, args.top_n))?;
+    write_report(&md_path, markdown::render(&report, &args.top_n.label))?;
     println!("Wrote JSON: {}", py::path_str(&json_path));
     println!("Wrote Markdown: {}", py::path_str(&md_path));
     println!("Commits behind/ahead: {behind}/{ahead}");

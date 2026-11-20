@@ -17,7 +17,7 @@ fn rows<'a>(report: &'a Py, name: &str) -> &'a [Py] {
     values
 }
 
-pub(super) fn render(report: &Py, top: i128) -> String {
+pub(super) fn render(report: &Py, top: &str) -> String {
     let refs = field(report, "refs");
     let diverged = *field(refs, "merge_base") == Py::Null;
     let merge_base = if diverged {
