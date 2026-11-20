@@ -2024,6 +2024,7 @@ dependencies = [
  "jiff",
  "regex",
  "serde_json",
+ "syn",
  "tempfile",
 ]
 
