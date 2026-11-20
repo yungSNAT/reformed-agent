@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-20T14:31:21.678098+00:00",
+  "generated_at_utc": "2026-11-20T16:07:21.840480+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -560,7 +560,7 @@
       "queue_pending": 0,
       "queue_total": 1,
       "rust_test_files": 497,
-      "rust_test_functions": 9144,
+      "rust_test_functions": 9146,
       "test_intent_mapping_ratio": 1.0,
       "test_intents_mapped": 10,
       "test_intents_total": 10,

@@ -10,11 +10,13 @@
 use std::collections::HashSet;
 use std::ffi::OsString;
 use std::fs;
+use std::panic::{resume_unwind, AssertUnwindSafe};
 use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::sync::LazyLock;
 use std::time::Duration as StdDuration;
 
+use futures::FutureExt;
 use hermes_agent::agent_loop::ToolRegistry;
 use hermes_agent::skill_orchestrator::parse_frontmatter;
 use hermes_agent::{AgentConfig, AgentLoop};
@@ -616,15 +618,18 @@ impl CronRunner {
             None => (self.tool_registry.clone(), None),
         };
 
-        // Create a fresh agent loop
-        let agent_loop = AgentLoop::new(config, tool_registry, self.llm_provider.clone());
-
-        // Run the agent loop
-        let result = agent_loop.run(messages, Some(tools)).await;
+        let run = async {
+            let agent_loop = AgentLoop::new(config, tool_registry, self.llm_provider.clone());
+            agent_loop.run(messages, Some(tools)).await
+        };
+        let result = AssertUnwindSafe(run).catch_unwind().await;
         if let Some(browser) = browser {
             browser.close().await;
         }
-        let result = result.map_err(CronError::Agent)?;
+        let result = match result {
+            Ok(outcome) => outcome.map_err(CronError::Agent)?,
+            Err(panic) => resume_unwind(panic),
+        };
 
         // Deliver results if configured
         if let Some(ref deliver) = job.deliver {
@@ -1004,7 +1009,7 @@ mod tests {
         register_test_tool(&mut registry, "cronjob");
         register_test_tool(&mut registry, "terminal");
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
+        let runner = CronRunner::new(Arc::new(MockLlmProvider::Success), Arc::new(registry));
 
         let schemas = runner.filtered_tool_schemas();
         let names: Vec<&str> = schemas.iter().map(|s| s.name.as_str()).collect();
@@ -1032,7 +1037,7 @@ mod tests {
             register_test_tool(&mut registry, name);
         }
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
+        let runner = CronRunner::new(Arc::new(MockLlmProvider::Success), Arc::new(registry));
 
         let names = schema_name_set(runner.filtered_tool_schemas());
         assert!(names.contains("terminal"));
@@ -1086,7 +1091,7 @@ tools_config:
             register_test_tool(&mut registry, name);
         }
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
+        let runner = CronRunner::new(Arc::new(MockLlmProvider::Success), Arc::new(registry));
 
         let names = schema_name_set(runner.filtered_tool_schemas());
         assert!(names.contains("terminal"));
@@ -1135,7 +1140,10 @@ tools_config:
         let mut job = CronJob::new("0 9 * * *", "Say hello");
         job.skills = Some(vec!["web_search".to_string(), "terminal".to_string()]);
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        );
 
         let messages = runner.build_messages(&job).expect("messages");
         // Should have skill context + prompt message
@@ -1149,7 +1157,10 @@ tools_config:
         let mut job = CronJob::new("0 9 * * *", "Say hello");
         job.script = Some("echo hello world".to_string());
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        );
 
         let messages = runner.build_messages(&job).expect("messages");
         assert_eq!(messages[0].content.as_deref(), Some("Say hello"));
@@ -1254,12 +1265,15 @@ tools_config:
         let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
         let browsers = Arc::new(Mutex::new(Vec::new()));
         let made = browsers.clone();
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()))
-            .with_run_tools(move || {
-                let browser = hermes_tools::unbound_browser();
-                made.lock().unwrap().push(browser.clone());
-                (Arc::new(ToolRegistry::new()), browser)
-            });
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        )
+        .with_run_tools(move || {
+            let browser = hermes_tools::unbound_browser();
+            made.lock().unwrap().push(browser.clone());
+            (Arc::new(ToolRegistry::new()), browser)
+        });
         let job = CronJob::new("0 9 * * *", "cron prompt");
 
         block_on(runner.run_job(&job)).expect("first run");
@@ -1273,6 +1287,42 @@ tools_config:
                 .expect("a run's browser stayed open after the run")
                 .to_string();
             assert!(err.contains("browser was closed"), "{err}");
+        }
+    }
+
+    #[test]
+    fn run_closes_browser_on_agent_error_or_panic() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let home = tempfile::tempdir().unwrap();
+        let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
+        let _ignore_user_config = EnvGuard::set("HERMES_IGNORE_USER_CONFIG", "1");
+        for (provider, expects_panic) in [
+            (MockLlmProvider::Error, false),
+            (MockLlmProvider::Panic, true),
+        ] {
+            let browser = SharedBrowser::lazy(|| panic!("cron fixture browser stayed open"));
+            let run_browser = browser.clone();
+            let runner = CronRunner::new(Arc::new(provider), Arc::new(ToolRegistry::new()))
+                .with_run_tools(move || (Arc::new(ToolRegistry::new()), run_browser.clone()));
+            let job = CronJob::new("0 9 * * *", "cron prompt");
+
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                block_on(runner.run_job(&job))
+            }));
+            if expects_panic {
+                let Err(payload) = result else {
+                    panic!("provider panic did not propagate")
+                };
+                assert_eq!(
+                    payload.downcast_ref::<&str>(),
+                    Some(&"cron fixture provider panic")
+                );
+            } else {
+                assert!(matches!(result, Ok(Err(CronError::Agent(_)))));
+            }
+
+            let error = block_on(browser.lock()).err().expect("browser not closed");
+            assert!(error.to_string().contains("browser was closed"));
         }
     }
 
@@ -1326,7 +1376,7 @@ tools_config:
                 Ok("ok".to_string())
             }),
         );
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(registry));
+        let runner = CronRunner::new(Arc::new(MockLlmProvider::Success), Arc::new(registry));
 
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
@@ -1350,7 +1400,10 @@ tools_config:
         std::fs::write(scripts.join("watchdog.sh"), "echo scripts-ok\n").unwrap();
         let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        );
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
         job.script = Some("watchdog.sh".to_string());
@@ -1372,7 +1425,10 @@ tools_config:
         std::fs::create_dir_all(home.path().join("scripts")).unwrap();
         let _home = EnvGuard::set("HERMES_HOME", home.path().to_string_lossy().as_ref());
 
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        );
         let mut job = CronJob::new("* * * * *", "unused");
         job.no_agent = true;
         job.script = Some("../../etc/passwd".to_string());
@@ -1430,7 +1486,10 @@ tools_config:
 
     #[tokio::test]
     async fn test_agent_script_mode_injects_output_into_prompt() {
-        let runner = CronRunner::new(Arc::new(MockLlmProvider), Arc::new(ToolRegistry::new()));
+        let runner = CronRunner::new(
+            Arc::new(MockLlmProvider::Success),
+            Arc::new(ToolRegistry::new()),
+        );
         let mut job = CronJob::new("* * * * *", "Report status.");
         job.script = Some("echo script-data".to_string());
 
@@ -1508,7 +1567,11 @@ tools_config:
     }
 
     // Minimal mock LLM provider for testing
-    struct MockLlmProvider;
+    enum MockLlmProvider {
+        Success,
+        Error,
+        Panic,
+    }
 
     #[async_trait::async_trait]
     impl LlmProvider for MockLlmProvider {
@@ -1521,6 +1584,15 @@ tools_config:
             _model: Option<&str>,
             _extra_body: Option<&serde_json::Value>,
         ) -> Result<hermes_core::LlmResponse, hermes_core::AgentError> {
+            match self {
+                Self::Success => (),
+                Self::Error => {
+                    return Err(hermes_core::AgentError::Config(
+                        "fixture provider failure".into(),
+                    ))
+                }
+                Self::Panic => panic!("cron fixture provider panic"),
+            }
             Ok(hermes_core::LlmResponse {
                 message: hermes_core::Message::assistant("done"),
                 usage: None,

@@ -12581,7 +12581,7 @@
       "classification": "intentional_divergence",
       "classification_path": "tests/hermes_cli/test_tencent_tokenhub_provider.py",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "eac3b760013b3e0c51ba5c6773b3f9c77a351eed",
+      "local_blob": "f30f48b1a40ed968cf283771265e247bfa3eb97c",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "tests/hermes_cli/test_tencent_tokenhub_provider.py",
@@ -22556,7 +22556,7 @@
       "classification": "policy_only",
       "classification_path": "website/static",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "61235075af7bb3cea48307bdf05b5ac90af98e95",
+      "local_blob": "067b8db9d6d4bb9e1626cd340f1cd209df3f250b",
       "necessity": "not_runtime_required",
       "owner": "yungSNAT",
       "path": "website/static/api/model-catalog.json",
@@ -22687,10 +22687,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-20T14:31:21.179180+00:00",
+  "generated_at_utc": "2026-11-20T16:07:21.224724+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "4c0de388a48adbc6d5e8cb107d2ec676c98fdaa2",
+    "local_sha": "a69bfbbd4db53b2b05f8b9b8925105bf87f23545",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
