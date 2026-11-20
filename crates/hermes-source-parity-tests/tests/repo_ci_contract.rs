@@ -46,6 +46,7 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
     let script = read("scripts/run-repo-ci.sh");
     let workflow = read(".github/workflows/ci.yml");
     for command in [
+        "bash scripts/run-python-parity-governance-tests.sh",
         "python3 scripts/generate-parity-matrix.py --local-ref HEAD",
         "python3 scripts/generate-workstream-status.py",
         "python3 scripts/generate-test-intent-mapping.py",
