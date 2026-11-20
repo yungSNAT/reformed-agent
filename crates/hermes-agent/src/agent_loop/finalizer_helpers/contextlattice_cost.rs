@@ -222,52 +222,38 @@ fn extract_marker_values(text: &str, marker: &str, limit: usize) -> Vec<String> 
     out
 }
 
-/// The price of a cache read as a fraction of the model's input price, from
-/// Anthropic's prompt caching page (Pricing, footnotes 1 and 2, read
-/// 18 November 2026): 0.025 for Claude Fable and Mythos 5.1 and 5.2, 0.05 for
-/// Claude Opus and Sonnet 5.5, and 0.1 for every other model. Keep the list
-/// to the page's footnotes. A dated snapshot id such as `claude-fable-5-20260101`
-/// names version 5, not 5.2.
-fn anthropic_cache_read_multiplier(model: &str) -> f64 {
-    let model = model.to_ascii_lowercase().replace('.', "-");
-    let parts: Vec<&str> = model.split(['-', '/', ':', '@']).collect();
-    for name in parts.windows(3) {
-        match (name[0], name[1], name[2]) {
-            ("fable" | "mythos", "5", "1" | "2") => return 0.025,
-            ("opus" | "sonnet", "5", "5") => return 0.05,
-            _ => {}
-        }
-    }
-    0.1
-}
-
 fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig) -> Option<f64> {
     if let Some(v) = usage.estimated_cost {
         return Some(v.max(0.0));
     }
-    let (in_pm, out_pm) = match (
+    let anthropic = hermes_intelligence::usage_pricing::anthropic_pricing_for_prompt(
+        model, usage.prompt_tokens,
+    );
+    let base_input = anthropic.as_ref().and_then(|entry| entry.input_cost_per_million);
+    let base_output = anthropic.as_ref().and_then(|entry| entry.output_cost_per_million);
+    let (input, output) = match (
         config.prompt_cost_per_million_usd,
         config.completion_cost_per_million_usd,
     ) {
         (Some(i), Some(o)) => (i, o),
-        _ => default_model_cost_per_million(model)?,
+        _ => base_input.zip(base_output).or_else(|| default_model_cost_per_million(model))?,
     };
-    // shortcut: Anthropic's rates, as only the Anthropic provider reports
-    // cache counts here (an Anthropic-compatible endpoint is assumed to price
-    // as Anthropic does): a cache read costs the model's read multiplier and
-    // a 5-minute cache write 1.25 of the input price. The agent never asks
-    // for a 1-hour cache; one requested through `extra_body` is priced as a
-    // 5-minute write, not at its 2x (reading `ephemeral_1h_input_tokens`
-    // would price it exactly). Carry the provider's rates with the counts
-    // once another provider reports them.
-    let cached = usage.cache_read_tokens + usage.cache_write_tokens;
-    let uncached = usage.prompt_tokens.saturating_sub(cached);
-    let prompt_tokens = uncached as f64
-        + anthropic_cache_read_multiplier(model) * usage.cache_read_tokens as f64
-        + 1.25 * usage.cache_write_tokens as f64;
-    let prompt_cost = (prompt_tokens / 1_000_000.0) * in_pm;
-    let completion_cost = (usage.completion_tokens as f64 / 1_000_000.0) * out_pm;
-    Some(prompt_cost + completion_cost)
+    let cache_tokens = usage.cache_read_tokens.saturating_add(usage.cache_write_tokens);
+    let uncached = usage.prompt_tokens.saturating_sub(cache_tokens);
+    let mut cost = uncached as f64 * input + usage.completion_tokens as f64 * output;
+    if cache_tokens > 0 {
+        let (read, write) = if let Some(entry) = anthropic {
+            // Custom base rates retain the known model's cache-to-input price ratios.
+            let scale = input / base_input?;
+            (scale * entry.cache_read_cost_per_million?, scale * entry.cache_write_cost_per_million?)
+        } else {
+            let (read, write) =
+                hermes_intelligence::usage_pricing::ANTHROPIC_STANDARD_CACHE_RATIOS;
+            (input * read, input * write)
+        };
+        cost += read * usage.cache_read_tokens as f64 + write * usage.cache_write_tokens as f64;
+    }
+    Some(cost / 1_000_000.0)
 }
 
 /// Merge two UsageStats, summing token counts and keeping the latest cost estimate.

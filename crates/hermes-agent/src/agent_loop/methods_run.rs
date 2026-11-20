@@ -445,6 +445,9 @@ impl AgentLoop {
                     }
                 };
                 if let Some(ref u) = r.usage {
+                    // Context pricing tiers are measured per provider request.
+                    session_cost_usd +=
+                        estimate_usage_cost_usd(u, r.model.as_str(), &self.config).unwrap_or(0.0);
                     turn_usage_acc = Some(merge_usage(turn_usage_acc, u));
                 }
 
@@ -566,11 +569,6 @@ impl AgentLoop {
             // Accumulate usage (merged across semantic-retried sub-calls)
             if let Some(ref usage) = turn_usage_acc {
                 accumulated_usage = Some(merge_usage(accumulated_usage, usage));
-                if let Some(cost) =
-                    estimate_usage_cost_usd(usage, response.model.as_str(), &self.config)
-                {
-                    session_cost_usd += cost;
-                }
             }
 
             if let Some(limit) = self.config.max_cost_usd {
