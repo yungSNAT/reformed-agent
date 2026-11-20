@@ -187,7 +187,6 @@ impl Gateway {
                 &incoming.chat_id,
                 &incoming.user_id,
                 self.browser_retirer.as_ref(),
-                hermes_tools::approval::clear_session,
             )
             .await
             .map_err(|error| GatewayError::Platform(error.to_owned()))?;

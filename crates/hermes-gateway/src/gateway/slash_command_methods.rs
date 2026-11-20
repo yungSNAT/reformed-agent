@@ -621,7 +621,10 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::CompressContext(_) => {
-                let outcome = self.compress_context(session_key, 24).await;
+                let Some(generation) = generation.as_ref() else {
+                    return Ok(true);
+                };
+                let outcome = self.compress_context(session_key, generation, 24).await;
                 let mut reply = format!(
                     "📦 Context compressed. Removed {} old messages.",
                     outcome.removed_messages
@@ -798,19 +801,15 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::Rollback { steps } => {
-                let mut removed = 0usize;
-                for _ in 0..steps {
-                    if self
-                        .session_manager
-                        .pop_last_message(session_key)
-                        .await
-                        .is_some()
-                    {
-                        removed += 1;
-                    } else {
-                        break;
-                    }
-                }
+                let Some(generation) = generation.as_ref() else {
+                    return Ok(true);
+                };
+                let Some(removed) = self.session_manager
+                    .update_turn_messages(session_key, generation, |messages| {
+                        let count = steps.min(messages.len());
+                        messages.truncate(messages.len() - count);
+                        count
+                    }).await else { return Ok(true); };
                 self.send_message(
                     &incoming.platform,
                     &incoming.chat_id,
@@ -907,18 +906,16 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::Undo => {
-                let mut removed = 0usize;
-                if let Some(last) = self.session_manager.pop_last_message(session_key).await {
-                    removed += 1;
-                    if last.role == MessageRole::Assistant {
-                        if let Some(prev) = self.session_manager.pop_last_message(session_key).await
-                        {
-                            if prev.role == MessageRole::User {
-                                removed += 1;
-                            }
-                        }
-                    }
-                }
+                let Some(generation) = generation.as_ref() else {
+                    return Ok(true);
+                };
+                let Some(removed) = self.session_manager
+                    .update_turn_messages(session_key, generation, |messages| {
+                        let Some(last) = messages.pop() else { return 0; };
+                        let prior_user = last.role == MessageRole::Assistant
+                            && messages.pop().is_some_and(|prior| prior.role == MessageRole::User);
+                        1 + usize::from(prior_user)
+                    }).await else { return Ok(true); };
                 let reply = if removed == 0 {
                     "Nothing to undo.".to_string()
                 } else {

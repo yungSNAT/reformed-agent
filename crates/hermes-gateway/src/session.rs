@@ -304,15 +304,13 @@ impl SessionEntry {
 struct SessionBoundary<'a> {
     browsers: Option<&'a BrowserRetirer>,
     reserved_slot: Option<BrowserReleaseSlot<'a>>,
-    clear_approvals: fn(&str),
 }
 
 impl<'a> SessionBoundary<'a> {
-    fn new(browsers: Option<&'a BrowserRetirer>, clear_approvals: fn(&str)) -> Self {
+    fn new(browsers: Option<&'a BrowserRetirer>) -> Self {
         Self {
             browsers,
             reserved_slot: None,
-            clear_approvals,
         }
     }
 
@@ -329,7 +327,7 @@ impl<'a> SessionBoundary<'a> {
         if let Some(generation) = generation {
             generation.retire();
         }
-        (self.clear_approvals)(session_key);
+        hermes_tools::approval::clear_session(session_key);
         Ok(true)
     }
 
@@ -445,7 +443,7 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
     ) -> Session {
-        self.admit_session(platform, chat_id, user_id, None, |_| ())
+        self.admit_session(platform, chat_id, user_id, None)
             .await
             .expect("admission without a browser cannot fail")
             .session
@@ -458,12 +456,11 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
         browsers: Option<&BrowserRetirer>,
-        clear_approvals: fn(&str),
     ) -> Result<SessionAdmission, &'static str> {
         let session_type = Self::infer_session_type(chat_id);
         let reset_policy = self.effective_reset_policy(platform, session_type);
         let session_key = self.compose_session_key(platform, chat_id, user_id);
-        let mut boundary = SessionBoundary::new(browsers, clear_approvals);
+        let mut boundary = SessionBoundary::new(browsers);
 
         loop {
             let mut sessions = self.sessions.write().await;
@@ -549,7 +546,7 @@ impl SessionManager {
         browsers: Option<&BrowserRetirer>,
     ) -> Result<(Option<Session>, Session), &'static str> {
         let session_key = self.compose_session_key(platform, chat_id, user_id);
-        let mut boundary = SessionBoundary::new(browsers, hermes_tools::approval::clear_session);
+        let mut boundary = SessionBoundary::new(browsers);
         let mut initial_generation = None;
         loop {
             let mut sessions = self.sessions.write().await;
@@ -874,13 +871,6 @@ impl SessionManager {
     ///
     /// Returns the removed session snapshots with their canonical keys.
     pub async fn expire_idle_session_snapshots(&self) -> Vec<(String, Session)> {
-        self.expire_idle_session_snapshots_with(|_| ()).await
-    }
-
-    pub(crate) async fn expire_idle_session_snapshots_with(
-        &self,
-        clear_approvals: fn(&str),
-    ) -> Vec<(String, Session)> {
         let mut sessions = self.sessions.write().await;
         let stale_ids: Vec<String> = sessions
             .iter()
@@ -896,7 +886,7 @@ impl SessionManager {
             if let Some(entry) = sessions.remove(&id) {
                 entry.generation.retire();
                 let session = entry.session;
-                clear_approvals(&id);
+                hermes_tools::approval::clear_session(&id);
                 if let Some(ids) = user_sessions.get_mut(&session.user_id) {
                     ids.retain(|existing| existing != &id);
                 }
@@ -922,9 +912,8 @@ impl SessionManager {
         key: &str,
         generation: &SessionGeneration,
         browsers: &BrowserRetirer,
-        clear_approvals: fn(&str),
     ) -> Result<Option<Session>, &'static str> {
-        let mut boundary = SessionBoundary::new(Some(browsers), clear_approvals);
+        let mut boundary = SessionBoundary::new(Some(browsers));
         loop {
             let mut sessions = self.sessions.write().await;
             let Some(entry) = sessions.get(key) else {
@@ -1204,7 +1193,7 @@ mod tests {
             ..SessionConfig::default()
         });
         let created = manager
-            .admit_session("telegram", "policy", "user1", None, |_| ())
+            .admit_session("telegram", "policy", "user1", None)
             .await
             .unwrap();
         assert!(matches!(created.transition, SessionTransition::Created));
@@ -1213,7 +1202,7 @@ mod tests {
             .await;
 
         let reset = manager
-            .admit_session("telegram", "policy", "user1", None, |_| ())
+            .admit_session("telegram", "policy", "user1", None)
             .await
             .unwrap();
         let SessionTransition::PolicyReset(previous) = reset.transition else {
@@ -1237,7 +1226,7 @@ mod tests {
         let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
         let queue = BrowserReleaseQueue::start(browsers.clone());
         let retirer = queue.retirer();
-        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer), |_| ());
+        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer));
         let before = admit("shared").await.unwrap();
         let other = admit("other").await.unwrap();
 

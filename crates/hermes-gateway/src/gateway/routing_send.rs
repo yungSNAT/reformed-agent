@@ -483,8 +483,15 @@ impl Gateway {
         Ok(out)
     }
 
-    async fn compress_context(&self, session_key: &str, max_messages: usize) -> CompressionOutcome {
-        let current = self.session_manager.get_messages(session_key).await;
+    async fn compress_context(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        max_messages: usize,
+    ) -> CompressionOutcome {
+        let Some(current) = self.session_manager.turn_messages(session_key, generation).await else {
+            return CompressionOutcome::default();
+        };
         if current.len() <= max_messages {
             return CompressionOutcome::default();
         }
@@ -524,9 +531,12 @@ impl Gateway {
         }
         compressed.extend(tail);
 
-        self.session_manager
-            .replace_messages(session_key, compressed)
-            .await;
+        if self.session_manager
+            .update_turn_messages(session_key, generation, |messages| *messages = compressed)
+            .await.is_none()
+        {
+            return CompressionOutcome::default();
+        }
         CompressionOutcome {
             removed_messages,
             summary_warning,
@@ -1205,11 +1215,10 @@ impl Gateway {
         // Own committed snapshots through queue waits and notifications.
         // Callbacks never postpone retirement of the other selected sessions.
         match tokio::spawn(async move {
-            let clear = hermes_tools::approval::clear_session;
             let expired = if let Some(browsers) = browsers {
                 let mut expired = Vec::new();
                 for (key, generation) in sessions.idle_session_generations().await {
-                    match sessions.expire_idle_session_with_browser(&key, &generation, &browsers, clear).await {
+                    match sessions.expire_idle_session_with_browser(&key, &generation, &browsers).await {
                         Ok(Some(session)) => expired.push((key, session)),
                         Ok(None) => {}
                         Err(error) => {
@@ -1220,7 +1229,7 @@ impl Gateway {
                 }
                 expired
             } else {
-                sessions.expire_idle_session_snapshots_with(clear).await
+                sessions.expire_idle_session_snapshots().await
             };
             let count = expired.len();
             if let Some(registry) = registry {
