@@ -20,7 +20,11 @@ enum Member {
     },
 }
 
-fn members(items: Vec<Item>) -> Vec<Member> {
+fn members(
+    items: Vec<Item>,
+    directory: &Path,
+    include_targets: &mut HashSet<PathBuf>,
+) -> Vec<Member> {
     items
         .into_iter()
         .filter_map(|item| match item {
@@ -30,12 +34,15 @@ fn members(items: Vec<Item>) -> Vec<Member> {
             Item::Mod(module) => Some(Member::Module {
                 name: module.ident.unraw().to_string(),
                 path: module.attrs.iter().find_map(module_path),
-                inline: module.content.map(|(_, items)| members(items)),
+                inline: module
+                    .content
+                    .map(|(_, items)| members(items, directory, include_targets)),
             }),
             Item::Macro(item) if item.mac.path.is_ident("include") => {
-                syn::parse2::<LitStr>(item.mac.tokens)
-                    .ok()
-                    .map(|literal| Member::Include(literal.value().into()))
+                let literal = syn::parse2::<LitStr>(item.mac.tokens).ok()?;
+                let path = normalise(&directory.join(literal.value()))?;
+                include_targets.insert(path.clone());
+                Some(Member::Include(path))
             }
             _ => None,
         })
@@ -70,6 +77,7 @@ fn collect_sources(
     root: &Path,
     directory: &Path,
     sources: &mut BTreeMap<PathBuf, Vec<Member>>,
+    include_targets: &mut HashSet<PathBuf>,
 ) -> Result<(), String> {
     let entries = match fs::read_dir(root.join(directory)) {
         Ok(entries) => entries,
@@ -81,7 +89,7 @@ fn collect_sources(
         let relative = directory.join(entry.file_name());
         let kind = entry.file_type().map_err(|error| error.to_string())?;
         if kind.is_dir() {
-            collect_sources(root, &relative, sources)?;
+            collect_sources(root, &relative, sources, include_targets)?;
         } else if rust_source(&relative) && entry.path().is_file() {
             let bytes = fs::read(entry.path())
                 .map_err(|error| format!("could not read {}: {error}", relative.display()))?;
@@ -89,7 +97,7 @@ fn collect_sources(
             // Fixtures and include fragments can be non-item Rust. They
             // cannot supply a standalone test declaration.
             if let Ok(tree) = syn::parse_file(&source) {
-                sources.insert(relative, members(tree.items));
+                sources.insert(relative, members(tree.items, directory, include_targets));
             }
         }
     }
@@ -178,10 +186,8 @@ impl Search<'_> {
                     self.names.insert(name.clone());
                 }
                 Member::Include(path) => {
-                    if let Some(child) = normalise(&physical_dir.join(path)) {
-                        self.followed_modules = true;
-                        self.visit_file(&child, search_dir);
-                    }
+                    self.followed_modules = true;
+                    self.visit_file(path, path.parent().unwrap_or(Path::new("")));
                 }
                 Member::Module {
                     name,
@@ -226,8 +232,9 @@ impl Search<'_> {
 
 pub(crate) fn scan(root: &Path) -> Result<TestCatalogue, String> {
     let mut sources = BTreeMap::new();
+    let mut include_targets = HashSet::new();
     for dir in ["crates", "tests"] {
-        collect_sources(root, Path::new(dir), &mut sources)?;
+        collect_sources(root, Path::new(dir), &mut sources, &mut include_targets)?;
     }
     let mut tests = TestCatalogue::new();
     for file in sources.keys() {
@@ -237,7 +244,15 @@ pub(crate) fn scan(root: &Path) -> Result<TestCatalogue, String> {
             names: BTreeSet::new(),
             followed_modules: false,
         };
-        search.visit_file(file, &module_directory(file));
+        let default_dir = module_directory(file);
+        let start_dir = if include_targets.contains(file) {
+            // Test manifests can cite an included file directly. Rust resolves
+            // its child modules from the included file's physical directory.
+            file.parent().unwrap_or(Path::new(""))
+        } else {
+            &default_dir
+        };
+        search.visit_file(file, start_dir);
         if !search.names.is_empty() {
             if search.followed_modules && file.file_name() == Some(OsStr::new("mod.rs")) {
                 // Existing manifests also cite the historical sibling facade.
@@ -322,6 +337,25 @@ mod tests {
         .collect();
         assert_eq!(tests[Path::new("crates/demo/src/suite.rs")], expected);
         assert_eq!(tests[Path::new("crates/demo/src/lib.rs")], expected);
+    }
+
+    #[test]
+    fn attributes_child_modules_to_their_include_and_its_caller() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        let target = "crates/demo/src/main.rs";
+        let included = "crates/demo/src/main/command_tests.rs";
+        write(root, target, r#"include!("main/command_tests.rs");"#);
+        write(root, included, "#[cfg(test)] mod tests { mod sidecar; }");
+        write(
+            root,
+            "crates/demo/src/main/tests/sidecar.rs",
+            "#[test] fn included_case() {}",
+        );
+        let tests = scan(root).unwrap();
+        let expected = BTreeSet::from(["included_case".to_owned()]);
+        assert_eq!(tests[Path::new(target)], expected);
+        assert_eq!(tests[Path::new(included)], expected);
     }
 
     #[test]
