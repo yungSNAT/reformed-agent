@@ -32,10 +32,14 @@ pub fn bridge_tool_registry_with(
 /// `cronjob` tool's backend. It omits that tool, so jobs cannot schedule jobs,
 /// and holds `tools` weakly: a strong handle would keep the registry, and so
 /// its MCP clients and their server processes, alive for good.
-fn bridge_tool_registry_for_cron(tools: &ToolRegistry) -> AgentToolRegistry {
+fn bridge_tool_registry_for_cron(
+    tools: &ToolRegistry,
+    overrides: hermes_tools::ToolOverrides,
+) -> AgentToolRegistry {
     let weak = tools.downgrade();
+    let overrides = Arc::new(overrides);
     bridge_tool_schemas(tools, &["cronjob"], move |name, params| {
-        Ok(weak.upgrade_for_call()?.dispatch(name, params))
+        Ok(weak.upgrade_for_call()?.dispatch_with(name, params, &overrides))
     })
 }
 
@@ -81,10 +85,16 @@ pub fn build_runtime_cron_scheduler(
     )
     .selected_model;
     let provider = build_provider(config, &model);
-    let runner = Arc::new(CronRunner::new(
-        provider,
-        Arc::new(bridge_tool_registry_for_cron(tools)),
-    ));
+    let weak = tools.downgrade();
+    let schemas = Arc::new(bridge_tool_registry_for_cron(tools, hermes_tools::ToolOverrides::new()));
+    let runner = Arc::new(CronRunner::new(provider, schemas.clone()).with_run_tools(move || {
+        let browser = hermes_tools::SharedBrowser::lazy(hermes_tools::isolated_browser_backend_from_env);
+        let tools = weak.upgrade().map_or_else(
+            || schemas.clone(),
+            |tools| Arc::new(bridge_tool_registry_for_cron(&tools, hermes_tools::browser_overrides(&browser))),
+        );
+        (tools, browser)
+    }));
     CronScheduler::new(persistence, runner)
 }
 
