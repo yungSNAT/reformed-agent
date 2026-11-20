@@ -251,11 +251,9 @@ mod tests {
         assert!(plugin.system_prompt_block().contains("tools-only mode"));
 
         *plugin.recall_mode.lock().unwrap() = "context".to_string();
-        assert!(
-            plugin
-                .system_prompt_block()
-                .contains("context-injection mode")
-        );
+        assert!(plugin
+            .system_prompt_block()
+            .contains("context-injection mode"));
     }
 
     #[test]
@@ -655,6 +653,105 @@ mod tests {
         server.verify().await;
         let saved = read_oauth_credential(&config_path, "hermes").expect("persisted grant");
         assert_eq!(saved.refresh_token, "hch-rt-new");
+    }
+
+    #[tokio::test]
+    async fn session_end_flush_preserves_http_outcomes() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = json!({"session_id": "fixture"});
+        let cases = [
+            ("/empty", ResponseTemplate::new(204), true),
+            (
+                "/json",
+                ResponseTemplate::new(200).set_body_json(json!({"ok": true})),
+                true,
+            ),
+            ("/not-modified", ResponseTemplate::new(304), false),
+            ("/unavailable", ResponseTemplate::new(503), false),
+            (
+                "/invalid-json",
+                ResponseTemplate::new(200).set_body_string("invalid JSON"),
+                false,
+            ),
+            (
+                "/timeout",
+                ResponseTemplate::new(204).set_delay(StdDuration::from_secs(1)),
+                false,
+            ),
+        ];
+        let mut differences = Vec::new();
+        for (route, template, expected) in cases {
+            Mock::given(method("POST"))
+                .and(path(route))
+                .respond_with(template)
+                .expect(2)
+                .mount(&server)
+                .await;
+            let config = HonchoConfig {
+                base_url: server.uri(),
+                timeout_secs: 0.25,
+                ..test_config()
+            };
+            let old_config = config.clone();
+            let old_body = body.clone();
+            let old = tokio::task::spawn_blocking(move || {
+                HonchoMemoryPlugin::send_json(
+                    &old_config,
+                    Method::POST,
+                    route,
+                    Some(&old_body),
+                    None,
+                )
+                .is_ok()
+            })
+            .await
+            .unwrap();
+            let new = HonchoMemoryPlugin::flush_session(config, route.into(), body.clone())
+                .await
+                .is_ok();
+            assert_eq!(old, expected, "existing flush outcome for {route}");
+            if new != old {
+                differences.push(route);
+            }
+        }
+        server.verify().await;
+        assert!(differences.is_empty(), "changed outcomes: {differences:?}");
+    }
+
+    #[tokio::test]
+    async fn session_end_flush_reports_a_response_body_timeout() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            let mut request = Vec::with_capacity(1024);
+            while !http_request_complete(&request) {
+                assert!(stream.read_buf(&mut request).await.unwrap() > 0);
+            }
+            stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 8\r\n\r\n{")
+                .await
+                .unwrap();
+            std::future::pending::<()>().await;
+        });
+        let config = HonchoConfig {
+            base_url: format!("http://{addr}"),
+            timeout_secs: 0.5,
+            ..test_config()
+        };
+        let result = HonchoMemoryPlugin::flush_session(config, "/flush".into(), json!({})).await;
+        server.abort();
+        let _ = server.await;
+        let error = result.expect_err("a stalled success body must fail");
+        assert!(
+            error.contains("Honcho flush response body read failed"),
+            "{error}"
+        );
     }
 
     #[test]

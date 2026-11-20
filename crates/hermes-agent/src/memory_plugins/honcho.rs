@@ -930,11 +930,22 @@ impl HonchoMemoryPlugin {
                 .bearer_auth(&config.api_key)
                 .header("X-API-Key", &config.api_key);
         }
-        request
+        let response = request
             .send()
             .await
-            .and_then(reqwest::Response::error_for_status)
             .map_err(|error| format!("Honcho flush request failed: {error}"))?;
+        let status = response.status();
+        if !status.is_success() {
+            return Err(format!("Honcho flush returned HTTP {status}"));
+        }
+        let response_body = response
+            .text()
+            .await
+            .map_err(|error| format!("Honcho flush response body read failed: {error}"))?;
+        if !response_body.trim().is_empty() {
+            serde_json::from_str::<Value>(&response_body)
+                .map_err(|error| format!("Honcho flush response parse error: {error}"))?;
+        }
         Ok(())
     }
 

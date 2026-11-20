@@ -62,7 +62,7 @@ async fn session_end_flush_captures_session_before_a_switch() {
 #[tokio::test]
 async fn session_end_flush_survives_caller_cancellation() {
     use tokio::sync::Notify;
-    use tokio::time::{Duration, timeout};
+    use tokio::time::{timeout, Duration};
 
     #[derive(Default)]
     struct FlushSignals {
@@ -144,4 +144,60 @@ async fn session_end_flush_does_not_send_a_stale_legacy_transcript() {
     }
     let observed = hook.0.lock().unwrap();
     assert_eq!(observed[0]["content"], "current transcript");
+}
+
+#[tokio::test]
+async fn session_end_flush_waits_for_every_queued_job() {
+    use tokio::sync::Notify;
+    use tokio::time::{timeout, Duration};
+
+    #[derive(Default)]
+    struct FlushSignals {
+        first_finished: Notify,
+        second_started: Notify,
+        release: Notify,
+    }
+
+    struct PairedHook(Arc<FlushSignals>);
+    impl crate::memory_manager::MemoryProviderPlugin for PairedHook {
+        fn name(&self) -> &str {
+            "test-paired-flush"
+        }
+
+        fn prepare_session_end(
+            &self,
+            messages: &[Value],
+        ) -> Option<futures::future::BoxFuture<'static, ()>> {
+            let signals = self.0.clone();
+            let first = messages.is_empty();
+            Some(Box::pin(async move {
+                if first {
+                    signals.first_finished.notify_one();
+                } else {
+                    signals.second_started.notify_one();
+                    signals.release.notified().await;
+                }
+            }))
+        }
+    }
+
+    let signals = Arc::new(FlushSignals::default());
+    let (agent, _manager) = agent_with_session_end_hook(Arc::new(PairedHook(signals.clone())));
+    let mut run = std::pin::pin!(AgentLoop::complete_memory_flush(async {
+        agent.memory_on_session_end(&[]);
+        agent.memory_on_session_end(&[Message::user("second")]);
+        Err(AgentError::MaxTurnsExceeded)
+    }));
+    let ready = timeout(Duration::from_secs(2), async {
+        signals.first_finished.notified().await;
+        signals.second_started.notified().await;
+    });
+    tokio::select! {
+        biased;
+        _ = &mut run => panic!("completion returned before the second flush"),
+        result = ready => result.expect("both jobs started"),
+    }
+    assert!(futures::poll!(&mut run).is_pending());
+    signals.release.notify_one();
+    assert!(matches!(run.await, Err(AgentError::MaxTurnsExceeded)));
 }
