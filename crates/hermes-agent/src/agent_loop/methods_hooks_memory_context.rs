@@ -1,5 +1,5 @@
 tokio::task_local! {
-    static ENDING_MEMORY_FLUSH: std::cell::RefCell<Option<futures::future::BoxFuture<'static, ()>>>;
+    static ENDING_MEMORY_FLUSH: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>>;
 }
 
 impl AgentLoop {
@@ -309,7 +309,7 @@ impl AgentLoop {
         run: impl std::future::Future<Output = Result<AgentResult, AgentError>>,
     ) -> Result<AgentResult, AgentError> {
         ENDING_MEMORY_FLUSH
-            .scope(std::cell::RefCell::new(None), async {
+            .scope(std::cell::RefCell::default(), async {
                 let result = run.await;
                 Self::flush_ending_memory().await;
                 result
@@ -318,42 +318,35 @@ impl AgentLoop {
     }
 
     async fn flush_ending_memory() {
-        let flush = ENDING_MEMORY_FLUSH.with(|pending| pending.borrow_mut().take());
-        if let Some(flush) = flush {
-            flush.await;
+        let flushes =
+            ENDING_MEMORY_FLUSH.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+        for flush in flushes {
+            if let Err(error) = flush.await {
+                tracing::warn!(%error, "Memory provider session-end task failed");
+            }
         }
     }
 
-    // Capture the exit's original context. The enclosing run awaits the flush before returning.
+    // Prepare each provider's work before the manager can switch sessions. The task keeps
+    // running if the caller goes away; normal runs await it before returning.
     fn memory_on_session_end(&self, messages: &[Message]) {
         if self.config.skip_memory {
             return;
         }
-        let Some(mm) = self.memory_manager.clone() else {
+        let Some(manager) = self.memory_manager.as_ref() else {
             return;
         };
-        let messages: Vec<Value> = messages
-            .iter()
-            .filter_map(|message| serde_json::to_value(message).ok())
-            .collect();
+        let tasks = MemoryManager::session_end_tasks(manager, messages);
+        if tasks.is_empty() {
+            return;
+        }
         ENDING_MEMORY_FLUSH.with(|pending| {
-            *pending.borrow_mut() = Some(Box::pin(async move {
-                let tasks = tokio::task::spawn_blocking(move || {
-                    mm.lock()
-                        .ok()
-                        .map(|manager| manager.session_end_tasks(&messages))
-                        .unwrap_or_default()
-                })
-                .await;
-                match tasks {
-                    Ok(tasks) => {
-                        for task in tasks {
-                            task.await;
-                        }
-                    }
-                    Err(error) => tracing::warn!(%error, "Memory provider session-end hook failed"),
+            let flush = tokio::spawn(async move {
+                for task in tasks {
+                    task.await;
                 }
-            }));
+            });
+            pending.borrow_mut().push(flush);
         });
     }
 
@@ -417,11 +410,15 @@ impl AgentLoop {
             .map(|s| s.trim().to_lowercase())
             .unwrap_or_default();
         match platform_key.as_str() {
-            "cli" => Some("You are a CLI AI Agent. Prefer concise plain text output suitable for terminals."),
-            "telegram" | "discord" | "slack" => {
-                Some("You are responding on a chat platform. Keep responses concise and avoid heavy formatting.")
+            "cli" => Some(
+                "You are a CLI AI Agent. Prefer concise plain text output suitable for terminals.",
+            ),
+            "telegram" | "discord" | "slack" => Some(
+                "You are responding on a chat platform. Keep responses concise and avoid heavy formatting.",
+            ),
+            "email" => {
+                Some("You are responding over email. Use clear structure and complete sentences.")
             }
-            "email" => Some("You are responding over email. Use clear structure and complete sentences."),
             "sms" => Some("You are responding over SMS. Keep responses short and high-signal."),
             _ => None,
         }
@@ -699,5 +696,4 @@ impl AgentLoop {
             Some(sections.join("\n\n"))
         }
     }
-
 }

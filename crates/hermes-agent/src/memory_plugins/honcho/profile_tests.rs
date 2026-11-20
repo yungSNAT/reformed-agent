@@ -251,9 +251,11 @@ mod tests {
         assert!(plugin.system_prompt_block().contains("tools-only mode"));
 
         *plugin.recall_mode.lock().unwrap() = "context".to_string();
-        assert!(plugin
-            .system_prompt_block()
-            .contains("context-injection mode"));
+        assert!(
+            plugin
+                .system_prompt_block()
+                .contains("context-injection mode")
+        );
     }
 
     #[test]
@@ -578,12 +580,24 @@ mod tests {
 
     #[tokio::test]
     async fn session_end_flushes_honcho_from_a_tokio_worker() {
-        use wiremock::matchers::{body_json, method, path};
+        use wiremock::matchers::{body_json, header, method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let server = MockServer::start().await;
         Mock::given(method("POST"))
-            .and(path("/v1/sessions/ending-session/flush"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "access_token": "hch-at-new",
+                "refresh_token": "hch-rt-new",
+                "expires_in": 3600
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/configured/sessions/ending-session/flush"))
+            .and(header("authorization", "Bearer hch-at-new"))
+            .and(header("x-api-key", "hch-at-new"))
             .and(body_json(json!({
                 "workspace_id": "fixture-workspace",
                 "session_id": "ending-session"
@@ -593,9 +607,19 @@ mod tests {
             .mount(&server)
             .await;
 
+        let tmp = tempfile::tempdir().expect("fixture home");
+        let config_path = tmp.path().join("honcho.json");
+        let oauth_endpoint = format!("{}/oauth/token", server.uri());
+        let host = oauth_host_block("hch-at-old", "hch-rt-old", 100, &oauth_endpoint);
+        std::fs::write(
+            &config_path,
+            json!({"hosts": {"hermes": host.clone()}}).to_string(),
+        )
+        .expect("fixture config");
+
         let plugin = Arc::new(HonchoMemoryPlugin::new());
         *plugin.config.lock().unwrap() = Some(HonchoConfig {
-            api_key: String::new(),
+            api_key: "hch-at-old".into(),
             base_url: server.uri(),
             enabled: true,
             recall_mode: String::new(),
@@ -607,21 +631,30 @@ mod tests {
             user_peer_aliases: HashMap::new(),
             runtime_peer_prefix: String::new(),
             timeout_secs: 2.0,
-            endpoints: HashMap::new(),
+            endpoints: HashMap::from([(
+                "flush".into(),
+                "/configured/sessions/{session}/flush".into(),
+            )]),
             host_had_explicit_api_key: false,
-            host: String::new(),
-            config_path: PathBuf::new(),
-            oauth: None,
+            host: "hermes".into(),
+            config_path: config_path.clone(),
+            oauth: Some(HonchoOAuthCredential::from_host_block(&host).expect("fixture grant")),
         });
         plugin.on_session_switch("ending-session", "", false);
         let mut manager = crate::memory_manager::MemoryManager::new();
         manager.add_provider(plugin);
-        let tasks = manager.session_end_tasks(&[]);
-        manager.on_session_switch("new-session", "ending-session", false);
+        let manager = Arc::new(std::sync::Mutex::new(manager));
+        let tasks = crate::memory_manager::MemoryManager::session_end_tasks(&manager, &[]);
+        manager
+            .lock()
+            .unwrap()
+            .on_session_switch("new-session", "ending-session", false);
         for task in tasks {
             task.await;
         }
         server.verify().await;
+        let saved = read_oauth_credential(&config_path, "hermes").expect("persisted grant");
+        assert_eq!(saved.refresh_token, "hch-rt-new");
     }
 
     #[test]
