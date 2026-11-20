@@ -43,7 +43,7 @@ jobs:
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch --upstream-branch parity-reference
           cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
-          python3 scripts/generate-global-parity-proof.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof
       - name: Format check
         run: cargo fmt --all --check
       - name: Clippy Warning Gate

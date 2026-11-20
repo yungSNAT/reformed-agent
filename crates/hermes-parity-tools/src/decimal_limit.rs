@@ -19,7 +19,7 @@ const DECIMAL_ZEROES: [u32; 77] = [
     0x1fbf0,
 ];
 
-fn decimal_digit(character: char) -> Option<char> {
+pub(crate) fn decimal_digit(character: char) -> Option<char> {
     let point = u32::from(character);
     let index = DECIMAL_ZEROES.partition_point(|zero| *zero <= point);
     let zero = DECIMAL_ZEROES[index.checked_sub(1)?];

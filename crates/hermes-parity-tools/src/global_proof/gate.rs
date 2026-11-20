@@ -101,7 +101,7 @@ impl Gate {
         let mut actual = Py::dict::<&str>([]);
         let mut ok = true;
         if let Some(required) = thresholds.get("required_workstreams_complete") {
-            for item in items(required) {
+            for item in items(required, "required_workstreams_complete")? {
                 let Py::Str(key) = item else {
                     return Err("required workstreams must be strings".into());
                 };
@@ -212,17 +212,18 @@ pub(super) fn apply_ci_rules(
         .map(|check| py::strip(&check.metric).to_owned())
         .collect();
     if let Some(config) = enabled_rule(rules, TREE_DRIFT) {
-        let allowed: BTreeSet<_> = config
-            .get("metrics")
-            .map_or_else(
-                || {
-                    vec![
-                        "max_commits_behind".into(),
-                        "max_upstream_patch_missing".into(),
-                    ]
-                },
-                |raw| items(raw).iter().map(py::str_of).collect(),
-            )
+        let allowed = if let Some(raw) = config.get("metrics") {
+            items(raw, "tree drift metrics")?
+                .iter()
+                .map(py::str_of)
+                .collect()
+        } else {
+            vec![
+                "max_commits_behind".into(),
+                "max_upstream_patch_missing".into(),
+            ]
+        };
+        let allowed: BTreeSet<_> = allowed
             .into_iter()
             .map(|name| py::strip(&name).to_owned())
             .filter(|name| !name.is_empty())

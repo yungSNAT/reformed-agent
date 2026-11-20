@@ -81,7 +81,7 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
         "cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings",
         "cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch",
         "cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref HEAD --max-commits 0",
-        "python3 scripts/generate-global-parity-proof.py",
+        "cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof",
         "cargo fmt --all --check",
         "bash scripts/clippy-warning-gate.sh --check",
         "cargo test -p hermes-source-parity-tests --test rust_module_size_policy -- --nocapture",

@@ -9,6 +9,7 @@ use std::path::{Component, Path, PathBuf};
 
 use clap::Args;
 
+use crate::decimal_limit::decimal_digit;
 use crate::py::{self, Py};
 use crate::report_io::{resolve_argument, write_reports};
 use gate::{apply_ci_rules, Gate};
@@ -105,16 +106,16 @@ fn list(value: &Py) -> &[Py] {
     }
 }
 
-fn items(value: &Py) -> Vec<Py> {
-    match value {
+fn items(value: &Py, field: &str) -> Result<Vec<Py>, String> {
+    Ok(match value {
         Py::List(items) => items.clone(),
         Py::Dict(entries) => entries.iter().map(|(key, _)| key.clone().into()).collect(),
         Py::Str(value) => value
             .chars()
             .map(|character| character.to_string().into())
             .collect(),
-        _ => Vec::new(),
-    }
+        _ => return Err(format!("{field} must be iterable")),
+    })
 }
 
 fn truth(value: &Py) -> bool {
@@ -134,9 +135,24 @@ fn number(value: &Py) -> Result<f64, String> {
         Py::Int(value) => Ok(*value as f64),
         Py::Float(value) => Ok(*value),
         Py::Bool(value) => Ok(f64::from(*value)),
-        Py::Str(value) => py::strip(value)
-            .parse()
-            .map_err(|_| format!("invalid number {value:?}")),
+        Py::Str(value) => {
+            let invalid = || format!("invalid number {value:?}");
+            let mut normalised = String::with_capacity(value.len());
+            let mut chars = value.trim().chars().peekable();
+            let mut previous_digit = false;
+            while let Some(character) = chars.next() {
+                let digit = decimal_digit(character);
+                if character == '_' {
+                    if !previous_digit || chars.peek().copied().and_then(decimal_digit).is_none() {
+                        return Err(invalid());
+                    }
+                } else {
+                    normalised.push(digit.unwrap_or(character));
+                }
+                previous_digit = digit.is_some();
+            }
+            normalised.parse().map_err(|_| invalid())
+        }
         _ => Err(format!("expected a number, got {}", py::repr(value))),
     }
 }
@@ -159,7 +175,7 @@ struct Reports {
 
 impl Reports {
     fn read(root: &Path, args: &GlobalProofArgs) -> Result<Self, String> {
-        Ok(Self {
+        let reports = Self {
             thresholds: read_json(root, &args.thresholds)?,
             parity: read_json(root, &args.parity_matrix)?,
             workstreams: read_json(root, &args.workstream_status)?,
@@ -173,7 +189,60 @@ impl Reports {
             harness: read_json(root, &args.sota_harness_matrix)?,
             behavioral: read_json(root, &args.behavioral_diff)?,
             deep: read_json(root, &args.deep_problem_solving_diff)?,
-        })
+        };
+        for (report, path, dictionaries) in [
+            (
+                &reports.thresholds,
+                &args.thresholds,
+                &["ci_thresholds", "release_thresholds"][..],
+            ),
+            (&reports.parity, &args.parity_matrix, &["summary"]),
+            (&reports.intents, &args.intent_mapping, &["summary"]),
+            (&reports.adapters, &args.adapter_matrix, &["summary"]),
+            (
+                &reports.shared_backlog,
+                &args.shared_diff_backlog,
+                &["summary"],
+            ),
+            (
+                &reports.divergence,
+                &args.divergence_validation,
+                &["summary"],
+            ),
+            (&reports.queue, &args.patch_queue, &["summary"]),
+            (
+                &reports.coverage,
+                &args.test_coverage_audit,
+                &["summary", "audit_gate"],
+            ),
+            (
+                &reports.harness,
+                &args.sota_harness_matrix,
+                &["summary", "gate"],
+            ),
+            (
+                &reports.behavioral,
+                &args.behavioral_diff,
+                &["summary", "gate"],
+            ),
+            (
+                &reports.deep,
+                &args.deep_problem_solving_diff,
+                &["summary", "gate"],
+            ),
+            (
+                get(&reports.queue, "summary"),
+                &args.patch_queue,
+                &["by_disposition"],
+            ),
+        ] {
+            for key in dictionaries {
+                if !get(report, key).is_dict() {
+                    return Err(format!("{path}: {key} must be an object"));
+                }
+            }
+        }
+        Ok(reports)
     }
 }
 
