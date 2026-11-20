@@ -1010,8 +1010,10 @@ impl McpClient {
 
     /// Run the MCP initialize handshake.
     async fn initialize(&mut self) -> Result<InitializeResult, McpError> {
+        const SUPPORTED_VERSIONS: &[&str] =
+            &["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"];
         let params = serde_json::json!({
-            "protocolVersion": "2024-11-05",
+            "protocolVersion": SUPPORTED_VERSIONS[0],
             "capabilities": {
                 "tools": { "listChanged": true },
                 "resources": {},
@@ -1025,6 +1027,20 @@ impl McpClient {
         let result = self.send_request("initialize", params).await?;
         let init_result: InitializeResult =
             serde_json::from_value(result).map_err(|e| McpError::Serialization(e.to_string()))?;
+
+        let version = SUPPORTED_VERSIONS
+            .iter()
+            .copied()
+            .find(|version| *version == init_result.protocol_version)
+            .ok_or_else(|| McpError::Protocol {
+                code: -32602,
+                message: "MCP server selected an unsupported protocol version".to_string(),
+            })?;
+        let transport = self
+            .transport
+            .as_mut()
+            .ok_or_else(|| McpError::ConnectionError("Not connected".to_string()))?;
+        transport.set_negotiated_protocol_version(version);
 
         self.send_notification("notifications/initialized", serde_json::json!({}))
             .await?;

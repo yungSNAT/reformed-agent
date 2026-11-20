@@ -26,7 +26,7 @@ use hermes_core::subprocess::CommandNoWindowExt;
 
 use crate::McpError;
 
-const MCP_PROTOCOL_VERSION_HEADER_VALUE: &str = "2025-03-26";
+const MCP_PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_STRICT: usize = 1024 * 1024;
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_BALANCED: usize = 2 * 1024 * 1024;
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_RELAXED: usize = 8 * 1024 * 1024;
@@ -416,6 +416,10 @@ fn enforce_message_size(content_length: usize, max_message_bytes: usize) -> Resu
 pub trait McpTransport: Send + Sync {
     /// Start the transport connection.
     async fn start(&mut self) -> Result<(), McpError>;
+
+    /// Set the protocol version selected during initialize for transports
+    /// that send it on subsequent requests.
+    fn set_negotiated_protocol_version(&mut self, _version: &'static str) {}
 
     /// Send a JSON-RPC message.
     async fn send(&mut self, message: Value) -> Result<(), McpError>;
@@ -809,6 +813,8 @@ pub struct HttpTransport {
     started: bool,
     /// Pending response from the server.
     pending_response: Option<Value>,
+    /// Protocol version agreed with the server.
+    protocol_version: Option<&'static str>,
 }
 
 impl HttpTransport {
@@ -820,6 +826,7 @@ impl HttpTransport {
             client: reqwest::Client::new(),
             started: false,
             pending_response: None,
+            protocol_version: None,
         }
     }
 
@@ -836,7 +843,9 @@ impl HttpTransport {
     fn build_request(&self, method: reqwest::Method, url: &str) -> reqwest::RequestBuilder {
         let mut builder = self.client.request(method, url);
         builder = builder.header("Content-Type", "application/json");
-        builder = builder.header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION_HEADER_VALUE);
+        if let Some(version) = self.protocol_version {
+            builder = builder.header(MCP_PROTOCOL_VERSION_HEADER, version);
+        }
         if let Some(ref token) = self.auth_token {
             builder = builder.header("Authorization", format!("Bearer {}", token));
         }
@@ -846,6 +855,10 @@ impl HttpTransport {
 
 #[async_trait]
 impl McpTransport for HttpTransport {
+    fn set_negotiated_protocol_version(&mut self, version: &'static str) {
+        self.protocol_version = Some(version);
+    }
+
     async fn start(&mut self) -> Result<(), McpError> {
         // For HTTP transport, "starting" means verifying the server is reachable
         if self.started {
@@ -928,6 +941,7 @@ impl McpTransport for HttpTransport {
         info!("Closing MCP HTTP transport");
         self.started = false;
         self.pending_response = None;
+        self.protocol_version = None;
         Ok(())
     }
 }
@@ -980,6 +994,8 @@ pub struct HttpSseTransport {
     legacy_events: SseResponseFinder,
     /// The session id a Streamable HTTP server assigned.
     session_id: Option<String>,
+    /// Protocol version agreed with the server.
+    protocol_version: Option<&'static str>,
     /// Read timeout used for SSE and POST responses.
     sse_read_timeout: Duration,
     /// Connect timeout used for initial SSE handshake.
@@ -1011,6 +1027,7 @@ impl HttpSseTransport {
             legacy_bytes: Vec::new(),
             legacy_events: SseResponseFinder::default(),
             session_id: None,
+            protocol_version: None,
             sse_read_timeout: mcp_sse_read_timeout(),
             connect_timeout: mcp_sse_connect_timeout(),
             max_message_bytes: max_message_bytes_from_env(),
@@ -1041,16 +1058,21 @@ impl HttpSseTransport {
         }
     }
 
-    /// Add the authentication, configured and session headers.
+    /// Add the authentication, configured, session and protocol headers.
     fn with_auth(&self, mut builder: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
         for (name, value) in &self.headers {
-            builder = builder.header(name.as_str(), value.as_str());
+            if !name.eq_ignore_ascii_case(MCP_PROTOCOL_VERSION_HEADER) {
+                builder = builder.header(name.as_str(), value.as_str());
+            }
         }
         if let Some(ref token) = self.auth_token {
             builder = builder.header("Authorization", format!("Bearer {}", token));
         }
         if let Some(ref session_id) = self.session_id {
             builder = builder.header("Mcp-Session-Id", session_id.as_str());
+        }
+        if let Some(version) = self.protocol_version {
+            builder = builder.header(MCP_PROTOCOL_VERSION_HEADER, version);
         }
         builder
     }
@@ -1060,7 +1082,6 @@ impl HttpSseTransport {
         let mut builder = self.client.request(method, url);
         builder = builder.header("Content-Type", "application/json");
         builder = builder.header("Accept", "application/json, text/event-stream");
-        builder = builder.header("MCP-Protocol-Version", MCP_PROTOCOL_VERSION_HEADER_VALUE);
         builder = builder.timeout(self.sse_read_timeout);
         self.with_auth(builder)
     }
@@ -1349,6 +1370,10 @@ fn http_reply_messages(body: &str, is_sse: bool) -> Result<Vec<Value>, McpError>
 
 #[async_trait]
 impl McpTransport for HttpSseTransport {
+    fn set_negotiated_protocol_version(&mut self, version: &'static str) {
+        self.protocol_version = Some(version);
+    }
+
     async fn start(&mut self) -> Result<(), McpError> {
         if self.started {
             return Err(McpError::ConnectionError(
@@ -1491,6 +1516,7 @@ impl McpTransport for HttpSseTransport {
         self.legacy_bytes.clear();
         self.legacy_events = SseResponseFinder::default();
         self.session_id = None;
+        self.protocol_version = None;
         Ok(())
     }
 }
@@ -1766,8 +1792,9 @@ mod tests {
     }
 
     #[test]
-    fn test_http_transport_seeds_protocol_header() {
-        let transport = HttpTransport::new("http://localhost:8080/mcp", None);
+    fn test_http_transport_uses_the_negotiated_protocol_header() {
+        let mut transport = HttpTransport::new("http://localhost:8080/mcp", None);
+        transport.set_negotiated_protocol_version("2025-06-18");
         let req = transport
             .build_request(reqwest::Method::POST, "http://localhost:8080/mcp/message")
             .build()
@@ -1776,23 +1803,18 @@ mod tests {
             req.headers()
                 .get("MCP-Protocol-Version")
                 .and_then(|v| v.to_str().ok()),
-            Some(MCP_PROTOCOL_VERSION_HEADER_VALUE)
+            Some("2025-06-18")
         );
     }
 
     #[test]
-    fn test_http_sse_transport_seeds_protocol_header() {
+    fn test_http_sse_transport_omits_the_protocol_header_before_negotiation() {
         let transport = HttpSseTransport::new("http://localhost:8080/mcp", None);
         let req = transport
             .build_request(reqwest::Method::POST, "http://localhost:8080/mcp/message")
             .build()
             .expect("build request");
-        assert_eq!(
-            req.headers()
-                .get("MCP-Protocol-Version")
-                .and_then(|v| v.to_str().ok()),
-            Some(MCP_PROTOCOL_VERSION_HEADER_VALUE)
-        );
+        assert!(!req.headers().contains_key(MCP_PROTOCOL_VERSION_HEADER));
     }
 
     #[test]
@@ -2284,6 +2306,86 @@ mod tests {
                 }
             }
             assert!(n > 0, "connection closed mid-request");
+        }
+    }
+
+    #[tokio::test]
+    async fn client_uses_the_negotiated_version_for_subsequent_http_requests() {
+        use crate::client::{McpClient, McpServerConfig};
+        use tokio::io::AsyncWriteExt;
+
+        for version in ["2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05"] {
+            let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+            let url = format!("http://{}/mcp", server.local_addr().unwrap());
+            let stub = tokio::spawn(async move {
+                for method in ["", "initialize", "notifications/initialized", "tools/list"] {
+                    let (mut stream, _) = server.accept().await.unwrap();
+                    let (head, body) = read_request(&mut stream).await;
+                    let (status, reply) = if method.is_empty() {
+                        assert!(head.starts_with("get /mcp "));
+                        ("405 Method Not Allowed", String::new())
+                    } else {
+                        let request: Value = serde_json::from_str(&body).expect("JSON request");
+                        assert_eq!(request["method"], method);
+                        let headers: Vec<_> = head
+                            .lines()
+                            .filter_map(|line| line.strip_prefix("mcp-protocol-version:"))
+                            .map(str::trim)
+                            .collect();
+                        match method {
+                            "initialize" => {
+                                assert_eq!(request["params"]["protocolVersion"], "2025-11-25");
+                                assert!(headers.is_empty(), "no version was negotiated yet");
+                                (
+                                    "200 OK",
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request["id"],
+                                        "result": {
+                                            "protocolVersion": version,
+                                            "capabilities": {"tools": {}},
+                                            "serverInfo": {"name": "loopback-stub"}
+                                        }
+                                    })
+                                    .to_string(),
+                                )
+                            }
+                            "notifications/initialized" => {
+                                assert_eq!(headers, [version]);
+                                ("202 Accepted", String::new())
+                            }
+                            _ => {
+                                assert_eq!(headers, [version]);
+                                (
+                                    "200 OK",
+                                    serde_json::json!({
+                                        "jsonrpc": "2.0",
+                                        "id": request["id"],
+                                        "result": {"tools": []}
+                                    })
+                                    .to_string(),
+                                )
+                            }
+                        }
+                    };
+                    let response = format!(
+                        "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{reply}",
+                        reply.len()
+                    );
+                    stream.write_all(response.as_bytes()).await.unwrap();
+                }
+            });
+            let config: McpServerConfig = serde_json::from_value(serde_json::json!({
+                "url": url,
+                "headers": {"Mcp-Protocol-Version": "ignored-override"}
+            }))
+            .unwrap();
+            let result = McpClient::new(config).connect().await;
+            tokio::time::timeout(Duration::from_secs(5), stub)
+                .await
+                .expect("server did not receive the complete handshake")
+                .expect("server rejected the client's handshake");
+            result.expect("connect to loopback server");
         }
     }
 
