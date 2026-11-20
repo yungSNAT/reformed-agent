@@ -12,6 +12,7 @@ mod fork_carry;
 mod git;
 mod global_proof;
 mod parity_matrix;
+mod release_readiness;
 mod report_io;
 mod shared_diff_backlog;
 mod slash_gate;
@@ -87,6 +88,13 @@ enum Command {
         infer_long_args = true
     )]
     GlobalProof(global_proof::GlobalProofArgs),
+    /// Summarise public parity evidence for a release decision.
+    #[command(
+        name = "generate-release-readiness-summary",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    ReleaseReadiness(release_readiness::ReadinessArgs),
 }
 
 fn main() {
@@ -104,6 +112,7 @@ fn main() {
         Command::CheckForkCarry(args) => fork_carry::run(args),
         Command::UpstreamQueue(args) => upstream_queue::run(args),
         Command::GlobalProof(args) => global_proof::run(args),
+        Command::ReleaseReadiness(args) => release_readiness::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
