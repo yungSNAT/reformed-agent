@@ -36,7 +36,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--fallback-cmd",
         default=(
-            "python3 scripts/generate-test-coverage-audit.py --check && "
+            "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check && "
             "python3 scripts/generate-global-parity-proof.py --check-ci"
         ),
         help="Fallback command when CLI surface extraction is unavailable for compared refs",

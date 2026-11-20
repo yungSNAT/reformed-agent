@@ -38,7 +38,7 @@ jobs:
           python3 scripts/generate-workstream-status.py --upstream-ref upstream/parity-reference --no-fetch
           cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
-          python3 scripts/generate-test-coverage-audit.py --check
+          cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch parity-reference
           python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
@@ -71,7 +71,6 @@ jobs:
           python3 -m py_compile scripts/publish_automation_summary.py
           python3 -m py_compile scripts/run-golden-parity-harness.py
           python3 -m py_compile scripts/generate-shared-diff-backlog.py
-          python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
           python3 -m py_compile scripts/release_secret_scan.py
       - name: Python parity governance tests
