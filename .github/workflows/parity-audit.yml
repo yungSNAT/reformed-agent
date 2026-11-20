@@ -32,7 +32,7 @@ jobs:
           python3 scripts/generate-test-intent-mapping.py
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
           python3 scripts/generate-test-coverage-audit.py --check
-          python3 scripts/generate-adapter-matrix.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           python3 scripts/generate-shared-diff-backlog.py --local-ref origin/main --no-fetch
           python3 scripts/generate-upstream-patch-queue.py --local-ref origin/main --max-commits 0
           python3 scripts/generate-global-parity-proof.py

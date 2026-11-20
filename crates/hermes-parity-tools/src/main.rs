@@ -3,6 +3,7 @@
 //! flags, exit codes and report bytes (timestamps aside):
 //! `cargo run --locked -q -p hermes-parity-tools -- <script name> <flags>`.
 
+mod adapter_matrix;
 mod divergence;
 mod git;
 mod slash_gate;
@@ -29,6 +30,9 @@ enum Command {
     /// Validate intentional-divergence registry quality and review freshness.
     #[command(name = "validate-intentional-divergence")]
     ValidateDivergence(divergence::DivergenceArgs),
+    /// Generate the gateway platform and memory plugin feature matrix.
+    #[command(name = "generate-adapter-matrix")]
+    AdapterMatrix(adapter_matrix::AdapterMatrixArgs),
 }
 
 fn main() {
@@ -37,6 +41,7 @@ fn main() {
         Command::SlashGate(args) => slash_gate::run(args),
         Command::SurfaceGate(args) => surface_gate::run(args),
         Command::ValidateDivergence(args) => divergence::run(args),
+        Command::AdapterMatrix(args) => adapter_matrix::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

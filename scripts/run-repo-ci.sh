@@ -27,6 +27,7 @@ scheduled parity audit reports drift from upstream's live main.
 Environment:
   CARGO_TARGET_DIR       Optional external Cargo target directory.
   CARGO_INCREMENTAL      Optional Cargo incremental setting.
+  PARITY_PYTHON          Python with pytest 9.2.0 for parity governance tests (default: python3).
   UPSTREAM_REMOTE        Upstream remote name (default: upstream).
   UPSTREAM_URL           Upstream remote URL (default: NousResearch/hermes-agent).
   UPSTREAM_REVISION      Upstream commit or branch to gate against (default: the
@@ -75,13 +76,14 @@ refresh_upstream() {
 cd "${REPO_ROOT}"
 
 refresh_upstream
+run bash scripts/run-python-parity-governance-tests.sh
 
 run python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-workstream-status.py --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-intent-mapping.py
 run cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref "${UPSTREAM_REF}" --no-fetch
 run python3 scripts/generate-test-coverage-audit.py --check
-run python3 scripts/generate-adapter-matrix.py
+run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 run python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
 run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
 run python3 scripts/generate-global-parity-proof.py

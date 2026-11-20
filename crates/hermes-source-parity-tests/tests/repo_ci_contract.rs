@@ -46,11 +46,12 @@ fn repo_ci_runner_covers_workflow_test_job_gates() {
     let script = read("scripts/run-repo-ci.sh");
     let workflow = read(".github/workflows/ci.yml");
     for command in [
+        "bash scripts/run-python-parity-governance-tests.sh",
         "python3 scripts/generate-parity-matrix.py --local-ref HEAD",
         "python3 scripts/generate-workstream-status.py",
         "python3 scripts/generate-test-intent-mapping.py",
         "python3 scripts/generate-test-coverage-audit.py --check",
-        "python3 scripts/generate-adapter-matrix.py",
+        "cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix",
         "cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings",
         "python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch",
         "python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0",

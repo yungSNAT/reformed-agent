@@ -240,6 +240,9 @@ Repo-local CI is the authoritative gate for development and release confidence.
 GitHub Actions are a hosted mirror of the repo contract when they run; they are
 not required as the source of truth.
 
+The parity governance tests use pytest 9.2.0. Set `PARITY_PYTHON` to the
+Python executable for that environment if it differs from `python3`.
+
 ```bash
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} bash scripts/run-repo-ci.sh
 ```
