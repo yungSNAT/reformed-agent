@@ -132,9 +132,17 @@ impl SharedBrowser {
     /// End the browser for good: later calls, through any clone, fail and
     /// build no backend. Waits for a running call, then drops the backend.
     pub async fn close(&self) {
+        self.mark_closed();
+        self.release_closed_backend().await;
+    }
+
+    pub(crate) fn mark_closed(&self) {
         self.inner
             .closed
             .store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+
+    pub(crate) async fn release_closed_backend(&self) {
         let mut state = self.inner.state.lock().await;
         drop_backend(state.backend.take()).await;
     }
