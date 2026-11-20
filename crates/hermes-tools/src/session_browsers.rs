@@ -15,6 +15,9 @@ use crate::register_builtins::browser_tool_handlers;
 use crate::registry::ToolOverrides;
 use crate::tools::browser::{BrowserBackend, BrowserFactory, SharedBrowser};
 
+mod release_queue;
+pub use release_queue::{BrowserReleaseQueue, BrowserRetirer};
+
 /// How long a session's browser may go unused before it is released.
 pub const SESSION_BROWSER_MAX_IDLE: Duration = Duration::from_secs(300);
 
@@ -72,13 +75,16 @@ impl SessionBrowsers {
     /// Close the browser of the session `session_key`, which has ended.
     /// Its handlers, including any a running turn holds, fail from now on.
     pub async fn close(&self, session_key: &str) {
-        let browser = self.sessions().remove(session_key).map(|(browser, _)| {
-            browser.mark_closed();
-            browser
-        });
-        if let Some(browser) = browser {
+        if let Some(browser) = self.retire(session_key) {
             browser.release_closed_backend().await;
         }
+    }
+
+    fn retire(&self, session_key: &str) -> Option<SharedBrowser> {
+        self.sessions().remove(session_key).map(|(browser, _)| {
+            browser.mark_closed();
+            browser
+        })
     }
 
     /// Release each browser no call has used within `max_idle`. A session
@@ -297,6 +303,51 @@ mod tests {
             1,
             "alice's session was released twice"
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deferred_release_keeps_the_worker_owned_until_the_vendor_replies() {
+        let gateway = gateway().await;
+        let requested = Arc::new(tokio::sync::Notify::new());
+        let notify = requested.clone();
+        let (reply, wait_for_reply) = std::sync::mpsc::channel();
+        let wait_for_reply = Mutex::new(wait_for_reply);
+        Mock::given(method("POST"))
+            .and(path("/v1/sessions/vendor_session_1"))
+            .respond_with(move |_: &Request| {
+                notify.notify_one();
+                let replied = wait_for_reply
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .is_ok();
+                ResponseTemplate::new(if replied { 200 } else { 500 })
+            })
+            .with_priority(1)
+            .mount(&gateway.api)
+            .await;
+        let queue = BrowserReleaseQueue::start(gateway.browsers.clone());
+        let old = gateway.browsers.tool_overrides("telegram:alice");
+        assert!(gateway.snapshot("telegram:alice").contains("snapshot"));
+        assert!(gateway.snapshot("telegram:bob").contains("snapshot"));
+        queue.retirer().retire("telegram:alice").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), requested.notified())
+            .await
+            .expect("the release worker did not reach the vendor");
+
+        let mut drain = Box::pin(queue.drain());
+        assert!(futures::poll!(drain.as_mut()).is_pending());
+        let response = gateway
+            .registry
+            .dispatch_with("browser_snapshot", json!({}), &old);
+        assert!(response.contains("browser was closed"), "{response}");
+        assert!(gateway.snapshot("telegram:bob").contains("snapshot"));
+        reply.send(()).unwrap();
+        drain.await.unwrap();
+        assert_eq!(gateway.released(1).await, 1);
+        assert_eq!(gateway.released(2).await, 0);
+        gateway.browsers.close_all().await;
+        assert_eq!(gateway.released(2).await, 1);
     }
 
     /// Releases run together, so a vendor that answers slowly holds no other

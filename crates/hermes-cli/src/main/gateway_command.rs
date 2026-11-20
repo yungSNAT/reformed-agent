@@ -257,9 +257,12 @@ async fn run_gateway(
             // session ends.
             let session_browsers =
                 hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
+            let browser_releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(
+                session_browsers.clone(),
+            );
             let mut hook_registry = HookRegistry::new();
             hook_registry.register_builtins();
-            CloseSessionBrowser::register(&mut hook_registry, &session_browsers);
+            CloseSessionBrowser::register(&mut hook_registry, &browser_releases);
             hook_registry.discover_and_load(&hermes_home().join("hooks"));
             gateway.set_hook_registry(Arc::new(hook_registry)).await;
             gateway
@@ -992,16 +995,6 @@ async fn run_gateway(
                 sidecar_tasks.push(tokio::spawn(async move {
                     gw_expiry.session_expiry_watcher(300).await;
                 }));
-                let idle_browsers = session_browsers.clone();
-                sidecar_tasks.push(tokio::spawn(async move {
-                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-                    loop {
-                        ticker.tick().await;
-                        idle_browsers
-                            .release_idle(hermes_tools::session_browsers::SESSION_BROWSER_MAX_IDLE)
-                            .await;
-                    }
-                }));
             }
             let own_pid = std::process::id();
             tokio::fs::write(&pid_path, format!("{}\n", own_pid))
@@ -1018,6 +1011,21 @@ async fn run_gateway(
                     return Err(AgentError::Config(format!("Desktop local runtime: {e}")));
                 }
             }
+            let idle_browsers = session_browsers.clone();
+            let (stop_idle_browser_sweep, mut stop_idle) = tokio::sync::oneshot::channel();
+            let idle_browser_sweep = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut stop_idle => break,
+                        _ = ticker.tick() => {}
+                    }
+                    idle_browsers
+                        .release_idle(hermes_tools::session_browsers::SESSION_BROWSER_MAX_IDLE)
+                        .await;
+                }
+            });
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             let stopping = gateway_shutdown_signal().await;
@@ -1028,18 +1036,27 @@ async fn run_gateway(
             if let Some(runtime) = desktop.as_mut() {
                 runtime.stop_serving();
             }
-            stopping?;
-
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
-            gateway.stop_all().await?;
-            session_browsers.close_all().await;
-            let _ = tokio::fs::remove_file(&pid_path).await;
-            for task in sidecar_tasks {
+            let _ = stop_idle_browser_sweep.send(());
+            for task in &sidecar_tasks {
                 task.abort();
             }
+            for task in sidecar_tasks {
+                let _ = task.await;
+            }
+            let stopped_adapters = gateway.stop_all().await;
+            let stopped_idle_sweep = idle_browser_sweep.await;
+            session_browsers.close_all().await;
+            let drained_releases = browser_releases.drain().await;
+            let _ = tokio::fs::remove_file(&pid_path).await;
             #[cfg(unix)]
             drop(desktop);
+            stopping?;
+            stopped_adapters?;
+            stopped_idle_sweep
+                .and(drained_releases)
+                .map_err(|err| AgentError::Io(format!("Gateway browser cleanup failed: {err}")))?;
             println!("Gateway stopped.");
         }
         Some("status") => {
@@ -1154,9 +1171,13 @@ async fn run_up(force: bool, dry_run: bool) -> Result<(), AgentError> {
         if let Some(service_state) = gateway_service_status()? {
             println!("{service_state}");
         } else {
-            println!("Gateway service: service install/start is not implemented for this platform.");
+            println!(
+                "Gateway service: service install/start is not implemented for this platform."
+            );
         }
-        println!("Dry-run: would ensure the gateway service is installed, start it, then print status.");
+        println!(
+            "Dry-run: would ensure the gateway service is installed, start it, then print status."
+        );
         return Ok(());
     }
 

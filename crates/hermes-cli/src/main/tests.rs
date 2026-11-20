@@ -142,7 +142,8 @@ mod tests {
         let ended = browsers.tool_overrides("telegram:1");
         let other = browsers.tool_overrides("telegram:2");
         let mut hooks = HookRegistry::new();
-        CloseSessionBrowser::register(&mut hooks, &browsers);
+        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers.clone());
+        CloseSessionBrowser::register(&mut hooks, &releases);
 
         hooks
             .emit(&hermes_gateway::hooks::HookEvent::new(
@@ -167,7 +168,11 @@ mod tests {
         assert!(err.contains("no browser here"), "{err}");
         let next = browsers.tool_overrides("telegram:1");
         let err = snapshot(&next).await;
-        assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
+        assert!(
+            err.contains("no browser here"),
+            "a new session got the closed browser: {err}"
+        );
+        releases.drain().await.unwrap();
     }
 
     #[cfg(feature = "gateway-api-server")]
@@ -177,7 +182,8 @@ mod tests {
             hermes_tools::backends::browser::unavailable_browser_backend("fixture browser")
         });
         let mut hooks = HookRegistry::new();
-        CloseSessionBrowser::register(&mut hooks, &browsers);
+        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers.clone());
+        CloseSessionBrowser::register(&mut hooks, &releases);
         let mut dm = DmManager::with_pair_behavior();
         dm.authorize_user("fixture");
         let gateway = Arc::new(Gateway::new(
@@ -245,6 +251,7 @@ mod tests {
         let new = turns.try_recv().expect("new first chat browser");
         let new = snapshot_error(new).await;
         assert!(new.contains("fixture browser"), "{new}");
+        releases.drain().await.unwrap();
     }
 
     /// A terminal backend that must never be reached.
@@ -1228,6 +1235,7 @@ mod tests {
             .map(|entry| entry.expect("entry").file_name())
             .collect();
         assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
+
     }
 
     include!("tests/provider_setup.rs");
@@ -1235,5 +1243,4 @@ mod tests {
     include!("tests/uninstall.rs");
 
     mod env_profile_diagnostics;
-
 }
