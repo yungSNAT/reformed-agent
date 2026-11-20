@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-20T23:31:52.697325+00:00",
+  "generated_at_utc": "2026-11-20T23:44:28.370761+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "8c506c300e61157d4dcbce6f2171753cfe967eee",
+    "local_sha": "08e75ded816211523d1ee06dc58222ad81c72b26",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1668,
+    "commits_ahead": 1671,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1399,
+    "local_patch_unique": 1401,
     "files_only_upstream": 24117,
-    "files_only_local": 2053,
+    "files_only_local": 2054,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27407,
+    "tree_files_changed": 27408,
     "tree_insertions": 4528861,
-    "tree_deletions": 950824
+    "tree_deletions": 950898
   },
   "top_upstream_only": [
     {
@@ -848,7 +848,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 8048,
       "shared_different": 697,
-      "local_only": 355,
+      "local_only": 356,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1399,
+    "local_patch_unique": 1401,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
