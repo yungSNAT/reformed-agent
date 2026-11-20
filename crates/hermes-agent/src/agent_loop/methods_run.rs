@@ -57,6 +57,14 @@ impl AgentLoop {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
+        Self::complete_memory_flush(self.run_inner(messages, tools)).await
+    }
+
+    async fn run_inner(
+        &self,
+        messages: Vec<Message>,
+        tools: Option<Vec<ToolSchema>>,
+    ) -> Result<AgentResult, AgentError> {
         let mut ctx = ContextManager::default_budget();
         let mut tool_errors: Vec<hermes_core::ToolErrorRecord> = Vec::new();
         let session_id = self.config.session_id.as_deref().unwrap_or("");

@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-20T13:20:19.144213+00:00`
+Generated: `2026-11-20T14:31:17.120375+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`f2ff705b1aa5eb6569c6971f6e49963aeed349a6`)
+- Local ref: `HEAD` (`4c0de388a48adbc6d5e8cb107d2ec676c98fdaa2`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-20T13:20:19.144213+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1646 |
+| Commits ahead local (`local` ancestry only) | 1647 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1375 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1377 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2039 |
+| Files only in local tree | 2041 |
 | Shared files identical content | 565 |
 | Shared files different content | 1508 |
-| Total files changed (`local` vs `upstream`) | 27393 |
-| Insertions (`local` vs `upstream`) | 4528858 |
-| Deletions (`local` vs `upstream`) | 944541 |
+| Total files changed (`local` vs `upstream`) | 27395 |
+| Insertions (`local` vs `upstream`) | 4528859 |
+| Deletions (`local` vs `upstream`) | 945383 |
 
 ## Top 40 upstream-only buckets
 
@@ -122,7 +122,7 @@ Generated: `2026-11-20T13:20:19.144213+00:00`
 | `crates/hermes-cli` | 199 |
 | `skills/creative` | 142 |
 | `crates/hermes-tools` | 134 |
-| `crates/hermes-agent` | 118 |
+| `crates/hermes-agent` | 119 |
 | `crates/hermes-gateway` | 114 |
 | `tests/run_agent` | 88 |
 | `website/docs` | 86 |
@@ -176,7 +176,7 @@ Generated: `2026-11-20T13:20:19.144213+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1375`
+- Local unique by patch-id: `1377`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 

@@ -305,7 +305,7 @@
       "classification": "intentional_divergence",
       "classification_path": "optional-skills/blockchain",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "7a1cc91e4476a1112a70b5bd3137c62e31f362db",
+      "local_blob": "43aaaf8991db04beaa85e1c4274587b2cf3d119b",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/blockchain/solana/scripts/solana_client.py",
@@ -22687,10 +22687,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-20T13:20:23.332435+00:00",
+  "generated_at_utc": "2026-11-20T14:31:21.179180+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "f2ff705b1aa5eb6569c6971f6e49963aeed349a6",
+    "local_sha": "4c0de388a48adbc6d5e8cb107d2ec676c98fdaa2",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },

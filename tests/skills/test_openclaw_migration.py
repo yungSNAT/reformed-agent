@@ -1107,3 +1107,38 @@ def test_migrate_model_config_no_catalog_leaves_value_alone(tmp_path: Path):
         {"agents": {"defaults": {"model": "some-model-id"}}},
     )
     assert _extract_model(parsed) == "some-model-id"
+
+
+def test_deep_channels_maps_matrix_access_token_when_enabled(tmp_path, monkeypatch):
+    mod = load_module()
+    config = {"channels": {"matrix": {"accessToken": "fixture-value"}}}
+    migrator = mod.Migrator(tmp_path, tmp_path, False, None, False, True, None)
+    writes = []
+    monkeypatch.setattr(migrator, "_set_env_var", lambda *args: writes.append(args))
+
+    migrator.migrate_deep_channels(config)
+
+    assert writes == [("MATRIX_ACCESS_TOKEN", "fixture-value", "channels.matrix.accessToken")]
+    writes.clear()
+    migrator.migrate_secrets = False
+    migrator.migrate_deep_channels(config)
+    assert writes == []
+
+
+def test_deep_channels_archive_redacts_inline_and_nested_matrix_credentials(tmp_path):
+    mod = load_module()
+    config = {"channels": {"matrix": {
+        "accessToken": "fixture-inline",
+        "accounts": {"default": {"accessToken": "fixture-nested"}},
+        "rooms": ["fixture-room"],
+    }}}
+    output = tmp_path / "output"
+    migrator = mod.Migrator(tmp_path, tmp_path, True, None, False, False, output)
+
+    migrator.migrate_deep_channels(config)
+
+    archive = json.loads((output / "archive/channels-deep-config.json").read_text(encoding="utf-8"))
+    matrix = archive["matrix"]
+    assert matrix["accessToken"] == mod.REDACTED_MIGRATION_VALUE
+    assert matrix["accounts"]["default"]["accessToken"] == mod.REDACTED_MIGRATION_VALUE
+    assert matrix["rooms"] == ["fixture-room"]

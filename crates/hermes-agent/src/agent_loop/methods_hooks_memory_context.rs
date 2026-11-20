@@ -1,3 +1,7 @@
+tokio::task_local! {
+    static ENDING_MEMORY_FLUSH: std::cell::RefCell<Vec<tokio::task::JoinHandle<()>>>;
+}
+
 impl AgentLoop {
     // -- Plugin hook helpers ------------------------------------------------
 
@@ -301,21 +305,49 @@ impl AgentLoop {
         }
     }
 
+    async fn complete_memory_flush(
+        run: impl std::future::Future<Output = Result<AgentResult, AgentError>>,
+    ) -> Result<AgentResult, AgentError> {
+        ENDING_MEMORY_FLUSH
+            .scope(std::cell::RefCell::default(), async {
+                let result = run.await;
+                Self::flush_ending_memory().await;
+                result
+            })
+            .await
+    }
+
+    async fn flush_ending_memory() {
+        let flushes =
+            ENDING_MEMORY_FLUSH.with(|pending| std::mem::take(&mut *pending.borrow_mut()));
+        for flush in flushes {
+            if let Err(error) = flush.await {
+                tracing::warn!(%error, "Memory provider session-end task failed");
+            }
+        }
+    }
+
+    // Prepare each provider's work before the manager can switch sessions. The task keeps
+    // running if the caller goes away; normal runs await it before returning.
     fn memory_on_session_end(&self, messages: &[Message]) {
         if self.config.skip_memory {
             return;
         }
-        let Some(ref mm) = self.memory_manager else {
+        let Some(manager) = self.memory_manager.as_ref() else {
             return;
         };
-        let Ok(mm) = mm.lock() else {
+        let tasks = MemoryManager::session_end_tasks(manager, messages);
+        if tasks.is_empty() {
             return;
-        };
-        let as_values: Vec<Value> = messages
-            .iter()
-            .filter_map(|m| serde_json::to_value(m).ok())
-            .collect();
-        mm.on_session_end(&as_values);
+        }
+        ENDING_MEMORY_FLUSH.with(|pending| {
+            let flush = tokio::spawn(async move {
+                for task in tasks {
+                    task.await;
+                }
+            });
+            pending.borrow_mut().push(flush);
+        });
     }
 
     /// Bring the code index up to date on the blocking pool. A full workspace
@@ -378,11 +410,15 @@ impl AgentLoop {
             .map(|s| s.trim().to_lowercase())
             .unwrap_or_default();
         match platform_key.as_str() {
-            "cli" => Some("You are a CLI AI Agent. Prefer concise plain text output suitable for terminals."),
-            "telegram" | "discord" | "slack" => {
-                Some("You are responding on a chat platform. Keep responses concise and avoid heavy formatting.")
+            "cli" => Some(
+                "You are a CLI AI Agent. Prefer concise plain text output suitable for terminals.",
+            ),
+            "telegram" | "discord" | "slack" => Some(
+                "You are responding on a chat platform. Keep responses concise and avoid heavy formatting.",
+            ),
+            "email" => {
+                Some("You are responding over email. Use clear structure and complete sentences.")
             }
-            "email" => Some("You are responding over email. Use clear structure and complete sentences."),
             "sms" => Some("You are responding over SMS. Keep responses short and high-signal."),
             _ => None,
         }
@@ -660,5 +696,4 @@ impl AgentLoop {
             Some(sections.join("\n\n"))
         }
     }
-
 }
