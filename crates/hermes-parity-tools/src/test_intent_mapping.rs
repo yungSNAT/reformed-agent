@@ -1,10 +1,10 @@
 //! Generate test-intent reports from the evidence domains shared with the coverage audit.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::ffi::OsStr;
 use std::fmt::Write as _;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use clap::Args;
 use regex::Regex;
@@ -16,7 +16,7 @@ const DOMAINS: &str = include_str!("../../../docs/parity/test-intent-domains.jso
 const SAMPLE_LIMIT: usize = 25;
 
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
-struct EvidencePath(Vec<u32>);
+pub(crate) struct EvidencePath(Vec<u32>);
 
 impl EvidencePath {
     fn from_relative_path(path: &Path) -> Self {
@@ -30,7 +30,7 @@ impl EvidencePath {
         Self(code_points)
     }
 
-    fn json(&self) -> String {
+    pub(crate) fn json(&self) -> String {
         let mut units = Vec::new();
         for &point in &self.0 {
             if let Some(character) = char::from_u32(point) {
@@ -107,14 +107,17 @@ fn collect_matches(
     root: &Path,
     current: &Path,
     segments: &[GlobSegment<'_>],
-    matches: &mut BTreeSet<EvidencePath>,
+    matches: &mut BTreeMap<EvidencePath, PathBuf>,
 ) -> Result<(), String> {
     match segments.split_first() {
         None if current.is_file() => {
             let relative = current
                 .strip_prefix(root)
                 .map_err(|error| error.to_string())?;
-            matches.insert(EvidencePath::from_relative_path(relative));
+            matches.insert(
+                EvidencePath::from_relative_path(relative),
+                relative.to_owned(),
+            );
         }
         None => {}
         Some((GlobSegment::Literal(name), rest)) => {
@@ -142,8 +145,11 @@ fn collect_matches(
     Ok(())
 }
 
-fn evidence(root: &Path, patterns: &[Py]) -> Result<BTreeSet<EvidencePath>, String> {
-    let mut paths = BTreeSet::new();
+pub(crate) fn evidence(
+    root: &Path,
+    patterns: &[Py],
+) -> Result<BTreeMap<EvidencePath, PathBuf>, String> {
+    let mut paths = BTreeMap::new();
     for pattern in patterns {
         let Py::Str(pattern) = pattern else {
             return Err("invalid evidence pattern in test-intent-domains.json".into());
@@ -157,9 +163,9 @@ fn evidence(root: &Path, patterns: &[Py]) -> Result<BTreeSet<EvidencePath>, Stri
     Ok(paths)
 }
 
-fn report_row(id: &str, scope: &Py, paths: &BTreeSet<EvidencePath>) -> String {
+fn report_row(id: &str, scope: &Py, paths: &BTreeMap<EvidencePath, PathBuf>) -> String {
     let sample: Vec<_> = paths
-        .iter()
+        .keys()
         .take(SAMPLE_LIMIT)
         .map(EvidencePath::json)
         .collect();
@@ -257,8 +263,8 @@ pub fn run(args: TestIntentMappingArgs) -> Result<i32, String> {
 mod tests {
     use super::*;
 
-    fn quoted(paths: &BTreeSet<EvidencePath>) -> Vec<String> {
-        paths.iter().map(EvidencePath::json).collect()
+    fn quoted(paths: &BTreeMap<EvidencePath, PathBuf>) -> Vec<String> {
+        paths.keys().map(EvidencePath::json).collect()
     }
 
     #[test]
