@@ -78,6 +78,37 @@ impl McpTransport for FakeTransport {
     }
 }
 
+#[tokio::test]
+async fn an_unsupported_protocol_ends_the_connection_before_tool_discovery() {
+    let config = serde_json::from_value(json!({"url": "http://127.0.0.1/mcp"})).unwrap();
+    let mut client = McpClient::new(config);
+    let closed = Arc::new(AtomicBool::new(false));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = FakeTransport::new_with_sent(
+        vec![json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "result": {
+                "protocolVersion": "2026-07-28",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": "unsupported-protocol"}
+            }
+        })],
+        closed.clone(),
+        sent.clone(),
+    );
+    let err = client
+        .finish_connect_with_transport(Box::new(transport))
+        .await
+        .expect_err("server selected an unsupported protocol version");
+
+    assert!(matches!(err, McpError::Protocol { code: -32602, .. }));
+    assert!(closed.load(Ordering::SeqCst));
+    let messages = sent.lock().unwrap();
+    assert_eq!(messages.len(), 1);
+    assert_eq!(messages[0]["method"], "initialize");
+}
+
 #[test]
 fn mcp_call_timeout_defaults_to_upstream_long_running_budget() {
     std::env::remove_var("HERMES_MCP_CALL_TIMEOUT_SECS");
