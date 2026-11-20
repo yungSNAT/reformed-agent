@@ -691,7 +691,23 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::SetTitle { title, reply } => {
-                let stored = self.session_manager.set_title(session_key, &title).await;
+                let Some(generation) = generation.as_ref() else {
+                    return Ok(true);
+                };
+                let Some(stored) = self
+                    .session_manager
+                    .set_title_for_generation(session_key, generation, &title)
+                    .await
+                else {
+                    self.send_message(
+                        &incoming.platform,
+                        &incoming.chat_id,
+                        "The conversation changed. Use /title again to rename it.",
+                        None,
+                    )
+                    .await?;
+                    return Ok(true);
+                };
                 let mut response = match &stored {
                     Some(stored_title) if stored_title.as_str() == title => reply,
                     Some(stored_title) => format!("🏷 Session title set to: {}", stored_title),

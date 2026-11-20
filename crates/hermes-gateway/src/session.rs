@@ -695,12 +695,36 @@ impl SessionManager {
 
     /// Set or clear the user-visible title for a session.
     pub async fn set_title(&self, session_id: &str, title: impl AsRef<str>) -> Option<String> {
+        self.update_session_title(session_id, None, title.as_ref())
+            .await
+            .flatten()
+    }
+
+    pub(crate) async fn set_title_for_generation(
+        &self,
+        session_id: &str,
+        generation: &SessionGeneration,
+        title: &str,
+    ) -> Option<Option<String>> {
+        self.update_session_title(session_id, Some(generation), title)
+            .await
+    }
+
+    async fn update_session_title(
+        &self,
+        session_id: &str,
+        expected: Option<&SessionGeneration>,
+        title: &str,
+    ) -> Option<Option<String>> {
         let mut sessions = self.sessions.write().await;
-        let normalized = normalize_session_title(Some(title.as_ref()));
-        let session = &mut sessions.get_mut(session_id)?.session;
-        session.title = normalized.clone();
-        session.last_active_at = Timestamp::now();
-        normalized
+        let entry = sessions.get_mut(session_id)?;
+        if expected.is_some_and(|generation| &entry.generation != generation) {
+            return None;
+        }
+        let normalized = normalize_session_title(Some(title));
+        entry.session.title = normalized.clone();
+        entry.session.last_active_at = Timestamp::now();
+        Some(normalized)
     }
 
     /// Return the user-visible title for a session, if one is set.

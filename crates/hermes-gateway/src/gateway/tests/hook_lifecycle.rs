@@ -266,6 +266,81 @@ async fn delayed_yolo_cannot_restore_permissions_after_reset_or_switch() {
 }
 
 #[tokio::test]
+async fn switching_conversations_preserves_the_destination_title() {
+    let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: sent.clone(),
+            }),
+        )
+        .await;
+    let pause = Arc::new(PauseHook::default());
+    let title_events = Arc::new(Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    hooks.register_in_process("command:title", pause.clone());
+    hooks.register_in_process(
+        "session:title",
+        Arc::new(RecordingHook {
+            seen: title_events.clone(),
+        }),
+    );
+    gateway.set_hook_registry(Arc::new(hooks)).await;
+
+    let mut command = test_incoming("/title Previous conversation");
+    command.chat_id = "source-title".into();
+    let current_key =
+        manager.compose_session_key(&command.platform, &command.chat_id, &command.user_id);
+    manager
+        .get_or_create_session(&command.platform, "destination-title", &command.user_id)
+        .await;
+    manager
+        .add_message(
+            "test:destination-title",
+            Message::user("destination history"),
+        )
+        .await;
+    manager
+        .set_title("test:destination-title", "Destination")
+        .await;
+
+    let mut pending = std::pin::pin!(gateway.route_message(&command));
+    tokio::time::timeout(std::time::Duration::from_secs(5), async {
+        tokio::select! {
+            () = pause.entered.notified() => {}
+            result = &mut pending => panic!("Title completed before its hook: {result:?}"),
+        }
+    })
+    .await
+    .expect("Title never reached its hook");
+    let replacement = IncomingMessage {
+        text: "/sessions test:destination-title".into(),
+        ..command.clone()
+    };
+    gateway.route_message(&replacement).await.unwrap();
+    pause.resume.notify_one();
+    pending.await.unwrap();
+
+    assert_eq!(
+        manager.get_title(&current_key).await.as_deref(),
+        Some("Destination")
+    );
+    assert!(title_events.lock().unwrap().is_empty());
+    assert!(sent
+        .lock()
+        .unwrap()
+        .last()
+        .unwrap()
+        .1
+        .contains("conversation changed"));
+}
+
+#[tokio::test]
 async fn delayed_approval_commands_cannot_resolve_the_replacement_conversation() {
     use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
 
