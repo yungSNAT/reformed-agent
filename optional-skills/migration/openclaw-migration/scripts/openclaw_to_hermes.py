@@ -2562,7 +2562,7 @@ class Migrator:
 
         # Extended channel token/allowlist mapping
         CHANNEL_ENV_MAP = {
-            "matrix": {"token": "MATRIX...OKEN", "tokenField": "accessToken", "allowFrom": "MATRIX_ALLOWED_USERS",
+            "matrix": {"token": "MATRIX_ACCESS_TOKEN", "tokenField": "accessToken", "allowFrom": "MATRIX_ALLOWED_USERS",
                         "extras": {"homeserverUrl": "MATRIX_HOMESERVER_URL", "userId": "MATRIX_USER_ID"}},
             "mattermost": {"token": "MATTERMOST_BOT_TOKEN", "allowFrom": "MATTERMOST_ALLOWED_USERS",
                            "extras": {"url": "MATTERMOST_URL", "teamId": "MATTERMOST_TEAM_ID"}},
@@ -2635,7 +2635,10 @@ class Migrator:
             if self.execute:
                 self.archive_dir.mkdir(parents=True, exist_ok=True)
                 dest = self.archive_dir / "channels-deep-config.json"
-                dest.write_text(json.dumps(complex_archive, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+                dest.write_text(
+                    json.dumps(redact_migration_value(complex_archive), indent=2, ensure_ascii=False) + "\n",
+                    encoding="utf-8",
+                )
             self.record("deep-channels", "openclaw.json channels (advanced settings)",
                         "archive/channels-deep-config.json", "archived",
                         f"Deep channel config for {len(complex_archive)} channels archived")
