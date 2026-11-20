@@ -341,6 +341,97 @@ async fn switching_conversations_preserves_the_destination_title() {
 }
 
 #[tokio::test]
+async fn switching_conversations_retires_the_previous_browser_on_commit() {
+    use hermes_tools::backends::browser::unavailable_browser_backend;
+    use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
+
+    let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+    let queue = BrowserReleaseQueue::start(browsers.clone());
+    let retirer = queue.retirer();
+    let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default())
+        .with_browser_retirement(retirer.clone());
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: sent.clone(),
+            }),
+        )
+        .await;
+    let (send, mut turns) = tokio::sync::mpsc::unbounded_channel();
+    gateway
+        .set_message_handler_with_context(Arc::new(move |_, context| {
+            send.send(context.browser.unwrap()).unwrap();
+            Box::pin(async { Ok("fixture response".into()) })
+        }))
+        .await;
+    let mut incoming = test_incoming("Open original conversation");
+    incoming.chat_id = "browser-switch-source".into();
+    let key = manager.compose_session_key(&incoming.platform, &incoming.chat_id, &incoming.user_id);
+    gateway.route_message(&incoming).await.unwrap();
+    manager.set_title(&key, "Original").await;
+    let original = turns.try_recv().unwrap();
+    let snapshot_error = |lease: BrowserLease| async move {
+        lease.tool_overrides()["browser_snapshot"]
+            .execute(serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string()
+    };
+    assert!(snapshot_error(original.clone())
+        .await
+        .contains("fixture browser"));
+
+    let target = "browser-switch-destination";
+    let target_key = manager.compose_session_key(&incoming.platform, target, &incoming.user_id);
+    manager
+        .get_or_create_session(&incoming.platform, target, &incoming.user_id)
+        .await;
+    manager
+        .add_message(&target_key, Message::user("Destination history"))
+        .await;
+    manager.set_title(&target_key, "Destination").await;
+    let switching = IncomingMessage {
+        text: format!("/sessions {target_key}"),
+        ..incoming.clone()
+    };
+    let sent_before_switch = sent.lock().unwrap().len();
+    let mut slots = Vec::new();
+    while let Some(slot) = retirer.try_reserve().unwrap() {
+        slots.push(slot);
+    }
+    assert!(!slots.is_empty());
+    {
+        let mut pending = std::pin::pin!(gateway.route_message(&switching));
+        assert!(futures::poll!(pending.as_mut()).is_pending());
+    }
+    assert_eq!(sent.lock().unwrap().len(), sent_before_switch);
+    assert_eq!(manager.get_title(&key).await.as_deref(), Some("Original"));
+    assert!(snapshot_error(original.clone())
+        .await
+        .contains("fixture browser"));
+
+    drop(slots);
+    gateway.route_message(&switching).await.unwrap();
+    assert_eq!(
+        manager.get_title(&key).await.as_deref(),
+        Some("Destination")
+    );
+    let error = snapshot_error(original).await;
+    assert!(error.contains("browser was closed"), "{error}");
+    gateway.route_message(&incoming).await.unwrap();
+    let current = turns.try_recv().unwrap();
+    let error = snapshot_error(current).await;
+    assert!(error.contains("fixture browser"), "{error}");
+    browsers.close_all().await;
+    queue.drain().await.unwrap();
+}
+
+#[tokio::test]
 async fn delayed_approval_commands_cannot_resolve_the_replacement_conversation() {
     use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
 

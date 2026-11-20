@@ -1022,8 +1022,10 @@ impl Gateway {
                             generation,
                             target.messages.clone(),
                             target.title.clone(),
+                            self.browser_retirer.as_ref(),
                         )
-                        .await;
+                        .await
+                        .map_err(|error| GatewayError::Platform(error.to_owned()))?;
                     if copied {
                         format!(
                             "🔁 Switched to session `{}`.\nLoaded {} message(s) into this chat context.",

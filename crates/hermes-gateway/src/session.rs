@@ -679,18 +679,24 @@ impl SessionManager {
         expected: Option<SessionGeneration>,
         messages: Vec<Message>,
         title: Option<String>,
-    ) -> bool {
-        let mut sessions = self.sessions.write().await;
-        let Some(entry) = sessions.get_mut(session_key) else {
-            return false;
-        };
-        if Some(&entry.generation) != expected.as_ref() {
-            return false;
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<bool, &'static str> {
+        let mut boundary = SessionBoundary::new(browsers);
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let Some(entry) = sessions.get_mut(session_key) else {
+                return Ok(false);
+            };
+            if Some(&entry.generation) != expected.as_ref() {
+                return Ok(false);
+            }
+            if boundary.try_finish(session_key, Some(&entry.generation))? {
+                entry.replace_context(messages, title);
+                return Ok(true);
+            }
+            drop(sessions);
+            boundary.wait_for_slot().await?;
         }
-        entry.generation.retire();
-        hermes_tools::approval::clear_session(session_key);
-        entry.replace_context(messages, title);
-        true
     }
 
     /// Set or clear the user-visible title for a session.
