@@ -1,5 +1,75 @@
 use super::*;
 
+#[tokio::test]
+async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_session() {
+    use hermes_tools::backends::browser::unavailable_browser_backend;
+    use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
+
+    let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+    let queue = BrowserReleaseQueue::start(browsers);
+    let retirer = queue.retirer();
+    let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default())
+        .with_browser_retirement(retirer.clone());
+    let messages = Arc::new(Mutex::new(Vec::new()));
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: messages.clone(),
+            }),
+        )
+        .await;
+    gateway
+        .set_message_handler(Arc::new(|_| {
+            Box::pin(async { Ok("fixture response".into()) })
+        }))
+        .await;
+
+    let first = test_incoming("open");
+    gateway.route_message(&first).await.unwrap();
+    let key = manager.compose_session_key(&first.platform, &first.chat_id, &first.user_id);
+    let before = manager.get_session(&key).await.unwrap();
+    let browser = retirer.lease(&key);
+    let snapshot = browser.tool_overrides()["browser_snapshot"].clone();
+    let mut slots = Vec::new();
+    while let Some(slot) = retirer.try_reserve().unwrap() {
+        slots.push(slot);
+    }
+    assert!(!slots.is_empty());
+
+    let reset = test_incoming("/reset");
+    {
+        let mut pending = std::pin::pin!(gateway.route_message(&reset));
+        assert!(futures::poll!(pending.as_mut()).is_pending());
+        let mut other = test_incoming("/help");
+        other.chat_id = "other".into();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            gateway.route_message(&other),
+        )
+        .await
+        .expect("another chat waited for the full release queue")
+        .unwrap();
+    }
+    let sent_before_failure = messages.lock().unwrap().len();
+    drop(slots);
+    queue.drain().await.unwrap();
+
+    let error = gateway.route_message(&reset).await.unwrap_err();
+    assert!(error
+        .to_string()
+        .contains("Browser release worker has stopped"));
+    assert_eq!(messages.lock().unwrap().len(), sent_before_failure);
+    let after = manager.get_session(&key).await.unwrap();
+    assert_eq!(after.id, before.id);
+    assert_eq!(after.messages.len(), before.messages.len());
+    let error = snapshot.execute(serde_json::json!({})).await.unwrap_err();
+    assert!(error.to_string().contains("fixture browser"));
+}
+
 #[derive(Default)]
 struct PauseFirstPolicyFinalize {
     used: std::sync::atomic::AtomicBool,
