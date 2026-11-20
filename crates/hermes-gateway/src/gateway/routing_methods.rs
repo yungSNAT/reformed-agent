@@ -159,20 +159,27 @@ impl Gateway {
             &incoming.chat_id,
             &incoming.user_id,
         );
-        let existing_session = self.session_manager.get_session(&session_key).await;
-        let session = self
+        let admission = self
             .session_manager
-            .get_or_create_session(&incoming.platform, &incoming.chat_id, &incoming.user_id)
-            .await;
-        let session_started = existing_session.is_none();
-        let session_auto_reset = existing_session
-            .as_ref()
-            .map(|s| s.created_at != session.created_at)
-            .unwrap_or(false);
-        if session_auto_reset {
-            hermes_tools::gateway_approval::clear(&session_key);
-        }
-        if session_started || session_auto_reset {
+            .admit_session(
+                &incoming.platform,
+                &incoming.chat_id,
+                &incoming.user_id,
+                self.browser_retirer.as_ref(),
+            )
+            .await
+            .map_err(|error| GatewayError::Platform(error.to_owned()))?;
+        let session_start_reason = match admission.transition {
+            SessionTransition::Created => Some("new"),
+            SessionTransition::PolicyReset(previous) => {
+                hermes_tools::gateway_approval::clear(&session_key);
+                self.emit_session_finalize(&session_key, &previous, "auto_reset")
+                    .await;
+                Some("auto_reset")
+            }
+            SessionTransition::Existing => None,
+        };
+        if let Some(reason) = session_start_reason {
             self.emit_hook_event(
                 "session:start",
                 serde_json::json!({
@@ -180,7 +187,7 @@ impl Gateway {
                     "chat_id": incoming.chat_id,
                     "user_id": incoming.user_id,
                     "session_id": session_key,
-                    "reason": if session_started { "new" } else { "auto_reset" }
+                    "reason": reason
                 }),
             )
             .await;
@@ -219,7 +226,10 @@ impl Gateway {
         // commands decline them, they are converted into a normal agent turn
         // containing the resolved SKILL.md content.
         if is_slash_command {
-            match self.execute_slash_command(incoming, &session_key).await? {
+            match self
+                .execute_slash_command(incoming, &session_key, admission.browser.as_ref())
+                .await?
+            {
                 SlashCommandOutcome::Handled => return Ok(None),
                 SlashCommandOutcome::ForwardToAgent { message } => {
                     agent_text_override = Some(message);
@@ -275,9 +285,10 @@ impl Gateway {
             busy.mark_active(&session_key, None);
         }
         let processing_result = if self.config.streaming_enabled {
-            self.route_streaming(incoming, messages, &session_key).await
+            self.route_streaming(incoming, messages, &session_key, admission.browser)
+                .await
         } else {
-            self.route_non_streaming(incoming, messages, &session_key)
+            self.route_non_streaming(incoming, messages, &session_key, admission.browser)
                 .await
         };
         // A command approval is good only for the turn that retries it.

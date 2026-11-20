@@ -16,7 +16,7 @@ use crate::registry::ToolOverrides;
 use crate::tools::browser::{BrowserBackend, BrowserFactory, SharedBrowser};
 
 mod release_queue;
-pub use release_queue::{BrowserReleaseQueue, BrowserRetirer};
+pub use release_queue::{BrowserReleaseQueue, BrowserReleaseSlot, BrowserRetirer};
 
 /// How long a session's browser may go unused before it is released.
 pub const SESSION_BROWSER_MAX_IDLE: Duration = Duration::from_secs(300);
@@ -47,6 +47,24 @@ pub fn unbound_browser() -> SharedBrowser {
 pub struct SessionBrowsers {
     factory: Arc<BrowserFactory>,
     sessions: Arc<Mutex<HashMap<String, (SharedBrowser, ToolOverrides)>>>,
+}
+
+/// Browser handlers pinned to a turn's session generation.
+#[derive(Clone)]
+pub struct BrowserLease(ToolOverrides);
+
+impl BrowserLease {
+    pub fn tool_overrides(&self) -> ToolOverrides {
+        self.0.clone()
+    }
+}
+
+impl std::fmt::Debug for BrowserLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BrowserLease")
+            .finish_non_exhaustive()
+    }
 }
 
 impl SessionBrowsers {

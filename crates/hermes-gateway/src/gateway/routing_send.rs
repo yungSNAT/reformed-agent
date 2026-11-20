@@ -5,6 +5,7 @@ impl Gateway {
         incoming: &IncomingMessage,
         messages: Vec<Message>,
         session_key: &str,
+        browser: Option<BrowserLease>,
     ) -> Result<(), GatewayError> {
         self.emit_hook_event(
             "agent:start",
@@ -19,7 +20,7 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let mut runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.message_handler_with_context.read().await.clone();
@@ -101,6 +102,7 @@ impl Gateway {
         incoming: &IncomingMessage,
         messages: Vec<Message>,
         session_key: &str,
+        browser: Option<BrowserLease>,
     ) -> Result<(), GatewayError> {
         self.emit_hook_event(
             "agent:start",
@@ -115,7 +117,7 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let mut runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.streaming_handler_with_context.read().await.clone();
@@ -307,6 +309,7 @@ impl Gateway {
         &self,
         incoming: &IncomingMessage,
         session_key: &str,
+        browser: Option<BrowserLease>,
     ) -> GatewayRuntimeContext {
         let default_model = self.default_model.read().await.clone();
         let state = self
@@ -320,6 +323,7 @@ impl Gateway {
 
         GatewayRuntimeContext {
             session_key: session_key.to_string(),
+            browser,
             platform: incoming.platform.clone(),
             chat_id: incoming.chat_id.clone(),
             thread_id: incoming.thread_id.clone(),
@@ -574,6 +578,7 @@ impl Gateway {
         session_key: &str,
         prompt: &str,
         isolated_context: bool,
+        browser: Option<BrowserLease>,
     ) -> Result<bool, GatewayError> {
         let trimmed = prompt.trim();
         if trimmed.eq_ignore_ascii_case("list") {
@@ -676,7 +681,7 @@ impl Gateway {
             vec![Message::user(trimmed)]
         };
         let legacy_messages = original_messages.clone();
-        let runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
         tokio::spawn(async move {
             let result = if let Some(handler) = context_handler {
                 handler(original_messages, runtime_context).await
@@ -1161,6 +1166,23 @@ impl Gateway {
     /// Expire idle sessions once and emit lifecycle finalization hooks for
     /// each removed session using retained session snapshots.
     pub async fn expire_idle_sessions_once(&self, reason: &str) -> usize {
+        if let Some(browsers) = &self.browser_retirer {
+            let mut expired = 0;
+            for key in self.session_manager.idle_session_keys().await {
+                match self.session_manager.expire_idle_session_with_browser(&key, browsers).await {
+                    Ok(Some(session)) => {
+                        expired += 1;
+                        self.emit_session_finalize(&key, &session, reason).await;
+                    }
+                    Ok(None) => {}
+                    Err(error) => {
+                        tracing::warn!(error, "Could not retire idle gateway browsers");
+                        break;
+                    }
+                }
+            }
+            return expired;
+        }
         let expired = self.session_manager.expire_idle_session_snapshots().await;
         for (session_key, session) in &expired {
             self.emit_session_finalize(session_key, session, reason)

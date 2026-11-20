@@ -1,7 +1,7 @@
 use tokio::sync::{mpsc, oneshot};
 use tokio::task::{JoinError, JoinHandle};
 
-use super::{SessionBrowsers, SharedBrowser};
+use super::{BrowserLease, SessionBrowsers, SharedBrowser};
 
 const QUEUED_BROWSER_RELEASES: usize = 16;
 
@@ -17,6 +17,20 @@ pub struct BrowserReleaseQueue {
 pub struct BrowserRetirer {
     browsers: SessionBrowsers,
     send: mpsc::Sender<SharedBrowser>,
+}
+
+/// A queue slot that can accept one retired browser synchronously.
+pub struct BrowserReleaseSlot<'a> {
+    browsers: &'a SessionBrowsers,
+    permit: mpsc::Permit<'a, SharedBrowser>,
+}
+
+impl BrowserReleaseSlot<'_> {
+    pub fn retire(self, session_key: &str) {
+        if let Some(browser) = self.browsers.retire(session_key) {
+            self.permit.send(browser);
+        }
+    }
 }
 
 impl BrowserReleaseQueue {
@@ -61,17 +75,40 @@ impl BrowserReleaseQueue {
 }
 
 impl BrowserRetirer {
-    /// Capacity is reserved before the browser is taken from the active map.
-    /// Cancelling during backpressure leaves the active browser in place.
-    pub async fn retire(&self, session_key: &str) -> Result<(), &'static str> {
+    pub fn lease(&self, session_key: &str) -> BrowserLease {
+        BrowserLease(self.browsers.tool_overrides(session_key))
+    }
+
+    pub fn try_reserve(&self) -> Result<Option<BrowserReleaseSlot<'_>>, &'static str> {
+        let permit = match self.send.try_reserve() {
+            Ok(permit) => permit,
+            Err(mpsc::error::TrySendError::Full(())) => return Ok(None),
+            Err(mpsc::error::TrySendError::Closed(())) => {
+                return Err("Browser release worker has stopped")
+            }
+        };
+        Ok(Some(BrowserReleaseSlot {
+            browsers: &self.browsers,
+            permit,
+        }))
+    }
+
+    pub async fn reserve(&self) -> Result<BrowserReleaseSlot<'_>, &'static str> {
         let permit = self
             .send
             .reserve()
             .await
             .map_err(|_| "Browser release worker has stopped")?;
-        if let Some(browser) = self.browsers.retire(session_key) {
-            permit.send(browser);
-        }
+        Ok(BrowserReleaseSlot {
+            browsers: &self.browsers,
+            permit,
+        })
+    }
+
+    /// Capacity is reserved before the browser is taken from the active map.
+    /// Cancelling during backpressure leaves the active browser in place.
+    pub async fn retire(&self, session_key: &str) -> Result<(), &'static str> {
+        self.reserve().await?.retire(session_key);
         Ok(())
     }
 }

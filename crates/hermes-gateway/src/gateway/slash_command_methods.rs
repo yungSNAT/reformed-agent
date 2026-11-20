@@ -129,6 +129,7 @@ impl Gateway {
         &self,
         incoming: &IncomingMessage,
         session_key: &str,
+        browser: Option<&BrowserLease>,
     ) -> Result<SlashCommandOutcome, GatewayError> {
         let command_text = Self::normalize_slash_command_text(&incoming.text);
         if let Some(reply) = self.resolve_quick_command(&command_text).await? {
@@ -198,7 +199,7 @@ impl Gateway {
                 .await;
         }
         let handled = self
-            .apply_command_result(incoming, session_key, result)
+            .apply_command_result(incoming, session_key, result, browser)
             .await?;
         Ok(if handled {
             SlashCommandOutcome::Handled
@@ -423,6 +424,7 @@ impl Gateway {
         incoming: &IncomingMessage,
         session_key: &str,
         result: GatewayCommandResult,
+        browser: Option<&BrowserLease>,
     ) -> Result<bool, GatewayError> {
         match result {
             GatewayCommandResult::Reply(text)
@@ -433,7 +435,14 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ResetSession(reply) => {
-                let current_session = self.session_manager.get_session(session_key).await;
+                let reset_snapshot = self
+                    .session_manager
+                    .reset_session_with_browser(session_key, self.browser_retirer.as_ref())
+                    .await
+                    .map_err(|error| GatewayError::Platform(error.to_owned()))?;
+                self.clear_session_boundary_security_state(session_key)
+                    .await;
+                let old_session = reset_snapshot.as_ref().map(|(old, _)| old);
                 self.emit_hook_event(
                     "session:end",
                     serde_json::json!({
@@ -441,24 +450,15 @@ impl Gateway {
                         "chat_id": incoming.chat_id,
                         "user_id": incoming.user_id,
                         "session_id": session_key,
-                        "logical_session_id": current_session.as_ref().map(|s| s.id.clone())
+                        "logical_session_id": old_session.map(|s| s.id.clone())
                     }),
                 )
                 .await;
-                if let Some(old_session) = current_session.as_ref() {
+                if let Some(old_session) = old_session {
                     self.emit_session_finalize(session_key, old_session, "reset")
                         .await;
                 }
-                let reset_snapshot = self
-                    .session_manager
-                    .reset_session_with_snapshots(session_key)
-                    .await;
-                self.clear_session_boundary_security_state(session_key)
-                    .await;
-                let reset_session = reset_snapshot
-                    .as_ref()
-                    .map(|(_, new_session)| new_session)
-                    .or(current_session.as_ref());
+                let reset_session = reset_snapshot.as_ref().map(|(_, new)| new);
                 self.emit_hook_event(
                     "session:reset",
                     serde_json::json!({
@@ -827,13 +827,13 @@ impl Gateway {
             }
             GatewayCommandResult::BackgroundTask { prompt } => {
                 let handled = self
-                    .handle_background_command(incoming, session_key, &prompt, false)
+                    .handle_background_command(incoming, session_key, &prompt, false, browser.cloned())
                     .await?;
                 Ok(handled)
             }
             GatewayCommandResult::BtwTask { prompt } => {
                 let handled = self
-                    .handle_background_command(incoming, session_key, &prompt, true)
+                    .handle_background_command(incoming, session_key, &prompt, true, browser.cloned())
                     .await?;
                 Ok(handled)
             }
@@ -885,7 +885,7 @@ impl Gateway {
                 self.session_manager
                     .replace_messages(session_key, messages.clone())
                     .await;
-                self.route_non_streaming(incoming, messages, session_key)
+                self.route_non_streaming(incoming, messages, session_key, browser.cloned())
                     .await?;
                 Ok(true)
             }

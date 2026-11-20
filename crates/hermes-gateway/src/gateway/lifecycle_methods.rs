@@ -11,6 +11,7 @@ impl Gateway {
         Self {
             adapters: RwLock::new(HashMap::new()),
             session_manager,
+            browser_retirer: None,
             dm_manager: Arc::new(RwLock::new(dm_manager)),
             stream_manager,
             config,
@@ -35,6 +36,12 @@ impl Gateway {
     /// Create a Gateway with default DM manager (pair behavior).
     pub fn with_defaults(session_manager: Arc<SessionManager>, config: GatewayConfig) -> Self {
         Self::new(session_manager, DmManager::with_pair_behavior(), config)
+    }
+
+    /// Bind gateway browser retirement before any turns are admitted.
+    pub fn with_browser_retirement(mut self, retirer: BrowserRetirer) -> Self {
+        self.browser_retirer = Some(retirer);
+        self
     }
 
     /// Merge per-request runtime hints (HTTP API, webhooks) for the composed session key.

@@ -105,33 +105,6 @@ fn gateway_tool_progress_parse_mode(platform: &str, text: &str) -> Option<ParseM
     }
 }
 
-/// Closes a chat session's browser as the session ends: on `/new` or
-/// `/reset`, idle expiry and shutdown.
-struct CloseSessionBrowser(hermes_tools::session_browsers::BrowserRetirer);
-
-impl CloseSessionBrowser {
-    fn register(
-        hooks: &mut HookRegistry,
-        releases: &hermes_tools::session_browsers::BrowserReleaseQueue,
-    ) {
-        hooks.register_in_process("on_session_finalize", Arc::new(Self(releases.retirer())));
-    }
-}
-
-#[async_trait::async_trait]
-impl hermes_gateway::hooks::HookHandler for CloseSessionBrowser {
-    async fn handle(&self, event: &hermes_gateway::hooks::HookEvent) -> Result<(), String> {
-        let session_key = event.context["session_key"]
-            .as_str()
-            .ok_or("on_session_finalize carried no session_key")?;
-        self.0.retire(session_key).await.map_err(str::to_string)
-    }
-
-    fn name(&self) -> &str {
-        "close-session-browser"
-    }
-}
-
 /// Platforms where a command approval is bound to a person: the platform
 /// authenticates the sender id, the gateway receives replies, and the request
 /// reaches the user as one unaltered message. Telegram's ids come from the bot
@@ -152,12 +125,15 @@ const SHARED_SENDER_IDS: &[&str] = &["1087968824", "136817688", "777000", "unkno
 /// sender, a terminal that asks this turn's user before running a command
 /// that needs confirmation.
 fn gateway_turn_tool_overrides(
-    browsers: &hermes_tools::SessionBrowsers,
     terminal_backend: &Arc<dyn hermes_core::TerminalBackend>,
     gateway: &Arc<Gateway>,
     ctx: &GatewayRuntimeContext,
 ) -> hermes_tools::ToolOverrides {
-    let mut overrides = browsers.tool_overrides(&ctx.session_key);
+    let mut overrides = ctx
+        .browser
+        .as_ref()
+        .map(|browser| browser.tool_overrides())
+        .unwrap_or_default();
     if !COMMAND_APPROVAL_PLATFORMS.contains(&ctx.platform.as_str())
         || SHARED_SENDER_IDS.contains(&ctx.user_id.as_str())
     {

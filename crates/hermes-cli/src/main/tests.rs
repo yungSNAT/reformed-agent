@@ -135,22 +135,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_finalize_closes_only_that_sessions_browser() {
+    async fn retiring_a_session_closes_only_that_sessions_browser() {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
         });
         let ended = browsers.tool_overrides("telegram:1");
         let other = browsers.tool_overrides("telegram:2");
-        let mut hooks = HookRegistry::new();
         let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers.clone());
-        CloseSessionBrowser::register(&mut hooks, &releases);
-
-        hooks
-            .emit(&hermes_gateway::hooks::HookEvent::new(
-                "on_session_finalize",
-                serde_json::json!({"session_key": "telegram:1", "reason": "reset"}),
-            ))
-            .await;
+        releases.retirer().retire("telegram:1").await.unwrap();
 
         let snapshot = |overrides: &hermes_tools::ToolOverrides| {
             let handler = overrides["browser_snapshot"].clone();
@@ -178,20 +170,36 @@ mod tests {
     #[cfg(feature = "gateway-api-server")]
     #[tokio::test]
     async fn gateway_reset_closes_its_chat_browser_and_keeps_the_other_chat() {
+        assert_gateway_browser_reset_isolated(false).await;
+    }
+
+    #[cfg(feature = "gateway-api-server")]
+    #[tokio::test]
+    async fn gateway_policy_reset_closes_its_chat_browser_and_keeps_the_other_chat() {
+        assert_gateway_browser_reset_isolated(true).await;
+    }
+
+    #[cfg(feature = "gateway-api-server")]
+    async fn assert_gateway_browser_reset_isolated(policy_reset: bool) {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("fixture browser")
         });
-        let mut hooks = HookRegistry::new();
-        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers.clone());
-        CloseSessionBrowser::register(&mut hooks, &releases);
+        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers);
         let mut dm = DmManager::with_pair_behavior();
         dm.authorize_user("fixture");
-        let gateway = Arc::new(Gateway::new(
-            Arc::new(SessionManager::new(SessionConfig::default())),
-            dm,
-            RuntimeGatewayConfig::default(),
-        ));
-        gateway.set_hook_registry(Arc::new(hooks)).await;
+        let mut session_config = SessionConfig::default();
+        if policy_reset {
+            session_config.reset_policy =
+                hermes_config::SessionResetPolicy::Idle { timeout_minutes: 0 };
+        }
+        let gateway = Arc::new(
+            Gateway::new(
+                Arc::new(SessionManager::new(session_config)),
+                dm,
+                RuntimeGatewayConfig::default(),
+            )
+            .with_browser_retirement(releases.retirer()),
+        );
         gateway
             .register_adapter(
                 "api_server",
@@ -205,7 +213,7 @@ mod tests {
             .set_message_handler_with_context(Arc::new(move |_messages, context| {
                 let gateway = weak_gateway.upgrade().expect("gateway running");
                 let overrides =
-                    gateway_turn_tool_overrides(&browsers, &terminal, &gateway, &context);
+                    gateway_turn_tool_overrides(&terminal, &gateway, &context);
                 tx.send(overrides["browser_snapshot"].clone())
                     .expect("recorded browser handler");
                 Box::pin(async { Ok("fixture response".into()) })
@@ -234,20 +242,29 @@ mod tests {
         let first_before = snapshot_error(first.clone()).await;
         assert!(first_before.contains("fixture browser"), "{first_before}");
 
-        gateway
-            .route_message(&incoming("first-chat", "/reset"))
-            .await
-            .unwrap();
-        assert!(turns.try_recv().is_err(), "reset was sent to the agent");
+        if policy_reset {
+            gateway
+                .route_message(&incoming("first-chat", "open again"))
+                .await
+                .unwrap();
+        } else {
+            gateway
+                .route_message(&incoming("first-chat", "/reset"))
+                .await
+                .unwrap();
+            assert!(turns.try_recv().is_err(), "reset was sent to the agent");
+        }
         let old = snapshot_error(first).await;
         let other = snapshot_error(second).await;
         assert!(old.contains("browser was closed"), "{old}");
         assert!(other.contains("fixture browser"), "{other}");
 
-        gateway
-            .route_message(&incoming("first-chat", "open again"))
-            .await
-            .unwrap();
+        if !policy_reset {
+            gateway
+                .route_message(&incoming("first-chat", "open again"))
+                .await
+                .unwrap();
+        }
         let new = turns.try_recv().expect("new first chat browser");
         let new = snapshot_error(new).await;
         assert!(new.contains("fixture browser"), "{new}");
@@ -298,9 +315,6 @@ mod tests {
             DmManager::with_pair_behavior(),
             RuntimeGatewayConfig::default(),
         ));
-        let browsers = hermes_tools::SessionBrowsers::new(|| {
-            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
-        });
         let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
             Arc::new(UnreachableTerminal);
         let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
@@ -315,7 +329,6 @@ mod tests {
         // registered, so the request cannot be sent and nothing is left to
         // approve.
         let overrides = gateway_turn_tool_overrides(
-            &browsers,
             &terminal_backend,
             &gateway,
             &ctx("telegram", "4242"),
@@ -352,7 +365,6 @@ mod tests {
         );
         for (platform, user) in refused {
             let overrides = gateway_turn_tool_overrides(
-                &browsers,
                 &terminal_backend,
                 &gateway,
                 &ctx(platform, user),

@@ -245,24 +245,20 @@ async fn run_gateway(
             };
             let session_manager = Arc::new(SessionManager::new(config.session.clone()));
             let dm_manager = build_gateway_dm_manager(&config);
-            let gateway = Arc::new(Gateway::new(
-                session_manager,
-                dm_manager,
-                runtime_gateway_config,
-            ));
-            gateway
-                .set_platform_access_policies(build_gateway_platform_access_policies(&config))
-                .await;
-            // Each chat session gets a browser of its own, closed as the
-            // session ends.
             let session_browsers =
                 hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
             let browser_releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(
                 session_browsers.clone(),
             );
+            let gateway = Arc::new(
+                Gateway::new(session_manager, dm_manager, runtime_gateway_config)
+                    .with_browser_retirement(browser_releases.retirer()),
+            );
+            gateway
+                .set_platform_access_policies(build_gateway_platform_access_policies(&config))
+                .await;
             let mut hook_registry = HookRegistry::new();
             hook_registry.register_builtins();
-            CloseSessionBrowser::register(&mut hook_registry, &browser_releases);
             hook_registry.discover_and_load(&hermes_home().join("hooks"));
             gateway.set_hook_registry(Arc::new(hook_registry)).await;
             gateway
@@ -290,8 +286,6 @@ async fn run_gateway(
             let clarify_dispatcher = ClarifyDispatcher::new();
             let tool_registry_for_msg = tool_registry.clone();
             let tool_registry_for_stream = tool_registry.clone();
-            let browsers_for_msg = session_browsers.clone();
-            let browsers_for_stream = session_browsers.clone();
             let terminal_for_msg = terminal_backend.clone();
             let terminal_for_stream = terminal_backend;
             let agent_tools_for_cron = Arc::new(bridge_tool_registry(&tool_registry));
@@ -305,7 +299,6 @@ async fn run_gateway(
                 .set_message_handler_with_context(Arc::new(move |messages, ctx| {
                     let config = config_arc.clone();
                     let runtime_tools = tool_registry_for_msg.clone();
-                    let browsers = browsers_for_msg.clone();
                     let terminal_backend = terminal_for_msg.clone();
                     let gateway_for_review = gateway_for_review.clone();
                     let clarify = clarify_for_msg.clone();
@@ -328,7 +321,6 @@ async fn run_gateway(
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
                             gateway_turn_tool_overrides(
-                                &browsers,
                                 &terminal_backend,
                                 &gateway_for_review,
                                 &ctx,
@@ -590,7 +582,6 @@ async fn run_gateway(
                 .set_streaming_handler_with_context(Arc::new(move |messages, ctx, on_chunk| {
                     let config = config_arc_stream.clone();
                     let runtime_tools = tool_registry_for_stream.clone();
-                    let browsers = browsers_for_stream.clone();
                     let terminal_backend = terminal_for_stream.clone();
                     let gateway_for_review = gateway_for_review_stream.clone();
                     let clarify = clarify_for_stream.clone();
@@ -613,7 +604,6 @@ async fn run_gateway(
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
                             gateway_turn_tool_overrides(
-                                &browsers,
                                 &terminal_backend,
                                 &gateway_for_review,
                                 &ctx,

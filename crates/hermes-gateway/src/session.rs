@@ -14,6 +14,7 @@ use uuid::Uuid;
 
 use hermes_config::session::{SessionResetPolicy, SessionType};
 use hermes_core::types::Message;
+use hermes_tools::session_browsers::{BrowserLease, BrowserReleaseSlot, BrowserRetirer};
 
 // ---------------------------------------------------------------------------
 // Re-export session types from hermes-config for convenience
@@ -255,6 +256,60 @@ pub fn redact_pii(text: &str, rules: &[RedactionRule]) -> String {
 // SessionManager
 // ---------------------------------------------------------------------------
 
+pub(crate) enum SessionTransition {
+    Existing,
+    Created,
+    PolicyReset(Box<Session>),
+}
+
+pub(crate) struct SessionAdmission {
+    session: Session,
+    pub(crate) transition: SessionTransition,
+    pub(crate) browser: Option<BrowserLease>,
+}
+
+struct SessionBrowserBoundary<'a> {
+    browsers: Option<&'a BrowserRetirer>,
+    reserved_slot: Option<BrowserReleaseSlot<'a>>,
+}
+
+impl<'a> SessionBrowserBoundary<'a> {
+    fn new(browsers: Option<&'a BrowserRetirer>) -> Self {
+        Self {
+            browsers,
+            reserved_slot: None,
+        }
+    }
+
+    // Called under the session write lock. A full queue leaves the session
+    // untouched, so the caller can wait outside the lock and recheck policy.
+    fn try_retire(&mut self, session_key: &str) -> Result<bool, &'static str> {
+        let Some(browsers) = self.browsers else {
+            return Ok(true);
+        };
+        let slot = match self.reserved_slot.take() {
+            Some(slot) => Some(slot),
+            None => browsers.try_reserve()?,
+        };
+        let Some(slot) = slot else {
+            return Ok(false);
+        };
+        slot.retire(session_key);
+        Ok(true)
+    }
+
+    async fn wait_for_slot(&mut self) -> Result<(), &'static str> {
+        if let Some(browsers) = self.browsers {
+            self.reserved_slot = Some(browsers.reserve().await?);
+        }
+        Ok(())
+    }
+
+    fn pin(&self, session_key: &str) -> Option<BrowserLease> {
+        self.browsers.map(|browsers| browsers.lease(session_key))
+    }
+}
+
 /// Manages all active sessions, providing creation, retrieval, and
 /// cross-platform session continuity.
 pub struct SessionManager {
@@ -336,40 +391,64 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
     ) -> Session {
+        self.admit_session(platform, chat_id, user_id, None)
+            .await
+            .expect("admission without a browser cannot fail")
+            .session
+    }
+
+    /// Report the transition decided under the session write lock.
+    pub(crate) async fn admit_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        user_id: &str,
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<SessionAdmission, &'static str> {
         let session_type = Self::infer_session_type(chat_id);
         let reset_policy = self.effective_reset_policy(platform, session_type);
-
         let session_key = self.compose_session_key(platform, chat_id, user_id);
+        let mut browser = SessionBrowserBoundary::new(browsers);
 
-        let mut sessions = self.sessions.write().await;
-
-        if let Some(session) = sessions.get_mut(&session_key) {
-            // Check if reset is needed
-            if session.should_reset() {
-                // Reset: clear messages but keep the session alive
-                session.messages.clear();
-                session.created_at = Timestamp::now();
-                session.last_active_at = Timestamp::now();
-            } else {
-                session.touch();
+        loop {
+            let mut sessions = self.sessions.write().await;
+            if let Some(session) = sessions.get_mut(&session_key) {
+                let transition = if session.should_reset() {
+                    if !browser.try_retire(&session_key)? {
+                        drop(sessions);
+                        browser.wait_for_slot().await?;
+                        continue;
+                    }
+                    let messages = std::mem::take(&mut session.messages);
+                    let mut previous = Box::new(session.clone());
+                    previous.messages = messages;
+                    session.created_at = Timestamp::now();
+                    session.last_active_at = Timestamp::now();
+                    SessionTransition::PolicyReset(previous)
+                } else {
+                    session.touch();
+                    SessionTransition::Existing
+                };
+                return Ok(SessionAdmission {
+                    session: session.clone(),
+                    transition,
+                    browser: browser.pin(&session_key),
+                });
             }
-            return session.clone();
+
+            let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
+            let mut user_sessions = self.user_sessions.write().await;
+            sessions.insert(session_key.clone(), session.clone());
+            user_sessions
+                .entry(user_id.to_string())
+                .or_default()
+                .push(session_key.clone());
+            return Ok(SessionAdmission {
+                session,
+                transition: SessionTransition::Created,
+                browser: browser.pin(&session_key),
+            });
         }
-
-        // Create new session
-        let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
-        let session_clone = session.clone();
-
-        sessions.insert(session_key.clone(), session);
-
-        // Track user -> session mapping for cross-platform continuity
-        let mut user_sessions = self.user_sessions.write().await;
-        user_sessions
-            .entry(user_id.to_string())
-            .or_default()
-            .push(session_key.clone());
-
-        session_clone
     }
 
     /// Reset a session by key, clearing all messages and rotating the logical
@@ -378,16 +457,34 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Option<(Session, Session)> {
-        let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        self.reset_session_with_browser(session_id, None)
+            .await
+            .expect("reset without a browser cannot fail")
+    }
+
+    pub(crate) async fn reset_session_with_browser(
+        &self,
+        session_id: &str,
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<Option<(Session, Session)>, &'static str> {
+        let mut browser = SessionBrowserBoundary::new(browsers);
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let Some(session) = sessions.get_mut(session_id) else {
+                return Ok(None);
+            };
+            if !browser.try_retire(session_id)? {
+                drop(sessions);
+                browser.wait_for_slot().await?;
+                continue;
+            }
             let old = session.clone();
             session.messages.clear();
             session.id = Uuid::new_v4().to_string();
             session.created_at = Timestamp::now();
             session.last_active_at = Timestamp::now();
-            return Some((old, session.clone()));
+            return Ok(Some((old, session.clone())));
         }
-        None
     }
 
     /// Reset a session by key, clearing all messages.
@@ -629,6 +726,44 @@ impl SessionManager {
         }
 
         expired
+    }
+
+    pub(crate) async fn idle_session_keys(&self) -> Vec<String> {
+        self.sessions
+            .read()
+            .await
+            .iter()
+            .filter(|(_, session)| session.should_reset())
+            .map(|(key, _)| key.clone())
+            .collect()
+    }
+
+    pub(crate) async fn expire_idle_session_with_browser(
+        &self,
+        key: &str,
+        browsers: &BrowserRetirer,
+    ) -> Result<Option<Session>, &'static str> {
+        let mut browser = SessionBrowserBoundary::new(Some(browsers));
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let Some(session) = sessions.get(key) else {
+                return Ok(None);
+            };
+            if !session.should_reset() {
+                return Ok(None);
+            }
+            let mut user_sessions = self.user_sessions.write().await;
+            if !browser.try_retire(key)? {
+                drop(user_sessions);
+                drop(sessions);
+                browser.wait_for_slot().await?;
+                continue;
+            }
+            if let Some(ids) = user_sessions.get_mut(&session.user_id) {
+                ids.retain(|id| id != key);
+            }
+            return Ok(sessions.remove(key));
+        }
     }
 
     /// Expire idle sessions according to their reset policy.
@@ -878,6 +1013,93 @@ mod tests {
         assert_eq!(new_session.chat_id, "chat-reset-id");
         assert!(new_session.messages.is_empty());
         assert!(manager.get_messages(&sid).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_manager_reports_policy_reset_with_the_previous_state() {
+        let manager = SessionManager::new(SessionConfig {
+            reset_policy: SessionResetPolicy::Idle { timeout_minutes: 0 },
+            ..SessionConfig::default()
+        });
+        let created = manager
+            .admit_session("telegram", "policy", "user1", None)
+            .await
+            .unwrap();
+        assert!(matches!(created.transition, SessionTransition::Created));
+        manager
+            .add_message("telegram:policy", Message::user("old message"))
+            .await;
+
+        let reset = manager
+            .admit_session("telegram", "policy", "user1", None)
+            .await
+            .unwrap();
+        let SessionTransition::PolicyReset(previous) = reset.transition else {
+            panic!("admission did not report the policy reset");
+        };
+        assert_eq!(previous.id, created.session.id);
+        assert_eq!(previous.messages.len(), 1);
+        assert_eq!(reset.session.id, created.session.id);
+        assert!(reset.session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn overlapping_policy_resets_pin_only_their_own_browser_generation() {
+        use hermes_tools::backends::browser::unavailable_browser_backend;
+        use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
+
+        let manager = SessionManager::new(SessionConfig {
+            reset_policy: SessionResetPolicy::Idle { timeout_minutes: 0 },
+            ..SessionConfig::default()
+        });
+        let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+        let queue = BrowserReleaseQueue::start(browsers.clone());
+        let retirer = queue.retirer();
+        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer));
+        let before = admit("shared").await.unwrap();
+        let other = admit("other").await.unwrap();
+
+        let (first, second) = tokio::join!(admit("shared"), admit("shared"));
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert!(matches!(
+            first.transition,
+            SessionTransition::PolicyReset(_)
+        ));
+        assert!(matches!(
+            second.transition,
+            SessionTransition::PolicyReset(_)
+        ));
+        assert_eq!(first.session.id, before.session.id);
+        assert_eq!(second.session.id, before.session.id);
+
+        // Build the tool overrides only after both admissions have completed.
+        let call = |admission: SessionAdmission| async move {
+            admission.browser.unwrap().tool_overrides()["browser_snapshot"]
+                .execute(serde_json::json!({}))
+                .await
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(call(before).await.contains("browser was closed"));
+        let competing = [call(first).await, call(second).await];
+        assert_eq!(
+            competing
+                .iter()
+                .filter(|error| error.contains("browser was closed"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            competing
+                .iter()
+                .filter(|error| error.contains("fixture browser"))
+                .count(),
+            1
+        );
+        assert!(call(other).await.contains("fixture browser"));
+        browsers.close_all().await;
+        queue.drain().await.unwrap();
     }
 
     #[tokio::test]
