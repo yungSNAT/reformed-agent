@@ -488,12 +488,10 @@ impl Gateway {
         session_key: &str,
         generation: &SessionGeneration,
         max_messages: usize,
-    ) -> CompressionOutcome {
-        let Some(current) = self.session_manager.turn_messages(session_key, generation).await else {
-            return CompressionOutcome::default();
-        };
+    ) -> Option<CompressionOutcome> {
+        let current = self.session_manager.turn_messages(session_key, generation).await?;
         if current.len() <= max_messages {
-            return CompressionOutcome::default();
+            return Some(CompressionOutcome::Unchanged);
         }
 
         let mut compressed = Vec::new();
@@ -531,16 +529,15 @@ impl Gateway {
         }
         compressed.extend(tail);
 
-        if self.session_manager
-            .update_turn_messages(session_key, generation, |messages| *messages = compressed)
-            .await.is_none()
-        {
-            return CompressionOutcome::default();
-        }
-        CompressionOutcome {
-            removed_messages,
-            summary_warning,
-        }
+        let replaced = self
+            .session_manager
+            .replace_turn_messages_if_unchanged(session_key, generation, &current, compressed)
+            .await?;
+        Some(if replaced {
+            CompressionOutcome::Compressed { removed_messages, summary_warning }
+        } else {
+            CompressionOutcome::HistoryChanged
+        })
     }
 
     async fn build_status_text(&self, session_key: &str) -> String {

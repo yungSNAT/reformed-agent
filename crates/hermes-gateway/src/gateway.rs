@@ -316,10 +316,13 @@ enum SlashCommandOutcome {
     ForwardToAgent { message: String },
 }
 
-#[derive(Debug, Clone, Default)]
-struct CompressionOutcome {
-    removed_messages: usize,
-    summary_warning: Option<String>,
+enum CompressionOutcome {
+    Unchanged,
+    HistoryChanged,
+    Compressed {
+        removed_messages: usize,
+        summary_warning: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]

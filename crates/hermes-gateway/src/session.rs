@@ -624,6 +624,26 @@ impl SessionManager {
         Some(update(&mut entry.session.messages))
     }
 
+    pub(crate) async fn replace_turn_messages_if_unchanged(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        expected_messages: &[Message],
+        replacement: Vec<Message>,
+    ) -> Option<bool> {
+        let mut sessions = self.sessions.write().await;
+        let entry = sessions.get_mut(session_key)?;
+        if &entry.generation != generation {
+            return None;
+        }
+        if entry.session.messages.as_slice() != expected_messages {
+            return Some(false);
+        }
+        entry.session.messages = replacement;
+        entry.session.last_active_at = Timestamp::now();
+        Some(true)
+    }
+
     pub(crate) async fn turn_messages(
         &self,
         session_key: &str,
@@ -1081,6 +1101,62 @@ mod tests {
             .await;
         assert_eq!(session.platform, "telegram");
         assert_eq!(session.chat_id, "chat1");
+    }
+
+    #[tokio::test]
+    async fn compaction_rejects_a_stale_snapshot_in_the_same_generation() {
+        let manager = SessionManager::new(SessionConfig::default());
+        let admission = manager
+            .admit_session("telegram", "compaction", "user1", None)
+            .await
+            .unwrap();
+        let key = "telegram:compaction";
+        let generation = &admission.generation;
+        let previous = Message::user("Previous message");
+        let concurrent = Message::assistant("Newly completed answer");
+        let summary = Message::assistant("Summary");
+        manager.add_message(key, previous.clone()).await;
+        let snapshot = manager.turn_messages(key, generation).await.unwrap();
+        manager.add_message(key, concurrent.clone()).await;
+
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(
+                    key,
+                    generation,
+                    &snapshot,
+                    vec![summary.clone()]
+                )
+                .await,
+            Some(false)
+        );
+        let current = manager.turn_messages(key, generation).await.unwrap();
+        assert_eq!(current, vec![previous, concurrent.clone()]);
+
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(
+                    key,
+                    generation,
+                    &current,
+                    vec![summary.clone(), concurrent.clone()]
+                )
+                .await,
+            Some(true)
+        );
+        assert_eq!(
+            manager.turn_messages(key, generation).await.unwrap(),
+            vec![summary.clone(), concurrent]
+        );
+
+        manager.reset_session(key).await;
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(key, generation, &[], vec![summary])
+                .await,
+            None
+        );
+        assert!(manager.get_messages(key).await.is_empty());
     }
 
     #[tokio::test]

@@ -624,15 +624,23 @@ impl Gateway {
                 let Some(generation) = generation.as_ref() else {
                     return Ok(true);
                 };
-                let outcome = self.compress_context(session_key, generation, 24).await;
-                let mut reply = format!(
-                    "📦 Context compressed. Removed {} old messages.",
-                    outcome.removed_messages
-                );
-                if let Some(warning) = outcome.summary_warning {
-                    reply.push_str("\n\n");
-                    reply.push_str(&warning);
-                }
+                let reply = match self.compress_context(session_key, generation, 24).await {
+                    None => return Ok(true),
+                    Some(CompressionOutcome::HistoryChanged) => {
+                        "Conversation changed during compression. Run `/compress` again.".to_string()
+                    }
+                    Some(CompressionOutcome::Unchanged) => {
+                        "📦 Context compressed. Removed 0 old messages.".to_string()
+                    }
+                    Some(CompressionOutcome::Compressed { removed_messages, summary_warning }) => {
+                        let mut reply = format!("📦 Context compressed. Removed {removed_messages} old messages.");
+                        if let Some(warning) = summary_warning {
+                            reply.push_str("\n\n");
+                            reply.push_str(&warning);
+                        }
+                        reply
+                    }
+                };
                 self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
                     .await?;
                 Ok(true)
