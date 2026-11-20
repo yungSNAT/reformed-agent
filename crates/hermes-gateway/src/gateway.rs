@@ -45,7 +45,7 @@ use crate::dm::{DmDecision, DmManager};
 use crate::hooks::{HookEvent, HookRegistry};
 use crate::media::validate_media_delivery_path;
 use crate::platforms::helpers::{extract_inline_images, extract_media_markers};
-use crate::session::{Session, SessionManager, SessionTransition};
+use crate::session::{Session, SessionGeneration, SessionManager, SessionTransition};
 use crate::session_control::{
     ActiveSessionControl, BusyInputMode, BusySessionCoordinator, MessageEvent, MessageType,
     ProcessingOutcome, SessionSource,

@@ -55,6 +55,7 @@ async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
             &key,
             GatewayCommandResult::ResetSession("fixture response".into()),
             None,
+            None,
         ));
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
             tokio::select! {
@@ -72,6 +73,144 @@ async fn cancelled_reset_clears_previous_approval_before_reset_hooks_finish() {
         Resolution::NothingPending,
         "a reset session retained its previous gateway approval"
     );
+}
+
+#[tokio::test]
+async fn delayed_yolo_cannot_restore_permissions_after_reset_or_switch() {
+    use hermes_tools::approval;
+
+    for (chat_id, transition) in [
+        ("delayed-yolo-reset", "/reset"),
+        ("delayed-yolo-switch", "/sessions test:permission-target"),
+    ] {
+        let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+        let mut dm = DmManager::with_pair_behavior();
+        dm.authorize_user("user1");
+        let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        gateway
+            .register_adapter(
+                "test",
+                Arc::new(TestAdapter {
+                    messages: sent.clone(),
+                }),
+            )
+            .await;
+        let pause = Arc::new(PauseHook::default());
+        let mut hooks = HookRegistry::new();
+        hooks.register_in_process("command:yolo", pause.clone());
+        gateway.set_hook_registry(Arc::new(hooks)).await;
+        let mut command = test_incoming("/yolo");
+        command.chat_id = chat_id.into();
+        let key = manager.compose_session_key(&command.platform, chat_id, &command.user_id);
+        manager
+            .get_or_create_session(&command.platform, "permission-target", &command.user_id)
+            .await;
+        manager
+            .add_message("test:permission-target", Message::user("switched history"))
+            .await;
+        approval::approve_session(&key, "previous permission");
+
+        let mut pending = std::pin::pin!(gateway.route_message(&command));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                () = pause.entered.notified() => {}
+                result = &mut pending => panic!("YOLO completed before its hook: {result:?}"),
+            }
+        })
+        .await
+        .expect("YOLO never reached its hook");
+        let before = manager.get_session(&key).await.unwrap();
+        let mut replacement = command.clone();
+        replacement.text = transition.into();
+        gateway.route_message(&replacement).await.unwrap();
+        let after = manager.get_session(&key).await.unwrap();
+        if transition == "/reset" {
+            assert_ne!(after.id, before.id);
+        } else {
+            assert_eq!(after.id, before.id);
+            assert_eq!(after.messages.len(), 1);
+        }
+        pause.resume.notify_one();
+        pending.await.unwrap();
+        let enabled = approval::is_session_yolo_enabled(&key);
+        let approved = approval::is_approved(&key, "previous permission");
+        approval::clear_session(&key);
+        assert!(!enabled, "delayed YOLO enabled bypass after {transition}");
+        assert!(!approved, "{transition} retained previous permissions");
+        assert!(sent
+            .lock()
+            .unwrap()
+            .last()
+            .unwrap()
+            .1
+            .contains("conversation changed"));
+    }
+}
+
+#[tokio::test]
+async fn delayed_approval_commands_cannot_resolve_the_replacement_conversation() {
+    use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
+
+    for (chat_id, action) in [("delayed-approve", "/approve"), ("delayed-deny", "/deny")] {
+        let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+        let mut dm = DmManager::with_pair_behavior();
+        dm.authorize_user("user1");
+        let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
+        gateway
+            .register_adapter(
+                "test",
+                Arc::new(TestAdapter {
+                    messages: Arc::default(),
+                }),
+            )
+            .await;
+        let pause = Arc::new(PauseHook::default());
+        let mut hooks = HookRegistry::new();
+        hooks.register_in_process(format!("command:{}", &action[1..]), pause.clone());
+        gateway.set_hook_registry(Arc::new(hooks)).await;
+        let mut command = test_incoming(action);
+        command.chat_id = chat_id.into();
+        let key = manager.compose_session_key(&command.platform, chat_id, &command.user_id);
+
+        let mut pending = std::pin::pin!(gateway.route_message(&command));
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            tokio::select! {
+                () = pause.entered.notified() => {}
+                result = &mut pending => panic!("{action} completed before its hook: {result:?}"),
+            }
+        })
+        .await
+        .expect("approval command never reached its hook");
+        let mut reset = command.clone();
+        reset.text = "/reset".into();
+        gateway.route_message(&reset).await.unwrap();
+        let binding = GatewayApprovalBinding {
+            session_key: key.clone(),
+            user_id: command.user_id.clone(),
+            notify: gateway_approval::notify_with(|_| async { true }),
+        };
+        let fixture_command = "echo fixture";
+        let error = gateway_approval::authorise(
+            &binding,
+            fixture_command,
+            &serde_json::json!({"command": fixture_command}),
+        )
+        .await
+        .unwrap_err();
+        assert!(error.contains("shown it"), "{error}");
+
+        pause.resume.notify_one();
+        let result = pending.await;
+        let resolution = gateway_approval::deny(&key, &command.user_id);
+        gateway_approval::clear(&key);
+        assert_eq!(
+            resolution,
+            Resolution::Resolved,
+            "delayed {action} consumed the replacement approval"
+        );
+        result.unwrap();
+    }
 }
 
 #[tokio::test]
@@ -193,6 +332,17 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
     dm.authorize_user("user1");
     let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default())
         .with_browser_retirement(retirer.clone());
+    let hooks_seen = Arc::new(Mutex::new(Vec::new()));
+    let mut hooks = HookRegistry::new();
+    for event in ["session:end", "on_session_finalize"] {
+        hooks.register_in_process(
+            event,
+            Arc::new(RecordingHook {
+                seen: hooks_seen.clone(),
+            }),
+        );
+    }
+    gateway.set_hook_registry(Arc::new(hooks)).await;
     let messages = Arc::new(Mutex::new(Vec::new()));
     gateway
         .register_adapter(
@@ -252,6 +402,25 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
             .unwrap_err();
         assert!(stale.to_string().contains("browser was closed"));
     }
+    let unchanged = manager.get_session(&key).await.unwrap();
+    assert_eq!(unchanged.id, before.id);
+    assert_eq!(unchanged.last_active_at, before.last_active_at);
+
+    let mut racing = std::pin::pin!(gateway.route_message(&reset));
+    assert!(futures::poll!(racing.as_mut()).is_pending());
+    assert!(
+        manager
+            .replace_messages_and_title(&key, before.messages.clone(), Some("replacement".into()))
+            .await
+    );
+    let switched = manager.get_session(&key).await.unwrap();
+    drop(slots.pop());
+    let error = tokio::time::timeout(std::time::Duration::from_secs(2), racing)
+        .await
+        .expect("reset kept waiting after release capacity was restored")
+        .unwrap_err();
+    assert!(error.to_string().contains("Session changed before reset"));
+
     let sent_before_failure = messages.lock().unwrap().len();
     drop(slots);
     queue.drain().await.unwrap();
@@ -264,7 +433,8 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
     let after = manager.get_session(&key).await.unwrap();
     assert_eq!(after.id, before.id);
     assert_eq!(after.messages.len(), before.messages.len());
-    assert_eq!(after.last_active_at, before.last_active_at);
+    assert_eq!(after.title.as_deref(), Some("replacement"));
+    assert_eq!(after.last_active_at, switched.last_active_at);
     let error = snapshot.execute(serde_json::json!({})).await.unwrap_err();
     assert!(error.to_string().contains("fixture browser"));
 
@@ -291,6 +461,20 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
         .contains("Browser release worker has stopped"));
     assert!(manager.get_session(&unknown_key).await.is_none());
     assert_eq!(messages.lock().unwrap().len(), sent_before_failure);
+    let events = hooks_seen.lock().unwrap();
+    assert_eq!(
+        events.len(),
+        2,
+        "an uncommitted reset announced finalisation: {events:?}"
+    );
+    assert!(events.iter().all(|(name, context)| {
+        let key_field = if name == "session:end" {
+            "session_id"
+        } else {
+            "session_key"
+        };
+        context[key_field] == "test:other"
+    }));
 }
 
 #[derive(Default)]
@@ -971,14 +1155,27 @@ async fn check_explicit_reset_finalization(reset_policy: hermes_config::SessionR
 
     #[async_trait::async_trait]
     impl HookHandler for ReadFinalizedSession {
-        async fn handle(&self, event: &HookEvent) -> Result<(), String> {
+        async fn handle(&self, _event: &HookEvent) -> Result<(), String> {
+            Err("finalisation did not supply a session snapshot".into())
+        }
+
+        async fn handle_finalized_session(
+            &self,
+            event: &HookEvent,
+            snapshot: &Session,
+        ) -> Result<(), String> {
             let key = event.context["session_key"].as_str().ok_or("missing key")?;
-            let snapshot = self
+            let current = self
                 .manager
                 .get_session(key)
                 .await
                 .ok_or("missing session")?;
-            self.snapshots.lock().unwrap().push(snapshot);
+            assert_ne!(
+                current.id, snapshot.id,
+                "hook called before reset committed"
+            );
+            assert!(current.messages.is_empty());
+            self.snapshots.lock().unwrap().push(snapshot.clone());
             Ok(())
         }
 
@@ -1084,6 +1281,7 @@ async fn check_explicit_reset_finalization(reset_policy: hermes_config::SessionR
         serde_json::json!(session_key)
     );
     assert_eq!(finalize_payload["reason"], serde_json::json!("reset"));
+    assert_eq!(finalize_payload.as_object().unwrap().len(), 6);
     assert_eq!(reset_payload["session_key"], serde_json::json!(session_key));
     assert_eq!(reset_payload["reason"], serde_json::json!("reset"));
     assert_ne!(reset_payload["session_id"], finalize_payload["session_id"]);

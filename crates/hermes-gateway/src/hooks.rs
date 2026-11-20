@@ -53,6 +53,8 @@ use hermes_core::subprocess::CommandNoWindowExt;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::session::Session;
+
 /// A single fired event. Mirrors Python's `(event_type, context)` tuple.
 #[derive(Debug, Clone, Serialize)]
 pub struct HookEvent {
@@ -87,6 +89,16 @@ pub trait HookHandler: Send + Sync {
     /// Handle one event. Errors are logged but never propagate to the
     /// gateway pipeline.
     async fn handle(&self, event: &HookEvent) -> Result<(), String>;
+
+    /// Handle a session-end event with access to the ended conversation.
+    /// The snapshot is available in process only, outside the event payload.
+    async fn handle_finalized_session(
+        &self,
+        event: &HookEvent,
+        _session: &Session,
+    ) -> Result<(), String> {
+        self.handle(event).await
+    }
 
     /// Handle one event and optionally return a decision/result payload.
     ///
@@ -305,10 +317,30 @@ impl HookRegistry {
     /// `scope:*` wildcard matches. Errors and panics are logged and
     /// swallowed.
     pub async fn emit(&self, event: &HookEvent) {
+        self.emit_event(event, None).await;
+    }
+
+    pub(crate) async fn emit_finalized_session(&self, event: &HookEvent, session: Arc<Session>) {
+        self.emit_event(event, Some(session)).await;
+    }
+
+    async fn emit_event(&self, event: &HookEvent, session: Option<Arc<Session>>) {
         for handler in self.matching_handlers(&event.event_type) {
             let name = handler.name().to_string();
             let evt_for_call = event.clone();
-            match tokio::spawn(async move { handler.handle(&evt_for_call).await }).await {
+            let session = session.clone();
+            let result = tokio::spawn(async move {
+                match session {
+                    Some(session) => {
+                        handler
+                            .handle_finalized_session(&evt_for_call, &session)
+                            .await
+                    }
+                    None => handler.handle(&evt_for_call).await,
+                }
+            })
+            .await;
+            match result {
                 Ok(Ok(())) => {}
                 Ok(Err(e)) => {
                     tracing::warn!(

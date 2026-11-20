@@ -62,7 +62,10 @@ impl Gateway {
 
     fn format_session_list(&self, heading: &str, sessions: &[Session]) -> String {
         if sessions.is_empty() {
-            return format!("📚 No {} found for your user.", heading.to_ascii_lowercase());
+            return format!(
+                "📚 No {} found for your user.",
+                heading.to_ascii_lowercase()
+            );
         }
 
         let mut out = format!("📚 **{}:**\n\n", heading);
@@ -132,6 +135,7 @@ impl Gateway {
         command_text: &str,
         result: GatewayCommandResult,
         browser: Option<&BrowserLease>,
+        generation: Option<SessionGeneration>,
     ) -> Result<SlashCommandOutcome, GatewayError> {
         if let Some(reply) = self.resolve_quick_command(command_text).await? {
             self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
@@ -195,11 +199,11 @@ impl Gateway {
         } = result
         {
             return self
-                .resolve_command_approval(incoming, session_key, choice, resolve_all)
+                .resolve_command_approval(incoming, session_key, generation, choice, resolve_all)
                 .await;
         }
         let handled = self
-            .apply_command_result(incoming, session_key, result, browser)
+            .apply_command_result(incoming, session_key, result, browser, generation)
             .await?;
         Ok(if handled {
             SlashCommandOutcome::Handled
@@ -218,6 +222,7 @@ impl Gateway {
         &self,
         incoming: &IncomingMessage,
         session_key: &str,
+        generation: Option<SessionGeneration>,
         choice: hermes_tools::approval::ApprovalChoice,
         resolve_all: bool,
     ) -> Result<SlashCommandOutcome, GatewayError> {
@@ -228,20 +233,30 @@ impl Gateway {
         let reply = if !deny && (resolve_all || choice != ApprovalChoice::Once) {
             "Only one-time approval is available here: reply /approve."
         } else {
-            let resolution = if deny {
-                gateway_approval::deny(session_key, &incoming.user_id)
-            } else {
-                gateway_approval::approve(session_key, &incoming.user_id)
-            };
+            let resolution = self
+                .session_manager
+                .with_current_generation(session_key, generation, || {
+                    if deny {
+                        gateway_approval::deny(session_key, &incoming.user_id)
+                    } else {
+                        gateway_approval::approve(session_key, &incoming.user_id)
+                    }
+                })
+                .await;
             match resolution {
-                Resolution::NothingPending => "No command is waiting for approval in this chat.",
-                Resolution::NotRequester => {
+                None => {
+                    "The conversation changed. Check the pending command before replying again."
+                }
+                Some(Resolution::NothingPending) => {
+                    "No command is waiting for approval in this chat."
+                }
+                Some(Resolution::NotRequester) => {
                     "Only the user who asked for this command can approve or deny it."
                 }
-                Resolution::Resolved if deny => "Denied. The command will not run.",
+                Some(Resolution::Resolved) if deny => "Denied. The command will not run.",
                 // Nothing is sent first: a failed send must not leave a grant
                 // without the turn that uses or revokes it.
-                Resolution::Resolved => {
+                Some(Resolution::Resolved) => {
                     return Ok(SlashCommandOutcome::ForwardToAgent {
                         message: gateway_approval::APPROVED_RETRY_MESSAGE.to_string(),
                     });
@@ -425,6 +440,7 @@ impl Gateway {
         session_key: &str,
         result: GatewayCommandResult,
         browser: Option<&BrowserLease>,
+        generation: Option<SessionGeneration>,
     ) -> Result<bool, GatewayError> {
         match result {
             GatewayCommandResult::Reply(text)
@@ -435,39 +451,33 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ResetSession(reply) => {
-                if let Some(retirer) = &self.browser_retirer {
-                    retirer
-                        .ensure_running()
-                        .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-                }
-                let old_session = self.session_manager.get_session(session_key).await;
-                if let Some(old_session) = &old_session {
-                    self.emit_hook_event(
+                let (old_session, reset_session) = self
+                    .session_manager
+                    .reset_session_for_command(
+                        &incoming.platform,
+                        &incoming.chat_id,
+                        &incoming.user_id,
+                        self.browser_retirer.as_ref(),
+                    )
+                    .await
+                    .map_err(|error| GatewayError::Platform(error.to_owned()))?;
+                if let Some(old_session) = old_session {
+                    let ended = Arc::new(old_session);
+                    self.emit_finalized_session_event(
                         "session:end",
                         serde_json::json!({
                             "platform": incoming.platform,
                             "chat_id": incoming.chat_id,
                             "user_id": incoming.user_id,
                             "session_id": session_key,
-                            "logical_session_id": old_session.id
+                            "logical_session_id": ended.id
                         }),
+                        ended.clone(),
                     )
                     .await;
-                    self.emit_session_finalize(session_key, old_session, "reset")
+                    self.emit_session_finalize(session_key, ended, "reset")
                         .await;
-                }
-                let reset_session = self
-                    .session_manager
-                    .reset_session_for_command(
-                        &incoming.platform,
-                        &incoming.chat_id,
-                        &incoming.user_id,
-                        old_session.as_ref(),
-                        self.browser_retirer.as_ref(),
-                    )
-                    .await
-                    .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-                if old_session.is_none() {
+                } else {
                     self.emit_hook_event(
                         "session:start",
                         serde_json::json!({
@@ -666,9 +676,20 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ToggleYolo(_) => {
-                let enabled = hermes_tools::approval::toggle_session_yolo(session_key);
-                let reply = format!("🤠 YOLO mode: {}", if enabled { "ON" } else { "OFF" });
-                self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
+                let enabled = self
+                    .session_manager
+                    .with_current_generation(session_key, generation, || {
+                        hermes_tools::approval::toggle_session_yolo(session_key)
+                    })
+                    .await;
+                let reply = match enabled {
+                    Some(true) => "🤠 YOLO mode: ON",
+                    Some(false) => "🤠 YOLO mode: OFF",
+                    None => {
+                        "The conversation changed. Use /yolo again to change its approval mode."
+                    }
+                };
+                self.send_message(&incoming.platform, &incoming.chat_id, reply, None)
                     .await?;
                 Ok(true)
             }
@@ -838,13 +859,25 @@ impl Gateway {
             }
             GatewayCommandResult::BackgroundTask { prompt } => {
                 let handled = self
-                    .handle_background_command(incoming, session_key, &prompt, false, browser.cloned())
+                    .handle_background_command(
+                        incoming,
+                        session_key,
+                        &prompt,
+                        false,
+                        browser.cloned(),
+                    )
                     .await?;
                 Ok(handled)
             }
             GatewayCommandResult::BtwTask { prompt } => {
                 let handled = self
-                    .handle_background_command(incoming, session_key, &prompt, true, browser.cloned())
+                    .handle_background_command(
+                        incoming,
+                        session_key,
+                        &prompt,
+                        true,
+                        browser.cloned(),
+                    )
                     .await?;
                 Ok(handled)
             }
@@ -998,14 +1031,14 @@ impl Gateway {
                 let msg = if let Some(target) = matched {
                     let copied = self
                         .session_manager
-                        .replace_messages_and_title(
+                        .switch_session_for_command(
                             session_key,
+                            generation,
                             target.messages.clone(),
                             target.title.clone(),
                         )
                         .await;
                     if copied {
-                        hermes_tools::approval::clear_session(session_key);
                         format!(
                             "🔁 Switched to session `{}`.\nLoaded {} message(s) into this chat context.",
                             session_id,
@@ -1013,7 +1046,7 @@ impl Gateway {
                         )
                     } else {
                         format!(
-                            "❌ Could not switch to `{}` because the current chat session key is missing.",
+                            "❌ Could not switch to `{}` because the current conversation changed.",
                             session_id
                         )
                     }

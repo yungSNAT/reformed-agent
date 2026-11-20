@@ -224,10 +224,25 @@ impl Gateway {
         })
     }
 
-    async fn emit_session_finalize(&self, session_key: &str, session: &Session, reason: &str) {
-        self.emit_hook_event(
+    async fn emit_finalized_session_event(
+        &self,
+        event_type: &str,
+        context: serde_json::Value,
+        session: Arc<Session>,
+    ) {
+        let registry = self.hook_registry.read().await.clone();
+        if let Some(registry) = registry {
+            registry
+                .emit_finalized_session(&HookEvent::new(event_type, context), session)
+                .await;
+        }
+    }
+
+    async fn emit_session_finalize(&self, session_key: &str, session: Arc<Session>, reason: &str) {
+        self.emit_finalized_session_event(
             "on_session_finalize",
-            Self::session_lifecycle_context(session_key, session, reason),
+            Self::session_lifecycle_context(session_key, &session, reason),
+            session,
         )
         .await;
     }
@@ -247,12 +262,13 @@ impl Gateway {
 
     async fn finalize_active_sessions(&self, reason: &str) -> usize {
         let sessions = self.session_manager.all_sessions().await;
-        for (session_key, session) in &sessions {
-            hermes_tools::gateway_approval::clear(session_key);
-            self.emit_session_finalize(session_key, session, reason)
+        let count = sessions.len();
+        for (session_key, session) in sessions {
+            hermes_tools::gateway_approval::clear(&session_key);
+            self.emit_session_finalize(&session_key, Arc::new(session), reason)
                 .await;
         }
-        sessions.len()
+        count
     }
 
     fn busy_input_mode(&self) -> BusyInputMode {
@@ -352,5 +368,4 @@ impl Gateway {
     // -----------------------------------------------------------------------
     // Message routing
     // -----------------------------------------------------------------------
-
 }

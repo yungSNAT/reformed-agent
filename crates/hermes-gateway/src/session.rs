@@ -274,6 +274,39 @@ pub(crate) struct SessionAdmission {
     session: Session,
     pub(crate) transition: SessionTransition,
     pub(crate) browser: Option<BrowserLease>,
+    pub(crate) generation: SessionGeneration,
+}
+
+#[derive(Clone, Copy, Eq, PartialEq)]
+pub(crate) struct SessionGeneration(Uuid);
+
+impl SessionGeneration {
+    fn new() -> Self {
+        Self(Uuid::new_v4())
+    }
+}
+
+struct SessionEntry {
+    session: Session,
+    generation: SessionGeneration,
+}
+
+impl SessionEntry {
+    fn reset(&mut self) -> Session {
+        let messages = std::mem::take(&mut self.session.messages);
+        let mut previous = self.session.clone();
+        previous.messages = messages;
+        self.session.reset_history();
+        self.generation = SessionGeneration::new();
+        previous
+    }
+
+    fn replace_context(&mut self, messages: Vec<Message>, title: Option<String>) {
+        self.session.messages = messages;
+        self.session.title = normalize_session_title(title.as_deref());
+        self.session.touch();
+        self.generation = SessionGeneration::new();
+    }
 }
 
 struct SessionBoundary<'a> {
@@ -335,7 +368,7 @@ impl<'a> SessionBoundary<'a> {
 /// Manages all active sessions, providing creation, retrieval, and
 /// cross-platform session continuity.
 pub struct SessionManager {
-    sessions: RwLock<HashMap<String, Session>>,
+    sessions: RwLock<HashMap<String, SessionEntry>>,
     config: SessionConfig,
 
     /// Index: (user_id) -> Set of session IDs for cross-platform continuity.
@@ -435,7 +468,8 @@ impl SessionManager {
 
         loop {
             let mut sessions = self.sessions.write().await;
-            if let Some(session) = sessions.get_mut(&session_key) {
+            if let Some(entry) = sessions.get_mut(&session_key) {
+                let session = &mut entry.session;
                 let transition = if session.should_reset() {
                     if !boundary.try_finish(&session_key)? {
                         drop(sessions);
@@ -447,6 +481,7 @@ impl SessionManager {
                     previous.messages = messages;
                     session.created_at = Timestamp::now();
                     session.last_active_at = Timestamp::now();
+                    entry.generation = SessionGeneration::new();
                     SessionTransition::PolicyReset(previous)
                 } else {
                     session.touch();
@@ -456,31 +491,42 @@ impl SessionManager {
                     session: session.clone(),
                     transition,
                     browser: boundary.pin(&session_key),
+                    generation: entry.generation,
                 });
             }
 
             let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
             let mut user_sessions = self.user_sessions.write().await;
-            Self::insert_session(&mut sessions, &mut user_sessions, &session_key, &session);
+            let generation =
+                Self::insert_session(&mut sessions, &mut user_sessions, &session_key, &session);
             return Ok(SessionAdmission {
                 session,
                 transition: SessionTransition::Created,
                 browser: boundary.pin(&session_key),
+                generation,
             });
         }
     }
 
     fn insert_session(
-        sessions: &mut HashMap<String, Session>,
+        sessions: &mut HashMap<String, SessionEntry>,
         user_sessions: &mut HashMap<String, Vec<String>>,
         session_key: &str,
         session: &Session,
-    ) {
-        sessions.insert(session_key.to_string(), session.clone());
+    ) -> SessionGeneration {
+        let generation = SessionGeneration::new();
+        sessions.insert(
+            session_key.to_string(),
+            SessionEntry {
+                session: session.clone(),
+                generation,
+            },
+        );
         user_sessions
             .entry(session.user_id.clone())
             .or_default()
             .push(session_key.to_string());
+        generation
     }
 
     /// Reset a session by key, clearing all messages and rotating the logical
@@ -490,10 +536,8 @@ impl SessionManager {
         session_id: &str,
     ) -> Option<(Session, Session)> {
         let mut sessions = self.sessions.write().await;
-        let session = sessions.get_mut(session_id)?;
-        let old = session.clone();
-        session.reset_history();
-        Some((old, session.clone()))
+        let entry = sessions.get_mut(session_id)?;
+        Some((entry.reset(), entry.session.clone()))
     }
 
     pub(crate) async fn reset_session_for_command(
@@ -501,30 +545,23 @@ impl SessionManager {
         platform: &str,
         chat_id: &str,
         user_id: &str,
-        previous: Option<&Session>,
         browsers: Option<&BrowserRetirer>,
-    ) -> Result<Session, &'static str> {
+    ) -> Result<(Option<Session>, Session), &'static str> {
         let session_key = self.compose_session_key(platform, chat_id, user_id);
         let mut boundary = SessionBoundary::new(browsers, hermes_tools::approval::clear_session);
+        let mut initial_generation = None;
         loop {
             let mut sessions = self.sessions.write().await;
             let current = sessions.get_mut(&session_key);
-            // Finalisation hooks ran outside the lock. Do not reset a replacement
-            // session if one of those hooks or another route changed the generation.
-            let same_generation = match (current.as_deref(), previous) {
-                (Some(current), Some(previous)) => {
-                    current.id == previous.id && current.created_at == previous.created_at
-                }
-                (None, None) => true,
-                _ => false,
-            };
-            if !same_generation {
+            // Waiting for queue capacity must not let this request reset a
+            // different conversation in the same chat.
+            let generation = current.as_ref().map(|entry| entry.generation);
+            if *initial_generation.get_or_insert(generation) != generation {
                 return Err("Session changed before reset");
             }
-            if let Some(session) = current {
+            if let Some(entry) = current {
                 if boundary.try_finish(&session_key)? {
-                    session.reset_history();
-                    return Ok(session.clone());
+                    return Ok((Some(entry.reset()), entry.session.clone()));
                 }
                 drop(sessions);
                 boundary.wait_for_slot().await?;
@@ -543,8 +580,20 @@ impl SessionManager {
             let reset_policy = self.effective_reset_policy(platform, session_type);
             let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
             Self::insert_session(&mut sessions, &mut user_sessions, &session_key, &session);
-            return Ok(session);
+            return Ok((None, session));
         }
+    }
+
+    /// Keep the admission current for the entire synchronous permission mutation.
+    pub(crate) async fn with_current_generation<T>(
+        &self,
+        session_key: &str,
+        expected: Option<SessionGeneration>,
+        action: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let sessions = self.sessions.read().await;
+        let entry = sessions.get(session_key)?;
+        (entry.generation == expected?).then(action)
     }
 
     /// Reset a session by key, clearing all messages.
@@ -555,7 +604,8 @@ impl SessionManager {
     /// Add a message to a session.
     pub async fn add_message(&self, session_id: &str, message: Message) {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             session.messages.push(message);
             session.last_active_at = Timestamp::now();
         }
@@ -566,14 +616,15 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         sessions
             .get(session_id)
-            .map(|s| s.messages.clone())
+            .map(|entry| entry.session.messages.clone())
             .unwrap_or_default()
     }
 
     /// Replace all messages for a session.
     pub async fn replace_messages(&self, session_id: &str, messages: Vec<Message>) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             session.messages = messages;
             session.last_active_at = Timestamp::now();
             return true;
@@ -590,20 +641,37 @@ impl SessionManager {
         title: Option<String>,
     ) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.messages = messages;
-            session.title = normalize_session_title(title.as_deref());
-            session.last_active_at = Timestamp::now();
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.replace_context(messages, title);
             return true;
         }
         false
+    }
+
+    pub(crate) async fn switch_session_for_command(
+        &self,
+        session_key: &str,
+        expected: Option<SessionGeneration>,
+        messages: Vec<Message>,
+        title: Option<String>,
+    ) -> bool {
+        let mut sessions = self.sessions.write().await;
+        let Some(entry) = sessions.get_mut(session_key) else {
+            return false;
+        };
+        if Some(entry.generation) != expected {
+            return false;
+        }
+        hermes_tools::approval::clear_session(session_key);
+        entry.replace_context(messages, title);
+        true
     }
 
     /// Set or clear the user-visible title for a session.
     pub async fn set_title(&self, session_id: &str, title: impl AsRef<str>) -> Option<String> {
         let mut sessions = self.sessions.write().await;
         let normalized = normalize_session_title(Some(title.as_ref()));
-        let session = sessions.get_mut(session_id)?;
+        let session = &mut sessions.get_mut(session_id)?.session;
         session.title = normalized.clone();
         session.last_active_at = Timestamp::now();
         normalized
@@ -612,16 +680,18 @@ impl SessionManager {
     /// Return the user-visible title for a session, if one is set.
     pub async fn get_title(&self, session_id: &str) -> Option<String> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).and_then(|s| s.title.clone())
+        sessions
+            .get(session_id)
+            .and_then(|entry| entry.session.title.clone())
     }
 
     /// Pop the latest message from a session.
     pub async fn pop_last_message(&self, session_id: &str) -> Option<Message> {
         let mut sessions = self.sessions.write().await;
-        sessions.get_mut(session_id).and_then(|s| {
-            let popped = s.messages.pop();
+        sessions.get_mut(session_id).and_then(|entry| {
+            let popped = entry.session.messages.pop();
             if popped.is_some() {
-                s.last_active_at = Timestamp::now();
+                entry.session.touch();
             }
             popped
         })
@@ -630,7 +700,7 @@ impl SessionManager {
     /// Get a session by its ID.
     pub async fn get_session(&self, session_id: &str) -> Option<Session> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).cloned()
+        sessions.get(session_id).map(|entry| entry.session.clone())
     }
 
     /// Find all sessions for a given user across all platforms
@@ -643,7 +713,7 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         session_ids
             .iter()
-            .filter_map(|id| sessions.get(id).cloned())
+            .filter_map(|id| sessions.get(id).map(|entry| entry.session.clone()))
             .collect()
     }
 
@@ -690,10 +760,10 @@ impl SessionManager {
     /// Remove a session entirely.
     pub async fn remove_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.remove(session_id) {
+        if let Some(entry) = sessions.remove(session_id) {
             // Clean up user_sessions index
             let mut user_sessions = self.user_sessions.write().await;
-            if let Some(ids) = user_sessions.get_mut(&session.user_id) {
+            if let Some(ids) = user_sessions.get_mut(&entry.session.user_id) {
                 ids.retain(|id| id != session_id);
             }
         }
@@ -708,11 +778,13 @@ impl SessionManager {
     /// Called periodically or before each interaction.
     pub async fn check_and_reset_if_needed(&self, session_id: &str) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             if session.should_reset() {
                 session.messages.clear();
                 session.created_at = Timestamp::now();
                 session.last_active_at = Timestamp::now();
+                entry.generation = SessionGeneration::new();
                 return true;
             }
         }
@@ -723,7 +795,8 @@ impl SessionManager {
     /// metadata from the session's state.
     pub async fn build_session_context(&self, session_id: &str) -> Option<SessionContext> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).map(|session| {
+        sessions.get(session_id).map(|entry| {
+            let session = &entry.session;
             let mut ctx = SessionContext::new(session);
             ctx.set_metadata("session_type", format!("{:?}", session.session_type));
             ctx.set_metadata("message_count", session.messages.len().to_string());
@@ -740,8 +813,7 @@ impl SessionManager {
     /// Returns all sessions that were flushed.
     pub async fn flush_memories(&self) -> Vec<Session> {
         let mut sessions = self.sessions.write().await;
-        let all: Vec<Session> = sessions.values().cloned().collect();
-        sessions.clear();
+        let all = sessions.drain().map(|(_, entry)| entry.session).collect();
 
         let mut user_sessions = self.user_sessions.write().await;
         user_sessions.clear();
@@ -754,7 +826,7 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         sessions
             .iter()
-            .map(|(key, session)| (key.clone(), session.clone()))
+            .map(|(key, entry)| (key.clone(), entry.session.clone()))
             .collect()
     }
 
@@ -772,7 +844,7 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let stale_ids: Vec<String> = sessions
             .iter()
-            .filter(|(_, s)| s.should_reset())
+            .filter(|(_, entry)| entry.session.should_reset())
             .map(|(id, _)| id.clone())
             .collect();
         if stale_ids.is_empty() {
@@ -781,7 +853,8 @@ impl SessionManager {
         let mut user_sessions = self.user_sessions.write().await;
         let mut expired = Vec::with_capacity(stale_ids.len());
         for id in stale_ids {
-            if let Some(session) = sessions.remove(&id) {
+            if let Some(entry) = sessions.remove(&id) {
+                let session = entry.session;
                 clear_approvals(&id);
                 if let Some(ids) = user_sessions.get_mut(&session.user_id) {
                     ids.retain(|existing| existing != &id);
@@ -798,7 +871,7 @@ impl SessionManager {
             .read()
             .await
             .iter()
-            .filter(|(_, session)| session.should_reset())
+            .filter(|(_, entry)| entry.session.should_reset())
             .map(|(key, _)| key.clone())
             .collect()
     }
@@ -812,9 +885,10 @@ impl SessionManager {
         let mut boundary = SessionBoundary::new(Some(browsers), clear_approvals);
         loop {
             let mut sessions = self.sessions.write().await;
-            let Some(session) = sessions.get(key) else {
+            let Some(entry) = sessions.get(key) else {
                 return Ok(None);
             };
+            let session = &entry.session;
             if !session.should_reset() {
                 return Ok(None);
             }
@@ -828,7 +902,7 @@ impl SessionManager {
             if let Some(ids) = user_sessions.get_mut(&session.user_id) {
                 ids.retain(|id| id != key);
             }
-            return Ok(sessions.remove(key));
+            return Ok(sessions.remove(key).map(|entry| entry.session));
         }
     }
 

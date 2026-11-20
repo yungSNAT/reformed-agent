@@ -172,7 +172,7 @@ impl Gateway {
             {
                 // An explicit reset is its own session transition. Running
                 // policy admission first can discard the same session twice.
-                self.execute_slash_command(incoming, &session_key, &text, result, None)
+                self.execute_slash_command(incoming, &session_key, &text, result, None, None)
                     .await?;
                 return Ok(None);
             }
@@ -194,7 +194,7 @@ impl Gateway {
         let session_start_reason = match admission.transition {
             SessionTransition::Created => Some("new"),
             SessionTransition::PolicyReset(previous) => {
-                self.emit_session_finalize(&session_key, &previous, "auto_reset")
+                self.emit_session_finalize(&session_key, Arc::from(previous), "auto_reset")
                     .await;
                 Some("auto_reset")
             }
@@ -254,6 +254,7 @@ impl Gateway {
                     &text,
                     result,
                     admission.browser.as_ref(),
+                    Some(admission.generation),
                 )
                 .await?
             {
@@ -370,7 +371,8 @@ impl Gateway {
             .map(Self::busy_event_to_incoming)
         };
         if let Err(error) = &processing_result {
-            self.send_processing_error_notification(incoming, error).await;
+            self.send_processing_error_notification(incoming, error)
+                .await;
         }
         processing_result?;
         Ok(pending)
@@ -582,5 +584,4 @@ impl Gateway {
             ))),
         }
     }
-
 }

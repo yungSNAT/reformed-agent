@@ -20,7 +20,9 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
+        let mut runtime_context = self
+            .build_runtime_context(incoming, session_key, browser)
+            .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.message_handler_with_context.read().await.clone();
@@ -117,7 +119,9 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
+        let mut runtime_context = self
+            .build_runtime_context(incoming, session_key, browser)
+            .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.streaming_handler_with_context.read().await.clone();
@@ -190,7 +194,9 @@ impl Gateway {
             let handler = self.streaming_handler.read().await;
             match handler.as_ref() {
                 Some(handler) => handler(legacy_messages, on_chunk).await,
-                None => Err(GatewayError::Platform("No streaming handler configured".into())),
+                None => Err(GatewayError::Platform(
+                    "No streaming handler configured".into(),
+                )),
             }
         };
         self.stream_manager.finish_stream(&stream_id).await;
@@ -681,7 +687,9 @@ impl Gateway {
             vec![Message::user(trimmed)]
         };
         let legacy_messages = original_messages.clone();
-        let runtime_context = self.build_runtime_context(incoming, session_key, browser).await;
+        let runtime_context = self
+            .build_runtime_context(incoming, session_key, browser)
+            .await;
         tokio::spawn(async move {
             let result = if let Some(handler) = context_handler {
                 handler(original_messages, runtime_context).await
@@ -1171,12 +1179,17 @@ impl Gateway {
             for key in self.session_manager.idle_session_keys().await {
                 match self
                     .session_manager
-                    .expire_idle_session_with_browser(&key, browsers, hermes_tools::approval::clear_session)
+                    .expire_idle_session_with_browser(
+                        &key,
+                        browsers,
+                        hermes_tools::approval::clear_session,
+                    )
                     .await
                 {
                     Ok(Some(session)) => {
                         expired += 1;
-                        self.emit_session_finalize(&key, &session, reason).await;
+                        self.emit_session_finalize(&key, Arc::new(session), reason)
+                            .await;
                     }
                     Ok(None) => {}
                     Err(error) => {
@@ -1191,11 +1204,12 @@ impl Gateway {
             .session_manager
             .expire_idle_session_snapshots_with(hermes_tools::approval::clear_session)
             .await;
-        for (session_key, session) in &expired {
-            self.emit_session_finalize(session_key, session, reason)
+        let count = expired.len();
+        for (session_key, session) in expired {
+            self.emit_session_finalize(&session_key, Arc::new(session), reason)
                 .await;
         }
-        expired.len()
+        count
     }
 
     /// Monitors adapter health and attempts reconnect through stop/start.
