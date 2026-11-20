@@ -454,13 +454,16 @@ async fn release_session_request(
         Ok(response) => {
             matches!(
                 response.status(),
-                reqwest::StatusCode::INTERNAL_SERVER_ERROR
+                reqwest::StatusCode::REQUEST_TIMEOUT
+                    | reqwest::StatusCode::TOO_MANY_REQUESTS
+                    | reqwest::StatusCode::INTERNAL_SERVER_ERROR
                     | reqwest::StatusCode::BAD_GATEWAY
                     | reqwest::StatusCode::SERVICE_UNAVAILABLE
                     | reqwest::StatusCode::GATEWAY_TIMEOUT
             ) && !response.headers().contains_key(reqwest::header::RETRY_AFTER)
         }
-        Err(error) => error.is_connect() || error.is_timeout(),
+        // A connection can close before the response even when dialing succeeded.
+        Err(error) => error.is_request() || error.is_timeout(),
     };
     if let Some(retry) = retry.filter(|_| transient) {
         outcome = retry.send().await;

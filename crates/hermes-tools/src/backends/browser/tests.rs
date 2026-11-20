@@ -2736,6 +2736,92 @@ async fn cloud_release_retries_the_same_session_after_a_timeout() {
 }
 
 #[tokio::test]
+async fn cloud_release_retries_request_timeout_and_rate_limit_without_retry_after() {
+    use std::sync::atomic::AtomicUsize;
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, Request, ResponseTemplate};
+
+    let mut results = Vec::new();
+    for status in [408, 429] {
+        let server = MockServer::builder().start().await;
+        let attempts = Arc::new(AtomicUsize::new(0));
+        let responses = attempts.clone();
+        Mock::given(method("DELETE"))
+            .and(path("/v2/browser/transient_fixture"))
+            .respond_with(move |_: &Request| {
+                let attempt = responses.fetch_add(1, Ordering::SeqCst);
+                ResponseTemplate::new(if attempt == 0 { status } else { 204 })
+            })
+            .mount(&server)
+            .await;
+
+        let backend = firecrawl_release_fixture(server.uri(), "transient_fixture").await;
+        let released = backend.close_active_session().await.unwrap();
+        results.push((status, released, attempts.load(Ordering::SeqCst)));
+    }
+    assert_eq!(results, [(408, true, 2), (429, true, 2)]);
+}
+
+#[tokio::test]
+async fn cloud_release_retries_when_the_server_closes_before_answering() {
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let server = tokio::spawn(async move {
+        let mut requests = Vec::new();
+        for round in 0..2 {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut request = String::new();
+            assert!(reader.read_line(&mut request).await.unwrap() > 0);
+            requests.push(request);
+            loop {
+                let mut header = String::new();
+                assert!(reader.read_line(&mut header).await.unwrap() > 0);
+                if header == "\r\n" {
+                    break;
+                }
+            }
+            if round == 1 {
+                reader
+                    .get_mut()
+                    .write_all(b"HTTP/1.1 204 No Content\r\nConnection: close\r\n\r\n")
+                    .await
+                    .unwrap();
+            }
+            // The first connection closes after the complete request.
+        }
+        requests
+    });
+
+    let backend = firecrawl_release_fixture(format!("http://{address}"), "closed_fixture").await;
+    assert!(backend.close_active_session().await.unwrap());
+    let requests = tokio::time::timeout(Duration::from_secs(5), server)
+        .await
+        .expect("server did not see both attempts")
+        .unwrap();
+    assert_eq!(
+        requests,
+        ["DELETE /v2/browser/closed_fixture HTTP/1.1\r\n"; 2]
+    );
+}
+
+async fn firecrawl_release_fixture(base_url: String, id: &str) -> FirecrawlBrowserBackend {
+    let backend = FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
+        api_key: "fixture-key".into(),
+        base_url,
+        ttl_secs: 300,
+        task_id: "fixture-task".into(),
+    });
+    *backend.session.lock().await = Some(FirecrawlBrowserSession {
+        bb_session_id: id.into(),
+        cdp_url: "wss://firecrawl.example/fixture".into(),
+    });
+    backend
+}
+
+#[tokio::test]
 async fn cloud_release_honours_retry_after_and_permanent_refusal() {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -2746,28 +2832,24 @@ async fn cloud_release_honours_retry_after_and_permanent_refusal() {
             "retry_later",
             ResponseTemplate::new(503).insert_header("retry-after", "60"),
         ),
+        (
+            "rate_limit",
+            ResponseTemplate::new(429).insert_header("retry-after", "60"),
+        ),
         ("denied", ResponseTemplate::new(403)),
+        ("not_implemented", ResponseTemplate::new(501)),
     ] {
         Mock::given(method("DELETE"))
             .and(path(format!("/v2/browser/{id}")))
             .respond_with(response)
             .mount(&server)
             .await;
-        let backend = FirecrawlBrowserBackend::new(FirecrawlBrowserConfig {
-            api_key: "fixture-key".into(),
-            base_url: server.uri(),
-            ttl_secs: 300,
-            task_id: "fixture-task".into(),
-        });
-        *backend.session.lock().await = Some(FirecrawlBrowserSession {
-            bb_session_id: id.into(),
-            cdp_url: "wss://firecrawl.example/fixture".into(),
-        });
+        let backend = firecrawl_release_fixture(server.uri(), id).await;
         assert!(!backend.close_active_session().await.unwrap());
     }
 
     let requests = server.received_requests().await.expect("recorded requests");
-    assert_eq!(requests.len(), 2);
+    assert_eq!(requests.len(), 4);
 }
 
 /// A local CDP backend at the fixture WebSocket `addr`, in its own context.
