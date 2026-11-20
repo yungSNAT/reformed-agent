@@ -1,6 +1,6 @@
 # Test Intent Mapping
 
-Generated: `2026-11-20T09:52:28.773417+00:00`
+Generated: `2026-11-20T10:50:11.886712+00:00`
 
 | Intent | Mapped | Evidence Count |
 | --- | --- | ---: |
@@ -10,7 +10,7 @@ Generated: `2026-11-20T09:52:28.773417+00:00`
 | `agent-loop-and-runtime` | yes | 115 |
 | `acp-protocol-and-transport` | yes | 21 |
 | `skills-management-contract` | yes | 78 |
-| `cron-and-scheduler-runtime` | yes | 80 |
+| `cron-and-scheduler-runtime` | yes | 81 |
 | `memory-plugin-integration` | yes | 12 |
 | `environment-lifecycle-contract` | yes | 17 |
 | `tool-call-parser-contract` | yes | 3 |

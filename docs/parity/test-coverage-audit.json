@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-20T09:52:32.812750+00:00",
+  "generated_at_utc": "2026-11-20T10:51:07.028912+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -991,7 +991,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 24,
+      "direct_test_evidence_count": 25,
       "direct_test_evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/swarm_specpatch_studio.rs",
@@ -1016,9 +1016,10 @@
         "crates/hermes-cron/src/persistence.rs",
         "crates/hermes-cron/src/runner.rs",
         "crates/hermes-cron/src/scheduler.rs",
+        "crates/hermes-cron/src/scheduler/completion_persistence_test.rs",
         "crates/hermes-cron/src/suggestions.rs"
       ],
-      "evidence_count": 80,
+      "evidence_count": 81,
       "evidence_sample": [
         "crates/hermes-cli/src/commands/command_agentic_workflows.rs",
         "crates/hermes-cli/src/commands/command_agentic_workflows/quorum_claims.rs",
@@ -1181,8 +1182,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 493,
-    "rust_test_functions": 9094,
+    "rust_test_files": 494,
+    "rust_test_functions": 9099,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
