@@ -218,6 +218,9 @@ async fn committed_policy_reset_delivers_all_hooks_after_request_cancellation() 
     let before = manager
         .get_or_create_session(&request.platform, &request.chat_id, &request.user_id)
         .await;
+    manager
+        .add_message(&key, Message::user("previous message"))
+        .await;
     {
         let mut pending = std::pin::pin!(gateway.route_message(&request));
         tokio::time::timeout(std::time::Duration::from_secs(5), async {
@@ -228,7 +231,7 @@ async fn committed_policy_reset_delivers_all_hooks_after_request_cancellation() 
         })
         .await
         .expect("Policy reset never reached its post-transition hook");
-        assert_ne!(manager.get_session(&key).await.unwrap().id, before.id);
+        assert!(manager.get_messages(&key).await.is_empty());
     }
 
     pause.resume.notify_one();
