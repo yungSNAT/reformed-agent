@@ -217,6 +217,94 @@ fn output_text(output: &Output) -> String {
     )
 }
 
+#[cfg(unix)]
+#[test]
+fn release_smoke_writes_failure_diagnostics_without_program_output() {
+    let fixture = TempTree::new("smoke-failure");
+    let assets = fixture.path().join("assets");
+    fs::create_dir(&assets).expect("create staged assets");
+    fs::write(
+        assets.join("install.sh"),
+        "#!/usr/bin/env bash\necho fixture-diagnostic-canary >&2\nexit 19\n",
+    )
+    .expect("write staged installer");
+    let report = fixture.path().join("report.json");
+
+    let output = Command::new("bash")
+        .arg(repo_root().join("scripts/smoke-release-artifact.sh"))
+        .arg("--asset-dir")
+        .arg(&assets)
+        .arg("--output-json")
+        .arg(&report)
+        .env("CI", "true")
+        .env("TMPDIR", fixture.path())
+        .stdin(Stdio::null())
+        .output()
+        .expect("run release smoke");
+
+    assert_eq!(output.status.code(), Some(19), "{}", output_text(&output));
+    let json = fs::read_to_string(report).expect("read smoke failure report");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).expect("parse smoke failure report"),
+        serde_json::json!({"schema_version": 1, "status": "FAIL", "phase": "install", "exit_status": 19}),
+    );
+    assert!(!output_text(&output).contains("fixture-diagnostic-canary"));
+}
+
+#[cfg(unix)]
+#[test]
+fn release_smoke_timeout_stops_legacy_probe_descendants() {
+    let fixture = TempTree::new("smoke-timeout");
+    let assets = fixture.path().join("assets");
+    fs::create_dir(&assets).expect("create staged assets");
+    fs::write(
+        assets.join("install.sh"),
+        r#"#!/usr/bin/env bash
+set -eu
+bin="$3"
+cat > "$bin/hermes" <<'SENTINEL'
+#!/usr/bin/env bash
+echo fixture-diagnostic-canary >&2
+bash -c 'sleep 4; : > "$HERMES_SMOKE_LATE_FILE"'
+SENTINEL
+chmod +x "$bin/hermes"
+cp "$bin/hermes" "$bin/hermes-agent-ultra"
+ln -s hermes-agent-ultra "$bin/hermes-ultra"
+echo "Installing hermes-agent-ultra from ${HERMES_RELEASE_BASE_URL}/fixture"
+echo "Checksum verified against SHA256SUMS."
+echo "Legacy hermes alias not installed by default"
+echo "Installed to $bin/hermes-agent-ultra"
+"#,
+    )
+    .expect("write staged installer");
+    let report = fixture.path().join("report.json");
+    let late_file = fixture.path().join("late-write");
+
+    let output = Command::new("bash")
+        .arg(repo_root().join("scripts/smoke-release-artifact.sh"))
+        .arg("--asset-dir")
+        .arg(&assets)
+        .arg("--output-json")
+        .arg(&report)
+        .env("CI", "true")
+        .env("TMPDIR", fixture.path())
+        .env("HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS", "1")
+        .env("HERMES_SMOKE_LATE_FILE", &late_file)
+        .stdin(Stdio::null())
+        .output()
+        .expect("run release smoke");
+
+    assert_eq!(output.status.code(), Some(124), "{}", output_text(&output));
+    let json = fs::read_to_string(report).expect("read timeout report");
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&json).expect("parse timeout report"),
+        serde_json::json!({"schema_version": 1, "status": "FAIL", "phase": "legacy-hermes", "exit_status": 124}),
+    );
+    assert!(!output_text(&output).contains("fixture-diagnostic-canary"));
+    std::thread::sleep(Duration::from_secs(3));
+    assert!(!late_file.exists(), "timed-out probe left a child running");
+}
+
 #[test]
 fn noninteractive_auto_install_skips_post_install_verification() {
     let fixture = InstallerFixture::new("noninteractive-auto");
