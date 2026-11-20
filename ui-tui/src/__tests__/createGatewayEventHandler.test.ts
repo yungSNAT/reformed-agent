@@ -353,7 +353,7 @@ describe('createGatewayEventHandler', () => {
     onEvent({
       payload: {
         cwd: '/repo',
-        python: '/opt/venv/bin/python',
+        command: '/repo/target/release/hermes-desktop-gateway',
         stderr_tail:
           '[startup] timed out\nModuleNotFoundError: No module named openai\nFileNotFoundError: ~/.hermes/config.yaml'
       },

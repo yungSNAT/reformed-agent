@@ -3,8 +3,8 @@
 //! Hermes Desktop's remote mode probes `GET /api/health` (or `/api/status`), then opens a WebSocket to
 //! `/api/ws?token=...` and speaks JSON-RPC over it; the first frame from the backend is a
 //! `gateway.ready` event. This crate serves that handshake, the chat methods in [`chat`] and
-//! a session's saved messages at `GET /api/sessions/{id}/messages`. Other methods get
-//! JSON-RPC 'method not found'.
+//! a session's saved messages at `GET /api/sessions/{id}/messages`, and reports the wake word and
+//! self-update as off. Other methods get JSON-RPC 'method not found'.
 //!
 //! The listener is loopback only. Every request must carry a `Host` naming a loopback
 //! address and the bound port (DNS rebinding). The WebSocket upgrade needs the token in its
@@ -16,7 +16,10 @@
 //! Local mode ([`local`], Unix) serves the same routes to the desktop on this machine. There the
 //! token path is off: the WebSocket upgrade needs a one-use `interactive` ticket in its `ticket`
 //! query and the messages route a one-use `native-http` ticket in `X-Hermes-Gateway-Ticket`, both
-//! minted on the runtime's private control socket, and any `Origin` refuses the request.
+//! minted on the runtime's private control socket, and any `Origin` refuses the request. The
+//! desktop's native dial offers its ticket as the `hermes-gateway-ticket.` subprotocol beside
+//! `hermes-gateway-v1` instead, and that connection speaks the canonical wire ([`chat`]'s
+//! `canonical` module).
 
 use std::collections::HashMap;
 use std::future::Future;
@@ -80,6 +83,13 @@ const LOOPBACK_NAMES: [&str; 3] = ["127.0.0.1", "localhost", "[::1]"];
 /// Header that carries the token on HTTP routes other than the public probes.
 const TOKEN_HEADER: &str = "x-hermes-session-token";
 
+/// The canonical session-authority protocol a native dial selects (upstream
+/// gateway/session_contract.py `CANONICAL_GATEWAY_PROTOCOL`).
+pub const CANONICAL_PROTOCOL: &str = "hermes-gateway-v1";
+
+/// Prefix of the subprotocol that carries a native dial's one-use ticket.
+const TICKET_PROTOCOL_PREFIX: &str = "hermes-gateway-ticket.";
+
 /// Header that carries a local-mode `native-http` ticket (upstream
 /// hermes_cli/dashboard_auth/native_http.py `HEADER`).
 const TICKET_HEADER: &str = "x-hermes-gateway-ticket";
@@ -131,6 +141,7 @@ fn router(auth: Auth, port: u16, chat: Chat) -> Router {
     });
     let private = Router::new()
         .route("/api/sessions/{session_id}/messages", get(messages))
+        .route("/api/hermes/update/check", get(update_check))
         .layer(middleware::from_fn_with_state(gateway.clone(), token_guard));
     Router::new()
         .route("/api/health", get(health))
@@ -204,6 +215,24 @@ async fn status() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "auth_required": false,
         "gateway_running": true,
+    }))
+}
+
+// Self-update is not served: this answers in the shape of upstream's
+// hermes_cli/web_routers/actions.py `check_hermes_update` with nothing to apply. Voice chat is not
+// served either, and `/api/audio/voice-live/status` is left unrouted on purpose: every 200 reply in
+// upstream's contract shows the desktop's voice-engine picker, whilst a 404 is read as a backend
+// that predates voice modes and hides it (apps/desktop/src/lib/voice-live.ts).
+
+async fn update_check() -> Json<Value> {
+    Json(json!({
+        "install_method": "unknown",
+        "current_version": env!("CARGO_PKG_VERSION"),
+        "behind": null,
+        "update_available": false,
+        "can_apply": false,
+        "update_command": "",
+        "message": "This gateway does not check for updates; update it the way it was installed.",
     }))
 }
 
@@ -296,10 +325,19 @@ async fn upgrade(
     ws: WebSocketUpgrade,
 ) -> Response {
     let credential = |name: &str| query.get(name).map(String::as_str);
+    // An ambiguous offer is refused before any ticket is read, so its ticket stays unspent. The
+    // token mode has no tickets, so a ticket protocol there is refused too.
+    let offered = match protocol_ticket(&headers) {
+        Ok(Some(_)) if matches!(gw.auth, Auth::Token(_)) => Err(()),
+        offered => offered,
+    };
+    let Ok(offered) = offered else {
+        return StatusCode::UNAUTHORIZED.into_response();
+    };
     if let Err(status) = admit(
         &gw,
         credential("token"),
-        credential("ticket"),
+        offered.or(credential("ticket")),
         Purpose::Interactive,
         &headers,
     ) {
@@ -307,13 +345,43 @@ async fn upgrade(
     }
     let epoch = gw.replay_epoch.clone();
     let chat = Arc::clone(&gw.chat);
+    let canonical = offered.is_some();
+    // The ticket-bearing protocol is a credential: only the public one is ever selected.
+    let ws = if canonical {
+        ws.protocols([CANONICAL_PROTOCOL])
+    } else {
+        ws
+    };
     ws.max_message_size(ATTACH_MAX_MESSAGE_BYTES)
         .max_frame_size(ATTACH_MAX_MESSAGE_BYTES)
-        .on_upgrade(move |socket| session(socket, epoch, chat))
+        .on_upgrade(move |socket| session(socket, epoch, chat, canonical))
 }
 
-async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
-    let ready = json!({
+/// The ticket a native dial offers as its `hermes-gateway-ticket.` subprotocol: `None` when it
+/// offers none, an error when the offer is ambiguous (no `hermes-gateway-v1` beside it, more than
+/// one ticket protocol, an empty ticket or a header that is not text), as upstream's
+/// `_gateway_ws_ticket_from_subprotocol` (hermes_cli/web_server_boundary.py) decides.
+fn protocol_ticket(headers: &HeaderMap) -> Result<Option<&str>, ()> {
+    let mut offered = Vec::new();
+    for value in headers.get_all(header::SEC_WEBSOCKET_PROTOCOL) {
+        let value = value.to_str().map_err(|_| ())?;
+        offered.extend(value.split(',').map(str::trim).filter(|p| !p.is_empty()));
+    }
+    let tickets: Vec<&str> = offered
+        .iter()
+        .filter_map(|p| p.strip_prefix(TICKET_PROTOCOL_PREFIX))
+        .collect();
+    match tickets[..] {
+        [] => Ok(None),
+        [ticket] if !ticket.is_empty() && offered.contains(&CANONICAL_PROTOCOL) => Ok(Some(ticket)),
+        _ => Err(()),
+    }
+}
+
+/// One connection. A `canonical` one ([`CANONICAL_PROTOCOL`]) announces the session authority in
+/// its `gateway.ready` and answers the session verbs as [`chat`]'s `canonical` module does.
+async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>, canonical: bool) {
+    let mut ready = json!({
         "jsonrpc": "2.0",
         "method": "event",
         "params": {"type": "gateway.ready", "payload": {
@@ -324,6 +392,9 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
             "replay_epoch": replay_epoch,
         }},
     });
+    if canonical {
+        ready["params"]["payload"]["session_authority"] = true.into();
+    }
     // Turns stream their events through this connection's outbox, after `gateway.ready`;
     // replies go out first, as each is written before the next outbox frame is read. Queued
     // events are written before the next request is read, so a client that reads slowly cannot
@@ -334,7 +405,13 @@ async fn session(mut socket: WebSocket, replay_epoch: String, chat: Arc<Chat>) {
     let (outbox, mut events) = mpsc::unbounded_channel::<Outgoing>();
     // Cannot fail: `events` lives until the session ends.
     let _ = outbox.send(Outgoing::from(ready));
-    let call = |method: &str, params: &Value| chat.call(method, params, &outbox);
+    let call = |method: &str, params: &Value| {
+        if canonical {
+            chat.call_canonical(method, params, &outbox, &replay_epoch)
+        } else {
+            chat.call(method, params, &outbox)
+        }
+    };
     loop {
         let frame = tokio::select! {
             biased;

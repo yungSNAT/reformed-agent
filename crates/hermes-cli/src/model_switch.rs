@@ -887,6 +887,22 @@ mod tests {
     }
 
     #[test]
+    fn gmi_curated_models_follow_upstreams_fallback_models() {
+        assert_eq!(
+            provider_curated_models("gmi"),
+            &[
+                "zai-org/GLM-5.1-FP8",
+                "deepseek-ai/DeepSeek-V3.2",
+                "moonshotai/Kimi-K2.5",
+                "google/gemini-3.1-flash-lite-preview",
+                "anthropic/claude-sonnet-5",
+                "anthropic/claude-sonnet-4.6",
+                "openai/gpt-5.4",
+            ]
+        );
+    }
+
+    #[test]
     fn direct_api_provider_curated_models_cover_upstream_provider_tests() {
         assert_eq!(provider_curated_models("xai")[0], "grok-build-0.1");
         assert!(provider_curated_models("xai").contains(&"grok-4.3"));

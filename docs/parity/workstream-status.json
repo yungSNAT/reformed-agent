@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-19T18:11:58+11:00",
-  "head_sha": "885c69d9de22d25183f12fc444420e1e2ce0462c",
+  "generated_at_utc": "2026-11-20T19:26:08+11:00",
+  "head_sha": "e71dabe9ca65e4776895837353165c59132ce229",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -25,10 +25,10 @@
         "send_message tool wired to live gateway backend in gateway runtime.",
         "clarify tool wired to channel backend in gateway and stdio backend in CLI runtimes.",
         "cronjob tool wired to live scheduler backend.",
-        "13 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "9 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
-        "rows_not_shown_matching": 13,
+        "rows_not_shown_matching": 9,
         "runtime_wiring_functions": 4
       },
       "state": "in_progress",
@@ -67,12 +67,12 @@
     {
       "evidence": [
         "CI workflow enforces format, clippy gate, placeholder gate, workspace tests, parity fixture tests.",
-        "337 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
+        "336 rows are deferred or not rechecked, so not yet shown to match in Rust (docs/parity/shared-diff-backlog.md and the coverage manifests)."
       ],
       "metrics": {
         "ci_jobs": 0,
         "parity_gate_present": true,
-        "rows_not_shown_matching": 337
+        "rows_not_shown_matching": 336
       },
       "state": "in_progress",
       "title": "Tests and CI parity",
