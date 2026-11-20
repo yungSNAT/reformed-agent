@@ -1,6 +1,7 @@
 //! Git as the Python scripts ran it: `subprocess.run(["git", ...],
 //! cwd=repo_root, text=True, capture_output=True)`.
 
+use std::collections::BTreeMap;
 use std::io::Write as _;
 use std::path::Path;
 use std::process::{Command, Stdio};
@@ -123,4 +124,58 @@ pub(crate) fn fetch_remote_branch(
         "git fetch {remote} {branch} failed: {}",
         crate::py::strip(&out.stderr)
     ))
+}
+
+pub(crate) fn git_text(root: &Path, args: &[&str], checked: bool) -> Result<String, String> {
+    let stdout = if checked {
+        git_checked(root, args)?
+    } else {
+        git(root, args)?.stdout
+    };
+    Ok(crate::py::strip(&stdout)
+        .replace("\r\n", "\n")
+        .replace('\r', "\n"))
+}
+
+pub(crate) fn python_lines(text: &str) -> impl Iterator<Item = &str> {
+    text.split_terminator([
+        '\n', '\r', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
+        '\u{2029}',
+    ])
+}
+
+pub(crate) fn python_words(text: &str) -> impl Iterator<Item = &str> {
+    text.split(|ch: char| ch.is_whitespace() || matches!(ch, '\u{1c}'..='\u{1f}'))
+        .filter(|word| !word.is_empty())
+}
+
+pub(crate) fn ls_tree_blobs(
+    root: &Path,
+    reference: &str,
+    trim_lines: bool,
+) -> Result<BTreeMap<String, String>, String> {
+    let output = git_text(root, &["ls-tree", "-r", "--full-tree", reference], true)?;
+    Ok(python_lines(&output)
+        .filter_map(|line| {
+            let line = if trim_lines {
+                crate::py::strip(line)
+            } else {
+                line
+            };
+            let (object, path) = line.split_once('\t')?;
+            let mut fields = python_words(object);
+            let (_, kind, hash) = (fields.next()?, fields.next()?, fields.next()?);
+            (kind == "blob" && fields.next().is_none()).then(|| (path.to_owned(), hash.to_owned()))
+        })
+        .collect())
+}
+
+pub(crate) fn branch_from_remote_ref<'a>(remote: &str, upstream_ref: &'a str) -> &'a str {
+    match upstream_ref
+        .strip_prefix(remote)
+        .and_then(|r| r.strip_prefix('/'))
+    {
+        Some(branch) if !branch.is_empty() => branch,
+        _ => "main",
+    }
 }

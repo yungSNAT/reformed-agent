@@ -10,9 +10,11 @@ mod divergence;
 mod git;
 mod parity_matrix;
 mod report_io;
+mod shared_diff_backlog;
 mod slash_gate;
 mod surface_gate;
 mod test_intent_mapping;
+mod workstream_status;
 
 use clap::{Parser, Subcommand};
 use hermes_py as py;
@@ -51,6 +53,20 @@ enum Command {
         infer_long_args = true
     )]
     ParityMatrix(parity_matrix::ParityMatrixArgs),
+    /// Classify the paths changed in both Git trees.
+    #[command(
+        name = "generate-shared-diff-backlog",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    SharedDiffBacklog(shared_diff_backlog::SharedDiffBacklogArgs),
+    /// Report evidence for parity workstreams.
+    #[command(
+        name = "generate-workstream-status",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    WorkstreamStatus(workstream_status::WorkstreamStatusArgs),
 }
 
 fn main() {
@@ -63,6 +79,8 @@ fn main() {
         Command::TestIntentMapping(args) => test_intent_mapping::run(args),
         Command::CoverageAudit(args) => coverage_audit::run(args),
         Command::ParityMatrix(args) => parity_matrix::run(args),
+        Command::SharedDiffBacklog(args) => shared_diff_backlog::run(args),
+        Command::WorkstreamStatus(args) => workstream_status::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

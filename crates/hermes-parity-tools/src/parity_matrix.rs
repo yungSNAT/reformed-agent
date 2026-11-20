@@ -8,7 +8,9 @@ use std::path::Path;
 use clap::Args;
 use regex::Regex;
 
-use crate::git::{ensure_remote, fetch_remote_branch, git, git_checked};
+use crate::git::{
+    ensure_remote, fetch_remote_branch, git_text, ls_tree_blobs, python_lines, python_words,
+};
 use crate::py::{self, Py};
 use crate::report_io::{resolve_argument, write_report};
 
@@ -238,14 +240,14 @@ const PATH_TO_WORKSTREAM: &[(&str, &str)] = &[
     ("docs", "WS5"),
 ];
 
-fn path_matches(path: &str, prefix: &str) -> bool {
+pub(crate) fn path_matches(path: &str, prefix: &str) -> bool {
     path == prefix
         || path
             .strip_prefix(prefix)
             .is_some_and(|rest| rest.starts_with('/'))
 }
 
-fn workstream_for(path: &str) -> &str {
+pub(crate) fn workstream_for(path: &str) -> &'static str {
     PATH_TO_WORKSTREAM
         .iter()
         .find_map(|&(prefix, id)| path_matches(path, prefix).then_some(id))
@@ -281,39 +283,6 @@ fn workstream_matrix(trees: &TreeComparison<'_>) -> Py {
     let mut rows: Vec<_> = rows.into_iter().collect();
     rows.sort_by_key(|(id, row)| (Reverse(row.gap()), *id));
     Py::List(rows.iter().map(|(id, row)| row.report(id)).collect())
-}
-
-fn git_text(root: &Path, args: &[&str], checked: bool) -> Result<String, String> {
-    let stdout = if checked {
-        git_checked(root, args)?
-    } else {
-        git(root, args)?.stdout
-    };
-    Ok(py::strip(&stdout).replace("\r\n", "\n").replace('\r', "\n"))
-}
-
-fn python_lines(text: &str) -> impl Iterator<Item = &str> {
-    text.split_terminator([
-        '\n', '\r', '\u{b}', '\u{c}', '\u{1c}', '\u{1d}', '\u{1e}', '\u{85}', '\u{2028}',
-        '\u{2029}',
-    ])
-}
-
-fn python_words(text: &str) -> impl Iterator<Item = &str> {
-    text.split(|ch: char| ch.is_whitespace() || matches!(ch, '\u{1c}'..='\u{1f}'))
-        .filter(|word| !word.is_empty())
-}
-
-fn blobs(root: &Path, reference: &str) -> Result<BTreeMap<String, String>, String> {
-    let output = git_text(root, &["ls-tree", "-r", "--full-tree", reference], true)?;
-    Ok(python_lines(&output)
-        .filter_map(|line| {
-            let (object, path) = py::strip(line).split_once('\t')?;
-            let mut fields = python_words(object);
-            let (_, kind, hash) = (fields.next()?, fields.next()?, fields.next()?);
-            (kind == "blob" && fields.next().is_none()).then(|| (path.to_owned(), hash.to_owned()))
-        })
-        .collect())
 }
 
 struct TreeComparison<'a> {
@@ -523,8 +492,8 @@ pub fn run(args: ParityMatrixArgs) -> Result<i32, String> {
         behind.parse::<usize>().map_err(|error| error.to_string())?,
         ahead.parse::<usize>().map_err(|error| error.to_string())?,
     );
-    let local_tree = blobs(&root, local)?;
-    let upstream_tree = blobs(&root, &upstream)?;
+    let local_tree = ls_tree_blobs(&root, local, true)?;
+    let upstream_tree = ls_tree_blobs(&root, &upstream, true)?;
     let trees = TreeComparison::compare(&local_tree, &upstream_tree);
     let [files_changed, insertions, deletions] = diff_stats(&root, local, &upstream)?;
     let upstream_patches = cherry(&root, local, &upstream)?;
