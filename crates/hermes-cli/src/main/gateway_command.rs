@@ -259,10 +259,7 @@ async fn run_gateway(
                 hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
             let mut hook_registry = HookRegistry::new();
             hook_registry.register_builtins();
-            hook_registry.register_in_process(
-                "on_session_finalize",
-                Arc::new(CloseSessionBrowser(session_browsers.clone())),
-            );
+            CloseSessionBrowser::register(&mut hook_registry, &session_browsers);
             hook_registry.discover_and_load(&hermes_home().join("hooks"));
             gateway.set_hook_registry(Arc::new(hook_registry)).await;
             gateway
