@@ -24,7 +24,7 @@ use tokio_tungstenite::tungstenite::Message;
 use url::Url;
 use uuid::Uuid;
 
-use crate::tools::browser::BrowserBackend;
+use crate::tools::browser::{BrowserBackend, BROWSER_RETIRED_MESSAGE};
 use hermes_core::ToolError;
 
 const BROWSERBASE_BASE_URL_DEFAULT: &str = "https://api.browserbase.com";

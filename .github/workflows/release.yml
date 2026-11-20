@@ -276,12 +276,20 @@ jobs:
           name: staged-release
           path: staged
       - name: Smoke the staged release
+        timeout-minutes: 16
         env:
           VERSION: ${{ needs.qualify.outputs.version }}
         run: |
           bash scripts/smoke-release-artifact.sh \
             --version "${VERSION}" \
-            --asset-dir staged
+            --asset-dir staged \
+            --output-json "${RUNNER_TEMP}/release-smoke.json"
+      - name: Upload staged smoke failure diagnostics
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: release-smoke-failure-${{ matrix.runner }}
+          path: ${{ runner.temp }}/release-smoke.json
 
   # The archives install.sh does not choose: musl Linux and Windows.
   smoke-direct:
@@ -438,12 +446,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Smoke published release artifact
+        timeout-minutes: 16
         run: |
           mkdir -p .sync-reports
           bash scripts/smoke-release-artifact.sh \
             --version "${GITHUB_REF_NAME}" \
             --output-json .sync-reports/release-artifact-smoke.json
       - name: Upload release smoke report
+        if: ${{ !cancelled() }}
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: release-artifact-smoke
