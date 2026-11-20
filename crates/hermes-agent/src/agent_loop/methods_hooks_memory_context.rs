@@ -1,3 +1,7 @@
+tokio::task_local! {
+    static ENDING_MEMORY_FLUSH: std::cell::RefCell<Option<futures::future::BoxFuture<'static, ()>>>;
+}
+
 impl AgentLoop {
     // -- Plugin hook helpers ------------------------------------------------
 
@@ -301,32 +305,56 @@ impl AgentLoop {
         }
     }
 
-    async fn memory_on_session_end(&self, messages: &[Message]) {
+    async fn complete_memory_flush(
+        run: impl std::future::Future<Output = Result<AgentResult, AgentError>>,
+    ) -> Result<AgentResult, AgentError> {
+        ENDING_MEMORY_FLUSH
+            .scope(std::cell::RefCell::new(None), async {
+                let result = run.await;
+                Self::flush_ending_memory().await;
+                result
+            })
+            .await
+    }
+
+    async fn flush_ending_memory() {
+        let flush = ENDING_MEMORY_FLUSH.with(|pending| pending.borrow_mut().take());
+        if let Some(flush) = flush {
+            flush.await;
+        }
+    }
+
+    // Capture the exit's original context. The enclosing run awaits the flush before returning.
+    fn memory_on_session_end(&self, messages: &[Message]) {
         if self.config.skip_memory {
             return;
         }
         let Some(mm) = self.memory_manager.clone() else {
             return;
         };
-        let as_values: Vec<Value> = messages
+        let messages: Vec<Value> = messages
             .iter()
             .filter_map(|message| serde_json::to_value(message).ok())
             .collect();
-        let tasks = tokio::task::spawn_blocking(move || {
-            mm.lock()
-                .ok()
-                .map(|manager| manager.session_end_tasks(&as_values))
-                .unwrap_or_default()
-        })
-        .await;
-        match tasks {
-            Ok(tasks) => {
-                for task in tasks {
-                    task.await;
+        ENDING_MEMORY_FLUSH.with(|pending| {
+            *pending.borrow_mut() = Some(Box::pin(async move {
+                let tasks = tokio::task::spawn_blocking(move || {
+                    mm.lock()
+                        .ok()
+                        .map(|manager| manager.session_end_tasks(&messages))
+                        .unwrap_or_default()
+                })
+                .await;
+                match tasks {
+                    Ok(tasks) => {
+                        for task in tasks {
+                            task.await;
+                        }
+                    }
+                    Err(error) => tracing::warn!(%error, "Memory provider session-end hook failed"),
                 }
-            }
-            Err(error) => tracing::warn!(%error, "Memory provider session-end hook failed"),
-        }
+            }));
+        });
     }
 
     /// Bring the code index up to date on the blocking pool. A full workspace
