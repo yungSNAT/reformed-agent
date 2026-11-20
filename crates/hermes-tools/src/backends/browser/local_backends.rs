@@ -94,18 +94,48 @@ impl CdpBrowserBackend {
             .await
             .map_err(failed)?;
         let mut connection = CdpConnection::open(&ws_url).await.map_err(failed)?;
-        let target_id = match tab.as_ref() {
-            Some(tab) => tab.target_id.clone(),
+        let target_id = match tab.as_ref().and_then(|tab| tab.target_id.clone()) {
+            Some(target_id) => target_id,
             None => {
-                let created = connection.create_isolated_tab().await.map_err(failed)?;
-                tab.insert(created).target_id.clone()
+                if let Some(pending) = tab.as_ref() {
+                    connection
+                        .dispose_owned_context(&pending.context_id)
+                        .await
+                        .map_err(failed)?;
+                    *tab = None;
+                }
+                let context_id = connection
+                    .create_isolated_context()
+                    .await
+                    .map_err(failed)?;
+                // Retain the context before the fallible target call. A tool
+                // timeout can cancel that call after the browser opened a tab.
+                let pending = tab.insert(IsolatedTab {
+                    context_id,
+                    target_id: None,
+                });
+                match connection.create_context_target(&pending.context_id).await {
+                    Ok(target_id) => {
+                        pending.target_id = Some(target_id.clone());
+                        target_id
+                    }
+                    Err(failure) => {
+                        if connection.dispose_owned_context(&pending.context_id).await.is_ok() {
+                            *tab = None;
+                        }
+                        return Err(failed(failure));
+                    }
+                }
             }
         };
         if let Err(failure) = connection.attach_to_target(&target_id).await {
             // The tab is gone, as after a Chrome restart: the next call
             // starts a new context rather than reach any other page.
-            if let Some(gone) = tab.take() {
-                let _ = connection.dispose_context(&gone.context_id).await;
+            if let Some(gone) = tab.as_mut() {
+                gone.target_id = None;
+                if connection.dispose_owned_context(&gone.context_id).await.is_ok() {
+                    *tab = None;
+                }
             }
             return Err(failed(failure));
         }
@@ -138,7 +168,7 @@ async fn dispose_browser_context(
         .await
         .map_err(failed)?;
     let mut connection = CdpConnection::open(&ws_url).await.map_err(failed)?;
-    let disposed = connection.dispose_context(context_id).await;
+    let disposed = connection.dispose_owned_context(context_id).await;
     connection.close().await;
     disposed.map(|()| true).map_err(failed)
 }

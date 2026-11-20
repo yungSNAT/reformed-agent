@@ -45,6 +45,8 @@ jobs:
         run: |
           python3 scripts/generate-release-readiness-summary.py --repo-root .
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
+          printf '\n[Upstream refresh plan](%s/%s/blob/%s/docs/upstream-sync.md#subsystem-refresh-for-v0232)\n' \
+            "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Upstream surface coverage report
         run: |
           report=.sync-reports/upstream-surface-coverage-gate.json

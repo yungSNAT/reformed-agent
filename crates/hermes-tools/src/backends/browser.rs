@@ -681,14 +681,14 @@ pub struct CdpBrowserBackend {
     /// Work in a browser context and tab of this backend's own, never the
     /// browser's first page; see [`isolated_browser_backend_from_env`].
     isolated: bool,
-    /// The isolated backend's context and tab, once created.
+    /// The isolated backend's context, including while its tab is being opened.
     tab: Mutex<Option<IsolatedTab>>,
 }
 
 /// A browser context with the one tab an isolated [`CdpBrowserBackend`] uses.
 struct IsolatedTab {
     context_id: String,
-    target_id: String,
+    target_id: Option<String>,
 }
 
 /// CamoFox anti-detection browser backend (compat layer).

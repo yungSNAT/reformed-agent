@@ -40,7 +40,7 @@
       "target_ticket_name": "GPAR-01 tests+CI parity"
     }
   ],
-  "generated_at_utc": "2026-11-20T17:34:56.445264+00:00",
+  "generated_at_utc": "2026-11-20T17:56:36.117700+00:00",
   "refs": {
     "baseline_start_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "local_ref": "HEAD",
