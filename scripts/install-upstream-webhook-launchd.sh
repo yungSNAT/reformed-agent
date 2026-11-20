@@ -218,63 +218,45 @@ if is_true "${AUTO_GENERATE_SECRET}" && grep -qE '^GITHUB_WEBHOOK_SECRET=$' "${E
 fi
 chmod 600 "${ENV_FILE}"
 
-cat > "${LISTENER_PLIST}" <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-  <key>Label</key>
-  <string>${LISTENER_LABEL}</string>
-  <key>ProgramArguments</key>
-  <array>
-    <string>/usr/bin/env</string>
-    <string>bash</string>
-    <string>${LISTENER_WRAPPER}</string>
-  </array>
-  <key>WorkingDirectory</key>
-  <string>${REPO_ROOT}</string>
-  <key>EnvironmentVariables</key>
-  <dict>
-    <key>REPO_ROOT</key>
-    <string>${REPO_ROOT}</string>
-    <key>UPSTREAM_SYNC_ENV_FILE</key>
-    <string>${ENV_FILE}</string>
-    <key>PATH</key>
-    <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-  </dict>
-  <key>RunAtLoad</key>
-  <true/>
-  <key>KeepAlive</key>
-  <true/>
-  <key>StandardOutPath</key>
-  <string>${LOG_DIR}/upstream-webhook-listener.out.log</string>
-  <key>StandardErrorPath</key>
-  <string>${LOG_DIR}/upstream-webhook-listener.err.log</string>
-</dict>
-</plist>
-EOF
+escape_plist_text() {
+  printf '%s\n' "$1" | awk '
+    NR > 1 { printf "&#10;" }
+    {
+      gsub(/&/, "\\&amp;")
+      gsub(/</, "\\&lt;")
+      gsub(/>/, "\\&gt;")
+      gsub(/\r/, "\\&#13;")
+      printf "%s", $0
+    }
+  '
+}
 
-cat > "${WORKER_PLIST}" <<EOF
+write_service_plist() {
+  local destination="$1" label="$2" wrapper="$3" service="$4"
+  local escaped_label escaped_wrapper
+  escaped_label="$(escape_plist_text "${label}")"
+  escaped_wrapper="$(escape_plist_text "${wrapper}")"
+  cat > "${destination}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>${WORKER_LABEL}</string>
+  <string>${escaped_label}</string>
   <key>ProgramArguments</key>
   <array>
     <string>/usr/bin/env</string>
     <string>bash</string>
-    <string>${WORKER_WRAPPER}</string>
+    <string>${escaped_wrapper}</string>
   </array>
   <key>WorkingDirectory</key>
-  <string>${REPO_ROOT}</string>
+  <string>${escaped_repo_root}</string>
   <key>EnvironmentVariables</key>
   <dict>
     <key>REPO_ROOT</key>
-    <string>${REPO_ROOT}</string>
+    <string>${escaped_repo_root}</string>
     <key>UPSTREAM_SYNC_ENV_FILE</key>
-    <string>${ENV_FILE}</string>
+    <string>${escaped_env_file}</string>
     <key>PATH</key>
     <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
   </dict>
@@ -283,12 +265,19 @@ cat > "${WORKER_PLIST}" <<EOF
   <key>KeepAlive</key>
   <true/>
   <key>StandardOutPath</key>
-  <string>${LOG_DIR}/upstream-webhook-worker.out.log</string>
+  <string>${escaped_log_dir}/upstream-webhook-${service}.out.log</string>
   <key>StandardErrorPath</key>
-  <string>${LOG_DIR}/upstream-webhook-worker.err.log</string>
+  <string>${escaped_log_dir}/upstream-webhook-${service}.err.log</string>
 </dict>
 </plist>
 EOF
+}
+
+escaped_repo_root="$(escape_plist_text "${REPO_ROOT}")"
+escaped_env_file="$(escape_plist_text "${ENV_FILE}")"
+escaped_log_dir="$(escape_plist_text "${LOG_DIR}")"
+write_service_plist "${LISTENER_PLIST}" "${LISTENER_LABEL}" "${LISTENER_WRAPPER}" listener
+write_service_plist "${WORKER_PLIST}" "${WORKER_LABEL}" "${WORKER_WRAPPER}" worker
 
 if [[ "${LOAD_SERVICES}" == "1" ]]; then
   launchctl bootout "gui/${UID}" "${LISTENER_PLIST}" >/dev/null 2>&1 || true
