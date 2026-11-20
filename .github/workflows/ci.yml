@@ -6,12 +6,19 @@ on:
   pull_request:
   workflow_dispatch:
 
+concurrency:
+  group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       # The gates compare against the pinned upstream revision, so a result depends
       # on the change under test. The scheduled parity audit reports live drift.
       - name: Fetch upstream parity reference
@@ -157,12 +164,15 @@ jobs:
 
   ui-tui:
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: ui-tui
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -183,6 +193,7 @@ jobs:
 
   cross-build:
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     strategy:
       matrix:
         target:
@@ -193,6 +204,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
@@ -213,9 +226,12 @@ jobs:
           - runner: macos-latest
             target: x86_64-apple-darwin
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: |
           rustup toolchain install
@@ -246,9 +262,12 @@ jobs:
   # build.
   macos-test:
     runs-on: macos-latest
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
@@ -267,9 +286,12 @@ jobs:
       matrix:
         runner: [ubuntu-latest, windows-latest, macos-latest]
     runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo
@@ -302,9 +324,12 @@ jobs:
   # cross build above compiles for Windows but runs nothing there.
   windows-test:
     runs-on: windows-latest
+    timeout-minutes: 45
     steps:
       - name: Checkout
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          persist-credentials: false
       - name: Install the pinned Rust toolchain
         run: rustup toolchain install
       - name: Cache cargo

@@ -1,14 +1,14 @@
 # Parity Dashboard
 
-_Generated from source artifacts: `2026-11-20T12:37:26.089649+00:00`_
+_Generated from source artifacts: `2026-11-20T13:20:23.876055+00:00`_
 
 ## Snapshot
 
 - Upstream target: `upstream/parity-reference` @ `ae2a81ccc00e9b7c06301523e5bb09608397149c`
-- Workstream snapshot generated: `2026-11-20T23:36:58+11:00`
-- Parity matrix generated: `2026-11-20T12:37:21.384821+00:00`
-- Queue snapshot generated: `2026-11-20T12:37:25.980673+00:00`
-- Proof snapshot generated: `2026-11-20T12:37:26.089649+00:00`
+- Workstream snapshot generated: `2026-11-21T00:19:41+11:00`
+- Parity matrix generated: `2026-11-20T13:20:19.144213+00:00`
+- Queue snapshot generated: `2026-11-20T13:20:23.749875+00:00`
+- Proof snapshot generated: `2026-11-20T13:20:23.876055+00:00`
 
 ## Gate Status
 
@@ -84,10 +84,10 @@ _Generated from source artifacts: `2026-11-20T12:37:26.089649+00:00`_
 | Metric | Value |
 | --- | ---: |
 | commits_behind | 1 |
-| commits_ahead | 1643 |
+| commits_ahead | 1646 |
 | upstream_patch_missing | 1 |
 | upstream_patch_represented | 0 |
-| local_patch_unique | 1373 |
+| local_patch_unique | 1375 |
 | files_only_upstream | 24117 |
 | files_only_local | 2039 |
 | files_shared_identical | 565 |
