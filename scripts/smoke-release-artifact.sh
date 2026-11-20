@@ -32,7 +32,7 @@ Environment:
   HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS
                          Per-command probe timeout in seconds (default: 30;
                          0 disables)
-  OUTPUT_JSON            Optional path for a machine-readable PASS report.
+  OUTPUT_JSON            Optional path for a machine-readable smoke report.
 USAGE
 }
 
@@ -77,13 +77,20 @@ need_cmd() {
   }
 }
 
+print_local_probe_output() {
+  local file="$1"
+  if [[ "${CI:-false}" != "true" ]]; then
+    echo "--- ${file} ---" >&2
+    sed -n '1,220p' "$file" >&2 || true
+  fi
+}
+
 assert_contains() {
   local file="$1"
   local expected="$2"
   if ! grep -Fq -- "$expected" "$file"; then
     echo "Expected ${file} to contain: ${expected}" >&2
-    echo "--- ${file} ---" >&2
-    sed -n '1,220p' "$file" >&2 || true
+    print_local_probe_output "$file"
     exit 1
   fi
 }
@@ -93,13 +100,12 @@ assert_not_contains() {
   local unexpected="$2"
   if grep -Fqi -- "$unexpected" "$file"; then
     echo "Unexpected ${file} content: ${unexpected}" >&2
-    echo "--- ${file} ---" >&2
-    sed -n '1,220p' "$file" >&2 || true
+    print_local_probe_output "$file"
     exit 1
   fi
 }
 
-run_capture() {
+run_capture() (
   local label="$1"
   shift
   local out="${TMP_ROOT}/${label}.out"
@@ -111,6 +117,8 @@ run_capture() {
     return
   fi
 
+  # Give this command and its foreground descendants their own process group.
+  set -m
   HERMES_HOME="${HERMES_HOME_SMOKE}" "$@" >"${out}" 2>&1 &
   local pid="$!"
   local elapsed=0
@@ -121,13 +129,12 @@ run_capture() {
         echo ""
         echo "Command timed out after ${HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS}s: $*"
       } >>"${out}"
-      kill "${pid}" >/dev/null 2>&1 || true
+      kill -- "-${pid}" >/dev/null 2>&1 || true
       sleep 1
-      kill -9 "${pid}" >/dev/null 2>&1 || true
+      kill -KILL -- "-${pid}" >/dev/null 2>&1 || true
       wait "${pid}" >/dev/null 2>&1 || true
       echo "Release smoke probe '${label}' timed out." >&2
-      echo "--- ${out} ---" >&2
-      sed -n '1,220p' "${out}" >&2 || true
+      print_local_probe_output "${out}"
       exit 124
     fi
     sleep 1
@@ -136,12 +143,11 @@ run_capture() {
   wait "${pid}" || status="$?"
   if [[ "${status}" -ne 0 ]]; then
     echo "Release smoke probe '${label}' failed with status ${status}." >&2
-    echo "--- ${out} ---" >&2
-    sed -n '1,220p' "${out}" >&2 || true
+    print_local_probe_output "${out}"
     exit "${status}"
   fi
   echo "${out}"
-}
+)
 
 sha256_file() {
   if command -v shasum >/dev/null 2>&1; then
@@ -154,22 +160,39 @@ sha256_file() {
   fi
 }
 
+finish_smoke() {
+  local status=$?
+  trap - EXIT
+  if (( status != 0 )) && [[ -n "${OUTPUT_JSON}" ]]; then
+    if ! { mkdir -p "$(dirname -- "${OUTPUT_JSON}")" &&
+      printf '{"schema_version":1,"status":"FAIL","phase":"%s","exit_status":%d}\n' \
+        "${SMOKE_PHASE}" "${status}" >"${OUTPUT_JSON}"; }; then
+      echo "Could not write release smoke diagnostics." >&2
+    fi
+  fi
+  if [[ "${KEEP_TMP}" != "true" && -n "${TMP_ROOT:-}" ]]; then
+    rm -rf -- "${TMP_ROOT}" || true
+  fi
+  exit "${status}"
+}
+
+SMOKE_PHASE=setup
+TMP_ROOT=""
+trap finish_smoke EXIT
+
 need_cmd curl
 need_cmd grep
 need_cmd mktemp
 need_cmd sed
 
 TMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/hermes-release-smoke.XXXXXX")"
-if [[ "${KEEP_TMP}" != "true" ]]; then
-  trap 'rm -rf "${TMP_ROOT}"' EXIT
-else
+if [[ "${KEEP_TMP}" == "true" ]]; then
   echo "[release-smoke] keeping temp dir: ${TMP_ROOT}"
 fi
 
 BIN_DIR="${TMP_ROOT}/bin"
 HERMES_HOME_SMOKE="${TMP_ROOT}/home"
 INSTALLER="${TMP_ROOT}/install.sh"
-INSTALL_LOG="${TMP_ROOT}/install.log"
 mkdir -p "${BIN_DIR}" "${HERMES_HOME_SMOKE}"
 
 # Sentinel for upstream NousResearch Hermes coexistence. The installer must not
@@ -189,17 +212,22 @@ else
   ASSET_BASE_URL="https://github.com/${REPO}/releases/download/${VERSION}"
   INSTALLER_URL="https://github.com/${REPO}/releases/download/${VERSION}/install.sh"
 fi
+SMOKE_PHASE=installer-download
 echo "[release-smoke] downloading installer: ${INSTALLER_URL}"
-curl -fsSL "${INSTALLER_URL}" -o "${INSTALLER}"
+curl --connect-timeout 15 --max-time 120 -fsSL "${INSTALLER_URL}" -o "${INSTALLER}"
 chmod +x "${INSTALLER}"
 
-PATH="${BIN_DIR}:${PATH}" \
-INSTALL_LEGACY_ALIAS=false \
-RUN_SETUP_MODE=never \
-HERMES_INSTALL_PROBE_TIMEOUT_SECONDS=15 \
-"${INSTALLER}" "${VERSION}" --dir "${BIN_DIR}" --hermes-home "${HERMES_HOME_SMOKE}" --skip-setup \
-  >"${INSTALL_LOG}" 2>&1
+SMOKE_PHASE=install
+INSTALL_LOG="$(
+  HERMES_SMOKE_COMMAND_TIMEOUT_SECONDS=480 run_capture install env \
+    "PATH=${BIN_DIR}:${PATH}" \
+    INSTALL_LEGACY_ALIAS=false \
+    RUN_SETUP_MODE=never \
+    HERMES_INSTALL_PROBE_TIMEOUT_SECONDS=15 \
+    "${INSTALLER}" "${VERSION}" --dir "${BIN_DIR}" --hermes-home "${HERMES_HOME_SMOKE}" --skip-setup
+)"
 
+SMOKE_PHASE=installer-checks
 assert_contains "${INSTALL_LOG}" "Installing hermes-agent-ultra from ${ASSET_BASE_URL}/"
 assert_contains "${INSTALL_LOG}" "against SHA256SUMS."
 if [[ "${HERMES_REQUIRE_SIGNATURE:-false}" == "true" ]]; then
@@ -212,44 +240,56 @@ assert_not_contains "${INSTALL_LOG}" "Release asset not available"
 
 test -x "${BIN_DIR}/hermes-agent-ultra"
 test -L "${BIN_DIR}/hermes-ultra"
-if [[ "$("${BIN_DIR}/hermes")" != "upstream-hermes-sentinel" ]]; then
+SMOKE_PHASE=legacy-hermes
+LEGACY_OUT="$(run_capture legacy-hermes "${BIN_DIR}/hermes")"
+LEGACY_HERMES="$(<"${LEGACY_OUT}")"
+if [[ "${LEGACY_HERMES}" != "upstream-hermes-sentinel" ]]; then
   echo "Installer clobbered existing hermes command" >&2
   exit 1
 fi
 
+SMOKE_PHASE=version
 VERSION_OUT="$(run_capture version "${BIN_DIR}/hermes-ultra" --version)"
 assert_contains "${VERSION_OUT}" "${VERSION#v}"
 
 if [[ "${RUN_SETUP_HELP}" == "true" ]]; then
+  SMOKE_PHASE=setup-help
   SETUP_HELP_OUT="$(run_capture setup-help "${BIN_DIR}/hermes-ultra" setup --help)"
   assert_contains "${SETUP_HELP_OUT}" "Run the interactive setup wizard"
 fi
 
+SMOKE_PHASE=auth-status
 AUTH_OUT="$(run_capture auth-status "${BIN_DIR}/hermes-ultra" auth status openai)"
 assert_contains "${AUTH_OUT}" "Auth status"
 assert_contains "${AUTH_OUT}" "provider='openai'"
 
+SMOKE_PHASE=memory-status
 MEMORY_OUT="$(run_capture memory-status "${BIN_DIR}/hermes-ultra" memory status)"
 assert_contains "${MEMORY_OUT}" "Memory provider"
 
+SMOKE_PHASE=route-health
 ROUTE_HEALTH_OUT="$(run_capture route-health "${BIN_DIR}/hermes-ultra" route-health show --json)"
 assert_contains "${ROUTE_HEALTH_OUT}" '"summary"'
 assert_contains "${ROUTE_HEALTH_OUT}" '"overall"'
 
+SMOKE_PHASE=systems-status
 SYSTEMS_OUT="$(run_capture systems-status "${BIN_DIR}/hermes-ultra" systems status --json)"
 assert_contains "${SYSTEMS_OUT}" '"kind": "hermes.systems.status"'
 assert_contains "${SYSTEMS_OUT}" "Provider capability registry"
 assert_contains "${SYSTEMS_OUT}" "Release gate"
 
+SMOKE_PHASE=systems-release
 RELEASE_OUT="$(run_capture systems-release "${BIN_DIR}/hermes-ultra" systems release --json)"
 assert_contains "${RELEASE_OUT}" '"kind": "hermes.systems.release_gate"'
 assert_contains "${RELEASE_OUT}" '"passed": true'
 
+SMOKE_PHASE=tools-list
 TOOLS_OUT="$(run_capture tools-list "${BIN_DIR}/hermes-ultra" tools list)"
 for surface in harness_cockpit tool_policy_simulate objective_snapshot ops_snapshot integrations_snapshot auth_snapshot skills_list skill_view; do
   assert_contains "${TOOLS_OUT}" "${surface}"
 done
 
+SMOKE_PHASE=report
 INSTALL_SHA="$(sha256_file "${INSTALLER}")"
 BIN_SHA="$(sha256_file "${BIN_DIR}/hermes-agent-ultra")"
 if [[ -n "${OUTPUT_JSON}" ]]; then
@@ -264,7 +304,7 @@ if [[ -n "${OUTPUT_JSON}" ]]; then
   "binary_sha256": "${BIN_SHA}",
   "canonical_bin": "${BIN_DIR}/hermes-agent-ultra",
   "primary_bin": "${BIN_DIR}/hermes-ultra",
-  "legacy_hermes": "$(${BIN_DIR}/hermes)"
+  "legacy_hermes": "${LEGACY_HERMES}"
 }
 JSON
 fi
@@ -277,6 +317,6 @@ installer_sha256=${INSTALL_SHA}
 binary_sha256=${BIN_SHA}
 canonical_bin=${BIN_DIR}/hermes-agent-ultra
 primary_bin=${BIN_DIR}/hermes-ultra
-legacy_hermes=$(${BIN_DIR}/hermes)
+legacy_hermes=${LEGACY_HERMES}
 report_json=${OUTPUT_JSON:-none}
 REPORT
