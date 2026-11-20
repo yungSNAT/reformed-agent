@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "updated_at": "2026-05-06T02:14:51Z",
+  "updated_at": "2026-11-20T14:09:05Z",
   "metadata": {
     "source": "hermes-agent repo",
     "docs": "https://hermes-agent.nousresearch.com/docs/reference/model-catalog"
@@ -63,10 +63,6 @@
         {
           "id": "xiaomi/mimo-v2.5",
           "description": ""
-        },
-        {
-          "id": "tencent/hy3-preview:free",
-          "description": "free"
         },
         {
           "id": "tencent/hy3-preview",

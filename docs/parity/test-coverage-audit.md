@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-20T14:31:20.672740+00:00`
+Generated: `2026-11-20T15:07:06.004083+00:00`
 
 ## Gate
 
