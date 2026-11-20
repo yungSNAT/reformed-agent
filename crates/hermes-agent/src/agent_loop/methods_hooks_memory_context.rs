@@ -301,21 +301,32 @@ impl AgentLoop {
         }
     }
 
-    fn memory_on_session_end(&self, messages: &[Message]) {
+    async fn memory_on_session_end(&self, messages: &[Message]) {
         if self.config.skip_memory {
             return;
         }
-        let Some(ref mm) = self.memory_manager else {
-            return;
-        };
-        let Ok(mm) = mm.lock() else {
+        let Some(mm) = self.memory_manager.clone() else {
             return;
         };
         let as_values: Vec<Value> = messages
             .iter()
-            .filter_map(|m| serde_json::to_value(m).ok())
+            .filter_map(|message| serde_json::to_value(message).ok())
             .collect();
-        mm.on_session_end(&as_values);
+        let tasks = tokio::task::spawn_blocking(move || {
+            mm.lock()
+                .ok()
+                .map(|manager| manager.session_end_tasks(&as_values))
+                .unwrap_or_default()
+        })
+        .await;
+        match tasks {
+            Ok(tasks) => {
+                for task in tasks {
+                    task.await;
+                }
+            }
+            Err(error) => tracing::warn!(%error, "Memory provider session-end hook failed"),
+        }
     }
 
     /// Bring the code index up to date on the blocking pool. A full workspace

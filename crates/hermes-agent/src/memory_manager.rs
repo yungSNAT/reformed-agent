@@ -16,6 +16,7 @@ use std::io::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use futures::future::BoxFuture;
 use hermes_core::Message;
 use regex::Regex;
 use serde_json::Value;
@@ -99,6 +100,12 @@ pub trait MemoryProviderPlugin: Send + Sync {
 
     fn on_session_end(&self, messages: &[Value]) {
         let _ = messages;
+    }
+
+    /// Capture the ending session before the manager can switch providers to another session.
+    fn prepare_session_end(&self, messages: &[Value]) -> Option<BoxFuture<'static, ()>> {
+        let _ = messages;
+        None
     }
 
     fn on_session_switch(&self, new_session_id: &str, parent_session_id: &str, reset: bool) {
@@ -577,6 +584,21 @@ impl MemoryManager {
         for provider in &self.providers {
             provider.on_session_end(&messages);
         }
+    }
+
+    pub(crate) fn session_end_tasks(&self, messages: &[Value]) -> Vec<BoxFuture<'static, ()>> {
+        let messages: Vec<Value> = messages.iter().map(redact_memory_value).collect();
+        self.providers
+            .iter()
+            .filter_map(|provider| {
+                if let Some(task) = provider.prepare_session_end(&messages) {
+                    Some(task)
+                } else {
+                    provider.on_session_end(&messages);
+                    None
+                }
+            })
+            .collect()
     }
 
     /// Notify all providers that the active session id changed.

@@ -83,7 +83,7 @@ impl AgentLoop {
     // Called from 11 exit points in the run loops, each passing its own loop
     // state; bundling that state into a struct would be a run-loop redesign.
     #[allow(clippy::too_many_arguments)]
-    fn graceful_interrupt_result(
+    async fn graceful_interrupt_result(
         &self,
         ctx: &mut ContextManager,
         total_turns: u32,
@@ -94,7 +94,7 @@ impl AgentLoop {
         persist_user_idx: Option<usize>,
         prefill_range: Option<Range<usize>>,
     ) -> AgentResult {
-        self.memory_on_session_end(ctx.get_messages());
+        self.memory_on_session_end(ctx.get_messages()).await;
         AgentResult {
             messages: self.messages_for_persisted_result(ctx, persist_user_idx, prefill_range),
             finished_naturally: false,

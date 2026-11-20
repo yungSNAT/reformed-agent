@@ -260,7 +260,7 @@ impl AgentLoop {
                     session_started_hooks_fired,
                     persist_user_idx,
                     prefill_range.clone(),
-                ));
+                ).await);
             }
 
             if let Some(max_turns) = max_turns_limit {
@@ -273,7 +273,7 @@ impl AgentLoop {
                     if let Some(msg) = summary_msg {
                         ctx.add_message(msg);
                     }
-                    self.memory_on_session_end(ctx.get_messages());
+                    self.memory_on_session_end(ctx.get_messages()).await;
                     replay.record(
                         "session_end",
                         serde_json::json!({
@@ -430,7 +430,7 @@ impl AgentLoop {
                         session_started_hooks_fired,
                         persist_user_idx,
                         prefill_range.clone(),
-                    ));
+                    ).await);
                 }
                 self.deliver_pending_steer(&mut ctx, &mut steers);
                 let r = if inner_attempt == 0 {
@@ -471,7 +471,7 @@ impl AgentLoop {
                                 session_started_hooks_fired,
                                 persist_user_idx,
                                 prefill_range.clone(),
-                            ));
+                            ).await);
                         }
                         Err(e @ AgentError::Config(_)) => return Err(e),
                         Err(e) => {
@@ -506,7 +506,7 @@ impl AgentLoop {
                                 session_started_hooks_fired,
                                 persist_user_idx,
                                 prefill_range.clone(),
-                            ));
+                            ).await);
                         }
                         Err(e) => {
                             let api_elapsed = api_start.elapsed().as_millis() as u64;
@@ -675,7 +675,7 @@ impl AgentLoop {
                         "Cost guard tripped: session spend ${:.4} exceeded max_cost_usd ${:.4}. Stopping loop.",
                         session_cost_usd, limit
                     )));
-                    self.memory_on_session_end(ctx.get_messages());
+                    self.memory_on_session_end(ctx.get_messages()).await;
                     replay.record(
                         "session_end",
                         serde_json::json!({
@@ -968,7 +968,7 @@ impl AgentLoop {
                 let (u, a) = extract_last_user_assistant(msgs);
                 self.memory_sync(&u, &a, session_id, msgs);
                 self.spawn_background_review(total_turns, &ctx, review_memory_at_end);
-                self.memory_on_session_end(ctx.get_messages());
+                self.memory_on_session_end(ctx.get_messages()).await;
                 replay.record(
                     "session_end",
                     serde_json::json!({
@@ -1102,7 +1102,7 @@ impl AgentLoop {
                     )));
                     // None of this turn's calls ran.
                     Self::sync_stored_tool_calls(&mut ctx, assistant_idx, &[]);
-                    self.memory_on_session_end(ctx.get_messages());
+                    self.memory_on_session_end(ctx.get_messages()).await;
                     return Ok(AgentResult {
                         messages: self.messages_for_persisted_result(
                             &ctx,
@@ -1235,7 +1235,7 @@ impl AgentLoop {
                     session_started_hooks_fired,
                     persist_user_idx,
                     prefill_range.clone(),
-                ));
+                ).await);
             }
 
             let tool_span = tracing::info_span!(
@@ -1396,7 +1396,7 @@ impl AgentLoop {
                     session_started_hooks_fired,
                     persist_user_idx,
                     prefill_range.clone(),
-                ));
+                ).await);
             }
             if should_trip_tool_loop_guard(
                 governor_consecutive_error_turns,
@@ -1444,7 +1444,7 @@ impl AgentLoop {
                         usage: None,
                     });
                 }
-                self.memory_on_session_end(ctx.get_messages());
+                self.memory_on_session_end(ctx.get_messages()).await;
                 return Ok(AgentResult {
                     messages: self.messages_for_persisted_result(
                         &ctx,

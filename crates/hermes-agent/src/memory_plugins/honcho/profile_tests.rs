@@ -576,6 +576,54 @@ mod tests {
         assert!(api_request_lower.contains("x-api-key: hch-at-new"));
     }
 
+    #[tokio::test]
+    async fn session_end_flushes_honcho_from_a_tokio_worker() {
+        use wiremock::matchers::{body_json, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/v1/sessions/ending-session/flush"))
+            .and(body_json(json!({
+                "workspace_id": "fixture-workspace",
+                "session_id": "ending-session"
+            })))
+            .respond_with(ResponseTemplate::new(204))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let plugin = Arc::new(HonchoMemoryPlugin::new());
+        *plugin.config.lock().unwrap() = Some(HonchoConfig {
+            api_key: String::new(),
+            base_url: server.uri(),
+            enabled: true,
+            recall_mode: String::new(),
+            context_tokens: None,
+            workspace_id: "fixture-workspace".into(),
+            peer_name: None,
+            ai_peer: String::new(),
+            pin_user_peer: false,
+            user_peer_aliases: HashMap::new(),
+            runtime_peer_prefix: String::new(),
+            timeout_secs: 2.0,
+            endpoints: HashMap::new(),
+            host_had_explicit_api_key: false,
+            host: String::new(),
+            config_path: PathBuf::new(),
+            oauth: None,
+        });
+        plugin.on_session_switch("ending-session", "", false);
+        let mut manager = crate::memory_manager::MemoryManager::new();
+        manager.add_provider(plugin);
+        let tasks = manager.session_end_tasks(&[]);
+        manager.on_session_switch("new-session", "ending-session", false);
+        for task in tasks {
+            task.await;
+        }
+        server.verify().await;
+    }
+
     #[test]
     fn test_honcho_pin_user_peer_wins_over_runtime_identity() {
         let mut config = test_config();
