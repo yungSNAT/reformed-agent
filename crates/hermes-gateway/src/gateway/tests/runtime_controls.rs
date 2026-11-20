@@ -399,11 +399,6 @@ async fn gateway_new_clears_yolo_only_for_target_session() {
     };
     assert!(gw.route_message(&yolo_chat2).await.is_ok());
 
-    {
-        let states = gw.runtime_state.read().await;
-        assert_eq!(states.get(&session_key_1).map(|s| s.yolo), Some(true));
-        assert_eq!(states.get(&session_key_2).map(|s| s.yolo), Some(true));
-    }
     assert!(hermes_tools::approval::is_session_yolo_enabled(
         &session_key_1
     ));
@@ -430,9 +425,6 @@ async fn gateway_new_clears_yolo_only_for_target_session() {
     };
     assert!(gw.route_message(&reset_chat1).await.is_ok());
 
-    let states = gw.runtime_state.read().await;
-    assert_eq!(states.get(&session_key_1).map(|s| s.yolo), Some(false));
-    assert_eq!(states.get(&session_key_2).map(|s| s.yolo), Some(true));
     assert!(!hermes_tools::approval::is_session_yolo_enabled(
         &session_key_1
     ));
@@ -716,10 +708,6 @@ async fn gateway_switch_session_clears_yolo_for_current_chat_context() {
         is_dm: true,
     };
     assert!(gw.route_message(&yolo_chat1).await.is_ok());
-    {
-        let states = gw.runtime_state.read().await;
-        assert_eq!(states.get(&current_key).map(|s| s.yolo), Some(true));
-    }
     assert!(hermes_tools::approval::is_session_yolo_enabled(
         &current_key
     ));
@@ -739,8 +727,6 @@ async fn gateway_switch_session_clears_yolo_for_current_chat_context() {
     };
     assert!(gw.route_message(&switch).await.is_ok());
 
-    let states = gw.runtime_state.read().await;
-    assert_eq!(states.get(&current_key).map(|s| s.yolo), Some(false));
     assert!(!hermes_tools::approval::is_session_yolo_enabled(
         &current_key
     ));

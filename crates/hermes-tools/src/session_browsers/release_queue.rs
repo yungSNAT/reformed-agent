@@ -67,6 +67,7 @@ impl BrowserReleaseQueue {
         self.retirer.clone()
     }
 
+    /// Wait for every queued release attempt, including failed vendor releases.
     /// Call once gateway ingress and the other retirement producers have stopped.
     pub async fn drain(self) -> Result<(), JoinError> {
         let _ = self.stop.send(());
@@ -75,6 +76,13 @@ impl BrowserReleaseQueue {
 }
 
 impl BrowserRetirer {
+    pub fn ensure_running(&self) -> Result<(), &'static str> {
+        if self.send.is_closed() {
+            return Err("Browser release worker has stopped");
+        }
+        Ok(())
+    }
+
     pub fn lease(&self, session_key: &str) -> BrowserLease {
         BrowserLease(self.browsers.tool_overrides(session_key))
     }

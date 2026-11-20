@@ -333,7 +333,6 @@ struct SessionRuntimeState {
     /// Optional usage budget (same units as `/budget` input; gateway displays as-is).
     budget: Option<f64>,
     verbose: bool,
-    yolo: bool,
     reasoning: bool,
     pending_system_notes: Vec<String>,
 }

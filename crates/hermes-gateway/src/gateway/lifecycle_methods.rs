@@ -100,16 +100,6 @@ impl Gateway {
         self.effective_session_model(&key).await
     }
 
-    async fn clear_session_yolo_state(&self, session_key: &str) {
-        if session_key.is_empty() {
-            return;
-        }
-        let mut states = self.runtime_state.write().await;
-        if let Some(state) = states.get_mut(session_key) {
-            state.yolo = false;
-        }
-    }
-
     fn reaction_lifecycle_plan(
         incoming: &IncomingMessage,
         access_policy: Option<&PlatformAccessPolicy>,

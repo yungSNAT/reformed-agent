@@ -816,6 +816,21 @@ pub fn is_session_yolo_enabled(session_key: &str) -> bool {
         .contains(session_key)
 }
 
+/// Toggle session approval bypass and return its new state.
+pub fn toggle_session_yolo(session_key: &str) -> bool {
+    let session_key = session_key.trim();
+    if session_key.is_empty() {
+        return false;
+    }
+    let mut sessions = SESSION_YOLO.lock().expect("session yolo lock poisoned");
+    if sessions.remove(session_key) {
+        false
+    } else {
+        sessions.insert(session_key.to_string());
+        true
+    }
+}
+
 fn environment_bypasses_host_guards(environment: &str) -> bool {
     CONTAINER_BACKENDS
         .iter()

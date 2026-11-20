@@ -339,7 +339,7 @@ impl Gateway {
                 .or_else(|| normalize_service_tier(self.config.service_tier.as_deref())),
             tool_progress: state.tool_progress,
             verbose: state.verbose,
-            yolo: state.yolo,
+            yolo: hermes_tools::approval::is_session_yolo_enabled(session_key),
             reasoning: state.reasoning,
             mcp_reload_generation,
             busy_control: Some(BusyControlRegistration::new(
@@ -562,7 +562,7 @@ impl Gateway {
             },
             if busy_active { "yes" } else { "no" },
             busy_pending,
-            if state.yolo { "ON" } else { "OFF" },
+            if hermes_tools::approval::is_session_yolo_enabled(session_key) { "ON" } else { "OFF" },
             state.home.unwrap_or_else(|| "(not set)".to_string()),
             messages.len(),
             running_tasks,
@@ -1171,7 +1171,7 @@ impl Gateway {
             for key in self.session_manager.idle_session_keys().await {
                 match self
                     .session_manager
-                    .expire_idle_session_with_browser(&key, browsers, hermes_tools::gateway_approval::clear)
+                    .expire_idle_session_with_browser(&key, browsers, hermes_tools::approval::clear_session)
                     .await
                 {
                     Ok(Some(session)) => {
@@ -1187,9 +1187,11 @@ impl Gateway {
             }
             return expired;
         }
-        let expired = self.session_manager.expire_idle_session_snapshots().await;
+        let expired = self
+            .session_manager
+            .expire_idle_session_snapshots_with(hermes_tools::approval::clear_session)
+            .await;
         for (session_key, session) in &expired {
-            hermes_tools::gateway_approval::clear(session_key);
             self.emit_session_finalize(session_key, session, reason)
                 .await;
         }

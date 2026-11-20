@@ -129,20 +129,20 @@ impl Gateway {
         &self,
         incoming: &IncomingMessage,
         session_key: &str,
+        command_text: &str,
+        result: GatewayCommandResult,
         browser: Option<&BrowserLease>,
     ) -> Result<SlashCommandOutcome, GatewayError> {
-        let command_text = Self::normalize_slash_command_text(&incoming.text);
-        if let Some(reply) = self.resolve_quick_command(&command_text).await? {
+        if let Some(reply) = self.resolve_quick_command(command_text).await? {
             self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
                 .await?;
             return Ok(SlashCommandOutcome::Handled);
         }
 
-        let result = handle_command(&command_text);
         if matches!(result, GatewayCommandResult::Unknown(_)) {
-            match self.resolve_skill_slash_command(&command_text) {
+            match self.resolve_skill_slash_command(command_text) {
                 Ok(Some(message)) => {
-                    if let Some(command_name) = Self::extract_command_name(&command_text) {
+                    if let Some(command_name) = Self::extract_command_name(command_text) {
                         self.emit_hook_event(
                             &format!("command:{}", command_name),
                             serde_json::json!({
@@ -172,7 +172,7 @@ impl Gateway {
             }
         }
         if !matches!(result, GatewayCommandResult::Unknown(_)) {
-            if let Some(command_name) = Self::extract_command_name(&command_text) {
+            if let Some(command_name) = Self::extract_command_name(command_text) {
                 self.emit_hook_event(
                     &format!("command:{}", command_name),
                     serde_json::json!({
@@ -205,7 +205,7 @@ impl Gateway {
             SlashCommandOutcome::Handled
         } else {
             SlashCommandOutcome::ForwardToAgent {
-                message: command_text,
+                message: command_text.to_string(),
             }
         })
     }
@@ -435,33 +435,51 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ResetSession(reply) => {
-                let reset_snapshot = self
-                    .session_manager
-                    .reset_session_with_browser(
-                        session_key,
-                        self.browser_retirer.as_ref(),
-                        hermes_tools::approval::clear_session,
+                if let Some(retirer) = &self.browser_retirer {
+                    retirer
+                        .ensure_running()
+                        .map_err(|error| GatewayError::Platform(error.to_owned()))?;
+                }
+                let old_session = self.session_manager.get_session(session_key).await;
+                if let Some(old_session) = &old_session {
+                    self.emit_hook_event(
+                        "session:end",
+                        serde_json::json!({
+                            "platform": incoming.platform,
+                            "chat_id": incoming.chat_id,
+                            "user_id": incoming.user_id,
+                            "session_id": session_key,
+                            "logical_session_id": old_session.id
+                        }),
                     )
-                    .await
-                    .map_err(|error| GatewayError::Platform(error.to_owned()))?;
-                self.clear_session_yolo_state(session_key).await;
-                let old_session = reset_snapshot.as_ref().map(|(old, _)| old);
-                self.emit_hook_event(
-                    "session:end",
-                    serde_json::json!({
-                        "platform": incoming.platform,
-                        "chat_id": incoming.chat_id,
-                        "user_id": incoming.user_id,
-                        "session_id": session_key,
-                        "logical_session_id": old_session.map(|s| s.id.clone())
-                    }),
-                )
-                .await;
-                if let Some(old_session) = old_session {
+                    .await;
                     self.emit_session_finalize(session_key, old_session, "reset")
                         .await;
                 }
-                let reset_session = reset_snapshot.as_ref().map(|(_, new)| new);
+                let reset_session = self
+                    .session_manager
+                    .reset_session_for_command(
+                        &incoming.platform,
+                        &incoming.chat_id,
+                        &incoming.user_id,
+                        old_session.as_ref(),
+                        self.browser_retirer.as_ref(),
+                    )
+                    .await
+                    .map_err(|error| GatewayError::Platform(error.to_owned()))?;
+                if old_session.is_none() {
+                    self.emit_hook_event(
+                        "session:start",
+                        serde_json::json!({
+                            "platform": incoming.platform,
+                            "chat_id": incoming.chat_id,
+                            "user_id": incoming.user_id,
+                            "session_id": session_key,
+                            "reason": "new"
+                        }),
+                    )
+                    .await;
+                }
                 self.emit_hook_event(
                     "session:reset",
                     serde_json::json!({
@@ -469,14 +487,12 @@ impl Gateway {
                         "chat_id": incoming.chat_id,
                         "user_id": incoming.user_id,
                         "session_id": session_key,
-                        "logical_session_id": reset_session.map(|s| s.id.clone())
+                        "logical_session_id": reset_session.id
                     }),
                 )
                 .await;
-                if let Some(new_session) = reset_session {
-                    self.emit_session_reset_lifecycle(session_key, new_session, "reset")
-                        .await;
-                }
+                self.emit_session_reset_lifecycle(session_key, &reset_session, "reset")
+                    .await;
                 self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
                     .await?;
                 Ok(true)
@@ -650,16 +666,8 @@ impl Gateway {
                 Ok(true)
             }
             GatewayCommandResult::ToggleYolo(_) => {
-                let mut states = self.runtime_state.write().await;
-                let state = states.entry(session_key.to_string()).or_default();
-                state.yolo = !state.yolo;
-                if state.yolo {
-                    hermes_tools::approval::enable_session_yolo(session_key);
-                } else {
-                    hermes_tools::approval::disable_session_yolo(session_key);
-                }
-                let reply = format!("🤠 YOLO mode: {}", if state.yolo { "ON" } else { "OFF" });
-                drop(states);
+                let enabled = hermes_tools::approval::toggle_session_yolo(session_key);
+                let reply = format!("🤠 YOLO mode: {}", if enabled { "ON" } else { "OFF" });
                 self.send_message(&incoming.platform, &incoming.chat_id, &reply, None)
                     .await?;
                 Ok(true)
@@ -997,7 +1005,6 @@ impl Gateway {
                         )
                         .await;
                     if copied {
-                        self.clear_session_yolo_state(session_key).await;
                         hermes_tools::approval::clear_session(session_key);
                         format!(
                             "🔁 Switched to session `{}`.\nLoaded {} message(s) into this chat context.",

@@ -153,12 +153,33 @@ impl Gateway {
             return Ok(None);
         }
 
-        // 2. Get or create session
         let session_key = self.session_manager.compose_session_key(
             &incoming.platform,
             &incoming.chat_id,
             &incoming.user_id,
         );
+        let slash_command = is_slash_command.then(|| {
+            let text = Self::normalize_slash_command_text(&incoming.text);
+            let result = handle_command(&text);
+            (text, result)
+        });
+        let slash_command = match slash_command {
+            Some((text, result @ GatewayCommandResult::ResetSession(_)))
+                if !self
+                    .config
+                    .quick_commands
+                    .contains_key(&Self::quick_command_key(&text)) =>
+            {
+                // An explicit reset is its own session transition. Running
+                // policy admission first can discard the same session twice.
+                self.execute_slash_command(incoming, &session_key, &text, result, None)
+                    .await?;
+                return Ok(None);
+            }
+            command => command,
+        };
+
+        // 2. Get or create session
         let admission = self
             .session_manager
             .admit_session(
@@ -166,7 +187,7 @@ impl Gateway {
                 &incoming.chat_id,
                 &incoming.user_id,
                 self.browser_retirer.as_ref(),
-                hermes_tools::gateway_approval::clear,
+                hermes_tools::approval::clear_session,
             )
             .await
             .map_err(|error| GatewayError::Platform(error.to_owned()))?;
@@ -225,9 +246,15 @@ impl Gateway {
         // Installed skill commands are the exception: after built-ins and quick
         // commands decline them, they are converted into a normal agent turn
         // containing the resolved SKILL.md content.
-        if is_slash_command {
+        if let Some((text, result)) = slash_command {
             match self
-                .execute_slash_command(incoming, &session_key, admission.browser.as_ref())
+                .execute_slash_command(
+                    incoming,
+                    &session_key,
+                    &text,
+                    result,
+                    admission.browser.as_ref(),
+                )
                 .await?
             {
                 SlashCommandOutcome::Handled => return Ok(None),
