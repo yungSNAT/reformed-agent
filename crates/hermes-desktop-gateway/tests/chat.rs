@@ -801,27 +801,17 @@ async fn a_turn_longer_than_the_write_timeout_reaches_a_reader_that_keeps_up() {
     assert_eq!(payload["text"], "slow reply", "{payload}");
 }
 
-/// A turn reads its session while its first event waits to be written; that store work must
-/// not hold the event, or a reader that keeps up is closed for a slow disk. Another connection
-/// holds the sessions database for a second, so the turn's read waits in SQLite's busy handler.
+/// The first turn event arrives while a separate connection still holds the session database.
+/// Releasing the database after that event lets the turn finish normally.
 #[tokio::test]
 async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
-    let timeout = Duration::from_millis(200);
-    let started = start_with(vec!["ok"], Duration::ZERO, Some(timeout), "").await;
+    let started = start_with(vec!["ok"], Duration::ZERO, None, "").await;
     let mut client = connect(started.addr).await;
     let session = client.create().await;
     let store = hermes_agent::SessionPersistence::new(started.home.path());
     store.load_session(&session).unwrap();
-    let db = store.db_path().to_path_buf();
-    let (locked, wait_for_lock) = std::sync::mpsc::channel();
-    let holder = std::thread::spawn(move || {
-        let conn = rusqlite::Connection::open(db).unwrap();
-        conn.execute_batch("BEGIN EXCLUSIVE").unwrap();
-        locked.send(()).unwrap();
-        std::thread::sleep(Duration::from_secs(1));
-        conn.execute_batch("COMMIT").unwrap();
-    });
-    wait_for_lock.recv().unwrap();
+    let holder = rusqlite::Connection::open(store.db_path()).unwrap();
+    holder.execute_batch("BEGIN EXCLUSIVE").unwrap();
     let probe = rusqlite::Connection::open(store.db_path()).unwrap();
     probe.busy_timeout(Duration::ZERO).unwrap();
     let refused = probe
@@ -837,12 +827,19 @@ async fn a_slow_session_read_does_not_hold_the_turns_first_event() {
 
     let reply = client.submit(2, &session, "hi").await;
     assert_eq!(reply["result"]["status"], "streaming", "{reply}");
+    let first = match client.events.pop_front() {
+        Some(frame) => frame,
+        None => client.next_json().await,
+    };
+    assert_eq!(first["method"], "event", "{first}");
+    assert_eq!(first["params"]["session_id"], session, "{first}");
+    assert_eq!(first["params"]["type"], "message.start", "{first}");
+    holder.execute_batch("COMMIT").unwrap();
+
     let events = client.turn_events(&session).await;
-    assert_eq!(events.first().unwrap().0, "message.start");
     let (kind, payload, _) = events.last().unwrap();
     assert_eq!(kind, "message.complete");
     assert_eq!(payload["text"], "ok", "{payload}");
-    holder.join().unwrap();
 }
 
 /// A small payload that starts as a PNG does: the gateway checks only the signature.
