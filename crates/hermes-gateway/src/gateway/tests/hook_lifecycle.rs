@@ -34,6 +34,8 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
     let before = manager.get_session(&key).await.unwrap();
     let browser = retirer.lease(&key);
     let snapshot = browser.tool_overrides()["browser_snapshot"].clone();
+    let fixture_error = snapshot.execute(serde_json::json!({})).await.unwrap_err();
+    assert!(fixture_error.to_string().contains("fixture browser"));
     let mut slots = Vec::new();
     while let Some(slot) = retirer.try_reserve().unwrap() {
         slots.push(slot);
@@ -53,6 +55,22 @@ async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_sessi
         .await
         .expect("another chat waited for the full release queue")
         .unwrap();
+        let other_key =
+            manager.compose_session_key(&other.platform, &other.chat_id, &other.user_id);
+        let other_browser = retirer.lease(&other_key);
+        other.text = "/reset".into();
+        tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            gateway.route_message(&other),
+        )
+        .await
+        .expect("a reset without a browser backend waited for release capacity")
+        .unwrap();
+        let stale = other_browser.tool_overrides()["browser_snapshot"]
+            .execute(serde_json::json!({}))
+            .await
+            .unwrap_err();
+        assert!(stale.to_string().contains("browser was closed"));
     }
     let sent_before_failure = messages.lock().unwrap().len();
     drop(slots);

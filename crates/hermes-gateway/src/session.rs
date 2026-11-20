@@ -287,6 +287,9 @@ impl<'a> SessionBrowserBoundary<'a> {
         let Some(browsers) = self.browsers else {
             return Ok(true);
         };
+        if browsers.try_retire_without_backend(session_key) {
+            return Ok(true);
+        }
         let slot = match self.reserved_slot.take() {
             Some(slot) => Some(slot),
             None => browsers.try_reserve()?,

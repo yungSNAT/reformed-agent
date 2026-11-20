@@ -149,6 +149,17 @@ impl SharedBrowser {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn try_close_without_backend(&self) -> bool {
+        let Ok(state) = self.inner.state.try_lock() else {
+            return false;
+        };
+        if state.backend.is_some() {
+            return false;
+        }
+        self.mark_closed();
+        true
+    }
+
     pub(crate) async fn release_closed_backend(&self) {
         let mut state = self.inner.state.lock().await;
         drop_backend(state.backend.take()).await;

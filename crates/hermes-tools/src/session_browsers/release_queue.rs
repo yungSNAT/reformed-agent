@@ -79,6 +79,12 @@ impl BrowserRetirer {
         BrowserLease(self.browsers.tool_overrides(session_key))
     }
 
+    /// Retire an absent or dormant browser without reserving room in the queue.
+    /// An active backend or a browser with a held lock still needs the worker.
+    pub fn try_retire_without_backend(&self, session_key: &str) -> bool {
+        self.browsers.try_retire_without_backend(session_key)
+    }
+
     pub fn try_reserve(&self) -> Result<Option<BrowserReleaseSlot<'_>>, &'static str> {
         let permit = match self.send.try_reserve() {
             Ok(permit) => permit,

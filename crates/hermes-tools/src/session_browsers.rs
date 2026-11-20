@@ -105,6 +105,18 @@ impl SessionBrowsers {
         })
     }
 
+    fn try_retire_without_backend(&self, session_key: &str) -> bool {
+        let mut sessions = self.sessions();
+        if sessions
+            .get(session_key)
+            .is_some_and(|(browser, _)| !browser.try_close_without_backend())
+        {
+            return false;
+        }
+        sessions.remove(session_key);
+        true
+    }
+
     /// Release each browser no call has used within `max_idle`. A session
     /// that calls again gets a new one.
     pub async fn release_idle(&self, max_idle: Duration) {
