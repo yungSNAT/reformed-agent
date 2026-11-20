@@ -166,13 +166,13 @@ impl Gateway {
                 &incoming.chat_id,
                 &incoming.user_id,
                 self.browser_retirer.as_ref(),
+                hermes_tools::gateway_approval::clear,
             )
             .await
             .map_err(|error| GatewayError::Platform(error.to_owned()))?;
         let session_start_reason = match admission.transition {
             SessionTransition::Created => Some("new"),
             SessionTransition::PolicyReset(previous) => {
-                hermes_tools::gateway_approval::clear(&session_key);
                 self.emit_session_finalize(&session_key, &previous, "auto_reset")
                     .await;
                 Some("auto_reset")

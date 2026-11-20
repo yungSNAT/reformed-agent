@@ -268,22 +268,32 @@ pub(crate) struct SessionAdmission {
     pub(crate) browser: Option<BrowserLease>,
 }
 
-struct SessionBrowserBoundary<'a> {
+struct SessionBoundary<'a> {
     browsers: Option<&'a BrowserRetirer>,
     reserved_slot: Option<BrowserReleaseSlot<'a>>,
+    clear_approvals: fn(&str),
 }
 
-impl<'a> SessionBrowserBoundary<'a> {
-    fn new(browsers: Option<&'a BrowserRetirer>) -> Self {
+impl<'a> SessionBoundary<'a> {
+    fn new(browsers: Option<&'a BrowserRetirer>, clear_approvals: fn(&str)) -> Self {
         Self {
             browsers,
             reserved_slot: None,
+            clear_approvals,
         }
     }
 
     // Called under the session write lock. A full queue leaves the session
     // untouched, so the caller can wait outside the lock and recheck policy.
-    fn try_retire(&mut self, session_key: &str) -> Result<bool, &'static str> {
+    fn try_finish(&mut self, session_key: &str) -> Result<bool, &'static str> {
+        if !self.try_retire_browser(session_key)? {
+            return Ok(false);
+        }
+        (self.clear_approvals)(session_key);
+        Ok(true)
+    }
+
+    fn try_retire_browser(&mut self, session_key: &str) -> Result<bool, &'static str> {
         let Some(browsers) = self.browsers else {
             return Ok(true);
         };
@@ -394,7 +404,7 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
     ) -> Session {
-        self.admit_session(platform, chat_id, user_id, None)
+        self.admit_session(platform, chat_id, user_id, None, |_| ())
             .await
             .expect("admission without a browser cannot fail")
             .session
@@ -407,19 +417,20 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
         browsers: Option<&BrowserRetirer>,
+        clear_approvals: fn(&str),
     ) -> Result<SessionAdmission, &'static str> {
         let session_type = Self::infer_session_type(chat_id);
         let reset_policy = self.effective_reset_policy(platform, session_type);
         let session_key = self.compose_session_key(platform, chat_id, user_id);
-        let mut browser = SessionBrowserBoundary::new(browsers);
+        let mut boundary = SessionBoundary::new(browsers, clear_approvals);
 
         loop {
             let mut sessions = self.sessions.write().await;
             if let Some(session) = sessions.get_mut(&session_key) {
                 let transition = if session.should_reset() {
-                    if !browser.try_retire(&session_key)? {
+                    if !boundary.try_finish(&session_key)? {
                         drop(sessions);
-                        browser.wait_for_slot().await?;
+                        boundary.wait_for_slot().await?;
                         continue;
                     }
                     let messages = std::mem::take(&mut session.messages);
@@ -435,7 +446,7 @@ impl SessionManager {
                 return Ok(SessionAdmission {
                     session: session.clone(),
                     transition,
-                    browser: browser.pin(&session_key),
+                    browser: boundary.pin(&session_key),
                 });
             }
 
@@ -449,7 +460,7 @@ impl SessionManager {
             return Ok(SessionAdmission {
                 session,
                 transition: SessionTransition::Created,
-                browser: browser.pin(&session_key),
+                browser: boundary.pin(&session_key),
             });
         }
     }
@@ -460,7 +471,7 @@ impl SessionManager {
         &self,
         session_id: &str,
     ) -> Option<(Session, Session)> {
-        self.reset_session_with_browser(session_id, None)
+        self.reset_session_with_browser(session_id, None, |_| ())
             .await
             .expect("reset without a browser cannot fail")
     }
@@ -469,16 +480,17 @@ impl SessionManager {
         &self,
         session_id: &str,
         browsers: Option<&BrowserRetirer>,
+        clear_approvals: fn(&str),
     ) -> Result<Option<(Session, Session)>, &'static str> {
-        let mut browser = SessionBrowserBoundary::new(browsers);
+        let mut boundary = SessionBoundary::new(browsers, clear_approvals);
         loop {
             let mut sessions = self.sessions.write().await;
             let Some(session) = sessions.get_mut(session_id) else {
                 return Ok(None);
             };
-            if !browser.try_retire(session_id)? {
+            if !boundary.try_finish(session_id)? {
                 drop(sessions);
-                browser.wait_for_slot().await?;
+                boundary.wait_for_slot().await?;
                 continue;
             }
             let old = session.clone();
@@ -745,8 +757,9 @@ impl SessionManager {
         &self,
         key: &str,
         browsers: &BrowserRetirer,
+        clear_approvals: fn(&str),
     ) -> Result<Option<Session>, &'static str> {
-        let mut browser = SessionBrowserBoundary::new(Some(browsers));
+        let mut boundary = SessionBoundary::new(Some(browsers), clear_approvals);
         loop {
             let mut sessions = self.sessions.write().await;
             let Some(session) = sessions.get(key) else {
@@ -756,10 +769,10 @@ impl SessionManager {
                 return Ok(None);
             }
             let mut user_sessions = self.user_sessions.write().await;
-            if !browser.try_retire(key)? {
+            if !boundary.try_finish(key)? {
                 drop(user_sessions);
                 drop(sessions);
-                browser.wait_for_slot().await?;
+                boundary.wait_for_slot().await?;
                 continue;
             }
             if let Some(ids) = user_sessions.get_mut(&session.user_id) {
@@ -1025,7 +1038,7 @@ mod tests {
             ..SessionConfig::default()
         });
         let created = manager
-            .admit_session("telegram", "policy", "user1", None)
+            .admit_session("telegram", "policy", "user1", None, |_| ())
             .await
             .unwrap();
         assert!(matches!(created.transition, SessionTransition::Created));
@@ -1034,7 +1047,7 @@ mod tests {
             .await;
 
         let reset = manager
-            .admit_session("telegram", "policy", "user1", None)
+            .admit_session("telegram", "policy", "user1", None, |_| ())
             .await
             .unwrap();
         let SessionTransition::PolicyReset(previous) = reset.transition else {
@@ -1058,7 +1071,7 @@ mod tests {
         let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
         let queue = BrowserReleaseQueue::start(browsers.clone());
         let retirer = queue.retirer();
-        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer));
+        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer), |_| ());
         let before = admit("shared").await.unwrap();
         let other = admit("other").await.unwrap();
 

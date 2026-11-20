@@ -1169,7 +1169,11 @@ impl Gateway {
         if let Some(browsers) = &self.browser_retirer {
             let mut expired = 0;
             for key in self.session_manager.idle_session_keys().await {
-                match self.session_manager.expire_idle_session_with_browser(&key, browsers).await {
+                match self
+                    .session_manager
+                    .expire_idle_session_with_browser(&key, browsers, hermes_tools::gateway_approval::clear)
+                    .await
+                {
                     Ok(Some(session)) => {
                         expired += 1;
                         self.emit_session_finalize(&key, &session, reason).await;
@@ -1185,6 +1189,7 @@ impl Gateway {
         }
         let expired = self.session_manager.expire_idle_session_snapshots().await;
         for (session_key, session) in &expired {
+            hermes_tools::gateway_approval::clear(session_key);
             self.emit_session_finalize(session_key, session, reason)
                 .await;
         }

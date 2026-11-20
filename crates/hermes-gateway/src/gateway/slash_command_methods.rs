@@ -437,7 +437,11 @@ impl Gateway {
             GatewayCommandResult::ResetSession(reply) => {
                 let reset_snapshot = self
                     .session_manager
-                    .reset_session_with_browser(session_key, self.browser_retirer.as_ref())
+                    .reset_session_with_browser(
+                        session_key,
+                        self.browser_retirer.as_ref(),
+                        hermes_tools::gateway_approval::clear,
+                    )
                     .await
                     .map_err(|error| GatewayError::Platform(error.to_owned()))?;
                 self.clear_session_boundary_security_state(session_key)

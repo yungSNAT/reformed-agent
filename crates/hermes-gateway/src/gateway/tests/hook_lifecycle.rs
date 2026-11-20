@@ -1,5 +1,75 @@
 use super::*;
 
+#[derive(Default)]
+struct PauseSessionEnd {
+    entered: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl HookHandler for PauseSessionEnd {
+    async fn handle(&self, _: &HookEvent) -> Result<(), String> {
+        self.entered.notify_one();
+        self.resume.notified().await;
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "pause-session-end"
+    }
+}
+
+#[tokio::test]
+async fn cancelled_reset_clears_previous_gateway_approval_before_the_end_hook() {
+    use hermes_tools::gateway_approval::{self, GatewayApprovalBinding, Resolution};
+
+    let manager = Arc::new(SessionManager::new(SessionConfig::default()));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager.clone(), dm, GatewayConfig::default());
+    let pause = Arc::new(PauseSessionEnd::default());
+    let mut hooks = HookRegistry::new();
+    hooks.register_in_process("session:end", pause.clone());
+    gateway.set_hook_registry(Arc::new(hooks)).await;
+
+    let mut reset = test_incoming("/reset");
+    reset.chat_id = "paused-reset-approval".into();
+    let key = manager.compose_session_key(&reset.platform, &reset.chat_id, &reset.user_id);
+    let before = manager
+        .get_or_create_session(&reset.platform, &reset.chat_id, &reset.user_id)
+        .await;
+    let binding = GatewayApprovalBinding {
+        session_key: key.clone(),
+        user_id: reset.user_id.clone(),
+        notify: gateway_approval::notify_with(|_| async { true }),
+    };
+    let command = "echo fixture";
+    let error =
+        gateway_approval::authorise(&binding, command, &serde_json::json!({"command": command}))
+            .await
+            .unwrap_err();
+    assert!(error.contains("shown it"), "{error}");
+
+    {
+        let mut request = std::pin::pin!(gateway.route_message(&reset));
+        tokio::time::timeout(std::time::Duration::from_secs(2), async {
+            tokio::select! {
+                result = request.as_mut() => panic!("reset finished before its session:end hook: {result:?}"),
+                () = pause.entered.notified() => {}
+            }
+        })
+        .await
+        .expect("reset never reached its end hook");
+        assert_ne!(manager.get_session(&key).await.unwrap().id, before.id);
+    }
+    pause.resume.notify_one();
+    assert_eq!(
+        gateway_approval::approve(&key, &reset.user_id),
+        Resolution::NothingPending,
+        "a reset session retained its previous gateway approval"
+    );
+}
+
 #[tokio::test]
 async fn cancelled_or_unavailable_browser_retirement_preserves_the_gateway_session() {
     use hermes_tools::backends::browser::unavailable_browser_backend;
