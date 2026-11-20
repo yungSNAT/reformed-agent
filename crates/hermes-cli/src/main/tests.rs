@@ -309,6 +309,7 @@ mod tests {
     #[tokio::test]
     async fn gateway_turns_ask_for_approval_only_where_the_platform_vouches_for_the_user() {
         use hermes_tools::gateway_approval::{self, Resolution};
+        use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
 
         let gateway = Arc::new(Gateway::new(
             Arc::new(SessionManager::new(SessionConfig::default())),
@@ -317,12 +318,20 @@ mod tests {
         ));
         let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
             Arc::new(UnreachableTerminal);
-        let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
-            session_key: format!("{platform}:cli-turn"),
-            platform: platform.into(),
-            chat_id: "cli-turn".into(),
-            user_id: user.into(),
-            ..GatewayRuntimeContext::default()
+        let releases = BrowserReleaseQueue::start(SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
+        }));
+        let retirer = releases.retirer();
+        let ctx = |platform: &str, user: &str| {
+            let session_key = format!("{platform}:cli-turn");
+            GatewayRuntimeContext {
+                browser: Some(retirer.lease(&session_key)),
+                session_key,
+                platform: platform.into(),
+                chat_id: "cli-turn".into(),
+                user_id: user.into(),
+                ..GatewayRuntimeContext::default()
+            }
         };
 
         // Telegram, one identified sender: the terminal asks. No adapter is
@@ -372,6 +381,7 @@ mod tests {
             assert!(!overrides.contains_key("terminal"), "{platform} {user}");
             assert!(overrides.contains_key("browser_snapshot"), "{platform} {user}");
         }
+        releases.drain().await.unwrap();
     }
 
     #[tokio::test]
