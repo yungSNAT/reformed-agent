@@ -158,22 +158,31 @@ fn write_value(out: &mut String, value: &Py, indent: Option<usize>, sort: bool, 
 }
 
 fn write_string(out: &mut String, s: &str) {
+    write_utf16_string(out, s.encode_utf16());
+}
+
+/// Encode a Python JSON string with `ensure_ascii=True`, including any lone
+/// UTF-16 surrogates such as the ones Python uses for undecodable path bytes.
+pub fn json_utf16_string(units: impl IntoIterator<Item = u16>) -> String {
+    let mut out = String::new();
+    write_utf16_string(&mut out, units);
+    out
+}
+
+fn write_utf16_string(out: &mut String, units: impl IntoIterator<Item = u16>) {
     out.push('"');
-    for c in s.chars() {
-        match c {
-            '"' => out.push_str("\\\""),
-            '\\' => out.push_str("\\\\"),
-            '\n' => out.push_str("\\n"),
-            '\r' => out.push_str("\\r"),
-            '\t' => out.push_str("\\t"),
-            '\u{08}' => out.push_str("\\b"),
-            '\u{0c}' => out.push_str("\\f"),
-            ' '..='~' => out.push(c),
+    for unit in units {
+        match unit {
+            0x22 => out.push_str("\\\""),
+            0x5c => out.push_str("\\\\"),
+            0x0a => out.push_str("\\n"),
+            0x0d => out.push_str("\\r"),
+            0x09 => out.push_str("\\t"),
+            0x08 => out.push_str("\\b"),
+            0x0c => out.push_str("\\f"),
+            0x20..=0x7e => out.push(char::from(unit as u8)),
             _ => {
-                let mut units = [0u16; 2];
-                for unit in c.encode_utf16(&mut units) {
-                    let _ = write!(out, "\\u{unit:04x}");
-                }
+                let _ = write!(out, "\\u{unit:04x}");
             }
         }
     }

@@ -31,6 +31,14 @@ fn strings_escape_as_python_ensure_ascii_does() {
 }
 
 #[test]
+fn json_string_preserves_lone_surrogates() {
+    assert_eq!(
+        json_utf16_string([0x2f, 0xdcff, 0xd83d, 0xde00, 0x22]),
+        r#""/\udcff\ud83d\ude00\"""#,
+    );
+}
+
+#[test]
 fn strings_repr_escapes_what_python_cannot_print() {
     // repr("a\xa0b\u200bc\u2028d\U000e0001e\ue000f\x85g\xadh\u0378i \u00e9\U0001F600\u3000j")
     // in Python 3.15 (Unicode 17).

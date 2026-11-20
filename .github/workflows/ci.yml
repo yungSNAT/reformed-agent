@@ -36,7 +36,7 @@ jobs:
         run: |
           python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-workstream-status.py --upstream-ref upstream/parity-reference --no-fetch
-          python3 scripts/generate-test-intent-mapping.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-coverage-audit.py --check
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
