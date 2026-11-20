@@ -98,14 +98,6 @@ fn entries(value: &Py) -> &[(String, Py)] {
     }
 }
 
-fn list(value: &Py) -> &[Py] {
-    if let Py::List(items) = value {
-        items
-    } else {
-        &[]
-    }
-}
-
 fn items(value: &Py, field: &str) -> Result<Vec<Py>, String> {
     Ok(match value {
         Py::List(items) => items.clone(),
