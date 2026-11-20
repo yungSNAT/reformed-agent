@@ -10,6 +10,7 @@ mod decimal_limit;
 mod divergence;
 mod fork_carry;
 mod git;
+mod global_proof;
 mod parity_matrix;
 mod report_io;
 mod shared_diff_backlog;
@@ -79,6 +80,13 @@ enum Command {
         infer_long_args = true
     )]
     UpstreamQueue(upstream_queue::UpstreamQueueArgs),
+    /// Evaluate CI and release parity proof thresholds.
+    #[command(
+        name = "generate-global-parity-proof",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    GlobalProof(global_proof::GlobalProofArgs),
 }
 
 fn main() {
@@ -95,6 +103,7 @@ fn main() {
         Command::WorkstreamStatus(args) => workstream_status::run(args),
         Command::CheckForkCarry(args) => fork_carry::run(args),
         Command::UpstreamQueue(args) => upstream_queue::run(args),
+        Command::GlobalProof(args) => global_proof::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
