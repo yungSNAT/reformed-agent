@@ -34,7 +34,7 @@ pub struct CoverageAuditArgs {
     /// Output Markdown path relative to the repository root.
     #[arg(long, default_value = "docs/parity/test-coverage-audit.md")]
     out_md: String,
-    /// Fail if the audit gate finds critical gaps.
+    /// Evaluate the audit gate without writing reports. Fail on critical gaps.
     #[arg(long)]
     check: bool,
 }
@@ -747,6 +747,51 @@ fn generate(root: &Path, generated: &str) -> Result<(String, String, bool), Stri
 pub fn run(args: CoverageAuditArgs) -> Result<i32, String> {
     let root = resolve_argument(Path::new(&args.repo_root))?;
     let (json, markdown, pass) = generate(&root, &py::utc_isoformat())?;
+    if args.check {
+        return Ok(i32::from(!pass));
+    }
     write_coverage_reports(&root, &args.out_json, &args.out_md, json, markdown)?;
-    Ok(i32::from(args.check && !pass))
+    Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn coverage_check_leaves_reports_untouched_for_both_gate_results() {
+        let tmp = tempfile::tempdir().unwrap();
+        let root = tmp.path();
+        fs::create_dir_all(root.join("docs/parity")).unwrap();
+        for input in MANIFESTS.into_iter().chain([MATRIX, QUEUE, DIVERGENCES]) {
+            fs::write(root.join(input), "{}").unwrap();
+        }
+        fs::write(root.join(DOMAIN_SPECS), "[]").unwrap();
+        fs::write(root.join("audit.json"), "previous JSON\n").unwrap();
+        let args = |check| CoverageAuditArgs {
+            repo_root: root.to_str().unwrap().into(),
+            out_json: "audit.json".into(),
+            out_md: "reports/audit.md".into(),
+            check,
+        };
+
+        fs::write(root.join(INTENT_REPORT), "{}").unwrap();
+        assert_eq!(run(args(true)).unwrap(), 0);
+        fs::write(
+            root.join(INTENT_REPORT),
+            r#"{"summary":{"unmapped_intents":1}}"#,
+        )
+        .unwrap();
+        assert_eq!(run(args(true)).unwrap(), 1);
+        assert_eq!(
+            fs::read(root.join("audit.json")).unwrap(),
+            b"previous JSON\n"
+        );
+        assert!(!root.join("reports").exists());
+
+        assert_eq!(run(args(false)).unwrap(), 0);
+        let report = fs::read_to_string(root.join("audit.json")).unwrap();
+        assert!(report.contains("unmapped_test_intents"));
+        assert!(root.join("reports/audit.md").is_file());
+    }
 }

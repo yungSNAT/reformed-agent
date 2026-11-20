@@ -11,6 +11,7 @@ From repository root:
 python3 scripts/generate-parity-matrix.py
 python3 scripts/generate-workstream-status.py
 cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
+cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
@@ -26,6 +27,9 @@ cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-ga
 
 By default this command fetches upstream directly from GitHub
 (`git fetch upstream --prune`) before computing metrics.
+
+The coverage audit writes JSON and Markdown with its default invocation. Run it
+with `--check` to evaluate the gate without writing either report.
 
 ## Outputs
 
