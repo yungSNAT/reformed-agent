@@ -241,7 +241,12 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
     Ok(key)
 }
 
-async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
+/// Atomically replaces the file at `path`, preserving any symbolic link to it.
+/// On Unix the staged file is created with owner-only permissions.
+pub async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
+    // A symlinked store keeps its link: the temp file is staged beside the
+    // link's target and renamed over it.
+    let path = &hermes_config::resolve_symlink_target(path);
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -612,6 +617,29 @@ mod tests {
             scope: Some("openid".to_string()),
             expires_at: None,
         }
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn file_token_store_writes_through_a_symlink_and_keeps_it() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempdir().unwrap();
+        let real = dir.path().join("vault").join("tokens.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = dir.path().join("tokens.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        let store = FileTokenStore::new(&link).await.unwrap();
+        store
+            .upsert(sample_credential("openai", "super-secret-token"))
+            .await
+            .unwrap();
+
+        assert!(link.is_symlink(), "the token store link was replaced");
+        let raw = std::fs::read_to_string(&real).unwrap();
+        assert!(serde_json::from_str::<TokenStoreEnvelope>(&raw).is_ok());
+        let mode = std::fs::metadata(&real).unwrap().permissions().mode();
+        assert_eq!(mode & 0o777, 0o600);
     }
 
     #[tokio::test]

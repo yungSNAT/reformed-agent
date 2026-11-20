@@ -260,15 +260,10 @@ fn flush_dead_targets(path: &Path, entries: &HashMap<String, DeadTargetEntry>) {
         debug!(path = %parent.display(), error = %err, "Failed to create dead-target registry directory");
         return;
     }
-    let tmp = path.with_extension("json.tmp");
     match serde_json::to_vec_pretty(entries) {
         Ok(bytes) => {
-            if let Err(err) = std::fs::write(&tmp, bytes) {
-                debug!(path = %tmp.display(), error = %err, "Failed to write dead-target registry");
-                return;
-            }
-            if let Err(err) = std::fs::rename(&tmp, path) {
-                debug!(from = %tmp.display(), to = %path.display(), error = %err, "Failed to replace dead-target registry");
+            if let Err(err) = hermes_config::atomic_write_bytes(path, &bytes) {
+                debug!(path = %path.display(), error = %err, "Failed to write dead-target registry");
             }
         }
         Err(err) => debug!(error = %err, "Failed to serialize dead-target registry"),
@@ -1109,6 +1104,21 @@ mod tests {
         assert!(reloaded.is_dead("telegram", "123"));
         assert!(reloaded.clear("telegram", "123"));
         assert!(!reloaded.is_dead("telegram", "123"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dead_target_registry_writes_through_a_symlink_and_keeps_it() {
+        let tmp = tempfile::tempdir().unwrap();
+        let real = tmp.path().join("dotfiles").join("dead_targets.json");
+        std::fs::create_dir_all(real.parent().unwrap()).unwrap();
+        let link = tmp.path().join("dead_targets.json");
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+
+        assert!(DeadTargetRegistry::with_path(&link).mark_dead("telegram", "123", "forbidden"));
+
+        assert!(link.is_symlink(), "the registry link was replaced");
+        assert!(DeadTargetRegistry::with_path(&real).is_dead("telegram", "123"));
     }
 
     #[test]

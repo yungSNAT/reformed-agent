@@ -1,7 +1,8 @@
 import { type ChildProcess, spawn } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { existsSync } from 'node:fs'
-import { delimiter, resolve } from 'node:path'
+import { accessSync, constants, statSync } from 'node:fs'
+import { delimiter, isAbsolute, join, resolve } from 'node:path'
 import { createInterface } from 'node:readline'
 
 import type { GatewayEvent } from './gatewayTypes.js'
@@ -13,7 +14,6 @@ const MAX_BUFFERED_EVENTS = 2000
 const MAX_LOG_PREVIEW = 240
 const STARTUP_TIMEOUT_MS = Math.max(5000, parseInt(process.env.HERMES_TUI_STARTUP_TIMEOUT_MS ?? '15000', 10) || 15000)
 const REQUEST_TIMEOUT_MS = Math.max(30000, parseInt(process.env.HERMES_TUI_RPC_TIMEOUT_MS ?? '120000', 10) || 120000)
-const WS_CONNECTING = 0
 const WS_OPEN = 1
 const WS_CLOSING = 2
 const WS_CLOSED = 3
@@ -33,25 +33,52 @@ const resolveSidecarUrl = () => {
   return raw ? raw : null
 }
 
-const resolvePython = (root: string) => {
-  const configured = process.env.HERMES_PYTHON?.trim() || process.env.PYTHON?.trim()
+// The Rust gateway (crates/hermes-desktop-gateway) reads its token from this variable and
+// announces its port on stdout once it listens.
+const GATEWAY_TOKEN_ENV = 'HERMES_DASHBOARD_SESSION_TOKEN'
+const GATEWAY_READY_RE = /^HERMES_BACKEND_READY port=(\d+)$/
+const GATEWAY_BIN = process.platform === 'win32' ? 'hermes-desktop-gateway.exe' : 'hermes-desktop-gateway'
+
+const GATEWAY_BUILD_HINT =
+  'build it with `cargo build --release -p hermes-desktop-gateway` or set HERMES_TUI_GATEWAY_BIN, then restart the TUI'
+
+// On Windows `\tools` passes isAbsolute but names a folder on the current drive: only a drive
+// root or a UNC share (`\\server\share`) counts. Callers check the joined, normalised path.
+const isRootedPath = (p: string) =>
+  process.platform === 'win32' ? /^([a-z]:[\\/]|[\\/]{2}[^\\/]+[\\/][^\\/]+)/i.test(p) : isAbsolute(p)
+
+// A file this process may execute, so a non-executable match does not end the search early.
+const isExecutableFile = (p: string) => {
+  try {
+    accessSync(p, constants.X_OK)
+
+    return statSync(p).isFile()
+  } catch {
+    return false
+  }
+}
+
+// Only a rooted path, so spawn never searches the working folder (as Windows does for a bare
+// name) or a relative PATH entry: HERMES_TUI_GATEWAY_BIN, then a build in the checkout this
+// client runs from (root, never the working folder), then the rooted PATH entries.
+const resolveGatewayBinary = (root: string): { bin: string } | { problem: string } => {
+  const configured = process.env.HERMES_TUI_GATEWAY_BIN?.trim()
 
   if (configured) {
-    return configured
+    return isRootedPath(configured)
+      ? { bin: configured }
+      : { problem: `HERMES_TUI_GATEWAY_BIN must be an absolute path, not ${configured}` }
   }
 
-  const venv = process.env.VIRTUAL_ENV?.trim()
+  const pathDirs = (process.env.PATH ?? '').split(delimiter)
 
-  const hit = [
-    venv && resolve(venv, 'bin/python'),
-    venv && resolve(venv, 'Scripts/python.exe'),
-    resolve(root, '.venv/bin/python'),
-    resolve(root, '.venv/bin/python3'),
-    resolve(root, 'venv/bin/python'),
-    resolve(root, 'venv/bin/python3')
-  ].find(p => p && existsSync(p))
+  const bin = [resolve(root, 'target', 'release'), resolve(root, 'target', 'debug'), ...pathDirs]
+    .map(dir => join(dir, GATEWAY_BIN))
+    .find(p => isRootedPath(p) && isExecutableFile(p))
 
-  return hit || (process.platform === 'win32' ? 'python' : 'python3')
+  return bin
+    ? { bin }
+    : { problem: `${GATEWAY_BIN} not found in ${resolve(root, 'target')} or on PATH (${GATEWAY_BUILD_HINT})` }
 }
 
 const asGatewayEvent = (value: unknown): GatewayEvent | null =>
@@ -215,7 +242,7 @@ export class GatewayClient extends EventEmitter {
     this.clearReadyTimer()
   }
 
-  private startReadyTimer(python: string, cwd: string) {
+  private startReadyTimer(command: string, cwd: string) {
     this.readyTimer = setTimeout(() => {
       if (this.ready) {
         return
@@ -227,12 +254,20 @@ export class GatewayClient extends EventEmitter {
       // to dig through `/logs`.  Capped to keep the activity feed
       // readable on slow boots.
       const stderrTail = this.getLogTail(20)
+      // Read before publishing: a listener may restart the transport, and its new child must survive.
+      const unannounced = this.proc && !this.ws ? this.proc : null
 
-      this.pushLog(`[startup] timed out waiting for gateway.ready (python=${python}, cwd=${cwd})`)
+      this.pushLog(`[startup] timed out waiting for gateway.ready (command=${command}, cwd=${cwd})`)
       this.publish({
         type: 'gateway.start_timeout',
-        payload: { cwd, python, stderr_tail: stderrTail }
+        payload: { command, cwd, stderr_tail: stderrTail }
       })
+
+      // A spawned gateway that never announced its port is stopped; its exit then rejects
+      // the requests waiting for it.
+      if (unannounced && this.proc === unannounced) {
+        unannounced.kill()
+      }
     }, STARTUP_TIMEOUT_MS)
   }
 
@@ -315,27 +350,64 @@ export class GatewayClient extends EventEmitter {
     }
   }
 
+  // Starts the Rust gateway on a free loopback port and attaches to it with a token made here,
+  // which reaches the child through its environment, never its arguments.
   private startSpawnedGateway(root: string) {
-    const python = resolvePython(root)
-    const cwd = process.env.HERMES_CWD || root
-    const env = { ...process.env }
-    const pyPath = env.PYTHONPATH?.trim()
+    const found = resolveGatewayBinary(root)
 
-    env.PYTHONPATH = pyPath ? `${root}${delimiter}${pyPath}` : root
-    this.startReadyTimer(python, cwd)
-    this.proc = spawn(python, ['-m', 'tui_gateway.entry'], { cwd, env, stdio: ['pipe', 'pipe', 'pipe'] })
+    if ('problem' in found) {
+      const line = `[spawn] ${found.problem}`
+      const missing = Promise.reject(new Error(found.problem))
+
+      missing.catch(() => {})
+      this.wsConnectPromise = missing
+      this.pushLog(line)
+      this.publish({ type: 'gateway.stderr', payload: { line } })
+      this.handleTransportExit(1, found.problem)
+
+      return
+    }
+
+    const { bin } = found
+    const cwd = process.env.HERMES_CWD || root
+    const token = randomBytes(32).toString('hex')
+    const env = { ...process.env, [GATEWAY_TOKEN_ENV]: token }
+
+    this.startReadyTimer(bin, cwd)
+    this.proc = spawn(bin, ['--host', '127.0.0.1', '--port', '0'], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+
+    const ownedProc = this.proc
 
     this.stdoutRl = createInterface({ input: this.proc.stdout! })
-    this.stdoutRl.on('line', raw => {
-      try {
-        this.dispatch(JSON.parse(raw))
-      } catch {
-        const preview = raw.trim().slice(0, MAX_LOG_PREVIEW) || '(empty line)'
 
-        this.pushLog(`[protocol] malformed stdout: ${preview}`)
-        this.publish({ type: 'gateway.protocol_error', payload: { preview } })
-      }
+    const announced = new Promise<string>((resolve, reject) => {
+      this.stdoutRl!.on('line', raw => {
+        const line = raw.trim()
+        const port = GATEWAY_READY_RE.exec(line)?.[1]
+
+        if (port) {
+          resolve(port)
+        } else if (line) {
+          this.pushLog(line)
+        }
+      })
+      ownedProc.once('error', reject)
+      ownedProc.once('exit', code => reject(new Error(`gateway exited (${code}) before it was ready`)))
     })
+
+    const connected = announced.then(port => {
+      if (this.proc !== ownedProc) {
+        throw new Error('gateway restarting')
+      }
+
+      this.wsConnectPromise = null
+      this.startAttachedGateway(`ws://127.0.0.1:${port}/api/ws?token=${token}`)
+
+      return this.wsConnectPromise ?? Promise.reject(new Error('gateway websocket startup failed'))
+    })
+
+    connected.catch(() => {})
+    this.wsConnectPromise = connected
 
     this.stderrRl = createInterface({ input: this.proc.stderr! })
     this.stderrRl.on('line', raw => {
@@ -349,14 +421,14 @@ export class GatewayClient extends EventEmitter {
       this.publish({ type: 'gateway.stderr', payload: { line } })
     })
 
-    const ownedProc = this.proc
     this.proc.on('error', err => {
       // Skip stale errors on an already-replaced child.
       if (this.proc !== ownedProc) {
         return
       }
 
-      const line = `[spawn] ${err.message}`
+      const hint = (err as NodeJS.ErrnoException).code === 'ENOENT' ? ` (${GATEWAY_BUILD_HINT})` : ''
+      const line = `[spawn] ${err.message}${hint}`
 
       this.pushLog(line)
       this.publish({ type: 'gateway.stderr', payload: { line } })
@@ -377,13 +449,14 @@ export class GatewayClient extends EventEmitter {
         return
       }
 
+      // Drop the socket first so its close does not report the exit a second time.
+      this.closeGatewaySocket()
       this.handleTransportExit(code)
     })
   }
 
   private startAttachedGateway(attachUrl: string) {
     const safeAttachUrl = redactUrl(attachUrl)
-    this.startReadyTimer('websocket', safeAttachUrl)
 
     if (typeof WebSocket === 'undefined') {
       const line = `[startup] WebSocket API unavailable; cannot attach to ${safeAttachUrl}`
@@ -459,9 +532,21 @@ export class GatewayClient extends EventEmitter {
 
         this.ws = null
         this.wsConnectPromise = null
+
+        // A gateway this client spawned is stopped with its socket; dropping the reference
+        // first makes its later exit event a stale one, so the exit is reported once.
+        const proc = this.proc
+
+        this.proc = null
+        proc?.kill()
         this.handleTransportExit(ev.code, `gateway websocket closed${ev.code ? ` (${ev.code})` : ''}`)
       })
       ws.addEventListener('error', () => {
+        // A socket this client already dropped is not reported.
+        if (this.ws !== ws) {
+          return
+        }
+
         const line = '[gateway] websocket transport error'
 
         this.pushLog(line)
@@ -490,6 +575,7 @@ export class GatewayClient extends EventEmitter {
     this.closeSidecarSocket()
 
     if (attachUrl) {
+      this.startReadyTimer('websocket', redactUrl(attachUrl))
       this.startAttachedGateway(attachUrl)
       return
     }
@@ -577,20 +663,15 @@ export class GatewayClient extends EventEmitter {
   }
 
   private async ensureAttachedWebSocket(method: string): Promise<WebSocket> {
-    if (!this.attachUrl) {
-      throw new Error('gateway not running')
-    }
-
-    if (!this.ws || this.ws.readyState === WS_CLOSED || this.ws.readyState === WS_CLOSING) {
+    // A spawned gateway has a connect promise before it has a socket.
+    if (!this.wsConnectPromise || this.ws?.readyState === WS_CLOSED || this.ws?.readyState === WS_CLOSING) {
       this.start()
     }
 
-    if (this.ws?.readyState === WS_CONNECTING) {
-      try {
-        await this.wsConnectPromise
-      } catch (err) {
-        throw err instanceof Error ? err : new Error(String(err))
-      }
+    try {
+      await this.wsConnectPromise
+    } catch (err) {
+      throw err instanceof Error ? err : new Error(String(err))
     }
 
     if (!this.ws || this.ws.readyState !== WS_OPEN) {
@@ -633,57 +714,14 @@ export class GatewayClient extends EventEmitter {
   }
 
   request<T = unknown>(method: string, params: Record<string, unknown> = {}): Promise<T> {
-    const attachUrl = resolveGatewayAttachUrl()
-
-    if (attachUrl) {
-      if (this.attachUrl !== attachUrl) {
-        // The env var rotated at runtime — restart the transport so
-        // switching from spawned-gateway mode to attach mode also
-        // tears down the old Python child. Merely closing `this.ws`
-        // would leave a previously spawned gateway process alive.
-        this.rejectPending(new Error('gateway attach url changed'))
-        this.start()
-      }
-
-      return this.requestOverWebSocket<T>(method, params)
-    }
-
-    if (!this.proc?.stdin || this.proc.killed || this.proc.exitCode !== null) {
+    if (resolveGatewayAttachUrl() !== this.attachUrl) {
+      // HERMES_TUI_GATEWAY_URL changed at runtime: restart the transport so a gateway
+      // this client spawned is stopped rather than left running beside the new one.
+      this.rejectPending(new Error('gateway attach url changed'))
       this.start()
     }
 
-    if (!this.proc?.stdin) {
-      return Promise.reject(new Error('gateway not running'))
-    }
-
-    const id = `r${++this.reqId}`
-
-    return new Promise<T>((resolve, reject) => {
-      const timeout = setTimeout(this.onTimeout, REQUEST_TIMEOUT_MS, id)
-
-      timeout.unref?.()
-
-      this.pending.set(id, {
-        id,
-        method,
-        reject,
-        resolve: v => resolve(v as T),
-        timeout
-      })
-
-      try {
-        this.proc!.stdin!.write(JSON.stringify({ id, jsonrpc: '2.0', method, params }) + '\n')
-      } catch (e) {
-        const pending = this.pending.get(id)
-
-        if (pending) {
-          clearTimeout(pending.timeout)
-          this.pending.delete(id)
-        }
-
-        reject(e instanceof Error ? e : new Error(String(e)))
-      }
-    })
+    return this.requestOverWebSocket<T>(method, params)
   }
 
   kill() {

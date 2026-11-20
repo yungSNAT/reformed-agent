@@ -92,6 +92,51 @@ const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".azure",
     ".config/gh",
 ];
+/// The files this fork writes in `auth/`.
+const AUTH_STORE_FILES: &[&str] = &[
+    "tokens.json",
+    "pool.json",
+    "provenance.key",
+    "google_oauth.json",
+];
+
+/// A key for comparing a path with a store: each component folded to lower
+/// case and cut at its first `:`, so the spellings that a case-insensitive
+/// file system (Windows, macOS) or an NTFS stream suffix (`::$DATA`,
+/// `:name`) give the same file match. On a case-sensitive file system this
+/// also denies the few names that differ from a store only in case.
+fn store_key(path: &Path) -> PathBuf {
+    path.components()
+        .map(|component| match component {
+            Component::Normal(name) => {
+                // Upper then lower case folds the forms APFS folds,
+                // such as the long s.
+                let name: String = name
+                    .to_string_lossy()
+                    .chars()
+                    .flat_map(char::to_uppercase)
+                    .flat_map(char::to_lowercase)
+                    .collect();
+                match name.split(':').next() {
+                    Some(stem) if !stem.is_empty() => stem.to_string(),
+                    _ => name,
+                }
+                .into()
+            }
+            other => other.as_os_str().to_ascii_lowercase(),
+        })
+        .collect()
+}
+
+/// Credential stores under the active Hermes home, each denied with
+/// everything below it: provider keys (`.env`); the Nous OAuth token
+/// (`auth.json`); the token store, credential pool, provenance key and Gemini
+/// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
+/// hub token (`hub_token`). A store, or a file in `auth/`, that links
+/// elsewhere is denied where it points, too. `config.yaml` stays writable, as upstream keeps its
+/// control files (upstream #45947).
+const WRITE_DENY_HERMES_HOME_PREFIX: &[&str] =
+    &[".env", "auth.json", "auth", "mcp_auth.json", "hub_token"];
 
 // ---------------------------------------------------------------------------
 // Content secret patterns
@@ -260,15 +305,37 @@ pub fn is_protected_file(path: &Path) -> bool {
 
 /// Check whether a file path is write-denied even if it is not a credential
 /// file by name. This covers sensitive system files, shell profiles, package
-/// manager credential files, and the active Hermes home's `.env`. The path is
-/// judged where the local backend writes it (`resolve_path` in
-/// hermes-environments): `~` is the `HOME` or `USERPROFILE` value as set, and
-/// another relative path sits under a non-empty `TERMINAL_CWD`.
+/// manager credential files, and the active Hermes home's credential stores
+/// (`WRITE_DENY_HERMES_HOME_PREFIX`). The path is
+/// judged where the local backend writes it (`local_write_path`).
+///
+/// This guards the file tools only: the terminal tool (redirects, `cp`, `mv`,
+/// `ln`) is outside it, as upstream's rule is defence in depth, not a boundary.
 ///
 /// shortcut: the path is judged before the write, not at it, so a symlink
 /// swapped in between is followed. Closing that needs the write itself to
 /// open each component without following links (`openat` with `O_NOFOLLOW`).
 pub fn is_write_denied(path: &Path) -> bool {
+    let safe_root = std::env::var_os("HERMES_WRITE_SAFE_ROOT")
+        .filter(|value| !value.is_empty())
+        .map(PathBuf::from);
+    judge_write(path, safe_root.as_deref())
+}
+
+/// `is_write_denied` without the `HERMES_WRITE_SAFE_ROOT` sandbox, for a
+/// writer outside the file tools that follows a link a model could plant
+/// (the memory tool): the safe root confines the file tools only.
+pub fn is_link_target_write_denied(path: &Path) -> bool {
+    judge_write(path, None)
+}
+
+/// `path` as an absolute path where the local backend writes it
+/// (`resolve_path` in hermes-environments): `~` is the `HOME` or
+/// `USERPROFILE` value as set, another relative path sits under a non-empty
+/// `TERMINAL_CWD`, else under the process folder. A tool that writes a file
+/// itself takes its path from here, so it judges and writes one file. None
+/// for a `~user` path, which `is_write_denied` refuses.
+pub fn local_write_path(path: &Path) -> Option<PathBuf> {
     let terminal_cwd = std::env::var_os("TERMINAL_CWD").filter(|cwd| !cwd.is_empty());
     let path = match terminal_cwd {
         Some(cwd) if path.is_relative() && !path.to_string_lossy().starts_with('~') => {
@@ -279,7 +346,12 @@ pub fn is_write_denied(path: &Path) -> bool {
     let backend_home = std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
         .map(PathBuf::from);
-    let Some(path) = expand_home(&path, backend_home.as_deref()) else {
+    let path = expand_home(&path, backend_home.as_deref())?;
+    Some(std::path::absolute(&path).unwrap_or(path))
+}
+
+fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
+    let Some(path) = local_write_path(path) else {
         return true;
     };
     is_expanded_write_denied(
@@ -288,10 +360,7 @@ pub fn is_write_denied(path: &Path) -> bool {
         // account's home here instead of disabling the home rules.
         dirs::home_dir().as_deref(),
         Some(hermes_config::hermes_home().as_path()),
-        std::env::var_os("HERMES_WRITE_SAFE_ROOT")
-            .filter(|value| !value.is_empty())
-            .map(PathBuf::from)
-            .as_deref(),
+        safe_root,
     )
 }
 
@@ -470,9 +539,36 @@ fn is_expanded_write_denied(
     }
 
     if let Some(hermes_home) = hermes_home {
-        let env_forms = root_forms(&hermes_home.join(".env"));
-        if forms.iter().any(|form| env_forms.contains(form)) {
-            return true;
+        // Each store, and each file in `auth/`, is a store where it links,
+        // too, even to a file not yet created. The known `auth/` names are
+        // checked as well, as a folder that can be entered but not listed
+        // hides its entries.
+        // shortcut: only `auth/`'s own entries are followed, not deeper ones.
+        let auth = hermes_home.join("auth");
+        let stores = WRITE_DENY_HERMES_HOME_PREFIX
+            .iter()
+            .map(|store| hermes_home.join(store))
+            .chain(
+                std::fs::read_dir(&auth)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.path()),
+            )
+            .chain(AUTH_STORE_FILES.iter().map(|name| auth.join(name)))
+            .flat_map(|store| {
+                let target = hermes_config::resolve_symlink_target(&store);
+                let linked = (target != store).then_some(target);
+                std::iter::once(store).chain(linked)
+            });
+        let form_keys: Vec<PathBuf> = forms.iter().map(|form| store_key(form)).collect();
+        for store in stores {
+            for store_form in root_forms(&store) {
+                let store_form = store_key(&store_form);
+                if form_keys.iter().any(|form| form.starts_with(&store_form)) {
+                    return true;
+                }
+            }
         }
     }
 
@@ -806,6 +902,199 @@ mod tests {
         assert!(!is_write_denied_with_roots(
             Path::new("/home/user/project/main.py"),
             Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
+    fn write_deny_protects_the_credential_stores_under_the_hermes_home() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+
+        for rel in [
+            "auth",
+            "auth/tokens.json",
+            "auth/pool.json",
+            "auth/provenance.key",
+            "auth/google_oauth.json",
+            "auth/new-store.json",
+            "mcp_auth.json",
+            "hub_token",
+            "auth.json",
+        ] {
+            assert!(denied(&hermes_home.join(rel)), "{rel} was writable");
+        }
+        // Control files stay writable, as upstream keeps them (#45947).
+        for rel in ["config.yaml", "mcp_servers.json", "authority.md"] {
+            assert!(!denied(&hermes_home.join(rel)), "{rel} was denied");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_link_into_the_hermes_auth_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let link = tmp.path().join("innocent");
+        std::os::unix::fs::symlink(hermes_home.join("auth"), &link).expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &link.join("tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        // `..` after a linked folder is taken where the link leads.
+        std::fs::create_dir_all(hermes_home.join("skills")).expect("skills dir");
+        let into_home = tmp.path().join("shortcut");
+        std::os::unix::fs::symlink(hermes_home.join("skills"), &into_home).expect("link");
+        assert!(is_write_denied_with_roots(
+            &into_home.join("../auth/tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &into_home.join("../authority.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
+    fn write_deny_matches_the_stores_whatever_their_case_or_stream_suffix() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&hermes_home).expect("home");
+        let denied = |rel: &str| {
+            is_write_denied_with_roots(&hermes_home.join(rel), None, Some(&hermes_home))
+        };
+
+        for rel in [
+            "AUTH/pool.json",
+            "Auth/tokens.json",
+            "MCP_AUTH.JSON",
+            "Auth.Json",
+            ".ENV",
+            "mcp_auth.json::$DATA",
+            "hub_token:alt",
+            "auth.jſon",
+            "mcp_auth.jſon",
+        ] {
+            assert!(denied(rel), "{rel} was writable");
+        }
+        for rel in ["AUTHORITY.md", "Config.yaml", "notes:auth"] {
+            assert!(!denied(rel), "{rel} was denied");
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_store_link_to_a_target_not_yet_created() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::os::unix::fs::symlink(
+            vault.join("custom.dat"),
+            hermes_home.join("auth/tokens.json"),
+        )
+        .expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("custom.dat"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_known_store_link_in_an_auth_folder_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        let auth = hermes_home.join("auth");
+        std::fs::create_dir_all(&auth).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::fs::write(vault.join("pool.dat"), "{}").expect("store");
+        std::os::unix::fs::symlink(vault.join("pool.dat"), auth.join("pool.json")).expect("link");
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o111)).expect("chmod");
+
+        let pool_denied =
+            is_write_denied_with_roots(&vault.join("pool.dat"), None, Some(&hermes_home));
+        let notes_denied =
+            is_write_denied_with_roots(&vault.join("notes.md"), None, Some(&hermes_home));
+        std::fs::set_permissions(&auth, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+
+        assert!(pool_denied, "the pool's link target was writable");
+        assert!(!notes_denied);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_store_file_linked_out_of_the_auth_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(hermes_home.join("auth")).expect("auth dir");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        std::fs::write(vault.join("custom.dat"), "{}").expect("store");
+        std::os::unix::fs::symlink(
+            vault.join("custom.dat"),
+            hermes_home.join("auth/tokens.json"),
+        )
+        .expect("link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("custom.dat"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
+            None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_dangling_link_at_a_top_level_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&hermes_home).expect("home");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&vault).expect("vault");
+        for store in [".env", "auth.json", "mcp_auth.json", "hub_token"] {
+            let target = vault.join(format!("new-{store}"));
+            std::os::unix::fs::symlink(&target, hermes_home.join(store)).expect("link");
+            assert!(
+                is_write_denied_with_roots(&target, None, Some(&hermes_home)),
+                "{store}"
+            );
+        }
+        std::os::unix::fs::symlink(vault.join("new-auth"), hermes_home.join("auth"))
+            .expect("auth link");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("new-auth").join("tokens.json"),
+            None,
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("notes.md"),
+            None,
             Some(&hermes_home)
         ));
     }

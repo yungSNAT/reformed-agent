@@ -179,3 +179,112 @@ fn fireworks_requests_carry_upstreams_attribution_headers() {
         assert_eq!(header_of(profile, "X-Title"), None, "{profile}");
     }
 }
+
+#[test]
+fn gmi_and_xai_requests_carry_upstreams_user_agents() {
+    let user_agent = |profile: &str| {
+        let provider = GenericProvider::new("https://example.invalid/v1", "key", "m")
+            .with_provider_profile(profile);
+        let request = provider
+            .build_request(
+                &Client::new(),
+                "https://example.invalid/v1/chat/completions",
+                "key",
+                &serde_json::json!({}),
+            )
+            .build()
+            .expect("request");
+        request
+            .headers()
+            .get("User-Agent")
+            .map(|value| value.to_str().unwrap().to_string())
+    };
+    for profile in ["gmi", "gmi-cloud", "gmicloud"] {
+        assert_eq!(
+            user_agent(profile),
+            Some(format!("HermesAgent/{}", env!("CARGO_PKG_VERSION"))),
+            "{profile}"
+        );
+    }
+    for profile in ["xai", "grok", "x-ai", "x.ai"] {
+        assert_eq!(
+            user_agent(profile),
+            Some(format!("Hermes-Agent/{}", env!("CARGO_PKG_VERSION"))),
+            "{profile}"
+        );
+    }
+    assert_eq!(user_agent("deepinfra"), None);
+}
+
+#[test]
+fn auxiliary_gmi_and_xai_requests_carry_upstreams_user_agents() {
+    let user_agent = |label: &str| {
+        let provider = crate::auxiliary_builder::direct_key_provider(
+            label,
+            "https://example.invalid/v1",
+            "key",
+            "m",
+        );
+        let request = provider
+            .build_request(
+                &Client::new(),
+                "https://example.invalid/v1/chat/completions",
+                "key",
+                &serde_json::json!({}),
+            )
+            .build()
+            .expect("request");
+        request
+            .headers()
+            .get("User-Agent")
+            .map(|value| value.to_str().unwrap().to_string())
+    };
+    assert_eq!(
+        user_agent("gmi"),
+        Some(format!("HermesAgent/{}", env!("CARGO_PKG_VERSION")))
+    );
+    assert_eq!(
+        user_agent("xai"),
+        Some(format!("Hermes-Agent/{}", env!("CARGO_PKG_VERSION")))
+    );
+    // Other profiles' request shaping stays off in the auxiliary chain.
+    assert_eq!(user_agent("fireworks"), None);
+}
+
+#[test]
+fn nvidia_tool_messages_drop_name_and_tool_name() {
+    let tool_result = Message {
+        name: Some("terminal".to_string()),
+        ..Message::tool_result("call-1", "done")
+    };
+    let messages = vec![
+        Message {
+            name: Some("ryan".to_string()),
+            ..Message::user("hello")
+        },
+        tool_result,
+    ];
+    let body_for = |profile: &str| {
+        GenericProvider::new("https://example.invalid/v1", "key", "m")
+            .with_provider_profile(profile)
+            .chat_request_body(ChatRequestParams {
+                messages: &messages,
+                tools: &[],
+                max_tokens: None,
+                temperature: None,
+                effective_model: "nvidia/llama-3.3-70b-instruct",
+                extra_body: None,
+                stream: false,
+            })
+    };
+    for profile in ["nvidia", "nvidia-nim", "nim", "build-nvidia", "nemotron"] {
+        let body = body_for(profile);
+        let tool = &body["messages"][1];
+        assert_eq!(tool["role"], "tool", "{profile}");
+        assert_eq!(tool["tool_call_id"], "call-1", "{profile}");
+        assert!(tool.get("name").is_none(), "{profile}: {tool}");
+        assert!(tool.get("tool_name").is_none(), "{profile}: {tool}");
+        assert_eq!(body["messages"][0]["name"], "ryan", "{profile}");
+    }
+    assert_eq!(body_for("openrouter")["messages"][1]["name"], "terminal");
+}

@@ -6,16 +6,17 @@
 //! 3. Append results to conversation history
 //! 4. Repeat until the model finishes naturally or the turn budget is exceeded
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::btree_map::Entry as BTreeEntry;
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::io::Write;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use futures::StreamExt;
-use hermes_auth::{exchange_refresh_token, OAuth2Endpoints};
+use hermes_auth::{exchange_refresh_token, write_file_private, OAuth2Endpoints};
 use hermes_intelligence::get_model_context_length;
 use jiff::Timestamp;
 use serde::{Deserialize, Serialize};

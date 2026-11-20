@@ -210,15 +210,13 @@ impl DiskCleanup {
         if let Some(parent) = tracked_file.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        let tmp = tracked_file.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(tracked)
             .map_err(|e| ToolError::ExecutionFailed(format!("serialize tracked.json: {e}")))?;
-        fs::write(&tmp, format!("{json}\n")).map_err(io_error)?;
         if tracked_file.exists() {
             fs::copy(&tracked_file, backup_path(&tracked_file)).map_err(io_error)?;
         }
-        fs::rename(&tmp, &tracked_file).map_err(io_error)?;
-        Ok(())
+        hermes_config::atomic_write_bytes(&tracked_file, format!("{json}\n").as_bytes())
+            .map_err(|e| ToolError::ExecutionFailed(format!("write tracked.json: {e}")))
     }
 
     pub fn guess_category(&self, path: &Path) -> Option<&'static str> {
@@ -1006,6 +1004,25 @@ mod tests {
         assert_eq!(cleaner.guess_category(&jobs), None);
         assert_eq!(cleaner.guess_category(&lock), None);
         assert_eq!(cleaner.guess_category(&output), Some("cron-output"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn save_tracked_through_a_symlink_keeps_the_link() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let link = cleaner.tracked_file();
+        let real = tmp.path().join("dotfiles").join("tracked.json");
+        fs::create_dir_all(real.parent().unwrap()).unwrap();
+        fs::create_dir_all(link.parent().unwrap()).unwrap();
+        fs::write(&real, "[]\n").unwrap();
+        std::os::unix::fs::symlink(&real, &link).unwrap();
+        let item = stale_item(&tmp.path().join("old.log"), "temp", 3);
+
+        cleaner.save_tracked(std::slice::from_ref(&item)).unwrap();
+
+        assert!(link.is_symlink(), "the tracked link was replaced");
+        assert!(fs::read_to_string(&real).unwrap().contains("old.log"));
     }
 
     fn stale_item(path: &Path, category: &str, size: u64) -> TrackedItem {

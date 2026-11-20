@@ -99,6 +99,8 @@ pub struct AnthropicProvider {
     pub rate_limiter: Option<Arc<RateLimitTracker>>,
     /// Optional credential pool.
     pub credential_pool: Option<Arc<CredentialPool>>,
+    /// The credential that replaced `api_key` after a refresh, shared by clones.
+    replaced_api_key: ReplacedKey,
 }
 
 impl AnthropicProvider {
@@ -115,6 +117,7 @@ impl AnthropicProvider {
             api_version: "2023-06-01".to_string(),
             rate_limiter: None,
             credential_pool: None,
+            replaced_api_key: ReplacedKey::default(),
         }
     }
 
@@ -162,11 +165,8 @@ impl AnthropicProvider {
     }
 
     fn effective_api_key(&self) -> String {
-        if let Some(ref pool) = self.credential_pool {
-            pool.get_key()
-        } else {
-            self.api_key.clone()
-        }
+        self.replaced_api_key
+            .effective(self.credential_pool.as_deref(), &self.api_key)
     }
 
     async fn check_rate_limit(&self) {
@@ -643,6 +643,16 @@ impl AnthropicProvider {
 
 #[async_trait]
 impl LlmProvider for AnthropicProvider {
+    fn active_credential(&self) -> Option<String> {
+        self.replaced_api_key
+            .active(self.credential_pool.as_deref(), &self.api_key)
+    }
+
+    fn replace_credential(&self, credential: &str) -> bool {
+        self.replaced_api_key
+            .replace(self.credential_pool.as_deref(), credential)
+    }
+
     async fn chat_completion(
         &self,
         messages: &[Message],

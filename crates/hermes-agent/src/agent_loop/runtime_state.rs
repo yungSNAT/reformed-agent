@@ -138,6 +138,15 @@ fn maybe_nous_401_diagnostic(
     ))
 }
 
+/// A 401: the credential was refused, which a refreshed OAuth token can fix.
+/// Read from the status the providers write after `API error `, so another
+/// status whose body mentions 401 or 'unauthorized' is left out.
+fn is_unauthorized_error(err: &str) -> bool {
+    const PREFIX: &str = "API error ";
+    err.find(PREFIX)
+        .is_some_and(|at| err[at + PREFIX.len()..].starts_with("401 "))
+}
+
 fn classify_error(err: &str) -> ErrorClass {
     let lower = err.to_lowercase();
     let model_not_found = lower.contains("model not found")
@@ -317,6 +326,17 @@ fn advertised_tool_name_index(tool_schemas: &[ToolSchema]) -> (HashSet<&str>, St
     names.dedup();
     let display = names.join(", ");
     (names.into_iter().collect(), display)
+}
+
+/// The provider, wire model and extra body one LLM request goes to.
+struct AttemptRuntime {
+    /// The provider the request goes to, as routing names it.
+    provider_name: String,
+    provider: Arc<dyn LlmProvider>,
+    wire_model: String,
+    extra_body: Option<Value>,
+    /// The route's provider did not build, so the primary runtime answers.
+    primary_fallback: bool,
 }
 
 /// Result of collecting one streaming completion.

@@ -30,6 +30,9 @@ pub mod v4a_patch;
 pub mod verification_evidence;
 pub mod website_policy;
 
+#[cfg(test)]
+pub(crate) mod test_env;
+
 // Re-export registry types
 pub use registry::{ToolEntry, ToolEntryInfo, ToolOverrides, ToolRegistry, WeakToolRegistry};
 pub use rtk_filter::RawModeState;

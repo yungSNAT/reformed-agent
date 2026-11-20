@@ -361,3 +361,12 @@ fn test_anthropic_later_system_message_stays_in_place_as_user_text() {
         "<memory-context>recalled</memory-context>"
     );
 }
+
+#[test]
+fn anthropic_pooled_provider_refuses_a_replaced_credential() {
+    let pooled = AnthropicProvider::new("old-token")
+        .with_credential_pool(Arc::new(CredentialPool::new(vec!["pool-key".to_string()])));
+    assert_eq!(pooled.active_credential(), None);
+    assert!(!pooled.replace_credential("new-token"));
+    assert_eq!(pooled.effective_api_key(), "pool-key");
+}

@@ -187,22 +187,13 @@ impl App {
         let raw = serde_json::to_string_pretty(store).map_err(|err| {
             AgentError::Config(format!("Failed to serialize composer drafts: {err}"))
         })?;
-        let tmp_path = path.with_extension("json.tmp");
-        std::fs::write(&tmp_path, raw).map_err(|err| {
+        hermes_config::atomic_write_bytes(&path, raw.as_bytes()).map_err(|err| {
             AgentError::Io(format!(
                 "Failed to write composer drafts {}: {}",
-                tmp_path.display(),
-                err
-            ))
-        })?;
-        std::fs::rename(&tmp_path, &path).map_err(|err| {
-            AgentError::Io(format!(
-                "Failed to replace composer drafts {}: {}",
                 path.display(),
                 err
             ))
-        })?;
-        Ok(())
+        })
     }
 
     /// Load unsent composer text for the active session.

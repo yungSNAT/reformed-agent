@@ -1,23 +1,23 @@
 # Shared-Different Backlog
 
-Generated: `2026-11-19T07:45:28.511628+00:00`
+Generated: `2026-11-20T09:52:33.419709+00:00`
 
 ## Summary
 
 - Total shared-different paths: `1508`
 - Pending classification: `0`
 - Pending functional review: `0`
-- Deferred review (counted, not cleared): `27`
+- Deferred review (counted, not cleared): `22`
 - Cleared non-runtime: `320`
-- Cleared intentional divergence: `1161`
+- Cleared intentional divergence: `1166`
 
 ## Status Counts
 
 | Status | Count |
 | --- | ---: |
-| `cleared_intentional_divergence` | 1161 |
+| `cleared_intentional_divergence` | 1166 |
 | `cleared_non_runtime` | 320 |
-| `deferred_review` | 27 |
+| `deferred_review` | 22 |
 
 ## Workstream Counts
 
@@ -52,10 +52,6 @@ Not yet shown to match in Rust; each row is counted and has a review date.
 | `plugins/google_meet/node/protocol.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream's node protocol now imports hmac for the token check and decodes bytes itself. Rust does not run this Python plugin, and no Rust code implements Google Meet. Deferred with the Google Meet plugin. |
 | `plugins/hermes-achievements/dashboard/plugin_api.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream rewrote the achievements dashboard API (460 lines added, 627 removed). Rust does not run this Python plugin, and no Rust code implements the achievements dashboard. Deferred until that plugin is ported or dropped. |
 | `plugins/model-providers/alibaba/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added the alibaba-cn, alibaba-token-plan and alibaba-token-plan-cn profiles, the aliyun alias and DashScope's preserve-thinking extras. The Rust CLI already maps aliyun to alibaba (crates/hermes-cli/src/main/auth_providers.rs); the Rust provider tables (crates/hermes-agent/src/provider_profiles.rs, crates/hermes-core/src/providers.rs) have none of the 3 profiles or the extras. Deferred until ported. |
-| `plugins/model-providers/gmi/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream builds GMI's User-Agent lazily and adds anthropic/claude-sonnet-5 to its fallback models. Rust's generic provider sends no User-Agent for gmi (crates/hermes-agent/src/provider/generic.rs sends one only for Kimi Code and Fireworks), a gap that predates b51fbc73. Deferred until ported. |
-| `plugins/model-providers/kilocode/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream changed Kilo Code's default auxiliary model from google/gemini-3-flash-preview to google/gemini-3.6-flash. No Rust code sets a per-provider default auxiliary model for kilocode, and which model this tree uses there was not established. Deferred until checked. |
-| `plugins/model-providers/nvidia/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream's NVIDIA NIM profile now strips `name` and `tool_name` from tool messages and adds the nim, build-nvidia and nemotron aliases. The Rust CLI already has those aliases (crates/hermes-cli/src/main/auth_providers.rs); no Rust code strips those fields for NVIDIA. Deferred until ported. |
-| `plugins/model-providers/xai/__init__.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream's xAI profile now sends a `Hermes-Agent` User-Agent. Rust's generic provider sends no User-Agent for xai. Deferred until ported. |
 | `plugins/platforms/discord/voice_mixer.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream refactored its Discord voice mixer (child names and the speech flag removed, the mixer now a discord.AudioSource, ffmpeg resolution added). This tree's Rust mixer (crates/hermes-gateway/src/voice_mixer.rs) ports the b51fbc73 design; whether the mixing behaviour changed was not established. Deferred until compared. |
 | `plugins/platforms/teams/plugin.yaml` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream declares 4 new Teams settings (TEAMS_HOST, TEAMS_REQUIRE_MENTION, TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN). Rust reads TEAMS_INCOMING_WEBHOOK_URL and TEAMS_GRAPH_ACCESS_TOKEN for the meeting pipeline only (crates/hermes-cli/src/teams_pipeline_cli.rs, crates/hermes-tools/src/teams_pipeline/graph_backend.rs), and neither TEAMS_HOST nor TEAMS_REQUIRE_MENTION. Deferred until ported. |
 | `tests/gateway/test_complete_path_at_filter.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added 7 path-completion cases (remote-backend completion, leading slash, fuzzy matching outside a git repository) and removed 10. No Rust test for these completion cases was found. Deferred until compared. |
@@ -71,4 +67,3 @@ Not yet shown to match in Rust; each row is counted and has a review date.
 | `tests/gateway/test_unknown_command.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added cases for /egress status and for running a synchronous plugin command off the event loop, and removed 7 command-hook cases. /egress is not ported (slash allowlist). Deferred until ported. |
 | `tests/gateway/test_webhook_signature_rate_limit.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream now answers a bad webhook signature with the 404 an unknown route gets, so route names cannot be probed, and removed 2 rate-limit cases. Since PR #164 Rust gives a bad signature the unknown-route reply (crates/hermes-gateway/src/platforms/webhook.rs, test a_bad_signature_reads_as_an_unknown_route), with an empty body where upstream's says 'Unknown route'. Rust checks the signature before the rate limit, but no Rust test sends more bad requests than the limit as upstream's remaining case does. Deferred until that case has a Rust test. |
 | `tests/gateway/test_yolo_command.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream added 3 cases on /yolo persistence (it survives a gateway restart, dies at the session boundary, and a revocation outlives the next turn). Not compared with the Rust /yolo handling. Deferred until compared. |
-| `tests/providers/test_e2e_wiring.py` | 2027-02-18 | R2338 | Compared b51fbc73 with v0.23.2: upstream removed 5 NVIDIA and DeepSeek wiring cases and added test_nvidia_tool_messages_drop_name_fields, the NVIDIA change in row 26. Deferred with it. |

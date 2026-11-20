@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-19T12:34:38.475828+00:00",
+  "generated_at_utc": "2026-11-20T09:52:32.812750+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -709,7 +709,7 @@
         "crates/hermes-tools/src/backends/video.rs",
         "crates/hermes-tools/src/backends/video_gen.rs"
       ],
-      "evidence_count": 132,
+      "evidence_count": 133,
       "evidence_sample": [
         "crates/hermes-tools/src/ansi_strip.rs",
         "crates/hermes-tools/src/approval.rs",
@@ -811,13 +811,14 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 79,
+      "direct_test_evidence_count": 80,
       "direct_test_evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/config.rs",
         "crates/hermes-agent/src/agent_loop/tests/coding_route_learning.rs",
         "crates/hermes-agent/src/agent_loop/tests/governor_finalizer.rs",
         "crates/hermes-agent/src/agent_loop/tests/llm_retry_stream.rs",
+        "crates/hermes-agent/src/agent_loop/tests/oauth_unauthorized_refresh.rs",
         "crates/hermes-agent/src/agent_loop/tests/runtime_provider_resolution.rs",
         "crates/hermes-agent/src/agent_loop/tests/runtime_smart_routing.rs",
         "crates/hermes-agent/src/agent_loop/tests_core.rs",
@@ -836,10 +837,9 @@
         "crates/hermes-agent/src/context_files.rs",
         "crates/hermes-agent/src/context_references.rs",
         "crates/hermes-agent/src/credential_pool.rs",
-        "crates/hermes-agent/src/gemini_schema.rs",
-        "crates/hermes-agent/src/gemini_schema/tests.rs"
+        "crates/hermes-agent/src/gemini_schema.rs"
       ],
-      "evidence_count": 114,
+      "evidence_count": 115,
       "evidence_sample": [
         "crates/hermes-agent/src/agent_loop.rs",
         "crates/hermes-agent/src/agent_loop/agent_struct.rs",
@@ -864,8 +864,8 @@
         "crates/hermes-agent/src/agent_loop/tests/coding_route_learning.rs",
         "crates/hermes-agent/src/agent_loop/tests/governor_finalizer.rs",
         "crates/hermes-agent/src/agent_loop/tests/llm_retry_stream.rs",
-        "crates/hermes-agent/src/agent_loop/tests/runtime_provider_resolution.rs",
-        "crates/hermes-agent/src/agent_loop/tests/runtime_smart_routing.rs"
+        "crates/hermes-agent/src/agent_loop/tests/oauth_unauthorized_refresh.rs",
+        "crates/hermes-agent/src/agent_loop/tests/runtime_provider_resolution.rs"
       ],
       "id": "agent-loop-and-runtime",
       "mapped": true,
@@ -1107,7 +1107,7 @@
         "crates/hermes-environments/tests/foreground_stdin.rs",
         "crates/hermes-environments/tests/tool_guard.rs"
       ],
-      "evidence_count": 16,
+      "evidence_count": 17,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -1115,6 +1115,7 @@
         "crates/hermes-environments/src/lib.rs",
         "crates/hermes-environments/src/local.rs",
         "crates/hermes-environments/src/local/env_shell.rs",
+        "crates/hermes-environments/src/local/process_tree.rs",
         "crates/hermes-environments/src/local/tests.rs",
         "crates/hermes-environments/src/managed_modal.rs",
         "crates/hermes-environments/src/manager.rs",
@@ -1180,8 +1181,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 490,
-    "rust_test_functions": 8925,
+    "rust_test_files": 493,
+    "rust_test_functions": 9094,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
