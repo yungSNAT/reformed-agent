@@ -11,6 +11,7 @@ impl Gateway {
         Self {
             adapters: RwLock::new(HashMap::new()),
             session_manager,
+            browser_retirer: None,
             dm_manager: Arc::new(RwLock::new(dm_manager)),
             stream_manager,
             config,
@@ -35,6 +36,12 @@ impl Gateway {
     /// Create a Gateway with default DM manager (pair behavior).
     pub fn with_defaults(session_manager: Arc<SessionManager>, config: GatewayConfig) -> Self {
         Self::new(session_manager, DmManager::with_pair_behavior(), config)
+    }
+
+    /// Bind gateway browser retirement before any turns are admitted.
+    pub fn with_browser_retirement(mut self, retirer: BrowserRetirer) -> Self {
+        self.browser_retirer = Some(retirer);
+        self
     }
 
     /// Merge per-request runtime hints (HTTP API, webhooks) for the composed session key.
@@ -91,17 +98,6 @@ impl Gateway {
             .session_manager
             .compose_session_key(platform, chat_id, user_id);
         self.effective_session_model(&key).await
-    }
-
-    async fn clear_session_boundary_security_state(&self, session_key: &str) {
-        if session_key.is_empty() {
-            return;
-        }
-        let mut states = self.runtime_state.write().await;
-        if let Some(state) = states.get_mut(session_key) {
-            state.yolo = false;
-        }
-        hermes_tools::approval::clear_session(session_key);
     }
 
     fn reaction_lifecycle_plan(
@@ -228,35 +224,104 @@ impl Gateway {
         })
     }
 
-    async fn emit_session_finalize(&self, session_key: &str, session: &Session, reason: &str) {
-        hermes_tools::gateway_approval::clear(session_key);
-        self.emit_hook_event(
-            "on_session_finalize",
-            Self::session_lifecycle_context(session_key, session, reason),
-        )
-        .await;
-    }
-
-    async fn emit_session_reset_lifecycle(
-        &self,
+    async fn notify_finalized_session(
+        registry: &HookRegistry,
         session_key: &str,
-        session: &Session,
+        session: Arc<Session>,
         reason: &str,
     ) {
-        self.emit_hook_event(
+        let event = HookEvent::new(
+            "on_session_finalize",
+            Self::session_lifecycle_context(session_key, &session, reason),
+        );
+        registry.emit_finalized_session(&event, session).await;
+    }
+
+    async fn emit_session_finalize(&self, session_key: &str, session: Arc<Session>, reason: &str) {
+        let registry = self.hook_registry.read().await.clone();
+        if let Some(registry) = registry {
+            Self::notify_finalized_session(&registry, session_key, session, reason).await;
+        }
+    }
+
+    async fn run_admission_lifecycle(
+        registry: &HookRegistry,
+        incoming: &IncomingMessage,
+        session_key: &str,
+        transition: SessionTransition,
+    ) {
+        let reason = match transition {
+            SessionTransition::Created => "new",
+            SessionTransition::PolicyReset(previous) => {
+                Self::notify_finalized_session(registry, session_key, Arc::from(previous), "auto_reset")
+                    .await;
+                "auto_reset"
+            }
+            SessionTransition::Existing => return,
+        };
+        registry
+            .emit(&HookEvent::new(
+                "session:start",
+                serde_json::json!({
+                    "platform": incoming.platform,
+                    "chat_id": incoming.chat_id,
+                    "user_id": incoming.user_id,
+                    "session_id": session_key,
+                    "reason": reason,
+                }),
+            ))
+            .await;
+    }
+
+    async fn run_reset_lifecycle(
+        registry: &HookRegistry,
+        incoming: &IncomingMessage,
+        session_key: &str,
+        old_session: Option<Session>,
+        reset_session: Session,
+    ) {
+        if let Some(old_session) = old_session {
+            let ended = Arc::new(old_session);
+            let event = HookEvent::new("session:end", serde_json::json!({
+                "platform": incoming.platform,
+                "chat_id": incoming.chat_id,
+                "user_id": incoming.user_id,
+                "session_id": session_key,
+                "logical_session_id": ended.id,
+            }));
+            registry.emit_finalized_session(&event, ended.clone()).await;
+            Self::notify_finalized_session(registry, session_key, ended, "reset").await;
+        } else {
+            registry.emit(&HookEvent::new("session:start", serde_json::json!({
+                "platform": incoming.platform,
+                "chat_id": incoming.chat_id,
+                "user_id": incoming.user_id,
+                "session_id": session_key,
+                "reason": "new",
+            }))).await;
+        }
+        registry.emit(&HookEvent::new("session:reset", serde_json::json!({
+            "platform": incoming.platform,
+            "chat_id": incoming.chat_id,
+            "user_id": incoming.user_id,
+            "session_id": session_key,
+            "logical_session_id": reset_session.id,
+        }))).await;
+        registry.emit(&HookEvent::new(
             "on_session_reset",
-            Self::session_lifecycle_context(session_key, session, reason),
-        )
-        .await;
+            Self::session_lifecycle_context(session_key, &reset_session, "reset"),
+        )).await;
     }
 
     async fn finalize_active_sessions(&self, reason: &str) -> usize {
         let sessions = self.session_manager.all_sessions().await;
-        for (session_key, session) in &sessions {
-            self.emit_session_finalize(session_key, session, reason)
+        let count = sessions.len();
+        for (session_key, session) in sessions {
+            hermes_tools::gateway_approval::clear(&session_key);
+            self.emit_session_finalize(&session_key, Arc::new(session), reason)
                 .await;
         }
-        sessions.len()
+        count
     }
 
     fn busy_input_mode(&self) -> BusyInputMode {
@@ -356,5 +421,4 @@ impl Gateway {
     // -----------------------------------------------------------------------
     // Message routing
     // -----------------------------------------------------------------------
-
 }

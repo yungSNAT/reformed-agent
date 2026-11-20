@@ -14,6 +14,8 @@ use uuid::Uuid;
 
 use hermes_config::session::{SessionResetPolicy, SessionType};
 use hermes_core::types::Message;
+pub(crate) use hermes_tools::gateway_approval::SessionGeneration;
+use hermes_tools::session_browsers::{BrowserLease, BrowserReleaseSlot, BrowserRetirer};
 
 // ---------------------------------------------------------------------------
 // Re-export session types from hermes-config for convenience
@@ -91,6 +93,14 @@ impl Session {
     /// Touch the session, updating `last_active_at` to now.
     pub fn touch(&mut self) {
         self.last_active_at = Timestamp::now();
+    }
+
+    fn reset_history(&mut self) {
+        let now = Timestamp::now();
+        self.messages.clear();
+        self.id = Uuid::new_v4().to_string();
+        self.created_at = now;
+        self.last_active_at = now;
     }
 
     /// Check whether this session should be reset based on its reset policy
@@ -255,10 +265,107 @@ pub fn redact_pii(text: &str, rules: &[RedactionRule]) -> String {
 // SessionManager
 // ---------------------------------------------------------------------------
 
+pub(crate) enum SessionTransition {
+    Existing,
+    Created,
+    PolicyReset(Box<Session>),
+}
+
+pub(crate) struct SessionAdmission {
+    session: Session,
+    pub(crate) transition: SessionTransition,
+    pub(crate) browser: Option<BrowserLease>,
+    pub(crate) generation: SessionGeneration,
+}
+
+struct SessionEntry {
+    session: Session,
+    generation: SessionGeneration,
+}
+
+impl SessionEntry {
+    fn reset(&mut self) -> Session {
+        let messages = std::mem::take(&mut self.session.messages);
+        let mut previous = self.session.clone();
+        previous.messages = messages;
+        self.session.reset_history();
+        self.generation = SessionGeneration::default();
+        previous
+    }
+
+    fn replace_context(&mut self, messages: Vec<Message>, title: Option<String>) {
+        self.session.messages = messages;
+        self.session.title = normalize_session_title(title.as_deref());
+        self.session.touch();
+        self.generation = SessionGeneration::default();
+    }
+}
+
+struct SessionBoundary<'a> {
+    browsers: Option<&'a BrowserRetirer>,
+    reserved_slot: Option<BrowserReleaseSlot<'a>>,
+}
+
+impl<'a> SessionBoundary<'a> {
+    fn new(browsers: Option<&'a BrowserRetirer>) -> Self {
+        Self {
+            browsers,
+            reserved_slot: None,
+        }
+    }
+
+    // Called under the session write lock. A full queue leaves the session
+    // untouched, so the caller can wait outside the lock and recheck policy.
+    fn try_finish(
+        &mut self,
+        session_key: &str,
+        generation: Option<&SessionGeneration>,
+    ) -> Result<bool, &'static str> {
+        if !self.try_retire_browser(session_key)? {
+            return Ok(false);
+        }
+        if let Some(generation) = generation {
+            generation.retire();
+        }
+        hermes_tools::approval::clear_session(session_key);
+        Ok(true)
+    }
+
+    fn try_retire_browser(&mut self, session_key: &str) -> Result<bool, &'static str> {
+        let Some(browsers) = self.browsers else {
+            return Ok(true);
+        };
+        browsers.ensure_running()?;
+        if browsers.try_retire_without_backend(session_key) {
+            return Ok(true);
+        }
+        let slot = match self.reserved_slot.take() {
+            Some(slot) => Some(slot),
+            None => browsers.try_reserve()?,
+        };
+        let Some(slot) = slot else {
+            return Ok(false);
+        };
+        slot.retire(session_key);
+        Ok(true)
+    }
+
+    async fn wait_for_slot(&mut self) -> Result<(), &'static str> {
+        if let Some(browsers) = self.browsers {
+            self.reserved_slot = Some(browsers.reserve().await?);
+        }
+        Ok(())
+    }
+
+    fn pin(&self, session_key: &str) -> Option<BrowserLease> {
+        self.browsers.map(|browsers| browsers.lease(session_key))
+    }
+}
+
 /// Manages all active sessions, providing creation, retrieval, and
 /// cross-platform session continuity.
 pub struct SessionManager {
-    sessions: RwLock<HashMap<String, Session>>,
+    sessions: RwLock<HashMap<String, SessionEntry>>,
     config: SessionConfig,
 
     /// Index: (user_id) -> Set of session IDs for cross-platform continuity.
@@ -336,40 +443,86 @@ impl SessionManager {
         chat_id: &str,
         user_id: &str,
     ) -> Session {
+        self.admit_session(platform, chat_id, user_id, None)
+            .await
+            .expect("admission without a browser cannot fail")
+            .session
+    }
+
+    /// Report the transition decided under the session write lock.
+    pub(crate) async fn admit_session(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        user_id: &str,
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<SessionAdmission, &'static str> {
         let session_type = Self::infer_session_type(chat_id);
         let reset_policy = self.effective_reset_policy(platform, session_type);
-
         let session_key = self.compose_session_key(platform, chat_id, user_id);
+        let mut boundary = SessionBoundary::new(browsers);
 
-        let mut sessions = self.sessions.write().await;
-
-        if let Some(session) = sessions.get_mut(&session_key) {
-            // Check if reset is needed
-            if session.should_reset() {
-                // Reset: clear messages but keep the session alive
-                session.messages.clear();
-                session.created_at = Timestamp::now();
-                session.last_active_at = Timestamp::now();
-            } else {
-                session.touch();
+        loop {
+            let mut sessions = self.sessions.write().await;
+            if let Some(entry) = sessions.get_mut(&session_key) {
+                let session = &mut entry.session;
+                let transition = if session.should_reset() {
+                    if !boundary.try_finish(&session_key, Some(&entry.generation))? {
+                        drop(sessions);
+                        boundary.wait_for_slot().await?;
+                        continue;
+                    }
+                    let messages = std::mem::take(&mut session.messages);
+                    let mut previous = Box::new(session.clone());
+                    previous.messages = messages;
+                    session.created_at = Timestamp::now();
+                    session.last_active_at = Timestamp::now();
+                    entry.generation = SessionGeneration::default();
+                    SessionTransition::PolicyReset(previous)
+                } else {
+                    session.touch();
+                    SessionTransition::Existing
+                };
+                return Ok(SessionAdmission {
+                    session: session.clone(),
+                    transition,
+                    browser: boundary.pin(&session_key),
+                    generation: entry.generation.clone(),
+                });
             }
-            return session.clone();
+
+            let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
+            let mut user_sessions = self.user_sessions.write().await;
+            let generation =
+                Self::insert_session(&mut sessions, &mut user_sessions, &session_key, &session);
+            return Ok(SessionAdmission {
+                session,
+                transition: SessionTransition::Created,
+                browser: boundary.pin(&session_key),
+                generation,
+            });
         }
+    }
 
-        // Create new session
-        let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
-        let session_clone = session.clone();
-
-        sessions.insert(session_key.clone(), session);
-
-        // Track user -> session mapping for cross-platform continuity
-        let mut user_sessions = self.user_sessions.write().await;
+    fn insert_session(
+        sessions: &mut HashMap<String, SessionEntry>,
+        user_sessions: &mut HashMap<String, Vec<String>>,
+        session_key: &str,
+        session: &Session,
+    ) -> SessionGeneration {
+        let generation = SessionGeneration::default();
+        sessions.insert(
+            session_key.to_string(),
+            SessionEntry {
+                session: session.clone(),
+                generation: generation.clone(),
+            },
+        );
         user_sessions
-            .entry(user_id.to_string())
+            .entry(session.user_id.clone())
             .or_default()
-            .push(session_key.clone());
-
-        session_clone
+            .push(session_key.to_string());
+        generation
     }
 
     /// Reset a session by key, clearing all messages and rotating the logical
@@ -379,15 +532,66 @@ impl SessionManager {
         session_id: &str,
     ) -> Option<(Session, Session)> {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            let old = session.clone();
-            session.messages.clear();
-            session.id = Uuid::new_v4().to_string();
-            session.created_at = Timestamp::now();
-            session.last_active_at = Timestamp::now();
-            return Some((old, session.clone()));
+        let entry = sessions.get_mut(session_id)?;
+        entry.generation.retire();
+        hermes_tools::approval::clear_session(session_id);
+        Some((entry.reset(), entry.session.clone()))
+    }
+
+    pub(crate) async fn reset_session_for_command(
+        &self,
+        platform: &str,
+        chat_id: &str,
+        user_id: &str,
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<(Option<Session>, Session), &'static str> {
+        let session_key = self.compose_session_key(platform, chat_id, user_id);
+        let mut boundary = SessionBoundary::new(browsers);
+        let mut initial_generation = None;
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let current = sessions.get_mut(&session_key);
+            // Waiting for queue capacity must not let this request reset a
+            // different conversation in the same chat.
+            let generation = current.as_ref().map(|entry| entry.generation.clone());
+            if initial_generation.get_or_insert_with(|| generation.clone()) != &generation {
+                return Err("Session changed before reset");
+            }
+            if let Some(entry) = current {
+                if boundary.try_finish(&session_key, Some(&entry.generation))? {
+                    return Ok((Some(entry.reset()), entry.session.clone()));
+                }
+                drop(sessions);
+                boundary.wait_for_slot().await?;
+                continue;
+            }
+            // Hold the user index before committing so a cancelled first reset
+            // cannot clear approvals or retire a lease without creating the session.
+            let mut user_sessions = self.user_sessions.write().await;
+            if !boundary.try_finish(&session_key, None)? {
+                drop(user_sessions);
+                drop(sessions);
+                boundary.wait_for_slot().await?;
+                continue;
+            }
+            let session_type = Self::infer_session_type(chat_id);
+            let reset_policy = self.effective_reset_policy(platform, session_type);
+            let session = Session::new(platform, chat_id, user_id, session_type, reset_policy);
+            Self::insert_session(&mut sessions, &mut user_sessions, &session_key, &session);
+            return Ok((None, session));
         }
-        None
+    }
+
+    /// Keep the admission current for the entire synchronous permission mutation.
+    pub(crate) async fn with_current_generation<T>(
+        &self,
+        session_key: &str,
+        expected: Option<SessionGeneration>,
+        action: impl FnOnce() -> T,
+    ) -> Option<T> {
+        let sessions = self.sessions.read().await;
+        let entry = sessions.get(session_key)?;
+        (entry.generation == expected?).then(action)
     }
 
     /// Reset a session by key, clearing all messages.
@@ -398,10 +602,56 @@ impl SessionManager {
     /// Add a message to a session.
     pub async fn add_message(&self, session_id: &str, message: Message) {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             session.messages.push(message);
             session.last_active_at = Timestamp::now();
         }
+    }
+
+    pub(crate) async fn update_turn_messages<T>(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        update: impl FnOnce(&mut Vec<Message>) -> T,
+    ) -> Option<T> {
+        let mut sessions = self.sessions.write().await;
+        let entry = sessions.get_mut(session_key)?;
+        if &entry.generation != generation {
+            return None;
+        }
+        entry.session.last_active_at = Timestamp::now();
+        Some(update(&mut entry.session.messages))
+    }
+
+    pub(crate) async fn replace_turn_messages_if_unchanged(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        expected_messages: &[Message],
+        replacement: Vec<Message>,
+    ) -> Option<bool> {
+        let mut sessions = self.sessions.write().await;
+        let entry = sessions.get_mut(session_key)?;
+        if &entry.generation != generation {
+            return None;
+        }
+        if entry.session.messages.as_slice() != expected_messages {
+            return Some(false);
+        }
+        entry.session.messages = replacement;
+        entry.session.last_active_at = Timestamp::now();
+        Some(true)
+    }
+
+    pub(crate) async fn turn_messages(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+    ) -> Option<Vec<Message>> {
+        let sessions = self.sessions.read().await;
+        let entry = sessions.get(session_key)?;
+        (&entry.generation == generation).then(|| entry.session.messages.clone())
     }
 
     /// Retrieve all messages for a session.
@@ -409,14 +659,15 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         sessions
             .get(session_id)
-            .map(|s| s.messages.clone())
+            .map(|entry| entry.session.messages.clone())
             .unwrap_or_default()
     }
 
     /// Replace all messages for a session.
     pub async fn replace_messages(&self, session_id: &str, messages: Vec<Message>) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             session.messages = messages;
             session.last_active_at = Timestamp::now();
             return true;
@@ -433,38 +684,90 @@ impl SessionManager {
         title: Option<String>,
     ) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
-            session.messages = messages;
-            session.title = normalize_session_title(title.as_deref());
-            session.last_active_at = Timestamp::now();
+        if let Some(entry) = sessions.get_mut(session_id) {
+            entry.generation.retire();
+            hermes_tools::approval::clear_session(session_id);
+            entry.replace_context(messages, title);
             return true;
         }
         false
     }
 
+    pub(crate) async fn switch_session_for_command(
+        &self,
+        session_key: &str,
+        expected: Option<SessionGeneration>,
+        messages: Vec<Message>,
+        title: Option<String>,
+        browsers: Option<&BrowserRetirer>,
+    ) -> Result<bool, &'static str> {
+        let mut boundary = SessionBoundary::new(browsers);
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let Some(entry) = sessions.get_mut(session_key) else {
+                return Ok(false);
+            };
+            if Some(&entry.generation) != expected.as_ref() {
+                return Ok(false);
+            }
+            if boundary.try_finish(session_key, Some(&entry.generation))? {
+                entry.replace_context(messages, title);
+                return Ok(true);
+            }
+            drop(sessions);
+            boundary.wait_for_slot().await?;
+        }
+    }
+
     /// Set or clear the user-visible title for a session.
     pub async fn set_title(&self, session_id: &str, title: impl AsRef<str>) -> Option<String> {
+        self.update_session_title(session_id, None, title.as_ref())
+            .await
+            .flatten()
+    }
+
+    pub(crate) async fn set_title_for_generation(
+        &self,
+        session_id: &str,
+        generation: &SessionGeneration,
+        title: &str,
+    ) -> Option<Option<String>> {
+        self.update_session_title(session_id, Some(generation), title)
+            .await
+    }
+
+    async fn update_session_title(
+        &self,
+        session_id: &str,
+        expected: Option<&SessionGeneration>,
+        title: &str,
+    ) -> Option<Option<String>> {
         let mut sessions = self.sessions.write().await;
-        let normalized = normalize_session_title(Some(title.as_ref()));
-        let session = sessions.get_mut(session_id)?;
-        session.title = normalized.clone();
-        session.last_active_at = Timestamp::now();
-        normalized
+        let entry = sessions.get_mut(session_id)?;
+        if expected.is_some_and(|generation| &entry.generation != generation) {
+            return None;
+        }
+        let normalized = normalize_session_title(Some(title));
+        entry.session.title = normalized.clone();
+        entry.session.last_active_at = Timestamp::now();
+        Some(normalized)
     }
 
     /// Return the user-visible title for a session, if one is set.
     pub async fn get_title(&self, session_id: &str) -> Option<String> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).and_then(|s| s.title.clone())
+        sessions
+            .get(session_id)
+            .and_then(|entry| entry.session.title.clone())
     }
 
     /// Pop the latest message from a session.
     pub async fn pop_last_message(&self, session_id: &str) -> Option<Message> {
         let mut sessions = self.sessions.write().await;
-        sessions.get_mut(session_id).and_then(|s| {
-            let popped = s.messages.pop();
+        sessions.get_mut(session_id).and_then(|entry| {
+            let popped = entry.session.messages.pop();
             if popped.is_some() {
-                s.last_active_at = Timestamp::now();
+                entry.session.touch();
             }
             popped
         })
@@ -473,7 +776,7 @@ impl SessionManager {
     /// Get a session by its ID.
     pub async fn get_session(&self, session_id: &str) -> Option<Session> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).cloned()
+        sessions.get(session_id).map(|entry| entry.session.clone())
     }
 
     /// Find all sessions for a given user across all platforms
@@ -486,7 +789,7 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         session_ids
             .iter()
-            .filter_map(|id| sessions.get(id).cloned())
+            .filter_map(|id| sessions.get(id).map(|entry| entry.session.clone()))
             .collect()
     }
 
@@ -533,10 +836,12 @@ impl SessionManager {
     /// Remove a session entirely.
     pub async fn remove_session(&self, session_id: &str) {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.remove(session_id) {
+        if let Some(entry) = sessions.remove(session_id) {
+            entry.generation.retire();
+            hermes_tools::approval::clear_session(session_id);
             // Clean up user_sessions index
             let mut user_sessions = self.user_sessions.write().await;
-            if let Some(ids) = user_sessions.get_mut(&session.user_id) {
+            if let Some(ids) = user_sessions.get_mut(&entry.session.user_id) {
                 ids.retain(|id| id != session_id);
             }
         }
@@ -551,11 +856,15 @@ impl SessionManager {
     /// Called periodically or before each interaction.
     pub async fn check_and_reset_if_needed(&self, session_id: &str) -> bool {
         let mut sessions = self.sessions.write().await;
-        if let Some(session) = sessions.get_mut(session_id) {
+        if let Some(entry) = sessions.get_mut(session_id) {
+            let session = &mut entry.session;
             if session.should_reset() {
                 session.messages.clear();
                 session.created_at = Timestamp::now();
                 session.last_active_at = Timestamp::now();
+                entry.generation.retire();
+                hermes_tools::approval::clear_session(session_id);
+                entry.generation = SessionGeneration::default();
                 return true;
             }
         }
@@ -566,7 +875,8 @@ impl SessionManager {
     /// metadata from the session's state.
     pub async fn build_session_context(&self, session_id: &str) -> Option<SessionContext> {
         let sessions = self.sessions.read().await;
-        sessions.get(session_id).map(|session| {
+        sessions.get(session_id).map(|entry| {
+            let session = &entry.session;
             let mut ctx = SessionContext::new(session);
             ctx.set_metadata("session_type", format!("{:?}", session.session_type));
             ctx.set_metadata("message_count", session.messages.len().to_string());
@@ -583,8 +893,14 @@ impl SessionManager {
     /// Returns all sessions that were flushed.
     pub async fn flush_memories(&self) -> Vec<Session> {
         let mut sessions = self.sessions.write().await;
-        let all: Vec<Session> = sessions.values().cloned().collect();
-        sessions.clear();
+        let all = sessions
+            .drain()
+            .map(|(key, entry)| {
+                entry.generation.retire();
+                hermes_tools::approval::clear_session(&key);
+                entry.session
+            })
+            .collect();
 
         let mut user_sessions = self.user_sessions.write().await;
         user_sessions.clear();
@@ -597,7 +913,7 @@ impl SessionManager {
         let sessions = self.sessions.read().await;
         sessions
             .iter()
-            .map(|(key, session)| (key.clone(), session.clone()))
+            .map(|(key, entry)| (key.clone(), entry.session.clone()))
             .collect()
     }
 
@@ -608,27 +924,67 @@ impl SessionManager {
         let mut sessions = self.sessions.write().await;
         let stale_ids: Vec<String> = sessions
             .iter()
-            .filter(|(_, s)| s.should_reset())
+            .filter(|(_, entry)| entry.session.should_reset())
             .map(|(id, _)| id.clone())
             .collect();
-        let mut expired = Vec::new();
-        for id in stale_ids {
-            if let Some(session) = sessions.remove(&id) {
-                expired.push((id, session));
-            }
+        if stale_ids.is_empty() {
+            return Vec::new();
         }
-        drop(sessions);
-
-        if !expired.is_empty() {
-            let mut user_sessions = self.user_sessions.write().await;
-            for (id, session) in &expired {
+        let mut user_sessions = self.user_sessions.write().await;
+        let mut expired = Vec::with_capacity(stale_ids.len());
+        for id in stale_ids {
+            if let Some(entry) = sessions.remove(&id) {
+                entry.generation.retire();
+                let session = entry.session;
+                hermes_tools::approval::clear_session(&id);
                 if let Some(ids) = user_sessions.get_mut(&session.user_id) {
-                    ids.retain(|existing| existing != id);
+                    ids.retain(|existing| existing != &id);
                 }
+                expired.push((id, session));
             }
         }
 
         expired
+    }
+
+    pub(crate) async fn idle_session_generations(&self) -> Vec<(String, SessionGeneration)> {
+        self.sessions
+            .read()
+            .await
+            .iter()
+            .filter(|(_, entry)| entry.session.should_reset())
+            .map(|(key, entry)| (key.clone(), entry.generation.clone()))
+            .collect()
+    }
+
+    pub(crate) async fn expire_idle_session_with_browser(
+        &self,
+        key: &str,
+        generation: &SessionGeneration,
+        browsers: &BrowserRetirer,
+    ) -> Result<Option<Session>, &'static str> {
+        let mut boundary = SessionBoundary::new(Some(browsers));
+        loop {
+            let mut sessions = self.sessions.write().await;
+            let Some(entry) = sessions.get(key) else {
+                return Ok(None);
+            };
+            let session = &entry.session;
+            if &entry.generation != generation || !session.should_reset() {
+                return Ok(None);
+            }
+            let mut user_sessions = self.user_sessions.write().await;
+            if !boundary.try_finish(key, Some(&entry.generation))? {
+                drop(user_sessions);
+                drop(sessions);
+                boundary.wait_for_slot().await?;
+                continue;
+            }
+            if let Some(ids) = user_sessions.get_mut(&session.user_id) {
+                ids.retain(|id| id != key);
+            }
+            return Ok(sessions.remove(key).map(|entry| entry.session));
+        }
     }
 
     /// Expire idle sessions according to their reset policy.
@@ -745,6 +1101,62 @@ mod tests {
             .await;
         assert_eq!(session.platform, "telegram");
         assert_eq!(session.chat_id, "chat1");
+    }
+
+    #[tokio::test]
+    async fn compaction_rejects_a_stale_snapshot_in_the_same_generation() {
+        let manager = SessionManager::new(SessionConfig::default());
+        let admission = manager
+            .admit_session("telegram", "compaction", "user1", None)
+            .await
+            .unwrap();
+        let key = "telegram:compaction";
+        let generation = &admission.generation;
+        let previous = Message::user("Previous message");
+        let concurrent = Message::assistant("Newly completed answer");
+        let summary = Message::assistant("Summary");
+        manager.add_message(key, previous.clone()).await;
+        let snapshot = manager.turn_messages(key, generation).await.unwrap();
+        manager.add_message(key, concurrent.clone()).await;
+
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(
+                    key,
+                    generation,
+                    &snapshot,
+                    vec![summary.clone()]
+                )
+                .await,
+            Some(false)
+        );
+        let current = manager.turn_messages(key, generation).await.unwrap();
+        assert_eq!(current, vec![previous, concurrent.clone()]);
+
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(
+                    key,
+                    generation,
+                    &current,
+                    vec![summary.clone(), concurrent.clone()]
+                )
+                .await,
+            Some(true)
+        );
+        assert_eq!(
+            manager.turn_messages(key, generation).await.unwrap(),
+            vec![summary.clone(), concurrent]
+        );
+
+        manager.reset_session(key).await;
+        assert_eq!(
+            manager
+                .replace_turn_messages_if_unchanged(key, generation, &[], vec![summary])
+                .await,
+            None
+        );
+        assert!(manager.get_messages(key).await.is_empty());
     }
 
     #[tokio::test]
@@ -878,6 +1290,93 @@ mod tests {
         assert_eq!(new_session.chat_id, "chat-reset-id");
         assert!(new_session.messages.is_empty());
         assert!(manager.get_messages(&sid).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn session_manager_reports_policy_reset_with_the_previous_state() {
+        let manager = SessionManager::new(SessionConfig {
+            reset_policy: SessionResetPolicy::Idle { timeout_minutes: 0 },
+            ..SessionConfig::default()
+        });
+        let created = manager
+            .admit_session("telegram", "policy", "user1", None)
+            .await
+            .unwrap();
+        assert!(matches!(created.transition, SessionTransition::Created));
+        manager
+            .add_message("telegram:policy", Message::user("old message"))
+            .await;
+
+        let reset = manager
+            .admit_session("telegram", "policy", "user1", None)
+            .await
+            .unwrap();
+        let SessionTransition::PolicyReset(previous) = reset.transition else {
+            panic!("admission did not report the policy reset");
+        };
+        assert_eq!(previous.id, created.session.id);
+        assert_eq!(previous.messages.len(), 1);
+        assert_eq!(reset.session.id, created.session.id);
+        assert!(reset.session.messages.is_empty());
+    }
+
+    #[tokio::test]
+    async fn overlapping_policy_resets_pin_only_their_own_browser_generation() {
+        use hermes_tools::backends::browser::unavailable_browser_backend;
+        use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
+
+        let manager = SessionManager::new(SessionConfig {
+            reset_policy: SessionResetPolicy::Idle { timeout_minutes: 0 },
+            ..SessionConfig::default()
+        });
+        let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+        let queue = BrowserReleaseQueue::start(browsers.clone());
+        let retirer = queue.retirer();
+        let admit = |chat| manager.admit_session("telegram", chat, "user1", Some(&retirer));
+        let before = admit("shared").await.unwrap();
+        let other = admit("other").await.unwrap();
+
+        let (first, second) = tokio::join!(admit("shared"), admit("shared"));
+        let first = first.unwrap();
+        let second = second.unwrap();
+        assert!(matches!(
+            first.transition,
+            SessionTransition::PolicyReset(_)
+        ));
+        assert!(matches!(
+            second.transition,
+            SessionTransition::PolicyReset(_)
+        ));
+        assert_eq!(first.session.id, before.session.id);
+        assert_eq!(second.session.id, before.session.id);
+
+        // Build the tool overrides only after both admissions have completed.
+        let call = |admission: SessionAdmission| async move {
+            admission.browser.unwrap().tool_overrides()["browser_snapshot"]
+                .execute(serde_json::json!({}))
+                .await
+                .unwrap_err()
+                .to_string()
+        };
+        assert!(call(before).await.contains("browser was closed"));
+        let competing = [call(first).await, call(second).await];
+        assert_eq!(
+            competing
+                .iter()
+                .filter(|error| error.contains("browser was closed"))
+                .count(),
+            1
+        );
+        assert_eq!(
+            competing
+                .iter()
+                .filter(|error| error.contains("fixture browser"))
+                .count(),
+            1
+        );
+        assert!(call(other).await.contains("fixture browser"));
+        browsers.close_all().await;
+        queue.drain().await.unwrap();
     }
 
     #[tokio::test]

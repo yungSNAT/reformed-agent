@@ -31,6 +31,7 @@ use hermes_intelligence::{
     build_model_switch_preflight_warning as format_model_switch_preflight_warning,
     estimate_messages_tokens_rough,
 };
+use hermes_tools::session_browsers::{BrowserLease, BrowserRetirer};
 use hermes_tools::skill_commands::{
     build_skill_reload_system_note, installed_skill_slash_command_snapshot,
     render_skill_slash_command_snapshot, resolve_installed_skill_slash_command,
@@ -44,7 +45,7 @@ use crate::dm::{DmDecision, DmManager};
 use crate::hooks::{HookEvent, HookRegistry};
 use crate::media::validate_media_delivery_path;
 use crate::platforms::helpers::{extract_inline_images, extract_media_markers};
-use crate::session::{Session, SessionManager};
+use crate::session::{Session, SessionGeneration, SessionManager, SessionTransition};
 use crate::session_control::{
     ActiveSessionControl, BusyInputMode, BusySessionCoordinator, MessageEvent, MessageType,
     ProcessingOutcome, SessionSource,
@@ -205,6 +206,10 @@ pub type MessageHandler = Arc<
 #[derive(Debug, Clone, Default)]
 pub struct GatewayRuntimeContext {
     pub session_key: String,
+    /// Browser tools pinned to the session generation admitted for this turn.
+    pub browser: Option<BrowserLease>,
+    /// Permission scope of the conversation that admitted this turn.
+    pub session_generation: Option<SessionGeneration>,
     pub platform: String,
     pub chat_id: String,
     pub thread_id: Option<String>,
@@ -311,10 +316,13 @@ enum SlashCommandOutcome {
     ForwardToAgent { message: String },
 }
 
-#[derive(Debug, Clone, Default)]
-struct CompressionOutcome {
-    removed_messages: usize,
-    summary_warning: Option<String>,
+enum CompressionOutcome {
+    Unchanged,
+    HistoryChanged,
+    Compressed {
+        removed_messages: usize,
+        summary_warning: Option<String>,
+    },
 }
 
 #[derive(Debug, Clone, Default)]
@@ -330,7 +338,6 @@ struct SessionRuntimeState {
     /// Optional usage budget (same units as `/budget` input; gateway displays as-is).
     budget: Option<f64>,
     verbose: bool,
-    yolo: bool,
     reasoning: bool,
     pending_system_notes: Vec<String>,
 }
@@ -395,6 +402,7 @@ include!("gateway/profile_overlay.rs");
 pub struct Gateway {
     adapters: RwLock<HashMap<String, Arc<dyn PlatformAdapter>>>,
     session_manager: Arc<SessionManager>,
+    browser_retirer: Option<BrowserRetirer>,
     dm_manager: Arc<RwLock<DmManager>>,
     stream_manager: Arc<StreamManager>,
     config: GatewayConfig,

@@ -5,6 +5,8 @@ impl Gateway {
         incoming: &IncomingMessage,
         messages: Vec<Message>,
         session_key: &str,
+        browser: Option<BrowserLease>,
+        generation: &SessionGeneration,
     ) -> Result<(), GatewayError> {
         self.emit_hook_event(
             "agent:start",
@@ -19,7 +21,9 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let mut runtime_context = self
+            .build_runtime_context(incoming, session_key, browser, generation)
+            .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.message_handler_with_context.read().await.clone();
@@ -54,11 +58,16 @@ impl Gateway {
         };
 
         // Add assistant response to session
-        self.session_manager
-            .add_message(session_key, Message::assistant(&response))
-            .await;
-        self.bump_output_usage(session_key, response.chars().count())
-            .await;
+        if self
+            .session_manager
+            .update_turn_messages(session_key, generation, |messages| {
+                messages.push(Message::assistant(&response));
+            })
+            .await
+            .is_some()
+        {
+            self.bump_output_usage(session_key, response.chars().count()).await;
+        }
 
         // Send response back to the platform
         let reply_thread_id = Self::reply_thread_id(incoming);
@@ -101,6 +110,8 @@ impl Gateway {
         incoming: &IncomingMessage,
         messages: Vec<Message>,
         session_key: &str,
+        browser: Option<BrowserLease>,
+        generation: &SessionGeneration,
     ) -> Result<(), GatewayError> {
         self.emit_hook_event(
             "agent:start",
@@ -115,7 +126,9 @@ impl Gateway {
         .await;
         let deferred_messages = Arc::new(StdMutex::new(Vec::new()));
         let deferred_release = Arc::new(AtomicBool::new(false));
-        let mut runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let mut runtime_context = self
+            .build_runtime_context(incoming, session_key, browser, generation)
+            .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
         let context_handler = self.streaming_handler_with_context.read().await.clone();
@@ -188,7 +201,9 @@ impl Gateway {
             let handler = self.streaming_handler.read().await;
             match handler.as_ref() {
                 Some(handler) => handler(legacy_messages, on_chunk).await,
-                None => Err(GatewayError::Platform("No streaming handler configured".into())),
+                None => Err(GatewayError::Platform(
+                    "No streaming handler configured".into(),
+                )),
             }
         };
         self.stream_manager.finish_stream(&stream_id).await;
@@ -213,11 +228,16 @@ impl Gateway {
         };
 
         // Add assistant response to session
-        self.session_manager
-            .add_message(session_key, Message::assistant(&response))
-            .await;
-        self.bump_output_usage(session_key, response.chars().count())
-            .await;
+        if self
+            .session_manager
+            .update_turn_messages(session_key, generation, |messages| {
+                messages.push(Message::assistant(&response));
+            })
+            .await
+            .is_some()
+        {
+            self.bump_output_usage(session_key, response.chars().count()).await;
+        }
         if !response.trim().is_empty() {
             self.send_notify_message_threaded(
                 &incoming.platform,
@@ -307,6 +327,8 @@ impl Gateway {
         &self,
         incoming: &IncomingMessage,
         session_key: &str,
+        browser: Option<BrowserLease>,
+        generation: &SessionGeneration,
     ) -> GatewayRuntimeContext {
         let default_model = self.default_model.read().await.clone();
         let state = self
@@ -320,6 +342,8 @@ impl Gateway {
 
         GatewayRuntimeContext {
             session_key: session_key.to_string(),
+            browser,
+            session_generation: Some(generation.clone()),
             platform: incoming.platform.clone(),
             chat_id: incoming.chat_id.clone(),
             thread_id: incoming.thread_id.clone(),
@@ -335,7 +359,13 @@ impl Gateway {
                 .or_else(|| normalize_service_tier(self.config.service_tier.as_deref())),
             tool_progress: state.tool_progress,
             verbose: state.verbose,
-            yolo: state.yolo,
+            yolo: self
+                .session_manager
+                .with_current_generation(session_key, Some(generation.clone()), || {
+                    hermes_tools::approval::is_session_yolo_enabled(session_key)
+                })
+                .await
+                .unwrap_or(false),
             reasoning: state.reasoning,
             mcp_reload_generation,
             busy_control: Some(BusyControlRegistration::new(
@@ -453,10 +483,15 @@ impl Gateway {
         Ok(out)
     }
 
-    async fn compress_context(&self, session_key: &str, max_messages: usize) -> CompressionOutcome {
-        let current = self.session_manager.get_messages(session_key).await;
+    async fn compress_context(
+        &self,
+        session_key: &str,
+        generation: &SessionGeneration,
+        max_messages: usize,
+    ) -> Option<CompressionOutcome> {
+        let current = self.session_manager.turn_messages(session_key, generation).await?;
         if current.len() <= max_messages {
-            return CompressionOutcome::default();
+            return Some(CompressionOutcome::Unchanged);
         }
 
         let mut compressed = Vec::new();
@@ -494,13 +529,15 @@ impl Gateway {
         }
         compressed.extend(tail);
 
-        self.session_manager
-            .replace_messages(session_key, compressed)
-            .await;
-        CompressionOutcome {
-            removed_messages,
-            summary_warning,
-        }
+        let replaced = self
+            .session_manager
+            .replace_turn_messages_if_unchanged(session_key, generation, &current, compressed)
+            .await?;
+        Some(if replaced {
+            CompressionOutcome::Compressed { removed_messages, summary_warning }
+        } else {
+            CompressionOutcome::HistoryChanged
+        })
     }
 
     async fn build_status_text(&self, session_key: &str) -> String {
@@ -558,7 +595,7 @@ impl Gateway {
             },
             if busy_active { "yes" } else { "no" },
             busy_pending,
-            if state.yolo { "ON" } else { "OFF" },
+            if hermes_tools::approval::is_session_yolo_enabled(session_key) { "ON" } else { "OFF" },
             state.home.unwrap_or_else(|| "(not set)".to_string()),
             messages.len(),
             running_tasks,
@@ -574,6 +611,8 @@ impl Gateway {
         session_key: &str,
         prompt: &str,
         isolated_context: bool,
+        browser: Option<BrowserLease>,
+        generation: &SessionGeneration,
     ) -> Result<bool, GatewayError> {
         let trimmed = prompt.trim();
         if trimmed.eq_ignore_ascii_case("list") {
@@ -664,7 +703,10 @@ impl Gateway {
         // Python `GatewayRunner._run_background_task`: only `user_message=prompt` (fresh session).
         // Python `_run_btw_task`: `conversation_history` snapshot + ephemeral user turn (no tools).
         let original_messages = if isolated_context {
-            let mut history = self.session_manager.get_messages(session_key).await;
+            let Some(mut history) = self.session_manager.turn_messages(session_key, generation).await else {
+                manager.fail(&task_id_for_task, "The gateway conversation has ended.".to_string());
+                return Ok(true);
+            };
             let btw_user = format!(
                 "[Ephemeral /btw side question. Answer using the conversation \
                  context. No tools available. Be direct and concise.]\n\n{}",
@@ -676,7 +718,9 @@ impl Gateway {
             vec![Message::user(trimmed)]
         };
         let legacy_messages = original_messages.clone();
-        let runtime_context = self.build_runtime_context(incoming, session_key).await;
+        let runtime_context = self
+            .build_runtime_context(incoming, session_key, browser, generation)
+            .await;
         tokio::spawn(async move {
             let result = if let Some(handler) = context_handler {
                 handler(original_messages, runtime_context).await
@@ -1161,12 +1205,43 @@ impl Gateway {
     /// Expire idle sessions once and emit lifecycle finalization hooks for
     /// each removed session using retained session snapshots.
     pub async fn expire_idle_sessions_once(&self, reason: &str) -> usize {
-        let expired = self.session_manager.expire_idle_session_snapshots().await;
-        for (session_key, session) in &expired {
-            self.emit_session_finalize(session_key, session, reason)
-                .await;
+        let registry = self.hook_registry.read().await.clone();
+        let sessions = self.session_manager.clone();
+        let browsers = self.browser_retirer.clone();
+        let reason = reason.to_owned();
+        // Own committed snapshots through queue waits and notifications.
+        // Callbacks never postpone retirement of the other selected sessions.
+        match tokio::spawn(async move {
+            let expired = if let Some(browsers) = browsers {
+                let mut expired = Vec::new();
+                for (key, generation) in sessions.idle_session_generations().await {
+                    match sessions.expire_idle_session_with_browser(&key, &generation, &browsers).await {
+                        Ok(Some(session)) => expired.push((key, session)),
+                        Ok(None) => {}
+                        Err(error) => {
+                            tracing::warn!(error, "Could not retire idle gateway browsers");
+                            break;
+                        }
+                    }
+                }
+                expired
+            } else {
+                sessions.expire_idle_session_snapshots().await
+            };
+            let count = expired.len();
+            if let Some(registry) = registry {
+                for (key, session) in expired {
+                    Self::notify_finalized_session(&registry, &key, Arc::new(session), &reason).await;
+                }
+            }
+            count
+        }).await {
+            Ok(count) => count,
+            Err(error) => {
+                tracing::warn!(%error, "Gateway idle session lifecycle task failed");
+                0
+            }
         }
-        expired.len()
     }
 
     /// Monitors adapter health and attempts reconnect through stop/start.

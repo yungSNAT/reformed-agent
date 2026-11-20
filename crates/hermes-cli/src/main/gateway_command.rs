@@ -245,21 +245,20 @@ async fn run_gateway(
             };
             let session_manager = Arc::new(SessionManager::new(config.session.clone()));
             let dm_manager = build_gateway_dm_manager(&config);
-            let gateway = Arc::new(Gateway::new(
-                session_manager,
-                dm_manager,
-                runtime_gateway_config,
-            ));
+            let session_browsers =
+                hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
+            let browser_releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(
+                session_browsers.clone(),
+            );
+            let gateway = Arc::new(
+                Gateway::new(session_manager, dm_manager, runtime_gateway_config)
+                    .with_browser_retirement(browser_releases.retirer()),
+            );
             gateway
                 .set_platform_access_policies(build_gateway_platform_access_policies(&config))
                 .await;
-            // Each chat session gets a browser of its own, closed as the
-            // session ends.
-            let session_browsers =
-                hermes_tools::SessionBrowsers::new(hermes_tools::isolated_browser_backend_from_env);
             let mut hook_registry = HookRegistry::new();
             hook_registry.register_builtins();
-            CloseSessionBrowser::register(&mut hook_registry, &session_browsers);
             hook_registry.discover_and_load(&hermes_home().join("hooks"));
             gateway.set_hook_registry(Arc::new(hook_registry)).await;
             gateway
@@ -287,8 +286,6 @@ async fn run_gateway(
             let clarify_dispatcher = ClarifyDispatcher::new();
             let tool_registry_for_msg = tool_registry.clone();
             let tool_registry_for_stream = tool_registry.clone();
-            let browsers_for_msg = session_browsers.clone();
-            let browsers_for_stream = session_browsers.clone();
             let terminal_for_msg = terminal_backend.clone();
             let terminal_for_stream = terminal_backend;
             let agent_tools_for_cron = Arc::new(bridge_tool_registry(&tool_registry));
@@ -302,7 +299,6 @@ async fn run_gateway(
                 .set_message_handler_with_context(Arc::new(move |messages, ctx| {
                     let config = config_arc.clone();
                     let runtime_tools = tool_registry_for_msg.clone();
-                    let browsers = browsers_for_msg.clone();
                     let terminal_backend = terminal_for_msg.clone();
                     let gateway_for_review = gateway_for_review.clone();
                     let clarify = clarify_for_msg.clone();
@@ -325,7 +321,6 @@ async fn run_gateway(
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
                             gateway_turn_tool_overrides(
-                                &browsers,
                                 &terminal_backend,
                                 &gateway_for_review,
                                 &ctx,
@@ -587,7 +582,6 @@ async fn run_gateway(
                 .set_streaming_handler_with_context(Arc::new(move |messages, ctx, on_chunk| {
                     let config = config_arc_stream.clone();
                     let runtime_tools = tool_registry_for_stream.clone();
-                    let browsers = browsers_for_stream.clone();
                     let terminal_backend = terminal_for_stream.clone();
                     let gateway_for_review = gateway_for_review_stream.clone();
                     let clarify = clarify_for_stream.clone();
@@ -610,7 +604,6 @@ async fn run_gateway(
                         let agent_tools = Arc::new(bridge_tool_registry_with(
                             &runtime_tools,
                             gateway_turn_tool_overrides(
-                                &browsers,
                                 &terminal_backend,
                                 &gateway_for_review,
                                 &ctx,
@@ -992,16 +985,6 @@ async fn run_gateway(
                 sidecar_tasks.push(tokio::spawn(async move {
                     gw_expiry.session_expiry_watcher(300).await;
                 }));
-                let idle_browsers = session_browsers.clone();
-                sidecar_tasks.push(tokio::spawn(async move {
-                    let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
-                    loop {
-                        ticker.tick().await;
-                        idle_browsers
-                            .release_idle(hermes_tools::session_browsers::SESSION_BROWSER_MAX_IDLE)
-                            .await;
-                    }
-                }));
             }
             let own_pid = std::process::id();
             tokio::fs::write(&pid_path, format!("{}\n", own_pid))
@@ -1018,6 +1001,21 @@ async fn run_gateway(
                     return Err(AgentError::Config(format!("Desktop local runtime: {e}")));
                 }
             }
+            let idle_browsers = session_browsers.clone();
+            let (stop_idle_browser_sweep, mut stop_idle) = tokio::sync::oneshot::channel();
+            let idle_browser_sweep = tokio::spawn(async move {
+                let mut ticker = tokio::time::interval(std::time::Duration::from_secs(60));
+                loop {
+                    tokio::select! {
+                        biased;
+                        _ = &mut stop_idle => break,
+                        _ = ticker.tick() => {}
+                    }
+                    idle_browsers
+                        .release_idle(hermes_tools::session_browsers::SESSION_BROWSER_MAX_IDLE)
+                        .await;
+                }
+            });
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             let stopping = gateway_shutdown_signal().await;
@@ -1028,18 +1026,27 @@ async fn run_gateway(
             if let Some(runtime) = desktop.as_mut() {
                 runtime.stop_serving();
             }
-            stopping?;
-
             println!("\nShutting down gateway...");
             cron_scheduler.stop().await;
-            gateway.stop_all().await?;
-            session_browsers.close_all().await;
-            let _ = tokio::fs::remove_file(&pid_path).await;
-            for task in sidecar_tasks {
+            let _ = stop_idle_browser_sweep.send(());
+            for task in &sidecar_tasks {
                 task.abort();
             }
+            for task in sidecar_tasks {
+                let _ = task.await;
+            }
+            let stopped_adapters = gateway.stop_all().await;
+            let stopped_idle_sweep = idle_browser_sweep.await;
+            session_browsers.close_all().await;
+            let drained_releases = browser_releases.drain().await;
+            let _ = tokio::fs::remove_file(&pid_path).await;
             #[cfg(unix)]
             drop(desktop);
+            stopping?;
+            stopped_adapters?;
+            stopped_idle_sweep
+                .and(drained_releases)
+                .map_err(|err| AgentError::Io(format!("Gateway browser cleanup failed: {err}")))?;
             println!("Gateway stopped.");
         }
         Some("status") => {
@@ -1154,9 +1161,13 @@ async fn run_up(force: bool, dry_run: bool) -> Result<(), AgentError> {
         if let Some(service_state) = gateway_service_status()? {
             println!("{service_state}");
         } else {
-            println!("Gateway service: service install/start is not implemented for this platform.");
+            println!(
+                "Gateway service: service install/start is not implemented for this platform."
+            );
         }
-        println!("Dry-run: would ensure the gateway service is installed, start it, then print status.");
+        println!(
+            "Dry-run: would ensure the gateway service is installed, start it, then print status."
+        );
         return Ok(());
     }
 

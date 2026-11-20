@@ -15,6 +15,9 @@ use crate::register_builtins::browser_tool_handlers;
 use crate::registry::ToolOverrides;
 use crate::tools::browser::{BrowserBackend, BrowserFactory, SharedBrowser};
 
+mod release_queue;
+pub use release_queue::{BrowserReleaseQueue, BrowserReleaseSlot, BrowserRetirer};
+
 /// How long a session's browser may go unused before it is released.
 pub const SESSION_BROWSER_MAX_IDLE: Duration = Duration::from_secs(300);
 
@@ -46,6 +49,24 @@ pub struct SessionBrowsers {
     sessions: Arc<Mutex<HashMap<String, (SharedBrowser, ToolOverrides)>>>,
 }
 
+/// Browser handlers pinned to a turn's session generation.
+#[derive(Clone)]
+pub struct BrowserLease(ToolOverrides);
+
+impl BrowserLease {
+    pub fn tool_overrides(&self) -> ToolOverrides {
+        self.0.clone()
+    }
+}
+
+impl std::fmt::Debug for BrowserLease {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("BrowserLease")
+            .finish_non_exhaustive()
+    }
+}
+
 impl SessionBrowsers {
     /// Sessions whose backends `factory` builds.
     pub fn new(factory: impl Fn() -> Arc<dyn BrowserBackend> + Send + Sync + 'static) -> Self {
@@ -72,13 +93,28 @@ impl SessionBrowsers {
     /// Close the browser of the session `session_key`, which has ended.
     /// Its handlers, including any a running turn holds, fail from now on.
     pub async fn close(&self, session_key: &str) {
-        let browser = self.sessions().remove(session_key).map(|(browser, _)| {
-            browser.mark_closed();
-            browser
-        });
-        if let Some(browser) = browser {
+        if let Some(browser) = self.retire(session_key) {
             browser.release_closed_backend().await;
         }
+    }
+
+    fn retire(&self, session_key: &str) -> Option<SharedBrowser> {
+        self.sessions().remove(session_key).map(|(browser, _)| {
+            browser.mark_closed();
+            browser
+        })
+    }
+
+    fn try_retire_without_backend(&self, session_key: &str) -> bool {
+        let mut sessions = self.sessions();
+        if sessions
+            .get(session_key)
+            .is_some_and(|(browser, _)| !browser.try_close_without_backend())
+        {
+            return false;
+        }
+        sessions.remove(session_key);
+        true
     }
 
     /// Release each browser no call has used within `max_idle`. A session
@@ -299,6 +335,51 @@ mod tests {
         );
     }
 
+    #[tokio::test(flavor = "multi_thread")]
+    async fn deferred_release_keeps_the_worker_owned_until_the_vendor_replies() {
+        let gateway = gateway().await;
+        let requested = Arc::new(tokio::sync::Notify::new());
+        let notify = requested.clone();
+        let (reply, wait_for_reply) = std::sync::mpsc::channel();
+        let wait_for_reply = Mutex::new(wait_for_reply);
+        Mock::given(method("POST"))
+            .and(path("/v1/sessions/vendor_session_1"))
+            .respond_with(move |_: &Request| {
+                notify.notify_one();
+                let replied = wait_for_reply
+                    .lock()
+                    .unwrap()
+                    .recv_timeout(Duration::from_secs(5))
+                    .is_ok();
+                ResponseTemplate::new(if replied { 200 } else { 500 })
+            })
+            .with_priority(1)
+            .mount(&gateway.api)
+            .await;
+        let queue = BrowserReleaseQueue::start(gateway.browsers.clone());
+        let old = gateway.browsers.tool_overrides("telegram:alice");
+        assert!(gateway.snapshot("telegram:alice").contains("snapshot"));
+        assert!(gateway.snapshot("telegram:bob").contains("snapshot"));
+        queue.retirer().retire("telegram:alice").await.unwrap();
+        tokio::time::timeout(Duration::from_secs(5), requested.notified())
+            .await
+            .expect("the release worker did not reach the vendor");
+
+        let mut drain = Box::pin(queue.drain());
+        assert!(futures::poll!(drain.as_mut()).is_pending());
+        let response = gateway
+            .registry
+            .dispatch_with("browser_snapshot", json!({}), &old);
+        assert!(response.contains("browser was closed"), "{response}");
+        assert!(gateway.snapshot("telegram:bob").contains("snapshot"));
+        reply.send(()).unwrap();
+        drain.await.unwrap();
+        assert_eq!(gateway.released(1).await, 1);
+        assert_eq!(gateway.released(2).await, 0);
+        gateway.browsers.close_all().await;
+        assert_eq!(gateway.released(2).await, 1);
+    }
+
     /// Releases run together, so a vendor that answers slowly holds no other
     /// session's release back.
     #[tokio::test(flavor = "multi_thread")]
@@ -360,18 +441,22 @@ mod tests {
 
         let mut shutdown = std::pin::pin!(sessions.close_all());
         assert!(futures::poll!(shutdown.as_mut()).is_pending());
-        drop(active);
-
-        // Active releases have already queued for the mutex. A handler for a
-        // browser queued behind that batch must already refuse new work.
-        let mut releasing = 0;
+        // Every browser refuses new work whilst the active calls hold the locks.
         for browser in &browsers {
             match browser.lock().now_or_never() {
                 Some(Err(error)) => assert!(error.to_string().contains("browser was closed")),
                 Some(Ok(_)) => panic!("a queued browser was still open"),
-                None => releasing += 1,
+                None => panic!("a retired browser waited for the backend lock"),
             }
         }
+
+        // The first release batch has queued for its locks. Dropping the active
+        // calls wakes those releases and leaves the next batch's lock available.
+        drop(active);
+        let releasing = browsers
+            .iter()
+            .filter(|browser| !browser.backend_lock_available())
+            .count();
         assert_eq!(
             releasing, 4,
             "unexpected number of concurrent browser releases"

@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-20T21:22:17.742182+00:00",
+  "generated_at_utc": "2026-11-20T21:50:29.510966+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -39,7 +39,7 @@
       ]
     },
     {
-      "evidence_count": 133,
+      "evidence_count": 134,
       "evidence_sample": [
         "crates/hermes-tools/src/ansi_strip.rs",
         "crates/hermes-tools/src/approval.rs",

@@ -113,12 +113,10 @@ impl SharedBrowser {
     /// Wait for the other browser tools to finish, then hold the browser.
     /// Fails once the browser is closed.
     pub async fn lock(&self) -> Result<BrowserGuard<'_>, ToolError> {
+        // A retired browser can hold this lock whilst releasing its backend.
+        self.check_open()?;
         let mut state = self.inner.state.lock().await;
-        if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
-            return Err(ToolError::ExecutionFailed(
-                "This browser was closed because its chat session or job ended".into(),
-            ));
-        }
+        self.check_open()?;
         if state.retired {
             return Err(ToolError::ExecutionFailed(BROWSER_RETIRED_MESSAGE.into()));
         }
@@ -127,6 +125,15 @@ impl SharedBrowser {
             .get_or_insert_with(|| (self.inner.factory)())
             .clone();
         Ok(BrowserGuard { backend, state })
+    }
+
+    fn check_open(&self) -> Result<(), ToolError> {
+        if self.inner.closed.load(std::sync::atomic::Ordering::SeqCst) {
+            return Err(ToolError::ExecutionFailed(
+                "This browser was closed because its chat session or job ended".into(),
+            ));
+        }
+        Ok(())
     }
 
     /// End the browser for good: later calls, through any clone, fail and
@@ -142,9 +149,25 @@ impl SharedBrowser {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub(crate) fn try_close_without_backend(&self) -> bool {
+        let Ok(state) = self.inner.state.try_lock() else {
+            return false;
+        };
+        if state.backend.is_some() {
+            return false;
+        }
+        self.mark_closed();
+        true
+    }
+
     pub(crate) async fn release_closed_backend(&self) {
         let mut state = self.inner.state.lock().await;
         drop_backend(state.backend.take()).await;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn backend_lock_available(&self) -> bool {
+        self.inner.state.try_lock().is_ok()
     }
 
     /// Drop the backend if no call has finished within `max_idle`, unless it
