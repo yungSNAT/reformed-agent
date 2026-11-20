@@ -2020,6 +2020,7 @@ name = "hermes-parity-tools"
 version = "0.22.0"
 dependencies = [
  "clap",
+ "fancy-regex",
  "hermes-py",
  "jiff",
  "regex",

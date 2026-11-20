@@ -6,6 +6,7 @@
 mod adapter_matrix;
 mod coverage_audit;
 mod coverage_tests;
+mod decimal_limit;
 mod divergence;
 mod fork_carry;
 mod git;
@@ -15,6 +16,7 @@ mod shared_diff_backlog;
 mod slash_gate;
 mod surface_gate;
 mod test_intent_mapping;
+mod upstream_queue;
 mod workstream_status;
 
 use clap::{Parser, Subcommand};
@@ -70,6 +72,13 @@ enum Command {
     WorkstreamStatus(workstream_status::WorkstreamStatusArgs),
     /// Verify the required fork behaviour contracts by executing their exact Rust tests.
     CheckForkCarry(fork_carry::ForkCarryArgs),
+    /// Generate the upstream missing patch queue.
+    #[command(
+        name = "generate-upstream-patch-queue",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    UpstreamQueue(upstream_queue::UpstreamQueueArgs),
 }
 
 fn main() {
@@ -85,6 +94,7 @@ fn main() {
         Command::SharedDiffBacklog(args) => shared_diff_backlog::run(args),
         Command::WorkstreamStatus(args) => workstream_status::run(args),
         Command::CheckForkCarry(args) => fork_carry::run(args),
+        Command::UpstreamQueue(args) => upstream_queue::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
