@@ -1,0 +1,74 @@
+name: Upstream Port Queue
+
+on:
+  workflow_run:
+    workflows: [Parity Audit]
+    types: [completed]
+    branches: [main]
+
+permissions: {}
+
+concurrency: upstream-port-queue
+
+jobs:
+  publish:
+    if: >-
+      github.repository == 'yungSNAT/reformed-agent' &&
+      github.event.workflow_run.head_repository.id == github.event.repository.id &&
+      github.event.workflow_run.conclusion == 'success' &&
+      (github.event.workflow_run.event == 'schedule' ||
+       github.event.workflow_run.event == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      issues: write
+    env:
+      GH_REPO: ${{ github.repository }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      # The audit runs upstream code. This job reads its JSON as data on a
+      # separate runner and can only write to GitHub issues.
+      - name: Refresh upstream port queue issue
+        shell: bash
+        run: |
+          # A delayed completion or a rerun must report the latest successful audit.
+          run_id="$(gh api --method GET "repos/$GH_REPO/actions/workflows/parity-audit.yml/runs" \
+            -f branch=main -f status=success -F per_page=30 | jq -er --arg repo "$GH_REPO" '
+              [.workflow_runs[] | select(.head_repository.full_name == $repo and
+                (.event == "schedule" or .event == "workflow_dispatch"))][0].id')"
+          [[ "$run_id" =~ ^[0-9]+$ ]]
+          queue_dir="$RUNNER_TEMP/upstream-port-queue"
+          gh run download "$run_id" --name parity-audit-artifacts --dir "$queue_dir"
+
+          issue_title='Upstream port queue'
+          marker='<!-- reformed-agent-upstream-port-queue -->'
+          issue_body="$queue_dir/issue.md"
+          jq -er --arg marker "$marker" --arg run "$GITHUB_SERVER_URL/$GH_REPO/actions/runs/$run_id" '
+            if (.commits | type) != "array" then error("Missing upstream commit queue") else . end
+            | [.commits[] | select(.disposition == "pending")] | reverse as $pending
+            | $marker, "",
+              "Pending NousResearch/hermes-agent commits in the latest successful Parity Audit: \($pending | length).",
+              "", "Download **parity-audit-artifacts** from the [audit run](\($run)) for the complete queue (`docs/parity/upstream-missing-queue.md`).",
+              "", "For an applicable change, link the upstream commit in a Reformed pull request and add a test for the affected Rust behaviour.",
+              (if ($pending | length) > 0 then "", "### Most recent pending commits", "",
+                ($pending[:25][] |
+                  if (.sha | test("^[0-9a-f]{40}$")) then
+                    (.subject[:200] | gsub("[[:cntrl:]`]"; " ") | gsub("@"; "＠")) as $subject
+                    | "- [\(.sha[:12])](https://github.com/NousResearch/hermes-agent/commit/\(.sha)) `\($subject)`"
+                  else error("Invalid upstream commit SHA") end)
+               else empty end)
+          ' "$queue_dir/docs/parity/upstream-missing-queue.json" > "$issue_body"
+
+          issue="$(gh api --paginate --method GET "repos/$GH_REPO/issues" \
+            -f state=open -F per_page=100 | jq -r --arg marker "$marker" '
+              .[] | select((has("pull_request") | not) and .user.login == "github-actions[bot]" and
+                ((.body // "") | startswith($marker))) | .number')"
+          if [[ -z "$issue" ]]; then
+            gh api --method POST "repos/$GH_REPO/issues" \
+              -f "title=$issue_title" -F "body=@$issue_body" --jq '.html_url'
+          else
+            [[ "$issue" =~ ^[0-9]+$ ]]
+            gh api --method PATCH "repos/$GH_REPO/issues/$issue" \
+              -F "body=@$issue_body" --jq '.html_url'
+          fi
