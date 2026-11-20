@@ -109,6 +109,12 @@ fn gateway_tool_progress_parse_mode(platform: &str, text: &str) -> Option<ParseM
 /// `/reset`, idle expiry and shutdown.
 struct CloseSessionBrowser(hermes_tools::SessionBrowsers);
 
+impl CloseSessionBrowser {
+    fn register(hooks: &mut HookRegistry, browsers: &hermes_tools::SessionBrowsers) {
+        hooks.register_in_process("on_session_finalize", Arc::new(Self(browsers.clone())));
+    }
+}
+
 #[async_trait::async_trait]
 impl hermes_gateway::hooks::HookHandler for CloseSessionBrowser {
     async fn handle(&self, event: &hermes_gateway::hooks::HookEvent) -> Result<(), String> {
