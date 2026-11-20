@@ -1371,7 +1371,11 @@ async fn assert_retired(backend: &CdpBrowserBackend) {
             .await
             .expect_err("snapshot after a failed clear"),
     ] {
-        assert!(err.to_string().contains("retired"), "{err}");
+        assert!(
+            err.to_string()
+                .contains("This browser was retired because a refused page could not be cleared."),
+            "{err}"
+        );
     }
 }
 

@@ -13,6 +13,9 @@ use hermes_core::{tool_schema, JsonSchema, ToolError, ToolHandler, ToolSchema};
 use crate::tools::url_safety::{check_website_blocklist, is_always_blocked_url, is_safe_url};
 use crate::tools::vision::VisionBackend;
 
+pub(crate) const BROWSER_RETIRED_MESSAGE: &str =
+    "This browser was retired because a refused page could not be cleared.";
+
 // ---------------------------------------------------------------------------
 // BrowserBackend trait
 // ---------------------------------------------------------------------------
@@ -117,9 +120,7 @@ impl SharedBrowser {
             ));
         }
         if state.retired {
-            return Err(ToolError::ExecutionFailed(
-                "This browser was retired because a refused page could not be cleared, and stays off until its chat session or job ends".into(),
-            ));
+            return Err(ToolError::ExecutionFailed(BROWSER_RETIRED_MESSAGE.into()));
         }
         let backend = state
             .backend
@@ -774,10 +775,8 @@ mod tests {
         SharedBrowser::new(std::sync::Arc::new(MockBrowserBackend::default()))
     }
 
-    /// A browser whose backends report `retired`, and the number it built.
-    fn counted(
-        retired: bool,
-    ) -> (
+    /// A browser and the number of backends it built.
+    fn counted() -> (
         SharedBrowser,
         std::sync::Arc<std::sync::atomic::AtomicUsize>,
     ) {
@@ -785,7 +784,7 @@ mod tests {
         let counter = built.clone();
         let browser = SharedBrowser::lazy(move || {
             counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            std::sync::Arc::new(MockBrowserBackend { retired })
+            std::sync::Arc::new(MockBrowserBackend::default())
         });
         (browser, built)
     }
@@ -796,7 +795,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_closed_browser_refuses_its_handlers_and_builds_no_backend() {
-        let (browser, count) = counted(false);
+        let (browser, count) = counted();
         let snapshot = BrowserSnapshotHandler::new(browser.clone());
         snapshot.execute(json!({})).await.expect("open browser");
 
@@ -809,7 +808,7 @@ mod tests {
 
     #[tokio::test]
     async fn idle_release_drops_the_backend_after_the_idle_period_only() {
-        let (browser, count) = counted(false);
+        let (browser, count) = counted();
         let snapshot = BrowserSnapshotHandler::new(browser.clone());
         assert_eq!(built(&count), 0, "the backend is built on first use");
         snapshot.execute(json!({})).await.unwrap();
@@ -844,7 +843,10 @@ mod tests {
             "the retired backend was kept, with whatever session it holds"
         );
         let err = snapshot.execute(json!({})).await.unwrap_err().to_string();
-        assert!(err.contains("retired"), "{err}");
+        assert!(
+            err.contains("This browser was retired because a refused page could not be cleared."),
+            "{err}"
+        );
         assert!(
             held.lock().unwrap().upgrade().is_none(),
             "a retired backend was replaced"
