@@ -376,11 +376,14 @@ impl CronScheduler {
 
         {
             let mut guard = ctx.jobs.lock().await;
-            guard.insert(job.id.clone(), job.clone());
-        }
-
-        if let Err(e) = ctx.persistence.save_job(&job).await {
-            tracing::error!("Failed to persist job '{}': {}", job.id, e);
+            let Some(stored) = guard.get_mut(&job.id) else {
+                return;
+            };
+            *stored = job.clone();
+            // Keep removal ordered after this save so it cannot be undone by completion.
+            if let Err(e) = ctx.persistence.save_job(&job).await {
+                tracing::error!("Failed to persist job '{}': {}", job.id, e);
+            }
         }
 
         if let Some(provider) = ctx
@@ -844,24 +847,17 @@ impl CronScheduler {
             }
             let result = run_result?;
 
-            // Update last_run but don't increment run_count for manual triggers
-            {
-                let mut guard = self.jobs.lock().await;
-                if let Some(j) = guard.get_mut(id) {
-                    j.last_run = Some(Timestamp::now());
-                    j.last_output = latest_assistant_output(&result)
-                        .map(|s| truncate_chars(&s, MAX_STORED_OUTPUT_CHARS));
-                    if j.status == JobStatus::Failed {
-                        // Reset status to Active on successful manual run
-                        j.status = JobStatus::Active;
-                    }
+            // Keep removal ordered after the save, without incrementing the run count.
+            let mut guard = self.jobs.lock().await;
+            if let Some(job) = guard.get_mut(id) {
+                job.last_run = Some(Timestamp::now());
+                job.last_output = latest_assistant_output(&result)
+                    .map(|s| truncate_chars(&s, MAX_STORED_OUTPUT_CHARS));
+                if job.status == JobStatus::Failed {
+                    job.status = JobStatus::Active;
                 }
-            }
-
-            // Persist the updated job
-            if let Some(job) = self.get_job(id).await {
                 self.persistence
-                    .save_job(&job)
+                    .save_job(job)
                     .await
                     .map_err(|e| CronError::Persistence(e.to_string()))?;
             }
@@ -967,6 +963,8 @@ mod tests {
     use crate::cli_support::cron_scheduler_for_data_dir;
     use crate::job::CronJob;
     use crate::persistence::FileJobPersistence;
+
+    include!("scheduler/completion_persistence_test.rs");
 
     fn make_test_scheduler() -> CronScheduler {
         let dir = tempdir().expect("tempdir");
@@ -1192,6 +1190,37 @@ mod tests {
             .last_output
             .as_deref()
             .is_some_and(|out| out.contains("finished")));
+    }
+
+    #[tokio::test]
+    async fn finishing_a_running_job_does_not_restore_it_after_removal() {
+        let executor = Arc::new(BlockingTestExecutor::default());
+        let (sched, _dir) = make_executor_scheduler(executor.clone());
+        let id = sched
+            .create_job(due_test_job("remove during execution"))
+            .await
+            .expect("create due job");
+
+        assert_eq!(sched.tick_due_jobs().await, 1);
+        wait_for_count(&executor.started, 1).await;
+        sched.remove_job(&id).await.expect("remove the running job");
+        executor.release.add_permits(1);
+        tokio::time::timeout(StdDuration::from_secs(2), async {
+            while sched.running_job_ids.lock().await.contains(&id) {
+                sleep(StdDuration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("the running job finished");
+
+        assert!(sched.get_job(&id).await.is_none());
+        assert!(sched
+            .persistence
+            .load_jobs()
+            .await
+            .expect("read persistence")
+            .iter()
+            .all(|job| job.id != id));
     }
 
     #[tokio::test]
