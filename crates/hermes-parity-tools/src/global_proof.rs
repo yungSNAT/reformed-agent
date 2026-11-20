@@ -15,7 +15,7 @@ use gate::{apply_ci_rules, Gate};
 
 type Metrics = Vec<(&'static str, f64)>;
 
-const EMPTY: Py = Py::Dict(Vec::new());
+static EMPTY: Py = Py::Dict(Vec::new());
 
 #[derive(Args, Debug)]
 pub struct GlobalProofArgs {

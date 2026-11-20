@@ -86,7 +86,7 @@ fn overdue_rows(root: &Path, reports: &Reports) -> Result<f64, String> {
     let now = jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::UTC);
     let today = now.date().to_string();
     let due =
-        |row| required_text(row, "review_date").map(|date| usize::from(date < today.as_str()));
+        |row: &Py| required_text(row, "review_date").map(|date| usize::from(date < today.as_str()));
     let mut overdue = 0;
     for row in required_list(&reports.shared_classification, "items")? {
         if is_text(Some(required(row, "classification")?), "deferred") {
