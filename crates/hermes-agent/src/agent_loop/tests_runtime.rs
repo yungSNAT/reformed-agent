@@ -1061,47 +1061,16 @@
             cache_read_tokens: 400_000,
             cache_write_tokens: 200_000,
         };
-        // 400,000 uncached, 400,000 read at 0.1 and 200,000 written at 1.25,
-        // at the fallback table's input price for "sonnet" names, $2.50 a
-        // million.
+        // 400,000 uncached at $3, 400,000 reads at $0.30 and 200,000 writes at $3.75 per million.
         let cost = estimate_usage_cost_usd(&u, "anthropic:claude-sonnet-4-6", &cfg).unwrap();
-        assert!((cost - 2.5 * (0.4 + 0.04 + 0.25)).abs() < 1e-9, "{cost}");
+        assert!((cost - 2.07).abs() < 1e-9, "{cost}");
     }
 
     #[test]
-    fn test_cache_reads_cost_what_anthropic_charges_each_model() {
-        for (model, multiplier) in [
-            ("claude-fable-5-2", 0.025),
-            ("claude-mythos-5-2", 0.025),
-            ("claude-fable-5-1-20261001", 0.025),
-            ("anthropic/claude-mythos-5.1", 0.025),
-            ("claude-opus-5-5", 0.05),
-            ("anthropic:claude-sonnet-5-5", 0.05),
-            ("claude-sonnet-5.5", 0.05),
-            ("anthropic.claude-opus-5-5", 0.05),
-            ("global.anthropic.claude-fable-5-2", 0.025),
-            ("claude-fable-5-2@20261001", 0.025),
-            ("claude-fable-5", 0.1),
-            ("claude-fable-5-20260101", 0.1),
-            ("claude-opus-5", 0.1),
-            ("claude-sonnet-5", 0.1),
-            ("claude-opus-4-8", 0.1),
-            ("claude-sonnet-4-6", 0.1),
-            ("claude-haiku-4-5", 0.1),
-            ("claude-haiku-5-5", 0.1),
-        ] {
-            assert_eq!(
-                anthropic_cache_read_multiplier(model),
-                multiplier,
-                "{model}"
-            );
-        }
-
-        // A Fable 5.2 turn at its $8 input price: 10,000 uncached prompt
-        // tokens and 90,000 read from the cache cost $0.098, as Anthropic
-        // bills (90,000 at $0.20 a million).
+    fn test_custom_base_rate_preserves_known_cache_discount() {
+        // At a custom input rate twice list price, prompt and cache charges both double.
         let cfg = AgentConfig {
-            prompt_cost_per_million_usd: Some(8.0),
+            prompt_cost_per_million_usd: Some(16.0),
             completion_cost_per_million_usd: Some(40.0),
             ..AgentConfig::default()
         };
@@ -1114,9 +1083,27 @@
             cache_write_tokens: 0,
         };
         let cost = estimate_usage_cost_usd(&u, "claude-fable-5-2", &cfg).unwrap();
-        assert!((cost - 0.098).abs() < 1e-9, "{cost}");
+        assert!((cost - 0.196).abs() < 1e-9, "{cost}");
     }
 
+    #[test]
+    fn test_custom_cache_rates_for_an_unlisted_anthropic_model() {
+        let cfg = AgentConfig {
+            prompt_cost_per_million_usd: Some(4.0),
+            completion_cost_per_million_usd: Some(20.0),
+            ..AgentConfig::default()
+        };
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            cache_read_tokens: 10_000,
+            cache_write_tokens: 20_000,
+            ..UsageStats::default()
+        };
+        let cost = estimate_usage_cost_usd(&usage, "claude-custom-endpoint", &cfg).unwrap();
+        assert!((cost - 0.384).abs() < 1e-9, "{cost}");
+    }
+
+    include!("tests/anthropic_per_request_pricing.rs");
     include!("tests/runtime_provider_resolution.rs");
 
     include!("tests/governor_finalizer.rs");
