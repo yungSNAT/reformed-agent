@@ -34,6 +34,19 @@ pub trait LlmProvider: Send + Sync {
         model: Option<&str>,
         extra_body: Option<&serde_json::Value>,
     ) -> BoxStream<'static, Result<StreamChunk, AgentError>>;
+
+    /// The one credential this provider sends with every request, or `None`
+    /// when it sends none or takes each request's key from a credential pool.
+    fn active_credential(&self) -> Option<String> {
+        None
+    }
+
+    /// Makes every later request, from this provider and its clones, send
+    /// `credential` in place of the active one. Returns `false`, changing
+    /// nothing, when the provider has no single credential to replace.
+    fn replace_credential(&self, _credential: &str) -> bool {
+        false
+    }
 }
 
 // ---------------------------------------------------------------------------

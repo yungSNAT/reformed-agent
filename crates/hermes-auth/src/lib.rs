@@ -241,7 +241,9 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
     Ok(key)
 }
 
-async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
+/// Atomically replaces the file at `path`, preserving any symbolic link to it.
+/// On Unix the staged file is created with owner-only permissions.
+pub async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
     // A symlinked store keeps its link: the temp file is staged beside the
     // link's target and renamed over it.
     let path = &hermes_config::resolve_symlink_target(path);

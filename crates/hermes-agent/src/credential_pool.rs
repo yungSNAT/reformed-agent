@@ -4,7 +4,7 @@
 //! When a key is rate-limited, it is temporarily skipped in favor of
 //! available keys.
 
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 /// Manages multiple API keys with round-robin selection and rate-limit tracking.
@@ -249,9 +249,63 @@ impl CredentialPool {
     }
 }
 
+/// The OAuth token that replaced a provider's configured key after a
+/// refresh, shared by every clone of the provider. A provider with a
+/// credential pool leaves rotation to the pool and refuses replacement.
+#[derive(Debug, Clone, Default)]
+pub struct ReplacedKey(Arc<Mutex<Option<String>>>);
+
+impl ReplacedKey {
+    /// The key to send: the pool's when there is one, else the replacement,
+    /// else `configured`.
+    pub fn effective(&self, pool: Option<&CredentialPool>, configured: &str) -> String {
+        match pool {
+            Some(pool) => pool.get_key(),
+            None => self
+                .0
+                .lock()
+                .ok()
+                .and_then(|replaced| replaced.clone())
+                .unwrap_or_else(|| configured.to_string()),
+        }
+    }
+
+    /// The key a request without a pool sends; none with a pool.
+    pub fn active(&self, pool: Option<&CredentialPool>, configured: &str) -> Option<String> {
+        pool.is_none().then(|| self.effective(None, configured))
+    }
+
+    /// Makes every clone send `credential`, unless a pool owns rotation.
+    pub fn replace(&self, pool: Option<&CredentialPool>, credential: &str) -> bool {
+        if pool.is_some() {
+            return false;
+        }
+        let Ok(mut replaced) = self.0.lock() else {
+            return false;
+        };
+        *replaced = Some(credential.to_string());
+        true
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn replaced_key_reaches_clones_and_leaves_pools_alone() {
+        let key = ReplacedKey::default();
+        let clone = key.clone();
+        assert_eq!(key.active(None, "old-token").as_deref(), Some("old-token"));
+        assert!(key.replace(None, "new-token"));
+        assert_eq!(clone.effective(None, "old-token"), "new-token");
+
+        let pool = CredentialPool::single("pool-key");
+        let pooled = ReplacedKey::default();
+        assert_eq!(pooled.active(Some(&pool), "old-token"), None);
+        assert!(!pooled.replace(Some(&pool), "new-token"));
+        assert_eq!(pooled.effective(Some(&pool), "old-token"), "pool-key");
+    }
 
     #[test]
     fn test_single_key() {

@@ -26,6 +26,53 @@ impl AgentLoop {
         pool.filter(|_| same_provider)
     }
 
+    /// Where one request goes: the turn's route when its provider builds,
+    /// else the primary runtime with the primary's own model.
+    fn attempt_runtime(&self, route: Option<&TurnRuntimeRoute>, model: &str) -> AttemptRuntime {
+        let (provider_name, model_name) = self.extract_provider_and_model(model);
+        let primary = |provider_name: String, model_name: &str, primary_fallback: bool| {
+            AttemptRuntime {
+                wire_model: Self::runtime_wire_model_for_provider(&provider_name, model_name),
+                provider_name,
+                provider: self.llm_provider.clone(),
+                extra_body: self.extra_body_for_api_mode(&self.config.api_mode),
+                primary_fallback,
+            }
+        };
+        let Some(rt) = route else {
+            return primary(provider_name, model_name, false);
+        };
+        let runtime_provider_name = rt.provider.clone().unwrap_or(provider_name);
+        let mode = rt.api_mode.as_ref().unwrap_or(&self.config.api_mode);
+        match self.build_runtime_provider(
+            &runtime_provider_name,
+            model_name,
+            rt.base_url.as_deref(),
+            rt.api_key_env.as_deref(),
+            None,
+            Some(mode),
+            self.credential_pool_for_route(rt),
+        ) {
+            Ok(provider) => AttemptRuntime {
+                wire_model: Self::runtime_wire_model_for_provider(&runtime_provider_name, model_name),
+                provider_name: runtime_provider_name,
+                provider,
+                extra_body: self.extra_body_for_api_mode(mode),
+                primary_fallback: false,
+            },
+            Err(e) => {
+                tracing::warn!(
+                    "Runtime route unavailable (reason={:?}), falling back to primary runtime: {}",
+                    rt.routing_reason,
+                    e
+                );
+                let (primary_provider, primary_model) =
+                    self.extract_provider_and_model(self.config.model.as_str());
+                primary(primary_provider, primary_model, true)
+            }
+        }
+    }
+
     fn messages_for_api_call(&self, ctx: &ContextManager) -> Vec<Message> {
         let mut messages = ctx.get_messages().to_vec();
         if let Some(ephemeral) = self
@@ -536,7 +583,7 @@ impl AgentLoop {
         let model = route
             .map(|r| r.model.as_str())
             .unwrap_or(self.config.model.as_str());
-        let (inferred_provider, model_name) = self.extract_provider_and_model(model);
+        let (inferred_provider, _) = self.extract_provider_and_model(model);
         let route_provider_hint = route
             .and_then(|r| r.provider.as_deref())
             .map(str::trim)
@@ -546,11 +593,6 @@ impl AgentLoop {
         let active_base_url = route
             .and_then(|r| r.base_url.clone())
             .or_else(|| self.resolve_runtime_base_url(active_provider.as_str(), None));
-        // Always try the requested model first. Some providers only reveal tool
-        // schema limitations at request time, so proactive substitution hides
-        // the real model behavior and makes quorum voters appear to "succeed"
-        // on a different backend.
-        let effective_model_name = model_name.to_string();
         if let Some(rt) = route {
             if let Some(ref label) = rt.route_label {
                 tracing::debug!(%label, model = %rt.model, ?rt.signature, "smart model route");
@@ -566,78 +608,46 @@ impl AgentLoop {
         let default_extra_body = self.extra_body_for_api_mode(&self.config.api_mode);
         let effective_max_tokens = max_tokens_override.or(self.config.max_tokens);
 
+        // One OAuth refresh per call: a second 401 ends it.
+        let mut unauthorized_refresh_tried = false;
         for attempt in 0..=effective_max_retries {
             self.interrupt.check_interrupt()?;
-            let result = if let Some(rt) = route {
-                let (provider_name, _) = self.extract_provider_and_model(model);
-                let runtime_provider_name = rt.provider.as_deref().unwrap_or(provider_name.as_str());
-                let wire_model_name =
-                    Self::runtime_wire_model_for_provider(runtime_provider_name, &effective_model_name);
-                let mode = rt.api_mode.as_ref().unwrap_or(&self.config.api_mode);
-                let extra_body_for_call = self.extra_body_for_api_mode(mode);
-                let pool = self.credential_pool_for_route(rt);
-                let routed_provider = self.build_runtime_provider(
-                    runtime_provider_name,
-                    &effective_model_name,
-                    rt.base_url.as_deref(),
-                    rt.api_key_env.as_deref(),
-                    None,
-                    Some(mode),
-                    pool,
-                );
-                match routed_provider {
-                    Ok(provider) => {
-                        provider
-                            .chat_completion(
-                                &api_messages,
-                                tool_schemas,
-                                effective_max_tokens,
-                                self.config.temperature,
-                                Some(&wire_model_name),
-                                extra_body_for_call.as_ref(),
-                            )
-                            .await
-                    }
-                    Err(e) => {
-                        tracing::warn!(
-                            "Runtime route unavailable (reason={:?}), falling back to primary runtime: {}",
-                            rt.routing_reason,
-                            e
-                        );
-                        // As the stream path: the primary runtime gets its own model.
-                        let (fallback_provider_name, fallback_model_name) =
-                            self.extract_provider_and_model(self.config.model.as_str());
-                        let fallback_wire_model_name = Self::runtime_wire_model_for_provider(
-                            fallback_provider_name.as_str(),
-                            fallback_model_name,
-                        );
-                        self.llm_provider
-                            .chat_completion(
-                                &api_messages,
-                                tool_schemas,
-                                effective_max_tokens,
-                                self.config.temperature,
-                                Some(&fallback_wire_model_name),
-                                default_extra_body.as_ref(),
-                            )
-                            .await
-                    }
-                }
-            } else {
-                let wire_model_name = Self::runtime_wire_model_for_provider(
-                    active_provider.as_str(),
-                    &effective_model_name,
-                );
-                self.llm_provider
+            // Always try the requested model first. Some providers only reveal tool
+            // schema limitations at request time, so proactive substitution hides
+            // the real model behavior and makes quorum voters appear to "succeed"
+            // on a different backend.
+            let target = self.attempt_runtime(route, model);
+            // A replay after an OAuth refresh reuses `target`, the provider that
+            // now holds the new token: a rebuilt route could load the old key.
+            let result = loop {
+                let sent = target.provider.active_credential();
+                let result = target
+                    .provider
                     .chat_completion(
                         &api_messages,
                         tool_schemas,
                         effective_max_tokens,
                         self.config.temperature,
-                        Some(&wire_model_name),
-                        default_extra_body.as_ref(),
+                        Some(&target.wire_model),
+                        target.extra_body.as_ref(),
                     )
-                    .await
+                    .await;
+                if let Err(ref e) = result {
+                    if !unauthorized_refresh_tried && is_unauthorized_error(&e.to_string()) {
+                        unauthorized_refresh_tried = true;
+                        if self
+                            .refresh_oauth_store_after_unauthorized(
+                                &target.provider_name,
+                                target.provider.as_ref(),
+                                sent.as_deref(),
+                            )
+                            .await
+                        {
+                            continue;
+                        }
+                    }
+                }
+                break result;
             };
 
             match result {
@@ -1008,8 +1018,6 @@ impl AgentLoop {
         on_chunk: &(dyn Fn(StreamChunk) + Send + Sync),
     ) -> Result<StreamCollectOutcome, AgentError> {
         let api_messages = self.messages_for_api_call(ctx);
-        let (active_provider_name, active_model_name) = self.extract_provider_and_model(active_model);
-        let default_extra_body = self.extra_body_for_api_mode(&self.config.api_mode);
         let effective_max_tokens = max_tokens_override.or(self.config.max_tokens);
         let max_stream_retries = std::env::var("HERMES_STREAM_RETRIES")
             .ok()
@@ -1024,7 +1032,12 @@ impl AgentLoop {
             .transpose()
             .map_err(|_| AgentError::Config("agent.stream_max_lifetime is too large".into()))?;
 
-        'stream_attempt: for stream_attempt in 0..=max_stream_retries {
+        // One OAuth refresh per call; the stream sent after it reuses the attempt.
+        let mut unauthorized_refresh_tried = false;
+        let mut stream_attempt = 0;
+        // The provider holding a refreshed token, for the replay that follows.
+        let mut replay_target: Option<AttemptRuntime> = None;
+        'stream_attempt: while stream_attempt <= max_stream_retries {
             let lifetime_deadline = stream_lifetime
                 .map(|cap| {
                     tokio::time::Instant::now()
@@ -1035,70 +1048,24 @@ impl AgentLoop {
                         })
                 })
                 .transpose()?;
+            let target = replay_target
+                .take()
+                .unwrap_or_else(|| self.attempt_runtime(route, active_model));
             // The reply is labelled, and so priced, as the model actually streamed.
-            let mut streamed_model = active_model;
-            let mut stream = if let Some(rt) = route {
-                let (provider_name, model_name) = self.extract_provider_and_model(active_model);
-                let runtime_provider_name = rt.provider.as_deref().unwrap_or(provider_name.as_str());
-                let wire_model_name =
-                    Self::runtime_wire_model_for_provider(runtime_provider_name, model_name);
-                let mode = rt.api_mode.as_ref().unwrap_or(&self.config.api_mode);
-                let extra_body_for_call = self.extra_body_for_api_mode(mode);
-                let pool = self.credential_pool_for_route(rt);
-                match self.build_runtime_provider(
-                    runtime_provider_name,
-                    model_name,
-                    rt.base_url.as_deref(),
-                    rt.api_key_env.as_deref(),
-                    None,
-                    Some(mode),
-                    pool,
-                ) {
-                    Ok(provider) => provider.chat_completion_stream(
-                        &api_messages,
-                        tool_schemas,
-                        effective_max_tokens,
-                        self.config.temperature,
-                        Some(&wire_model_name),
-                        extra_body_for_call.as_ref(),
-                    ),
-                    Err(e) => {
-                        tracing::warn!(
-                            "Runtime route unavailable (reason={:?}) for stream, falling back to primary runtime: {}",
-                            rt.routing_reason,
-                            e
-                        );
-                        streamed_model = self.config.model.as_str();
-                        let (fallback_provider_name, fallback_model_name) =
-                            self.extract_provider_and_model(streamed_model);
-                        let fallback_wire_model_name = Self::runtime_wire_model_for_provider(
-                            fallback_provider_name.as_str(),
-                            fallback_model_name,
-                        );
-                        self.llm_provider.chat_completion_stream(
-                            &api_messages,
-                            tool_schemas,
-                            effective_max_tokens,
-                            self.config.temperature,
-                            Some(&fallback_wire_model_name),
-                            default_extra_body.as_ref(),
-                        )
-                    }
-                }
+            let streamed_model = if target.primary_fallback {
+                self.config.model.as_str()
             } else {
-                let wire_model_name = Self::runtime_wire_model_for_provider(
-                    active_provider_name.as_str(),
-                    active_model_name,
-                );
-                self.llm_provider.chat_completion_stream(
-                    &api_messages,
-                    tool_schemas,
-                    effective_max_tokens,
-                    self.config.temperature,
-                    Some(&wire_model_name),
-                    default_extra_body.as_ref(),
-                )
+                active_model
             };
+            let sent = target.provider.active_credential();
+            let mut stream = target.provider.chat_completion_stream(
+                &api_messages,
+                tool_schemas,
+                effective_max_tokens,
+                self.config.temperature,
+                Some(&target.wire_model),
+                target.extra_body.as_ref(),
+            );
 
             let mut content = String::new();
             let mut reasoning_content = String::new();
@@ -1106,6 +1073,9 @@ impl AgentLoop {
             let mut last_usage: Option<UsageStats> = None;
             let mut finish_reason: Option<String> = None;
             let mut deltas_were_sent = false;
+            // Any chunk, thinking and tool-call deltas included, may already
+            // have reached the caller: after one, a 401 is not replayed.
+            let mut chunk_received = false;
             let mut stream_scrubber = StreamingContextScrubber::new();
 
             loop {
@@ -1149,8 +1119,28 @@ impl AgentLoop {
                 };
 
                 let chunk = match chunk_result {
-                    Ok(chunk) => chunk,
+                    Ok(chunk) => {
+                        chunk_received = true;
+                        chunk
+                    }
                     Err(err) => {
+                        if !chunk_received
+                            && !unauthorized_refresh_tried
+                            && is_unauthorized_error(&err.to_string())
+                        {
+                            unauthorized_refresh_tried = true;
+                            if self
+                                .refresh_oauth_store_after_unauthorized(
+                                    &target.provider_name,
+                                    target.provider.as_ref(),
+                                    sent.as_deref(),
+                                )
+                                .await
+                            {
+                                replay_target = Some(target);
+                                continue 'stream_attempt;
+                            }
+                        }
                         let partial_tool_in_flight = tool_calls.iter().any(|tc| {
                             !tc.id.is_empty()
                                 || !tc.function.name.is_empty()
@@ -1201,6 +1191,7 @@ impl AgentLoop {
                                     err
                                 );
                             }
+                            stream_attempt += 1;
                             continue 'stream_attempt;
                         }
                         return Err(err);

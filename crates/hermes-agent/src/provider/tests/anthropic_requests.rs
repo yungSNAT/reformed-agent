@@ -344,3 +344,12 @@ fn test_anthropic_strips_sampling_and_unsupported_fast_controls() {
     assert_eq!(supported["temperature"], serde_json::json!(0.7));
     assert_eq!(supported["speed"], serde_json::json!("fast"));
 }
+
+#[test]
+fn anthropic_pooled_provider_refuses_a_replaced_credential() {
+    let pooled = AnthropicProvider::new("old-token")
+        .with_credential_pool(Arc::new(CredentialPool::new(vec!["pool-key".to_string()])));
+    assert_eq!(pooled.active_credential(), None);
+    assert!(!pooled.replace_credential("new-token"));
+    assert_eq!(pooled.effective_api_key(), "pool-key");
+}

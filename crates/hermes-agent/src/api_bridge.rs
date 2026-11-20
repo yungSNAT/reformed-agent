@@ -19,7 +19,7 @@ use hermes_core::{
     StreamChunk, StreamDelta, ToolCall, ToolCallDelta, ToolSchema, UsageStats,
 };
 
-use crate::credential_pool::CredentialPool;
+use crate::credential_pool::{CredentialPool, ReplacedKey};
 use crate::provider::{
     build_provider_http_client, codex_cloudflare_headers, is_openai_dynamic_model_alias,
     OPENAI_CODEX_BASE_URL, OPENAI_CODEX_DYNAMIC_WIRE_MODEL,
@@ -51,6 +51,8 @@ pub struct CodexProvider {
     request_timeout: Option<Duration>,
     pub rate_limiter: Option<Arc<RateLimitTracker>>,
     pub credential_pool: Option<Arc<CredentialPool>>,
+    /// The credential that replaced `api_key` after a refresh, shared by clones.
+    replaced_api_key: ReplacedKey,
 }
 
 impl CodexProvider {
@@ -66,6 +68,7 @@ impl CodexProvider {
             request_timeout,
             rate_limiter: None,
             credential_pool: None,
+            replaced_api_key: ReplacedKey::default(),
         }
     }
 
@@ -110,11 +113,8 @@ impl CodexProvider {
     }
 
     fn effective_api_key(&self) -> String {
-        if let Some(ref pool) = self.credential_pool {
-            pool.get_key()
-        } else {
-            self.api_key.clone()
-        }
+        self.replaced_api_key
+            .effective(self.credential_pool.as_deref(), &self.api_key)
     }
 
     fn uses_chatgpt_codex_backend(&self) -> bool {
@@ -532,6 +532,16 @@ impl CodexProvider {
 
 #[async_trait]
 impl LlmProvider for CodexProvider {
+    fn active_credential(&self) -> Option<String> {
+        self.replaced_api_key
+            .active(self.credential_pool.as_deref(), &self.api_key)
+    }
+
+    fn replace_credential(&self, credential: &str) -> bool {
+        self.replaced_api_key
+            .replace(self.credential_pool.as_deref(), credential)
+    }
+
     async fn chat_completion(
         &self,
         messages: &[Message],
@@ -977,5 +987,13 @@ mod tests {
         assert_eq!(tc.len(), 1);
         assert_eq!(tc[0].id, "fc_1");
         assert_eq!(tc[0].function.name, "read_file");
+    }
+
+    #[test]
+    fn codex_sends_the_replaced_credential_from_every_clone() {
+        let provider = CodexProvider::new("old-token");
+        let clone = provider.clone();
+        assert!(provider.replace_credential("new-token"));
+        assert_eq!(clone.effective_api_key(), "new-token");
     }
 }

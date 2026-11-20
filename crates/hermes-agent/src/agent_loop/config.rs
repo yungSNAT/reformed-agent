@@ -87,6 +87,26 @@ struct OAuthStoreCredential {
     expires_at: Option<Timestamp>,
 }
 
+/// By store path and provider key: a credential exchanged but not yet
+/// written, with the entry it replaced.
+type UnsavedOAuthCredentials =
+    BTreeMap<(PathBuf, String), (OAuthStoreCredential, OAuthStoreCredential)>;
+
+/// OAuth credentials exchanged in this process but not yet written to their
+/// `tokens.json`. A rotating exchange spends the stored refresh token, so
+/// these are the only copy until a write succeeds.
+static UNSAVED_OAUTH_CREDENTIALS: Mutex<UnsavedOAuthCredentials> = Mutex::new(BTreeMap::new());
+
+/// Held across each read, exchange and write of `tokens.json`, with the
+/// `tokens.json.lock` file lock for other processes, so that one refresh
+/// token is exchanged once.
+/// shortcut: hermes-auth's `FileTokenStore` (the CLI login) takes neither
+/// lock and writes from the copy it loaded when opened, so a login running
+/// alongside a refresh can overwrite the refresh token rotated here. Upgrade:
+/// have it take the file lock and reload before each write.
+static OAUTH_STORE_LOCK: LazyLock<tokio::sync::Mutex<()>> =
+    LazyLock::new(|| tokio::sync::Mutex::new(()));
+
 const MEMORY_GUIDANCE: &str = "You have persistent memory across sessions. Save durable facts using the memory tool: user preferences, environment details, tool quirks, and stable conventions. Memory is injected into every turn, so keep it compact and focused on facts that will still matter later. Prioritize what reduces future user steering. Do NOT save task progress, session outcomes, completed-work logs, or temporary TODO state to memory.";
 
 const SESSION_SEARCH_GUIDANCE: &str = "When the user references something from a past conversation or you suspect relevant cross-session context exists, use session_search to recall it before asking them to repeat themselves.";
@@ -95,6 +115,8 @@ const SKILLS_GUIDANCE: &str = "After completing a complex task (5+ tool calls), 
 
 const CONVERSATIONAL_SUPPORT_GUIDANCE: &str = "# Conversational support protocol\nWhen users share personal stress, emotions, or difficult decisions, start with a brief non-judgmental acknowledgment, ask one clarifying question if context is missing, then offer practical options with trade-offs. Keep factual or technical requests direct and do not force emotional language where it does not fit. Do not present yourself as a therapist or crisis service; when safety risk appears, urge the user to seek immediate professional or emergency help.";
 const OAUTH_REFRESH_BACKOFF_SECS: u64 = 60;
+/// Longest wait for a token endpoint during an OAuth refresh.
+const OAUTH_REFRESH_TIMEOUT_SECS: u64 = 30;
 const SESSION_OBJECTIVE_PREFIX: &str = "[SESSION_OBJECTIVE] ";
 const OBJECTIVE_PATCH_TAG: &str = "PATCH_VERIFIED:";
 const OBJECTIVE_ANALYTICS_TAG: &str = "ANALYTICS_VERIFIED:";
