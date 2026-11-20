@@ -9,7 +9,7 @@ import pathlib
 import re
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass, field
 
 
 PATTERNS: list[tuple[str, re.Pattern[str]]] = [
@@ -83,7 +83,7 @@ class Finding:
     file: str
     line: int
     pattern: str
-    snippet: str
+    snippet: str = field(default="[redacted]", init=False)
 
 
 def repo_files(repo_root: pathlib.Path) -> list[pathlib.Path]:
@@ -141,12 +141,7 @@ def scan(repo_root: pathlib.Path) -> list[Finding]:
                 continue
             for name, pattern in PATTERNS:
                 if pattern.search(line):
-                    snippet = line.strip()
-                    if len(snippet) > 180:
-                        snippet = snippet[:177] + "..."
-                    findings.append(
-                        Finding(file=rel, line=line_no, pattern=name, snippet=snippet)
-                    )
+                    findings.append(Finding(file=rel, line=line_no, pattern=name))
     return findings
 
 
@@ -166,7 +161,7 @@ def main() -> int:
     report = {
         "repo_root": str(repo_root),
         "total_findings": len(findings),
-        "findings": [finding.__dict__ for finding in findings],
+        "findings": [asdict(finding) for finding in findings],
     }
     if args.report:
         report_path = pathlib.Path(args.report)
