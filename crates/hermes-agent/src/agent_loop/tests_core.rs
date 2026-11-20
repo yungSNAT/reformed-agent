@@ -222,12 +222,9 @@
             .expect("agent run");
 
         let seen = provider.seen_messages.lock().expect("seen messages lock");
-        assert!(seen
-            .iter()
-            .any(|m| m.content.as_deref() == Some("ephemeral test-only system prompt")));
-        assert!(seen
-            .iter()
-            .any(|m| m.content.as_deref() == Some("real question")));
+        let question = seen.iter().position(|m| m.content.as_deref() == Some("real question"));
+        let extra = seen.iter().position(|m| m.content.as_deref() == Some("ephemeral test-only system prompt"));
+        assert!(question.expect("user question") < extra.expect("ephemeral system prompt"));
 
         assert!(!result
             .messages
@@ -1672,6 +1669,7 @@
 
     include!("tests/llm_retry_stream.rs");
     include!("tests/oauth_unauthorized_refresh.rs");
+    include!("tests/prompt_cache_prefix.rs");
 
     #[test]
     fn quiet_mode_suppresses_status_callback() {
