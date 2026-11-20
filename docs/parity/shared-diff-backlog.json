@@ -22687,10 +22687,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-20T12:08:43.207760+00:00",
+  "generated_at_utc": "2026-11-20T12:26:22.389650+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "229ae96da0af5e0efe054276cecaad03235ea065",
+    "local_sha": "b90ed2afcb131e598427d1af3f13cf8d4b95998f",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
