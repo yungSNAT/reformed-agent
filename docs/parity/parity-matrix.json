@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-20T20:01:45.764826+00:00",
+  "generated_at_utc": "2026-11-20T20:32:57.985621+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "cc138997765c6ac0860cbcd85a286c3627dc6bf8",
+    "local_sha": "351fcdcb43bdeaf833f396fc8f22dc5d15966bcd",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1656,
+    "commits_ahead": 1659,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1387,
+    "local_patch_unique": 1390,
     "files_only_upstream": 24117,
-    "files_only_local": 2044,
+    "files_only_local": 2045,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
-    "tree_files_changed": 27398,
+    "tree_files_changed": 27399,
     "tree_insertions": 4528861,
-    "tree_deletions": 946575
+    "tree_deletions": 946935
   },
   "top_upstream_only": [
     {
@@ -468,7 +468,7 @@
     },
     {
       "path": "crates/hermes-parity-tools",
-      "count": 12
+      "count": 14
     },
     {
       "path": "crates/hermes-skills",
@@ -792,7 +792,7 @@
     },
     {
       "path": "crates/hermes-parity-tools",
-      "count": 12
+      "count": 14
     },
     {
       "path": "crates/hermes-skills",
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 354,
+      "local_only": 355,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1387,
+    "local_patch_unique": 1390,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
