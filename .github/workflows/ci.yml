@@ -39,7 +39,7 @@ jobs:
           python3 scripts/generate-test-intent-mapping.py
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
           python3 scripts/generate-test-coverage-audit.py --check
-          python3 scripts/generate-adapter-matrix.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           python3 scripts/generate-shared-diff-backlog.py --local-ref HEAD --no-fetch --upstream-branch parity-reference
           python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-global-parity-proof.py
@@ -74,6 +74,11 @@ jobs:
           python3 -m py_compile scripts/generate-test-coverage-audit.py
           python3 -m py_compile scripts/generate-release-readiness-summary.py
           python3 -m py_compile scripts/release_secret_scan.py
+      - name: Python parity governance tests
+        run: |
+          python3 -m venv "${RUNNER_TEMP:?}/parity-governance"
+          "${RUNNER_TEMP}/parity-governance/bin/python" -m pip install --quiet --disable-pip-version-check pytest==9.2.0
+          PARITY_PYTHON="${RUNNER_TEMP}/parity-governance/bin/python" bash scripts/run-python-parity-governance-tests.sh
       - name: Skill scripts never start programs from the working folder
         run: python3 -m unittest tests/skills/test_skill_program_lookup.py
       - name: GitNexus proxy listens on loopback and serves only its dist folder
