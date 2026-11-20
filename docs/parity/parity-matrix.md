@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-20T09:52:28.345689+00:00`
+Generated: `2026-11-20T10:15:11.426213+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`6ba932d94ce8457fe60ce5abdd3a78736818f3a7`)
+- Local ref: `HEAD` (`3ec232a891c9c663df86b21f586ea0ef48d55468`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-20T09:52:28.345689+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1655 |
+| Commits ahead local (`local` ancestry only) | 1639 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1385 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1369 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2036 |
+| Files only in local tree | 2037 |
 | Shared files identical content | 565 |
 | Shared files different content | 1508 |
-| Total files changed (`local` vs `upstream`) | 27390 |
+| Total files changed (`local` vs `upstream`) | 27391 |
 | Insertions (`local` vs `upstream`) | 4528858 |
-| Deletions (`local` vs `upstream`) | 943899 |
+| Deletions (`local` vs `upstream`) | 944113 |
 
 ## Top 40 upstream-only buckets
 
@@ -122,7 +122,7 @@ Generated: `2026-11-20T09:52:28.345689+00:00`
 | `crates/hermes-cli` | 199 |
 | `skills/creative` | 142 |
 | `crates/hermes-tools` | 134 |
-| `crates/hermes-agent` | 116 |
+| `crates/hermes-agent` | 117 |
 | `crates/hermes-gateway` | 114 |
 | `tests/run_agent` | 88 |
 | `website/docs` | 86 |
@@ -176,7 +176,7 @@ Generated: `2026-11-20T09:52:28.345689+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1385`
+- Local unique by patch-id: `1369`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
