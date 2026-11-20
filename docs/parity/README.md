@@ -8,7 +8,7 @@ This directory stores generated parity reports against the upstream target
 From repository root:
 
 ```bash
-python3 scripts/generate-parity-matrix.py
+cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix
 python3 scripts/generate-workstream-status.py
 cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
 cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check

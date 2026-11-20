@@ -913,7 +913,10 @@ def maybe_check_global_parity_drift(
         return {"enabled": False, "checked": False}
 
     scripts = [
-        ["scripts/generate-parity-matrix.py"],
+        [
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-parity-matrix",
+        ],
         ["scripts/generate-workstream-status.py"],
         [
             "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",

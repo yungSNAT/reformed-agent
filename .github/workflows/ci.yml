@@ -34,7 +34,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Generate parity governance artifacts
         run: |
-          python3 scripts/generate-parity-matrix.py --local-ref HEAD --upstream-branch parity-reference --no-fetch
+          cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref HEAD --upstream-branch parity-reference --no-fetch
           python3 scripts/generate-workstream-status.py --upstream-ref upstream/parity-reference --no-fetch
           cargo run --locked -q -p hermes-parity-tools -- generate-test-intent-mapping
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings --upstream-ref upstream/parity-reference --no-fetch
