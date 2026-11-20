@@ -42,6 +42,30 @@ fn parity_gates_use_the_pinned_upstream_revision() {
 }
 
 #[test]
+fn scheduled_audit_builds_proof_from_single_revision_pair_before_readiness() {
+    let audit = read(".github/workflows/parity-audit.yml");
+    assert_eq!(audit.matches("git fetch ").count(), 1);
+    assert!(!audit.contains("origin/main"));
+    assert!(audit.contains("git worktree add --detach ../hermes-agent \"$upstream_sha\""));
+    let commands = [
+        "generate-upstream-patch-queue",
+        "generate-test-coverage-audit",
+        "generate-global-parity-proof",
+        "generate-release-readiness-summary",
+        "Bind report artifacts to the audit revisions",
+        "Upload parity artifacts",
+    ];
+    let mut remaining = audit.as_str();
+    for command in commands {
+        let (_, after) = remaining
+            .split_once(command)
+            .unwrap_or_else(|| panic!("scheduled audit omitted or reordered {command}"));
+        remaining = after;
+    }
+    assert!(remaining.contains(".sync-reports/parity-audit-snapshot.json"));
+}
+
+#[test]
 fn repo_ci_runner_covers_workflow_test_job_gates() {
     let script = read("scripts/run-repo-ci.sh");
     let workflow = read(".github/workflows/ci.yml");
