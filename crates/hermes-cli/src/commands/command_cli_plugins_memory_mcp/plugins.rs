@@ -398,6 +398,16 @@ fn short_sha(sha: &str) -> String {
     sha.chars().take(8).collect()
 }
 
+fn inspect_plugin_install(root: &std::path::Path) -> (Vec<String>, bool) {
+    let warnings = scan_plugin_security(root);
+    let hard_block = warnings.iter().any(|warning| {
+        warning.contains("curl piped to shell")
+            || warning.contains("wget piped to shell")
+            || warning.contains("curl|sh style install")
+    });
+    (warnings, hard_block)
+}
+
 /// Static scan of a cloned plugin tree: risky patterns in scripts/config.
 fn scan_plugin_security(root: &std::path::Path) -> Vec<String> {
     let mut out = Vec::new();
