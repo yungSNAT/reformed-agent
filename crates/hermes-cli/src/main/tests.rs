@@ -135,21 +135,14 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn session_finalize_closes_only_that_sessions_browser() {
+    async fn retiring_a_session_closes_only_that_sessions_browser() {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
         });
         let ended = browsers.tool_overrides("telegram:1");
         let other = browsers.tool_overrides("telegram:2");
-        let mut hooks = HookRegistry::new();
-        CloseSessionBrowser::register(&mut hooks, &browsers);
-
-        hooks
-            .emit(&hermes_gateway::hooks::HookEvent::new(
-                "on_session_finalize",
-                serde_json::json!({"session_key": "telegram:1", "reason": "reset"}),
-            ))
-            .await;
+        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers.clone());
+        releases.retirer().retire("telegram:1").await.unwrap();
 
         let snapshot = |overrides: &hermes_tools::ToolOverrides| {
             let handler = overrides["browser_snapshot"].clone();
@@ -167,25 +160,46 @@ mod tests {
         assert!(err.contains("no browser here"), "{err}");
         let next = browsers.tool_overrides("telegram:1");
         let err = snapshot(&next).await;
-        assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
+        assert!(
+            err.contains("no browser here"),
+            "a new session got the closed browser: {err}"
+        );
+        releases.drain().await.unwrap();
     }
 
     #[cfg(feature = "gateway-api-server")]
     #[tokio::test]
     async fn gateway_reset_closes_its_chat_browser_and_keeps_the_other_chat() {
+        assert_gateway_browser_reset_isolated(false).await;
+    }
+
+    #[cfg(feature = "gateway-api-server")]
+    #[tokio::test]
+    async fn gateway_policy_reset_closes_its_chat_browser_and_keeps_the_other_chat() {
+        assert_gateway_browser_reset_isolated(true).await;
+    }
+
+    #[cfg(feature = "gateway-api-server")]
+    async fn assert_gateway_browser_reset_isolated(policy_reset: bool) {
         let browsers = hermes_tools::SessionBrowsers::new(|| {
             hermes_tools::backends::browser::unavailable_browser_backend("fixture browser")
         });
-        let mut hooks = HookRegistry::new();
-        CloseSessionBrowser::register(&mut hooks, &browsers);
+        let releases = hermes_tools::session_browsers::BrowserReleaseQueue::start(browsers);
         let mut dm = DmManager::with_pair_behavior();
         dm.authorize_user("fixture");
-        let gateway = Arc::new(Gateway::new(
-            Arc::new(SessionManager::new(SessionConfig::default())),
-            dm,
-            RuntimeGatewayConfig::default(),
-        ));
-        gateway.set_hook_registry(Arc::new(hooks)).await;
+        let mut session_config = SessionConfig::default();
+        if policy_reset {
+            session_config.reset_policy =
+                hermes_config::SessionResetPolicy::Idle { timeout_minutes: 0 };
+        }
+        let gateway = Arc::new(
+            Gateway::new(
+                Arc::new(SessionManager::new(session_config)),
+                dm,
+                RuntimeGatewayConfig::default(),
+            )
+            .with_browser_retirement(releases.retirer()),
+        );
         gateway
             .register_adapter(
                 "api_server",
@@ -199,7 +213,7 @@ mod tests {
             .set_message_handler_with_context(Arc::new(move |_messages, context| {
                 let gateway = weak_gateway.upgrade().expect("gateway running");
                 let overrides =
-                    gateway_turn_tool_overrides(&browsers, &terminal, &gateway, &context);
+                    gateway_turn_tool_overrides(&terminal, &gateway, &context);
                 tx.send(overrides["browser_snapshot"].clone())
                     .expect("recorded browser handler");
                 Box::pin(async { Ok("fixture response".into()) })
@@ -228,23 +242,33 @@ mod tests {
         let first_before = snapshot_error(first.clone()).await;
         assert!(first_before.contains("fixture browser"), "{first_before}");
 
-        gateway
-            .route_message(&incoming("first-chat", "/reset"))
-            .await
-            .unwrap();
-        assert!(turns.try_recv().is_err(), "reset was sent to the agent");
+        if policy_reset {
+            gateway
+                .route_message(&incoming("first-chat", "open again"))
+                .await
+                .unwrap();
+        } else {
+            gateway
+                .route_message(&incoming("first-chat", "/reset"))
+                .await
+                .unwrap();
+            assert!(turns.try_recv().is_err(), "reset was sent to the agent");
+        }
         let old = snapshot_error(first).await;
         let other = snapshot_error(second).await;
         assert!(old.contains("browser was closed"), "{old}");
         assert!(other.contains("fixture browser"), "{other}");
 
-        gateway
-            .route_message(&incoming("first-chat", "open again"))
-            .await
-            .unwrap();
+        if !policy_reset {
+            gateway
+                .route_message(&incoming("first-chat", "open again"))
+                .await
+                .unwrap();
+        }
         let new = turns.try_recv().expect("new first chat browser");
         let new = snapshot_error(new).await;
         assert!(new.contains("fixture browser"), "{new}");
+        releases.drain().await.unwrap();
     }
 
     /// A terminal backend that must never be reached.
@@ -285,30 +309,36 @@ mod tests {
     #[tokio::test]
     async fn gateway_turns_ask_for_approval_only_where_the_platform_vouches_for_the_user() {
         use hermes_tools::gateway_approval::{self, Resolution};
+        use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
 
         let gateway = Arc::new(Gateway::new(
             Arc::new(SessionManager::new(SessionConfig::default())),
             DmManager::with_pair_behavior(),
             RuntimeGatewayConfig::default(),
         ));
-        let browsers = hermes_tools::SessionBrowsers::new(|| {
-            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
-        });
         let terminal_backend: Arc<dyn hermes_core::TerminalBackend> =
             Arc::new(UnreachableTerminal);
-        let ctx = |platform: &str, user: &str| GatewayRuntimeContext {
-            session_key: format!("{platform}:cli-turn"),
-            platform: platform.into(),
-            chat_id: "cli-turn".into(),
-            user_id: user.into(),
-            ..GatewayRuntimeContext::default()
+        let releases = BrowserReleaseQueue::start(SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("no browser here")
+        }));
+        let retirer = releases.retirer();
+        let ctx = |platform: &str, user: &str| {
+            let session_key = format!("{platform}:cli-turn");
+            GatewayRuntimeContext {
+                browser: Some(retirer.lease(&session_key)),
+                session_generation: Some(Default::default()),
+                session_key,
+                platform: platform.into(),
+                chat_id: "cli-turn".into(),
+                user_id: user.into(),
+                ..GatewayRuntimeContext::default()
+            }
         };
 
         // Telegram, one identified sender: the terminal asks. No adapter is
         // registered, so the request cannot be sent and nothing is left to
         // approve.
         let overrides = gateway_turn_tool_overrides(
-            &browsers,
             &terminal_backend,
             &gateway,
             &ctx("telegram", "4242"),
@@ -323,6 +353,11 @@ mod tests {
             gateway_approval::approve("telegram:cli-turn", "4242"),
             Resolution::NothingPending
         );
+
+        let mut without_generation = ctx("telegram", "4242");
+        without_generation.session_generation = None;
+        assert!(!gateway_turn_tool_overrides(&terminal_backend, &gateway, &without_generation)
+            .contains_key("terminal"));
 
         // Anywhere else, or for a sender id shared by many people, the
         // registry's terminal, which refuses outright, stays in place.
@@ -345,7 +380,6 @@ mod tests {
         );
         for (platform, user) in refused {
             let overrides = gateway_turn_tool_overrides(
-                &browsers,
                 &terminal_backend,
                 &gateway,
                 &ctx(platform, user),
@@ -353,6 +387,7 @@ mod tests {
             assert!(!overrides.contains_key("terminal"), "{platform} {user}");
             assert!(overrides.contains_key("browser_snapshot"), "{platform} {user}");
         }
+        releases.drain().await.unwrap();
     }
 
     #[tokio::test]
@@ -1228,6 +1263,7 @@ mod tests {
             .map(|entry| entry.expect("entry").file_name())
             .collect();
         assert_eq!(names.len(), 2, "temporary files left behind: {names:?}");
+
     }
 
     include!("tests/provider_setup.rs");
@@ -1235,5 +1271,4 @@ mod tests {
     include!("tests/uninstall.rs");
 
     mod env_profile_diagnostics;
-
 }
