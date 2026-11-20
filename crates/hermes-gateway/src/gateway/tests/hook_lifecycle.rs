@@ -1,5 +1,120 @@
 use super::*;
 
+#[derive(Default)]
+struct PauseFirstPolicyFinalize {
+    used: std::sync::atomic::AtomicBool,
+    entered: tokio::sync::Notify,
+    resume: tokio::sync::Notify,
+}
+
+#[async_trait::async_trait]
+impl HookHandler for PauseFirstPolicyFinalize {
+    async fn handle(&self, event: &HookEvent) -> Result<(), String> {
+        if event.context["session_key"] == "test:shared"
+            && event.context["reason"] == "auto_reset"
+            && !self.used.swap(true, std::sync::atomic::Ordering::AcqRel)
+        {
+            self.entered.notify_one();
+            self.resume.notified().await;
+        }
+        Ok(())
+    }
+
+    fn name(&self) -> &str {
+        "pause-first-policy-finalize"
+    }
+}
+
+#[tokio::test]
+async fn delayed_policy_finalization_keeps_the_admitted_browser_generation() {
+    use hermes_tools::backends::browser::unavailable_browser_backend;
+    use hermes_tools::session_browsers::{BrowserReleaseQueue, SessionBrowsers};
+
+    let browsers = SessionBrowsers::new(|| unavailable_browser_backend("fixture browser"));
+    let queue = BrowserReleaseQueue::start(browsers.clone());
+    let manager = Arc::new(SessionManager::new(SessionConfig {
+        reset_policy: hermes_config::SessionResetPolicy::Idle { timeout_minutes: 0 },
+        ..SessionConfig::default()
+    }));
+    let mut dm = DmManager::with_pair_behavior();
+    dm.authorize_user("user1");
+    let gateway = Gateway::new(manager, dm, GatewayConfig::default())
+        .with_browser_retirement(queue.retirer());
+    let pause = Arc::new(PauseFirstPolicyFinalize::default());
+    let mut hooks = HookRegistry::new();
+    hooks.register_in_process("on_session_finalize", pause.clone());
+    gateway.set_hook_registry(Arc::new(hooks)).await;
+    gateway
+        .register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: Arc::default(),
+            }),
+        )
+        .await;
+    let (send, mut turns) = tokio::sync::mpsc::unbounded_channel();
+    gateway
+        .set_message_handler_with_context(Arc::new(move |_, context| {
+            send.send(context.browser.unwrap()).unwrap();
+            Box::pin(async { Ok("fixture response".into()) })
+        }))
+        .await;
+    let message = |chat: &str, text: &str| IncomingMessage {
+        platform: "test".into(),
+        chat_id: chat.into(),
+        user_id: "user1".into(),
+        text: text.into(),
+        message_id: None,
+        thread_id: None,
+        is_dm: true,
+    };
+    gateway
+        .route_message(&message("shared", "open"))
+        .await
+        .unwrap();
+    let oldest = turns.try_recv().unwrap();
+    let first_reset = message("shared", "first reset");
+    let (first_result, (current, unrelated)) =
+        tokio::time::timeout(std::time::Duration::from_secs(10), async {
+            tokio::join!(gateway.route_message(&first_reset), async {
+                pause.entered.notified().await;
+                gateway
+                    .route_message(&message("shared", "second reset"))
+                    .await
+                    .unwrap();
+                let current = turns.try_recv().unwrap();
+                gateway
+                    .route_message(&message("other", "open"))
+                    .await
+                    .unwrap();
+                let unrelated = turns.try_recv().unwrap();
+                pause.resume.notify_one();
+                (current, unrelated)
+            })
+        })
+        .await
+        .expect("another route waited for the paused finalization hook");
+    first_result.unwrap();
+    let delayed = turns.try_recv().unwrap();
+    let snapshot_error = |browser: BrowserLease| async move {
+        browser.tool_overrides()["browser_snapshot"]
+            .execute(serde_json::json!({}))
+            .await
+            .unwrap_err()
+            .to_string()
+    };
+    for browser in [oldest, delayed] {
+        let error = snapshot_error(browser).await;
+        assert!(error.contains("browser was closed"), "{error}");
+    }
+    for browser in [current, unrelated] {
+        let error = snapshot_error(browser).await;
+        assert!(error.contains("fixture browser"), "{error}");
+    }
+    browsers.close_all().await;
+    queue.drain().await.unwrap();
+}
+
 #[tokio::test]
 async fn gateway_emits_agent_start_and_end_hooks() {
     let sent = Arc::new(Mutex::new(Vec::new()));
