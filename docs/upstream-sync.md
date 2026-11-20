@@ -3,6 +3,32 @@
 This fork includes automation to keep `main` close to upstream while preserving
 fork-specific history.
 
+## Subsystem refresh for v0.23.2
+
+Refresh one subsystem per pull request against the commit in the
+[upstream reference](parity/upstream-reference.txt). Start by comparing the
+upstream behaviour and its tests with the shipped Rust path. Preserve any
+fork-specific behaviour in the same path with a regression test.
+
+The v0.23.2 baseline at `bd8f0102` has 22 deferred shared-file classifications.
+The 3 coverage manifests have 141 deferred rows and 337 older coverage claims
+whose upstream test changed. These are counts of report rows. A behaviour may
+appear in several reports.
+
+| Subsystem | Evidence for the next refresh |
+| --- | --- |
+| Gateway, sessions and providers | Read the deferred gateway tests and plugin entries in the [shared-file backlog](parity/shared-diff-backlog.md). Check trust boundaries first. Exercise credentials, session transitions and requests with local stubs where the upstream test requires a service. |
+| Core runtime and tools | Start with the 46 deferred and 131 older rows in the [Python suite manifest](parity/python-test-suite-coverage.json). Map each applicable upstream case to a Rust runtime test. |
+| CLI | Start with the 36 deferred and 110 older rows in the [CLI manifest](parity/hermes-cli-test-coverage.json). Exercise the installed command or its parser where upstream asserts its exit status, arguments or output. |
+| TUI and desktop | Start with the 59 deferred and 96 older rows in the [TUI manifest](parity/ui-tui-source-coverage.json). Run the client fixture against the corresponding Rust gateway for changes to the connection or session contract. |
+| Bundled plugins and skills | Compare the upstream interface and the shipped bundle. Use the [intentional divergence registry](parity/intentional-divergence.json) for a deliberate difference and record where the shipped behaviour is checked. |
+
+Update each reviewed manifest row with the matching Rust test or an explanation
+for the remaining gap. Preserve evidence of which upstream case the test
+exercises. Regenerate the [parity reports](parity/README.md) against the same
+upstream pin and run the governance checks before merging. The public parity
+audit reports live upstream drift separately from the checks against this pin.
+
 ## Scripts
 
 - `scripts/sync-upstream.sh`
