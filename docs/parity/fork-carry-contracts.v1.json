@@ -2,6 +2,12 @@
   "version": 1,
   "required": [
     {
+      "id": "carry-contextlattice-auto-registration",
+      "behaviour": "Enabled ContextLattice is discovered and initialised in the preferred provider order.",
+      "package": "hermes-agent",
+      "test": "memory_plugins::tests::contextlattice_is_discovered_initialized_and_ordered"
+    },
+    {
       "id": "carry-contextlattice-search-scope",
       "behaviour": "Search payloads retain project and topic scope.",
       "package": "hermes-agent",
@@ -93,10 +99,6 @@
     }
   ],
   "uncovered": [
-    {
-      "id": "carry-contextlattice-auto-registration",
-      "behaviour": "Automatic ContextLattice registration and provider ordering have no mapped execution test."
-    },
     {
       "id": "carry-webhook-queue-backends",
       "behaviour": "SQLite, SQS and Kafka webhook queue behaviour has no mapped execution test."

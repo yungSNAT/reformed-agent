@@ -164,3 +164,75 @@ pub fn build_initialized_memory_manager(
     }
     Some(Arc::new(Mutex::new(manager)))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn contextlattice_is_discovered_initialized_and_ordered() {
+        const CASE: &str = "HERMES_TEST_CONTEXTLATTICE_AUTO_REGISTRATION";
+        if let Ok(case) = std::env::var(CASE) {
+            let home = std::env::var("HERMES_HOME").unwrap();
+            let manager = build_initialized_memory_manager("carry-fixture", &home, 1).unwrap();
+            let manager = manager.lock().unwrap();
+            let providers: Vec<&str> = manager
+                .providers()
+                .iter()
+                .map(|provider| provider.name())
+                .filter(|name| matches!(*name, "contextlattice" | "holographic"))
+                .collect();
+            match case.as_str() {
+                "disabled" => assert_eq!(providers, ["holographic"]),
+                "enabled" => assert_eq!(providers, ["contextlattice", "holographic"]),
+                "custom-order" => assert_eq!(providers, ["holographic", "contextlattice"]),
+                _ => panic!("unknown fixture case {case}"),
+            }
+            if case != "disabled" {
+                let provider = manager.get_provider("contextlattice").unwrap();
+                assert!(provider
+                    .system_prompt_block()
+                    .contains("Project: carry-fixture."));
+            }
+            return;
+        }
+
+        // Keep provider discovery away from the developer's configuration and other tests.
+        let executable = std::env::current_exe().unwrap();
+        let (_, module) = module_path!().split_once("::").unwrap();
+        let test = format!("{module}::contextlattice_is_discovered_initialized_and_ordered");
+        for case in ["disabled", "enabled", "custom-order"] {
+            let home = tempfile::tempdir().unwrap();
+            let mut command = Command::new(&executable);
+            command
+                .env_clear()
+                .env(CASE, case)
+                .env("HOME", home.path())
+                .env("USERPROFILE", home.path())
+                .env("HERMES_HOME", home.path())
+                .env("PATH", home.path())
+                .current_dir(home.path())
+                .args(["--exact", &test]);
+            #[cfg(windows)]
+            if let Some(system_root) = std::env::var_os("SystemRoot") {
+                command.env("SystemRoot", system_root);
+            }
+            if case != "disabled" {
+                command
+                    .env("HERMES_ENABLE_CONTEXTLATTICE", "true")
+                    .env("CONTEXTLATTICE_PROJECT", "carry-fixture");
+            }
+            if case == "custom-order" {
+                command.env("HERMES_MEMORY_PROVIDER_ORDER", "holographic,contextlattice");
+            }
+            let output = command.output().unwrap();
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let passed = format!("test {test} ... ok");
+            assert!(
+                output.status.success() && stdout.lines().any(|line| line == passed),
+                "{case}: {output:?}"
+            );
+        }
+    }
+}
