@@ -12,7 +12,7 @@ fork-specific behaviour in the same path with a regression test.
 
 The v0.23.2 baseline at `bd8f0102` has 22 deferred shared-file classifications.
 The 3 coverage manifests have 141 deferred rows and 337 older coverage claims
-whose upstream test changed. These are counts of report rows. A behaviour may
+whose upstream file changed. These are counts of report rows. A behaviour may
 appear in several reports.
 
 | Subsystem | Evidence for the next refresh |
