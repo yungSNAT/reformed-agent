@@ -142,10 +142,7 @@ mod tests {
         let ended = browsers.tool_overrides("telegram:1");
         let other = browsers.tool_overrides("telegram:2");
         let mut hooks = HookRegistry::new();
-        hooks.register_in_process(
-            "on_session_finalize",
-            Arc::new(CloseSessionBrowser(browsers.clone())),
-        );
+        CloseSessionBrowser::register(&mut hooks, &browsers);
 
         hooks
             .emit(&hermes_gateway::hooks::HookEvent::new(
@@ -171,6 +168,83 @@ mod tests {
         let next = browsers.tool_overrides("telegram:1");
         let err = snapshot(&next).await;
         assert!(err.contains("no browser here"), "a new session got the closed browser: {err}");
+    }
+
+    #[cfg(feature = "gateway-api-server")]
+    #[tokio::test]
+    async fn gateway_reset_closes_its_chat_browser_and_keeps_the_other_chat() {
+        let browsers = hermes_tools::SessionBrowsers::new(|| {
+            hermes_tools::backends::browser::unavailable_browser_backend("fixture browser")
+        });
+        let mut hooks = HookRegistry::new();
+        CloseSessionBrowser::register(&mut hooks, &browsers);
+        let mut dm = DmManager::with_pair_behavior();
+        dm.authorize_user("fixture");
+        let gateway = Arc::new(Gateway::new(
+            Arc::new(SessionManager::new(SessionConfig::default())),
+            dm,
+            RuntimeGatewayConfig::default(),
+        ));
+        gateway.set_hook_registry(Arc::new(hooks)).await;
+        gateway
+            .register_adapter(
+                "api_server",
+                Arc::new(ApiServerAdapter::new(ApiServerConfig::default())),
+            )
+            .await;
+        let (tx, mut turns) = tokio::sync::mpsc::unbounded_channel();
+        let weak_gateway = Arc::downgrade(&gateway);
+        let terminal: Arc<dyn hermes_core::TerminalBackend> = Arc::new(UnreachableTerminal);
+        gateway
+            .set_message_handler_with_context(Arc::new(move |_messages, context| {
+                let gateway = weak_gateway.upgrade().expect("gateway running");
+                let overrides =
+                    gateway_turn_tool_overrides(&browsers, &terminal, &gateway, &context);
+                tx.send(overrides["browser_snapshot"].clone())
+                    .expect("recorded browser handler");
+                Box::pin(async { Ok("fixture response".into()) })
+            }))
+            .await;
+        let incoming = |chat: &str, text: &str| GatewayIncomingMessage {
+            platform: "api_server".into(),
+            chat_id: chat.into(),
+            user_id: "fixture".into(),
+            text: text.into(),
+            message_id: None,
+            thread_id: None,
+            is_dm: true,
+        };
+        for chat in ["first-chat", "second-chat"] {
+            gateway
+                .route_message(&incoming(chat, "open"))
+                .await
+                .unwrap();
+        }
+        let first = turns.try_recv().expect("first chat browser");
+        let second = turns.try_recv().expect("second chat browser");
+        let snapshot_error = |handler: Arc<dyn hermes_core::ToolHandler>| async move {
+            handler.execute(serde_json::json!({})).await.unwrap_err().to_string()
+        };
+        let first_before = snapshot_error(first.clone()).await;
+        assert!(first_before.contains("fixture browser"), "{first_before}");
+
+        gateway
+            .route_message(&incoming("first-chat", "/reset"))
+            .await
+            .unwrap();
+        assert!(turns.try_recv().is_err(), "reset was sent to the agent");
+        let old = snapshot_error(first).await;
+        let other = snapshot_error(second).await;
+        assert!(old.contains("browser was closed"), "{old}");
+        assert!(other.contains("fixture browser"), "{other}");
+
+        gateway
+            .route_message(&incoming("first-chat", "open again"))
+            .await
+            .unwrap();
+        let new = turns.try_recv().expect("new first chat browser");
+        let new = snapshot_error(new).await;
+        assert!(new.contains("fixture browser"), "{new}");
     }
 
     /// A terminal backend that must never be reached.

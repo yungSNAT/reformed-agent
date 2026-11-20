@@ -807,6 +807,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn closing_a_browser_refuses_a_call_that_is_already_queued() {
+        let (browser, count) = counted();
+        let active = browser.lock().await.expect("initial browser call");
+        let snapshot = BrowserSnapshotHandler::new(browser.clone());
+        let queued = snapshot.execute(json!({}));
+        tokio::pin!(queued);
+        assert!(futures::poll!(queued.as_mut()).is_pending());
+
+        let closing = browser.close();
+        tokio::pin!(closing);
+        assert!(futures::poll!(closing.as_mut()).is_pending());
+        drop(active);
+
+        let err = queued.await.unwrap_err().to_string();
+        assert!(err.contains("browser was closed"), "{err}");
+        closing.await;
+        assert_eq!(built(&count), 1);
+    }
+
+    #[tokio::test]
     async fn idle_release_drops_the_backend_after_the_idle_period_only() {
         let (browser, count) = counted();
         let snapshot = BrowserSnapshotHandler::new(browser.clone());
