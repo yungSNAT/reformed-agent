@@ -52,6 +52,7 @@ fn scheduled_audit_builds_proof_from_single_revision_pair_before_readiness() {
         "generate-test-coverage-audit",
         "generate-global-parity-proof",
         "generate-release-readiness-summary",
+        "Report fork carry contracts",
         "Bind report artifacts to the audit revisions",
         "Upload parity artifacts",
     ];
@@ -63,6 +64,7 @@ fn scheduled_audit_builds_proof_from_single_revision_pair_before_readiness() {
         remaining = after;
     }
     assert!(remaining.contains(".sync-reports/parity-audit-snapshot.json"));
+    assert!(remaining.contains(".sync-reports/fork-carry-contracts.md"));
 }
 
 #[test]
