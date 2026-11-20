@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-20T15:07:06.004083+00:00",
+  "generated_at_utc": "2026-11-20T15:38:27.807896+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",

@@ -80,7 +80,7 @@ impl CdpBrowserBackend {
     async fn open_page(&self) -> Result<CdpConnection, ToolError> {
         if self.retired.load(Ordering::SeqCst) {
             return Err(ToolError::ExecutionFailed(
-                "The browser was retired because a refused page could not be cleared; restart Hermes to use it again".into(),
+                BROWSER_RETIRED_MESSAGE.into(),
             ));
         }
         let failed = |failure: CdpFailure| ToolError::ExecutionFailed(failure.message());
