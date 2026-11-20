@@ -3,7 +3,7 @@
 use std::fmt::Write as _;
 use std::fs;
 use std::io::ErrorKind;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
 use clap::Args;
@@ -340,22 +340,17 @@ fn markdown(report: &Py) -> String {
 pub fn run(args: ReadinessArgs) -> Result<i32, String> {
     let root = resolve_argument(Path::new(&args.repo_root))?;
     let (report, ok) = build_summary(&root)?;
-    let docs = [
-        (
-            py::join(&root, &args.output_json),
-            py::dumps(&report, Some(2), true) + "\n",
-        ),
-        (py::join(&root, &args.output_md), markdown(&report)),
-    ];
-    for (path, _) in &docs {
+    let [out_json, out_md] = [args.output_json, args.output_md]
+        .map(|path| py::join(&root, &path).components().collect::<PathBuf>());
+    for path in [&out_json, &out_md] {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
         }
     }
-    for (path, contents) in docs {
-        write_report(&path, contents)?;
-        println!("Wrote {}", py::path_str(&path));
-    }
+    write_report(&out_json, py::dumps(&report, Some(2), true) + "\n")?;
+    write_report(&out_md, markdown(&report))?;
+    println!("Wrote {}", py::path_str(&out_json));
+    println!("Wrote {}", py::path_str(&out_md));
     println!("release_readiness={}", state(ok));
     Ok(i32::from(args.check && !ok))
 }
