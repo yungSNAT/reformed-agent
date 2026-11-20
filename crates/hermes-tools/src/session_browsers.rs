@@ -9,12 +9,16 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use std::time::Duration;
 
+use futures::{stream, StreamExt};
+
 use crate::register_builtins::browser_tool_handlers;
 use crate::registry::ToolOverrides;
 use crate::tools::browser::{BrowserBackend, BrowserFactory, SharedBrowser};
 
 /// How long a session's browser may go unused before it is released.
 pub const SESSION_BROWSER_MAX_IDLE: Duration = Duration::from_secs(300);
+
+const MAX_CONCURRENT_BROWSER_RELEASES: usize = 4;
 
 /// The browser tools, keyed by name, all driving `browser`.
 pub fn browser_overrides(browser: &SharedBrowser) -> ToolOverrides {
@@ -68,9 +72,12 @@ impl SessionBrowsers {
     /// Close the browser of the session `session_key`, which has ended.
     /// Its handlers, including any a running turn holds, fail from now on.
     pub async fn close(&self, session_key: &str) {
-        let removed = self.sessions().remove(session_key);
-        if let Some((browser, _)) = removed {
-            browser.close().await;
+        let browser = self.sessions().remove(session_key).map(|(browser, _)| {
+            browser.mark_closed();
+            browser
+        });
+        if let Some(browser) = browser {
+            browser.release_closed_backend().await;
         }
     }
 
@@ -82,19 +89,28 @@ impl SessionBrowsers {
             .values()
             .map(|(browser, _)| browser.clone())
             .collect();
-        // Together: each release can wait on its vendor for seconds.
-        futures::future::join_all(
-            browsers
-                .iter()
-                .map(|browser| browser.release_if_idle(max_idle)),
-        )
-        .await;
+        stream::iter(browsers)
+            .for_each_concurrent(MAX_CONCURRENT_BROWSER_RELEASES, |browser| async move {
+                browser.release_if_idle(max_idle).await;
+            })
+            .await;
     }
 
     /// Close every session's browser, at shutdown.
     pub async fn close_all(&self) {
-        let removed: Vec<_> = self.sessions().drain().collect();
-        futures::future::join_all(removed.iter().map(|(_, (browser, _))| browser.close())).await;
+        let removed: Vec<_> = self
+            .sessions()
+            .drain()
+            .map(|(_, (browser, _))| {
+                browser.mark_closed();
+                browser
+            })
+            .collect();
+        stream::iter(removed)
+            .for_each_concurrent(MAX_CONCURRENT_BROWSER_RELEASES, |browser| async move {
+                browser.release_closed_backend().await;
+            })
+            .await;
     }
 
     fn sessions(&self) -> MutexGuard<'_, HashMap<String, (SharedBrowser, ToolOverrides)>> {
@@ -320,6 +336,47 @@ mod tests {
         for session in 1..=6 {
             assert_eq!(gateway.released(session).await, 1, "session {session}");
         }
+    }
+
+    #[tokio::test]
+    async fn shutdown_retires_all_handlers_before_releasing_in_batches() {
+        use futures::FutureExt;
+
+        let sessions = SessionBrowsers::new(|| {
+            crate::backends::browser::unavailable_browser_backend("fixture")
+        });
+        for index in 0..5 {
+            sessions.tool_overrides(&index.to_string());
+        }
+        let browsers: Vec<_> = sessions
+            .sessions()
+            .values()
+            .map(|(browser, _)| browser.clone())
+            .collect();
+        let mut active = Vec::new();
+        for browser in &browsers {
+            active.push(browser.lock().await.unwrap());
+        }
+
+        let mut shutdown = std::pin::pin!(sessions.close_all());
+        assert!(futures::poll!(shutdown.as_mut()).is_pending());
+        drop(active);
+
+        // Active releases have already queued for the mutex. A handler for a
+        // browser queued behind that batch must already refuse new work.
+        let mut releasing = 0;
+        for browser in &browsers {
+            match browser.lock().now_or_never() {
+                Some(Err(error)) => assert!(error.to_string().contains("browser was closed")),
+                Some(Ok(_)) => panic!("a queued browser was still open"),
+                None => releasing += 1,
+            }
+        }
+        assert_eq!(
+            releasing, 4,
+            "unexpected number of concurrent browser releases"
+        );
+        shutdown.await;
     }
 
     #[tokio::test(flavor = "multi_thread")]
