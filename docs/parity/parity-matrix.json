@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-20T23:44:28.370761+00:00",
+  "generated_at_utc": "2026-11-21T00:16:09.768619+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "08e75ded816211523d1ee06dc58222ad81c72b26",
+    "local_sha": "ea17183dddf7fcb68f140e297d3b61cb1339a6c1",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1671,
+    "commits_ahead": 1667,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1401,
+    "local_patch_unique": 1398,
     "files_only_upstream": 24117,
     "files_only_local": 2054,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
     "tree_files_changed": 27408,
     "tree_insertions": 4528861,
-    "tree_deletions": 950898
+    "tree_deletions": 950961
   },
   "top_upstream_only": [
     {
@@ -411,16 +411,16 @@
       "count": 30
     },
     {
+      "path": "crates/hermes-parity-tools",
+      "count": 28
+    },
+    {
       "path": "tests/hermes_cli",
       "count": 28
     },
     {
       "path": "third_party/rustsec-patches",
       "count": 28
-    },
-    {
-      "path": "crates/hermes-parity-tools",
-      "count": 27
     },
     {
       "path": "crates/hermes-core",
@@ -735,16 +735,16 @@
       "count": 30
     },
     {
+      "path": "crates/hermes-parity-tools",
+      "count": 28
+    },
+    {
       "path": "tests/hermes_cli",
       "count": 28
     },
     {
       "path": "third_party/rustsec-patches",
       "count": 28
-    },
-    {
-      "path": "crates/hermes-parity-tools",
-      "count": 27
     },
     {
       "path": "crates/hermes-core",
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1401,
+    "local_patch_unique": 1398,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

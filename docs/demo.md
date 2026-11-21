@@ -11,7 +11,7 @@ the repo-owned command is the artifact to trust when hosted CI is unavailable.
 
 ```bash
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} bash scripts/run-repo-ci.sh
-python3 scripts/generate-release-readiness-summary.py --repo-root . --check
+cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root . --check
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} cargo test -p hermes-cli --test e2e_sota_workflow_replay -- --nocapture
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} cargo test -p hermes-cli harness_command_reports_issue_backed_cockpit_and_teach_skill -- --nocapture
 CARGO_TARGET_DIR=${CARGO_TARGET_DIR:-target} cargo test -p hermes-cli test_simulate_command_is_registered_and_completable -- --nocapture
@@ -41,7 +41,7 @@ with that tag exists there. What it proves when one does:
 
 | Claim | Public surface | Deterministic proof |
 | --- | --- | --- |
-| Parity baseline at the pinned upstream revision is closed | release-readiness summary | `scripts/generate-release-readiness-summary.py --check` |
+| Parity baseline at the pinned upstream revision is closed | release-readiness summary | `cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --check` |
 | Published artifacts install cleanly | release artifact smoke | `scripts/smoke-release-artifact.sh --version <tag>` (needs a published release) |
 | Upstream `hermes` can coexist | installer smoke sentinel | `scripts/smoke-release-artifact.sh --version <tag>` (needs a published release) |
 | One-true-harness cockpit exists | `/harness`, `harness_cockpit` | `cargo test -p hermes-cli harness_command_reports_issue_backed_cockpit_and_teach_skill` |

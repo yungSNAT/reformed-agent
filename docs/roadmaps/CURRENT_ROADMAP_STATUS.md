@@ -15,7 +15,7 @@ remains the generated parity artifacts under `docs/parity/`.
 | Coverage critical gaps | `0` | `docs/parity/test-coverage-audit.json` |
 | SOTA harness critical gaps | `0` | `docs/parity/sota-harness-matrix.json` |
 | Released artifact smoke | scripted | `scripts/smoke-release-artifact.sh` |
-| Public readiness summary | scripted | `scripts/generate-release-readiness-summary.py` |
+| Public readiness summary | scripted | `cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary` |
 
 The tracked parity backlog is closed at this baseline. That means the current
 local governance artifacts have no pending tracked rows; it does not mean
@@ -36,7 +36,7 @@ future upstream commits cannot create new drift.
 
 | Area | Required state | Local gate |
 | --- | --- | --- |
-| Release readiness summary | PASS | `python3 scripts/generate-release-readiness-summary.py --repo-root . --check` |
+| Release readiness summary | PASS | `cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root . --check` |
 | Released binary smoke | PASS for current tag | `bash scripts/smoke-release-artifact.sh --version v0.21.3` |
 | Upstream missing queue | `pending = 0` before release | `cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --max-commits 0` |
 | Global parity proof | Pass release gate locally | `cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-release` |
