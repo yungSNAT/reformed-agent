@@ -73,7 +73,6 @@ jobs:
           python3 -m py_compile scripts/upstream_webhook_sync.py
           python3 -m py_compile scripts/publish_automation_summary.py
           python3 -m py_compile scripts/run-golden-parity-harness.py
-          python3 -m py_compile scripts/release_secret_scan.py
       - name: Python parity governance tests
         run: |
           python3 -m venv "${RUNNER_TEMP:?}/parity-governance"

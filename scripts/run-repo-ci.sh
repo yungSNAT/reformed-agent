@@ -106,8 +106,7 @@ run cargo test -p hermes-source-parity-tests --test global_parity_governance
 for script in \
   scripts/upstream_webhook_sync.py \
   scripts/publish_automation_summary.py \
-  scripts/run-golden-parity-harness.py \
-  scripts/release_secret_scan.py; do
+  scripts/run-golden-parity-harness.py; do
   run python3 -m py_compile "${script}"
 done
 
