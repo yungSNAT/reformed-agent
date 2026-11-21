@@ -278,6 +278,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Webhook launchd lifecycle
+        timeout-minutes: 3
+        env:
+          HERMES_TEST_LAUNCHD_LIFECYCLE: '1'
+        run: python3 -m unittest discover -s tests -p test_upstream_webhook_launchd.py -v
       - name: Write guard tests
         run: cargo test --locked -p hermes-tools --lib credential_guard
       - name: Native tests

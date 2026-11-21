@@ -2,8 +2,11 @@ import os
 import plistlib
 import shutil
 import subprocess
+import sys
 import tempfile
+import time
 import unittest
+import uuid
 from pathlib import Path
 
 
@@ -177,3 +180,96 @@ class WebhookLaunchdTests(unittest.TestCase):
                     self.assertEqual(data["StandardErrorPath"], str(logs / f"upstream-webhook-{role}.err.log"))
                     self.assertTrue(data["RunAtLoad"])
                     self.assertTrue(data["KeepAlive"])
+
+
+@unittest.skipUnless(
+    sys.platform == "darwin" and os.environ.get("HERMES_TEST_LAUNCHD_LIFECYCLE") == "1",
+    "native launchd fixture requires an explicitly enabled macOS login session",
+)
+class NativeWebhookLaunchdTests(unittest.TestCase):
+    def test_installer_starts_restarts_and_stops_both_agents(self):
+        with tempfile.TemporaryDirectory(prefix="hermes-native-launchd-") as scratch:
+            root = Path(scratch).resolve()
+            repo = root / "repo with 'quotes' & spaces"
+            wrappers = repo / "scripts"
+            wrappers.mkdir(parents=True)
+            for role in ("listener", "worker"):
+                (wrappers / f"run-upstream-webhook-{role}.sh").write_text(
+                    '#!/bin/bash\n'
+                    'set -eu\n'
+                    'source "$UPSTREAM_SYNC_ENV_FILE"\n'
+                    'printf "%s\\n" "$$" "$PWD" "$UPSTREAM_SYNC_SUMMARY_LOCAL_PATH" > "$0.ready.$$"\n'
+                    'mv -f "$0.ready.$$" "$0.ready"\n'
+                    'trap "exit 0" TERM INT\n'
+                    'while :; do sleep 1; done\n',
+                    encoding="utf-8",
+                )
+            (wrappers / "upstream_webhook_sync.py").touch()
+            label = f"test.hermes.webhook.{uuid.uuid4().hex}"
+            domain = f"gui/{os.getuid()}"
+            targets = {
+                role: f"{domain}/{label}.upstream_webhook_{role}"
+                for role in ("listener", "worker")
+            }
+            env = {
+                "HOME": str(root),
+                "PATH": os.defpath,
+                "UPSTREAM_SYNC_AUTO_GENERATE_SECRET": "0",
+            }
+
+            def command(*args, check=True):
+                result = subprocess.run(
+                    args, env=env, capture_output=True, text=True, timeout=20,
+                )
+                if check:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                return result
+
+            def wait_for_marker(role, prior_pid):
+                marker = wrappers / f"run-upstream-webhook-{role}.sh.ready"
+                deadline = time.monotonic() + 25
+                while time.monotonic() < deadline:
+                    if marker.exists():
+                        pid, cwd, summary = marker.read_text(encoding="utf-8").splitlines()
+                        status = command("/bin/launchctl", "print", targets[role], check=False)
+                        current = status.stdout.splitlines()
+                        if pid != prior_pid and f"pid = {pid}" in map(str.strip, current):
+                            self.assertEqual(cwd, str(repo))
+                            self.assertEqual(
+                                summary, str(repo / ".sync-reports/upstream-sync-summary-fallback.log")
+                            )
+                            return pid
+                    time.sleep(0.2)
+                self.fail(f"{role} did not start a new process before the deadline")
+
+            def wait_for_stop(target, pid):
+                deadline = time.monotonic() + 20
+                while time.monotonic() < deadline:
+                    status = command("/bin/launchctl", "print", target, check=False)
+                    if status.returncode != 0:
+                        try:
+                            os.kill(int(pid), 0)
+                        except ProcessLookupError:
+                            return
+                    time.sleep(0.2)
+                self.fail(f"{target} was still registered or running after bootout")
+
+            command("/bin/launchctl", "print", domain)
+            install = [
+                "/bin/bash", str(SCRIPTS / "install-upstream-webhook-launchd.sh"),
+                "--repo-root", str(repo), "--label-prefix", label,
+                "--agents-dir", str(root / "launch agents"),
+                "--env-file", str(root / "webhook & settings"),
+                "--log-dir", str(root / "webhook & logs"),
+            ]
+            try:
+                command(*install)
+                initial = {role: wait_for_marker(role, None) for role in targets}
+                command(*install)
+                restarted = {role: wait_for_marker(role, initial[role]) for role in targets}
+                for role, target in targets.items():
+                    command("/bin/launchctl", "bootout", target)
+                    wait_for_stop(target, restarted[role])
+            finally:
+                for target in targets.values():
+                    command("/bin/launchctl", "bootout", target, check=False)
