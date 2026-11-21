@@ -1137,6 +1137,45 @@ mod tests {
         assert_eq!(calls.as_slice(), [Some("/workspace/acp".to_string())]);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn terminal_reports_the_fallback_for_a_deleted_session_directory() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _yolo = EnvGuard::remove("HERMES_YOLO_MODE");
+        let _session = EnvGuard::remove("HERMES_SESSION_KEY");
+        let _sudo = EnvGuard::remove("SUDO_PASSWORD");
+        let backend = hermes_environments::LocalBackend::new_with_shell_init(
+            10,
+            32_768,
+            Vec::new(),
+            false,
+            Vec::new(),
+        );
+        let handler = TerminalHandler::new(Arc::new(backend));
+        let folder = tempfile::tempdir().unwrap();
+        let parent = folder.path().canonicalize().unwrap();
+        let deleted = parent.join("workspace").join("session");
+        std::fs::create_dir_all(&deleted).unwrap();
+        handler.set_task_cwd("session", deleted.to_str().unwrap());
+        std::fs::remove_dir(&deleted).unwrap();
+        std::fs::remove_dir(deleted.parent().unwrap()).unwrap();
+
+        let params = json!({"command": "pwd", "task_id": "session"});
+        let notice = block_on(handler.execute(params.clone()))
+            .unwrap_err()
+            .to_string();
+        assert!(notice.contains(deleted.to_str().unwrap()), "{notice}");
+        assert!(notice.contains(&format!("{parent:?}")), "{notice}");
+        assert!(notice.contains("Command did not run."), "{notice}");
+
+        let explicit_missing = json!({"command": "pwd", "workdir": deleted});
+        assert!(block_on(handler.execute(explicit_missing)).is_err());
+        let retry = json!({"command": "pwd", "task_id": "session", "workdir": parent});
+        let output = block_on(handler.execute(retry)).unwrap();
+        assert_eq!(output.trim(), parent.to_str().unwrap());
+        assert!(block_on(handler.execute(params)).is_err());
+    }
+
     #[test]
     fn terminal_handler_uses_non_local_terminal_cwd_without_host_validation() {
         let _lock = TEST_ENV_LOCK.lock().unwrap();
