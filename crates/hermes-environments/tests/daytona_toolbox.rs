@@ -19,6 +19,15 @@ struct Request {
 }
 
 async fn respond(listener: &TcpListener, status: &str, response: &str) -> Request {
+    respond_with_headers(listener, status, "", response).await
+}
+
+async fn respond_with_headers(
+    listener: &TcpListener,
+    status: &str,
+    headers_out: &str,
+    response: &str,
+) -> Request {
     timeout(Duration::from_secs(5), async {
         let (socket, _) = listener.accept().await.unwrap();
         let mut stream = BufReader::new(socket);
@@ -44,7 +53,7 @@ async fn respond(listener: &TcpListener, status: &str, response: &str) -> Reques
         let mut body = vec![0; size];
         stream.read_exact(&mut body).await.unwrap();
         let response = format!(
-            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{response}",
+            "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\n{headers_out}Connection: close\r\n\r\n{response}",
             response.len(),
         );
         stream.get_mut().write_all(response.as_bytes()).await.unwrap();
@@ -164,4 +173,28 @@ async fn reads_writes_and_checks_files_over_the_toolbox_api() {
     let error = forbidden.unwrap_err().to_string();
     assert!(error.contains("403"));
     assert!(!error.contains("fixture error body"));
+}
+
+#[tokio::test]
+async fn keeps_the_request_on_the_configured_toolbox_endpoint() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = backend(&listener);
+    let server = tokio::spawn(async move {
+        respond_with_headers(
+            &listener,
+            "307 Temporary Redirect",
+            "Location: /another-endpoint\r\n",
+            "",
+        )
+        .await;
+        timeout(Duration::from_millis(200), listener.accept())
+            .await
+            .is_err()
+    });
+    let error = backend
+        .execute_command("printf fixture", None, None, false, false)
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("307"));
+    assert!(server.await.unwrap());
 }
