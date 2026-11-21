@@ -42,7 +42,7 @@ future upstream commits cannot create new drift.
 | Global parity proof | Pass release gate locally | `cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-release` |
 | SOTA harness coverage | All domains covered | `python3 scripts/generate-sota-harness-hardening.py --check` |
 | Behavioral similarity diff | Outcome similarity `1.0`, no regressions or unverified cases | `python3 scripts/generate-behavioral-similarity-diff.py --check` |
-| Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `python3 scripts/generate-deep-problem-solving-diff.py --check` |
+| Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check` |
 | Runtime placeholder discipline | Clean | `scripts/check-runtime-placeholders.sh` |
 | Rust workspace health | Build/test locally | `cargo build --workspace`, `cargo test --workspace` |
 | Cargo build surface | Track compile invalidation roots before crate splits | `scripts/audit-cargo-build-surface.sh` |
