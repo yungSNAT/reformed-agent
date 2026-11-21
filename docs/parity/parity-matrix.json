@@ -1,23 +1,23 @@
 {
-  "generated_at_utc": "2026-11-21T04:01:16.188706+00:00",
+  "generated_at_utc": "2026-11-21T04:10:31.772952+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "8bf4faa6b68ef6df9ee2576f30745fbd3ae22853",
+    "local_sha": "b68c0735ce36f7179bd9528511c6927ce6f3ea1d",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1677,
+    "commits_ahead": 1680,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1408,
+    "local_patch_unique": 1410,
     "files_only_upstream": 24117,
     "files_only_local": 2059,
-    "files_shared_identical": 565,
-    "files_shared_different": 1508,
-    "tree_files_changed": 27413,
+    "files_shared_identical": 564,
+    "files_shared_different": 1509,
+    "tree_files_changed": 27414,
     "tree_insertions": 4528861,
     "tree_deletions": 951891
   },
@@ -245,16 +245,16 @@
       "count": 17
     },
     {
+      "path": "optional-skills/finance",
+      "count": 12
+    },
+    {
       "path": "tests/cron",
       "count": 12
     },
     {
       "path": "tests/plugins",
       "count": 12
-    },
-    {
-      "path": "optional-skills/finance",
-      "count": 11
     },
     {
       "path": "optional-skills/productivity",
@@ -877,7 +877,7 @@
       "issue": 8,
       "name": "Skills parity",
       "upstream_only": 564,
-      "shared_different": 229,
+      "shared_different": 230,
       "local_only": 436,
       "risk": "high",
       "effort": "XL"
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1408,
+    "local_patch_unique": 1410,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
