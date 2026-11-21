@@ -1441,8 +1441,14 @@ mod tests {
             .unwrap_err();
         assert_eq!(error.kind, BillingErrorKind::Network);
         let rendered = billing_error_to_agent_error(error).to_string();
-        assert!(!rendered.contains(&server.uri()), "{rendered}");
-        assert!(!rendered.contains("private-charge-fixture"), "{rendered}");
+        assert!(
+            !rendered.contains(&server.uri()),
+            "The timeout diagnosis included its request destination."
+        );
+        assert!(
+            !rendered.contains("private-charge-fixture"),
+            "The timeout diagnosis included its charge reference."
+        );
         assert!(rendered.contains("Nous Portal did not respond in time."));
     }
 
