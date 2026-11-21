@@ -86,8 +86,8 @@ run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 run cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
-run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
-run python3 scripts/generate-global-parity-proof.py
+run cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof
 run python3 scripts/generate-release-readiness-summary.py --check
 
 run cargo fmt --all --check

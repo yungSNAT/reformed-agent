@@ -38,7 +38,7 @@ def parse_args() -> argparse.Namespace:
         default=(
             "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit && "
             "cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check && "
-            "python3 scripts/generate-global-parity-proof.py --check-ci"
+            "cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-ci"
         ),
         help="Fallback command when CLI surface extraction is unavailable for compared refs",
     )
