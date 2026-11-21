@@ -245,14 +245,10 @@
         let second_path = second.path().canonicalize().unwrap();
         let config = GatewayConfig::default();
         let backend = crate::terminal_backend::build_terminal_backend(&config);
-        let terminal = hermes_tools::tools::terminal::TerminalHandler::new(Arc::clone(&backend));
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
-        tool_registry.register(
-            "terminal",
-            "terminal",
-            hermes_tools::ToolHandler::schema(&terminal),
-            Arc::new(terminal),
-        );
+        let skill_store = Arc::new(hermes_skills::FileSkillStore::new(first_path.join("skills")));
+        let skills = Arc::new(hermes_skills::SkillManager::new(skill_store));
+        hermes_tools::register_builtin_tools(&tool_registry, Arc::clone(&backend), skills);
         let executor = CliAcpPromptExecutor {
             config: Arc::new(config),
             tool_registry,
@@ -274,18 +270,18 @@
         let first_call = &first_tools.get("terminal").unwrap().handler;
         let second_call = &second_tools.get("terminal").unwrap().handler;
 
-        let first_output = first_call(json!({"command": "pwd", "task_id": "session-2"})).unwrap();
-        assert!(
-            first_output.contains(first_path.to_str().unwrap()),
-            "{first_output}"
-        );
-        let second_output = second_call(json!({"command": "pwd"})).unwrap();
-        assert!(
-            second_output.contains(second_path.to_str().unwrap()),
-            "{second_output}"
-        );
-        let explicit = first_call(json!({"command": "pwd", "workdir": second_path})).unwrap();
-        assert!(explicit.contains(second_path.to_str().unwrap()), "{explicit}");
+        let first_output =
+            first_call(serde_json::json!({"command": "pwd", "task_id": "session-2"})).unwrap();
+        assert_eq!(first_output.trim(), first_path.to_str().unwrap());
+        let second_output = second_call(serde_json::json!({"command": "pwd"})).unwrap();
+        assert_eq!(second_output.trim(), second_path.to_str().unwrap());
+        let explicit =
+            first_call(serde_json::json!({"command": "pwd", "workdir": second_path})).unwrap();
+        assert_eq!(explicit.trim(), second_path.to_str().unwrap());
+
+        first.close().unwrap();
+        let missing = first_call(serde_json::json!({"command": "pwd"})).unwrap();
+        assert!(missing.contains("Command did not run."), "{missing}");
     }
 
     #[test]
