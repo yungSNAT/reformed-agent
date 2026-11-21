@@ -20,6 +20,9 @@ pub struct ClosureArgs {
     /// Repository root.
     #[arg(long, default_value = ".")]
     repo_root: String,
+    /// Return failure for pending scoped commits without writing the reports.
+    #[arg(long)]
+    check: bool,
 }
 
 fn scoped_ticket(value: Option<&Py>) -> Result<Option<usize>, String> {
@@ -71,10 +74,16 @@ pub fn run(args: ClosureArgs) -> Result<i32, String> {
         *by_ticket[ticket].entry(disposition.clone()).or_insert(0) += 1;
         *by_disposition.entry(disposition).or_insert(0) += 1;
     }
-    let generated = py::utc_isoformat();
-    let total: usize = by_disposition.values().sum();
     let pending = by_disposition.get("pending").copied().unwrap_or(0);
     let passed = pending == 0;
+    if args.check {
+        if !passed {
+            eprintln!("GPAR closure has {pending} pending scoped commits");
+        }
+        return Ok(i32::from(!passed));
+    }
+    let generated = py::utc_isoformat();
+    let total: usize = by_disposition.values().sum();
     let payload = Py::dict([
         ("generated_at_utc", generated.as_str().into()),
         (

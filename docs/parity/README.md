@@ -21,6 +21,7 @@ cargo run --locked -q -p hermes-parity-tools -- generate-behavioral-similarity-d
 cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check
 cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-ci
 cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof
+cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof --check
 cargo run --locked -q -p hermes-parity-tools -- generate-sota-harness-hardening --check
 cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --upstream-ref upstream/main
@@ -29,8 +30,8 @@ cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-ga
 By default this command fetches upstream directly from GitHub
 (`git fetch upstream --prune`) before computing metrics.
 
-The coverage audit writes JSON and Markdown with its default invocation. Run it
-with `--check` to evaluate the gate without writing either report.
+The coverage audit and GPAR proof write JSON and Markdown by default. Run either
+with `--check` to evaluate its gate without writing reports.
 
 ## Outputs
 

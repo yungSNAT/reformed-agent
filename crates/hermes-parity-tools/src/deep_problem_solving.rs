@@ -321,6 +321,10 @@ fn evidence(
     let count = |class| classifications.get(class).copied().unwrap_or(0);
     let total = cases.len();
     let superior = count("superior");
+    let unverified = cases
+        .iter()
+        .filter(|case| !matches!(case.get("verified"), Some(Py::Bool(true))))
+        .count();
     let missing_refs = count_missing(cases, "missing_rust_test_refs");
     let missing_artifacts = count_missing(cases, "missing_source_artifacts");
     let ratio = if total == 0 {
@@ -376,7 +380,7 @@ fn evidence(
         (
             "unverified",
             format!("unverified {description} cases are present"),
-            count("unverified"),
+            unverified,
         ),
         (
             "missing_rust_test_refs",
@@ -405,7 +409,7 @@ fn evidence(
         ),
         ("regressions", count("regression").into()),
         ("gaps", count("gap").into()),
-        ("unverified_cases", count("unverified").into()),
+        ("unverified_cases", unverified.into()),
         ("missing_rust_test_refs", missing_refs.into()),
         ("missing_source_artifacts", missing_artifacts.into()),
         (kind.ratio_key, ratio.into()),
