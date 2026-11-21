@@ -240,7 +240,7 @@ On HTTP 401, Hermes now performs a one-shot credential recovery before fallback:
 Some older community proxies use `api.github.com/copilot_internal/v2/token` exchange flows. That endpoint can be unavailable for some account types (returns 404). Hermes therefore keeps direct-token auth as the primary path and relies on runtime credential refresh + retry for robustness.
 :::
 
-**API routing**: GPT-5+ models (except `gpt-5-mini`) automatically use the Responses API. All other models (GPT-4o, Claude, Gemini, etc.) use Chat Completions. Models are auto-detected from the live Copilot catalog.
+The Rust `copilot` adapter uses Chat Completions. When a request specifies a reasoning effort, Hermes can make a short, cached `/models` request to the same recognised HTTPS Copilot endpoint with the inference credential. It uses the advertised levels for the selected model. When catalogue data is unavailable, Hermes sends the original request. Custom inference endpoints skip this lookup.
 
 **`copilot-acp` — Copilot ACP agent backend**. Spawns the local Copilot CLI as a subprocess:
 
