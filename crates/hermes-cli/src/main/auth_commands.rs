@@ -314,7 +314,7 @@ async fn verify_nous_runtime_credentials_live(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|err| format!("live_probe_failed: build client: {err}"))?;
+        .map_err(|err| format!("live_probe_failed: build client: {}", err.without_url()))?;
     let model = std::env::var("HERMES_MODEL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -337,28 +337,12 @@ async fn verify_nous_runtime_credentials_live(
         .json(&payload)
         .send()
         .await
-        .map_err(|err| format!("live_probe_failed: request failed: {err}"))?;
+        .map_err(|err| format!("live_probe_failed: request failed: {}", err.without_url()))?;
     let status = response.status();
     if status.is_success() {
-        return Ok(());
-    }
-    let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("message")
-                .or_else(|| value.get("error_description"))
-                .or_else(|| value.get("error"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| body.trim().chars().take(240).collect::<String>());
-    if detail.is_empty() {
-        Err(format!("live_probe_failed: HTTP {status}"))
+        Ok(())
     } else {
-        Err(format!("live_probe_failed: HTTP {status}: {detail}"))
+        Err(format!("live_probe_failed: HTTP {status}"))
     }
 }
 
