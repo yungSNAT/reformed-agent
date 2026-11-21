@@ -1210,6 +1210,52 @@ mod tests {
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
     }
 
+    #[test]
+    fn local_writes_wait_for_the_resolved_file_edit_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let home = tmp.path().join("home");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&home).unwrap();
+        let write = WriteFileHandler::new(Arc::new(hermes_environments::LocalBackend::new(
+            30, 100_000,
+        )));
+
+        crate::test_env::with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(&cwd)),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new().unwrap().block_on(async {
+                    for (input, path) in [
+                        ("lock-fixture.txt", cwd.join("lock-fixture.txt")),
+                        ("~/lock-fixture.txt", home.join("lock-fixture.txt")),
+                    ] {
+                        tokio::fs::write(&path, "before\n").await.unwrap();
+                        let edit_lock = file_edit_lock(&path).await;
+                        let turn = edit_lock.lock().await;
+                        let params = json!({"path": input, "content": "after\n"});
+                        let outcome = tokio::time::timeout(
+                            std::time::Duration::from_millis(200),
+                            write.execute(params.clone()),
+                        )
+                        .await;
+                        assert!(
+                            outcome.is_err(),
+                            "write used a different edit lock for {input}"
+                        );
+                        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "before\n");
+                        drop(turn);
+                        write.execute(params).await.unwrap();
+                        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "after\n");
+                    }
+                });
+            },
+        );
+    }
+
     /// A file created through a symlinked folder keeps the lock it had before
     /// it existed, so a call that names it by its real path takes turns with it.
     #[cfg(unix)]
