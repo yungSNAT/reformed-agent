@@ -1,7 +1,7 @@
-# syntax=docker/dockerfile:1.7
+# syntax=docker/dockerfile:1.7@sha256:a57df69d0ea827fb7266491f2813635de6f17269be881f696fbfdf2d83dda33e
 
 # ----- Build stage -----
-FROM rust:1.99.1-bookworm AS builder
+FROM rust:1.99.1-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 
 WORKDIR /app
 
@@ -16,7 +16,7 @@ COPY --link third_party third_party
 RUN cargo build --release --locked -p hermes-cli --bin hermes --bin hermes-agent-ultra
 
 # ----- Runtime stage -----
-FROM debian:bookworm-slim
+FROM debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
 LABEL org.opencontainers.image.source="https://github.com/yungSNAT/reformed-agent" \
       org.opencontainers.image.licenses="MIT"
 
