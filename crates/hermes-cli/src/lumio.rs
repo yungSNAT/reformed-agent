@@ -229,19 +229,22 @@ pub async fn login(open_browser: bool) -> LoginResult {
                     }
 
                     // Check for error
-                    if let Some(err) = params.get("error") {
-                        let desc = params
-                            .get("error_description")
-                            .cloned()
-                            .unwrap_or_else(|| err.clone());
-                        let html = error_page(&desc);
+                    if let Some(error) = params.get("error") {
+                        let message = match error.as_str() {
+                            "access_denied" => "Authorization was denied",
+                            "server_error" | "temporarily_unavailable" => {
+                                "The authorization service is unavailable, please retry"
+                            }
+                            _ => "Authorization failed, please retry",
+                        };
+                        let html = error_page(message);
                         let _ = write_http_response(&mut stream, 200, &html);
                         if let Some(sender) = tx.lock().unwrap().take() {
                             let _ = sender.send(LoginResult {
                                 success: false,
                                 token: None,
                                 username: None,
-                                error: Some(desc),
+                                error: Some(message.into()),
                             });
                         }
                         return;
@@ -345,13 +348,14 @@ pub async fn setup(model: Option<&str>, open_browser: bool) -> Result<bool, Agen
 
     let token = result.token.unwrap_or_default();
     let username = result.username.unwrap_or_default();
+    let display_username: String = username.chars().filter(|c| !c.is_control()).collect();
 
     println!(
         "\n✅ Login successful! User: {}",
-        if username.is_empty() {
+        if display_username.is_empty() {
             "(unknown)"
         } else {
-            &username
+            &display_username
         }
     );
 
@@ -454,15 +458,13 @@ fn exchange_code_blocking(
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
         .send()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        .map_err(|_| "Could not reach the token endpoint")?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!("HTTP {status}: {body}"));
+        return Err(format!("HTTP {}", resp.status()));
     }
 
-    let data: serde_json::Value = resp.json().map_err(|e| format!("JSON parse: {e}"))?;
+    let data: serde_json::Value = resp.json().map_err(|_| "Invalid token endpoint response")?;
     let token = data
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -565,11 +567,19 @@ fn rand_u128() -> u128 {
     (a << 64) | b
 }
 
+fn escape_html_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// HTML success page shown after authorization.
 fn success_page(username: &str) -> String {
     let user_line = if username.is_empty() {
         String::new()
     } else {
+        let username = escape_html_text(username);
         format!(r#"<p style="color:#6c63ff;margin-top:12px">User: {username}</p>"#)
     };
     format!(
@@ -584,6 +594,7 @@ justify-content:center;min-height:100vh;background:#0f0c29;color:#fff}}
 
 /// HTML error page shown on authorization failure.
 fn error_page(message: &str) -> String {
+    let message = escape_html_text(message);
     format!(
         r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Authorization Failed</title>
 <style>body{{font-family:-apple-system,sans-serif;display:flex;align-items:center;
