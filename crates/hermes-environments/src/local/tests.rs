@@ -679,7 +679,10 @@ async fn unpaged_local_read_preserves_mixed_line_endings_and_final_newline() {
     let path = target.to_str().unwrap();
     let backend = LocalBackend::default();
 
-    assert_eq!(backend.read_file(path, Some(1), Some(1)).await.unwrap(), "βeta");
+    assert_eq!(
+        backend.read_file(path, Some(1), Some(1)).await.unwrap(),
+        "βeta"
+    );
     assert_eq!(backend.read_file(path, None, None).await.unwrap(), original);
 }
 
