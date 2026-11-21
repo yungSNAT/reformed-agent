@@ -11,6 +11,7 @@ mod divergence;
 mod fork_carry;
 mod git;
 mod global_proof;
+mod gpar_closure;
 mod parity_matrix;
 mod release_readiness;
 mod release_secret_scan;
@@ -102,6 +103,8 @@ enum Command {
     ReleaseSecretScan(release_secret_scan::ScanArgs),
     #[command(name = "run-security-release-gate-v2")]
     SecurityReleaseGate(security_release_gate::SecurityReleaseGateArgs),
+    #[command(name = "generate-gpar-01-04-proof")]
+    GparClosure(gpar_closure::ClosureArgs),
 }
 
 fn main() {
@@ -122,6 +125,7 @@ fn main() {
         Command::ReleaseReadiness(args) => release_readiness::run(args),
         Command::ReleaseSecretScan(args) => release_secret_scan::run(args),
         Command::SecurityReleaseGate(args) => security_release_gate::run(args),
+        Command::GparClosure(args) => gpar_closure::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
