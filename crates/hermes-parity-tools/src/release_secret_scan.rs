@@ -77,14 +77,49 @@ const REDACTED: &str = "[redacted]";
 // The regex crate's default Unicode word class also includes combining marks.
 const PYTHON_WORD: &str = r"[\p{L}\p{N}_]";
 
-static DETECTORS: LazyLock<Result<Vec<(&'static str, Regex)>, String>> = LazyLock::new(|| {
-    let boundary =
-        format!(r"(?:(?<!{PYTHON_WORD})(?={PYTHON_WORD})|(?<={PYTHON_WORD})(?!{PYTHON_WORD}))");
+struct Detector {
+    name: &'static str,
+    candidate: Regex,
+    boundary_checked: Option<Regex>,
+}
+
+impl Detector {
+    fn new(name: &'static str, pattern: &str) -> Result<Self, fancy_regex::Error> {
+        let body = pattern
+            .strip_prefix(r"\b")
+            .and_then(|rest| rest.strip_suffix(r"\b"));
+        let candidate = Regex::new(body.unwrap_or(pattern))?;
+        let boundary_checked = body
+            .map(|body| {
+                // Check boundaries only on lines that can match the detector.
+                let boundary = format!(
+                    r"(?:(?<!{PYTHON_WORD})(?={PYTHON_WORD})|(?<={PYTHON_WORD})(?!{PYTHON_WORD}))"
+                );
+                Regex::new(&format!("{boundary}{body}{boundary}"))
+            })
+            .transpose()?;
+        Ok(Self {
+            name,
+            candidate,
+            boundary_checked,
+        })
+    }
+
+    fn is_match(&self, text: &str) -> Result<bool, fancy_regex::Error> {
+        if !self.candidate.is_match(text)? {
+            return Ok(false);
+        }
+        self.boundary_checked
+            .as_ref()
+            .map_or(Ok(true), |regex| regex.is_match(text))
+    }
+}
+
+static DETECTORS: LazyLock<Result<Vec<Detector>, String>> = LazyLock::new(|| {
     PATTERNS
         .iter()
         .map(|&(name, pattern)| {
-            Regex::new(&pattern.replace(r"\b", &boundary))
-                .map(|regex| (name, regex))
+            Detector::new(name, pattern)
                 .map_err(|error| format!("cannot compile release scanner detector {name}: {error}"))
         })
         .collect()
@@ -140,7 +175,7 @@ fn should_skip_file(relative: &str) -> bool {
 fn file_findings<'a>(
     relative: &'a str,
     contents: &str,
-    detectors: &[(&'a str, Regex)],
+    detectors: &[Detector],
     findings: &mut Vec<Finding<'a>>,
 ) -> Result<(), String> {
     let contents = if contents.contains("\r\n") {
@@ -162,15 +197,15 @@ fn file_findings<'a>(
         {
             continue;
         }
-        for (name, pattern) in detectors {
-            if pattern
+        for detector in detectors {
+            if detector
                 .is_match(text)
-                .map_err(|_| format!("release scanner detector {name} failed"))?
+                .map_err(|_| format!("release scanner detector {} failed", detector.name))?
             {
                 findings.push(Finding {
                     file: relative,
                     line: line + 1,
-                    detector: name,
+                    detector: detector.name,
                 });
             }
         }
@@ -244,7 +279,7 @@ mod tests {
 
     #[test]
     fn findings_keep_locations_and_never_keep_the_matched_text() {
-        let detectors = [("fixture", Regex::new("marker").unwrap())];
+        let detectors = [Detector::new("fixture", r"\bmarker\b").unwrap()];
         let mut findings = Vec::new();
         file_findings(
             "notes.txt",
@@ -264,6 +299,8 @@ mod tests {
             findings[0].report_entry().get("snippet"),
             Some(&Py::Str(REDACTED.to_string()))
         );
+        assert!(!detectors[0].is_match("prefixmarker").unwrap());
+        assert!(!detectors[0].is_match("markervalue").unwrap());
     }
 
     #[test]
