@@ -147,6 +147,11 @@ fn request_error(operation: &str, error: reqwest::Error) -> AgentError {
 
 fn checked(response: Response, operation: &str) -> Result<Response, AgentError> {
     let status = response.status();
+    if status == StatusCode::REQUEST_TIMEOUT {
+        return Err(AgentError::Timeout(format!(
+            "Daytona {operation} timed out"
+        )));
+    }
     if !status.is_success() {
         return Err(AgentError::Io(format!(
             "Daytona {operation} returned {status}"
