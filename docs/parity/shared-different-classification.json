@@ -901,7 +901,7 @@
       "classification": "intentional_divergence",
       "owner": "yungSNAT",
       "path": "plugins/model-providers/copilot/__init__.py",
-      "rationale": "Upstream now sends xhigh to Copilot models whose live catalogue lists it and lowers other levels to the nearest supported one. The Rust Copilot provider has no per-model effort table yet; ledger follow-up under R3524.",
+      "rationale": "The Rust Copilot Chat Completions adapter reconciles reasoning against the selected model's advertised efforts. The copilot_clamps_reasoning_to_the_model_override_capabilities and copilot_stream_and_plain_chat_share_catalog_cache tests cover the runtime behaviour. Credential acquisition and upstream Responses routing are separate.",
       "ticket": 3524
     },
     {

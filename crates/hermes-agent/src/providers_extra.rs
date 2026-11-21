@@ -4,15 +4,19 @@
 //! - [`KimiProvider`]: Moonshot AI (月之暗面)
 //! - [`MiniMaxProvider`]: MiniMax AI
 //! - [`NousProvider`]: Nous Research
-//! - [`CopilotProvider`]: GitHub Copilot ACP
+//! - [`CopilotProvider`]: GitHub Copilot HTTP
+
+use std::borrow::Cow;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures::stream::BoxStream;
+use futures::StreamExt;
 use serde_json::Value;
 
 use hermes_core::{AgentError, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema};
 
-use crate::provider::GenericProvider;
+use crate::provider::{is_openai_dynamic_model_alias, GenericProvider};
 use crate::provider_profiles;
 
 fn openrouter_compatible_extra_body(extra_body: Option<&Value>) -> Option<Value> {
@@ -365,41 +369,122 @@ impl LlmProvider for NousProvider {
 }
 
 // ---------------------------------------------------------------------------
-// CopilotProvider — GitHub Copilot ACP
+// CopilotProvider — GitHub Copilot HTTP
 // ---------------------------------------------------------------------------
 
-/// GitHub Copilot ACP provider with a configurable base URL (obtained via OAuth flow).
+#[path = "providers_extra/copilot_catalog.rs"]
+mod copilot_catalog;
+
+use copilot_catalog::{reconcile_effort, CopilotCatalog, EffortSupport};
+
+/// GitHub Copilot HTTP provider with a configurable inference base URL.
 ///
 /// Default model: `gpt-4o`
 #[derive(Debug, Clone)]
 pub struct CopilotProvider {
     inner: GenericProvider,
+    catalog: Option<Arc<CopilotCatalog>>,
 }
 
 impl CopilotProvider {
     pub fn new(base_url: impl Into<String>, api_key: impl Into<String>) -> Self {
         Self {
             inner: GenericProvider::new(base_url, api_key, "gpt-4o"),
+            catalog: None,
         }
     }
 
     pub fn with_model(self, model: impl Into<String>) -> Self {
         Self {
             inner: self.inner.with_model(model),
+            ..self
         }
     }
 
-    pub fn with_base_url(self, url: impl Into<String>) -> Self {
-        Self {
-            inner: self.inner.with_base_url(url),
+    pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
+        self.inner = self.inner.with_base_url(url);
+        if self.catalog.is_some() {
+            self.catalog = CopilotCatalog::for_base_url(&self.inner.base_url);
         }
+        self
+    }
+
+    /// Reconcile requested reasoning effort against the account's catalogue.
+    /// Lookups use the same recognised HTTPS origin and credential as inference.
+    /// A disabled, missing or unavailable lookup leaves inference available.
+    pub fn with_model_catalog(mut self) -> Self {
+        if !matches!(self.inner.api_key.trim(), "" | "local-no-key") {
+            self.catalog = CopilotCatalog::for_base_url(&self.inner.base_url);
+        }
+        self
     }
 
     pub fn with_optional_request_timeout_seconds(self, seconds: Option<f64>) -> Self {
         Self {
             inner: self.inner.with_optional_request_timeout_seconds(seconds),
+            ..self
         }
     }
+
+    async fn reconcile_reasoning<'a>(
+        &self,
+        model: Option<&str>,
+        extra_body: Option<&'a Value>,
+    ) -> Option<Cow<'a, Value>> {
+        let body = extra_body?;
+        let Some((catalog, effort)) = self.catalog.as_ref().zip(requested_catalog_effort(body))
+        else {
+            return Some(Cow::Borrowed(body));
+        };
+        let wire_model = match body.get("model") {
+            Some(Value::String(model)) => model,
+            Some(_) => return Some(Cow::Borrowed(body)),
+            None => model.unwrap_or(&self.inner.model).trim(),
+        };
+        if is_openai_dynamic_model_alias(wire_model) {
+            return Some(Cow::Borrowed(body));
+        }
+        let support = catalog
+            .effort_support(&self.inner.api_key, wire_model)
+            .await;
+        let replacement = match support {
+            EffortSupport::Unknown => return Some(Cow::Borrowed(body)),
+            EffortSupport::Unsupported => None,
+            EffortSupport::Supported(levels) => {
+                let Some(value) = reconcile_effort(effort, &levels) else {
+                    return Some(Cow::Borrowed(body));
+                };
+                if body.get("reasoning_effort").and_then(Value::as_str) == Some(value.as_str()) {
+                    return Some(Cow::Borrowed(body));
+                }
+                Some(value)
+            }
+        };
+        let mut adjusted = body.as_object()?.clone();
+        if let Some(value) = replacement {
+            adjusted.insert("reasoning_effort".into(), Value::String(value));
+        } else {
+            adjusted.remove("reasoning_effort");
+        }
+        Some(Cow::Owned(Value::Object(adjusted)))
+    }
+}
+
+fn requested_catalog_effort(body: &Value) -> Option<&str> {
+    if [
+        "/reasoning/enabled",
+        "/reasoning_config/enabled",
+        "/supports_reasoning",
+    ]
+    .iter()
+    .any(|field| body.pointer(field).and_then(Value::as_bool) == Some(false))
+    {
+        return None;
+    }
+    body.get("reasoning_effort")?
+        .as_str()
+        .map(str::trim)
+        .filter(|effort| !effort.is_empty() && !effort.eq_ignore_ascii_case("none"))
 }
 
 #[async_trait]
@@ -413,8 +498,16 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> Result<LlmResponse, AgentError> {
+        let adjusted = self.reconcile_reasoning(model, extra_body).await;
         self.inner
-            .chat_completion(messages, tools, max_tokens, temperature, model, extra_body)
+            .chat_completion(
+                messages,
+                tools,
+                max_tokens,
+                temperature,
+                model,
+                adjusted.as_deref(),
+            )
             .await
     }
 
@@ -427,14 +520,38 @@ impl LlmProvider for CopilotProvider {
         model: Option<&str>,
         extra_body: Option<&Value>,
     ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
-        self.inner.chat_completion_stream(
-            messages,
-            tools,
-            max_tokens,
-            temperature,
-            model,
-            extra_body,
-        )
+        if self.catalog.is_none() || extra_body.and_then(requested_catalog_effort).is_none() {
+            return self.inner.chat_completion_stream(
+                messages,
+                tools,
+                max_tokens,
+                temperature,
+                model,
+                extra_body,
+            );
+        }
+
+        let provider = self.clone();
+        let messages = messages.to_vec();
+        let tools = tools.to_vec();
+        let model = model.map(str::to_owned);
+        let extra_body = extra_body.cloned();
+        Box::pin(async_stream::stream! {
+            let adjusted = provider
+                .reconcile_reasoning(model.as_deref(), extra_body.as_ref())
+                .await;
+            let mut stream = provider.inner.chat_completion_stream(
+                &messages,
+                &tools,
+                max_tokens,
+                temperature,
+                model.as_deref(),
+                adjusted.as_deref(),
+            );
+            while let Some(chunk) = stream.next().await {
+                yield chunk;
+            }
+        })
     }
 }
 
@@ -564,3 +681,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "providers_extra/copilot_catalog_tests.rs"]
+mod copilot_catalog_tests;

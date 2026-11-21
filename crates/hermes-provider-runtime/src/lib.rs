@@ -859,7 +859,8 @@ pub fn build_provider_with_auth_resolver(
                 &api_key,
             )
             .with_model(model_name.as_str())
-            .with_optional_request_timeout_seconds(request_timeout_seconds);
+            .with_optional_request_timeout_seconds(request_timeout_seconds)
+            .with_model_catalog();
             Arc::new(p)
         }
         local if local_backends::local_backend_spec(local).is_some() => {

@@ -1,6 +1,6 @@
 # Upstream Missing Patch Queue
 
-Generated: `2026-11-21T08:23:38.361578+00:00`
+Generated: `2026-11-21T08:53:51.339758+00:00`
 
 - Range: `HEAD..upstream/parity-reference`; total commits tracked: `1`.
 

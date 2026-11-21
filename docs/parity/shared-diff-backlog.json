@@ -19661,7 +19661,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "2425ff8d3bb5afaf7bf6d5749aed903dd8c4e6ac",
+      "local_blob": "4dbeaaa8031d3cf25081b2495388b262ca49b9b8",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/integrations/providers.md",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-21T08:23:37.532319+00:00",
+  "generated_at_utc": "2026-11-21T08:53:50.420188+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "04c5686b0d43beb6e758630647b1ef43dc8d822d",
+    "local_sha": "c466a74634b4dd99d5b2e9c1f119795eaba3efb5",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
