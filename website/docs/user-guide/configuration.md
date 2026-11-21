@@ -231,22 +231,25 @@ terminal:
 
 ### Daytona Backend
 
-Runs commands in a [Daytona](https://daytona.io) managed workspace. Supports stop/resume for persistence.
+Reformed can attach to a running Daytona V0 sandbox when built from source with
+`cargo build --locked -p hermes-cli --features hermes-environments/daytona`.
+The backend was tested against a loopback stub. Verification against the live
+Daytona service is pending.
 
 ```yaml
 terminal:
   backend: daytona
-  container_cpu: 1                 # CPU cores
-  container_memory: 5120           # MB → converted to GiB
-  container_disk: 10240            # MB → converted to GiB (max 10 GiB)
-  container_persistent: true       # Stop/resume instead of delete
 ```
 
-**Required:** `DAYTONA_API_KEY` environment variable.
+Set `DAYTONA_API_KEY` and `DAYTONA_SANDBOX_ID` in the process environment.
+`DAYTONA_WORKSPACE_ID` is an alias for an existing configuration. For a
+custom Daytona deployment, set `DAYTONA_TOOLBOX_URL` to its trusted Toolbox
+proxy base, before the sandbox ID. The default base is
+`https://proxy.app.daytona.io/toolbox`.
 
-**Persistence:** When enabled, sandboxes are stopped (not deleted) on cleanup and resumed on next session. Sandbox names follow the pattern `hermes-{task_id}`.
-
-**Disk limit:** Daytona enforces a 10 GiB maximum. Requests above this are capped with a warning.
+Manage sandbox creation, start and stop in Daytona. The terminal backend
+uses the selected sandbox for commands and file operations. Daytona returns
+combined command output, which Reformed reports as stdout.
 
 ### Vercel Sandbox Backend
 

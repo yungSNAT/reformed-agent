@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-21T05:35:55.059036+00:00",
+  "generated_at_utc": "2026-11-21T06:07:48.777371+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "0ba80d4c7064151849103666d8ad68d28f309b4a",
+    "local_sha": "b55d7cdfe82053d22db22867913f63a8f52e4dfb",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1679,
+    "commits_ahead": 1681,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1410,
+    "local_patch_unique": 1412,
     "files_only_upstream": 24117,
-    "files_only_local": 2061,
+    "files_only_local": 2062,
     "files_shared_identical": 564,
     "files_shared_different": 1509,
-    "tree_files_changed": 27416,
-    "tree_insertions": 4528861,
-    "tree_deletions": 952252
+    "tree_files_changed": 27417,
+    "tree_insertions": 4528868,
+    "tree_deletions": 952454
   },
   "top_upstream_only": [
     {
@@ -440,7 +440,7 @@
     },
     {
       "path": "crates/hermes-environments",
-      "count": 18
+      "count": 19
     },
     {
       "path": "crates/hermes-eval",
@@ -764,7 +764,7 @@
     },
     {
       "path": "crates/hermes-environments",
-      "count": 18
+      "count": 19
     },
     {
       "path": "crates/hermes-eval",
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 367,
+      "local_only": 368,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1410,
+    "local_patch_unique": 1412,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

@@ -1,105 +1,163 @@
-//! Daytona terminal backend – executes commands via the Daytona API.
+//! Attach the terminal backend to a running Daytona V0 sandbox.
+
+use std::net::IpAddr;
+use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::Client;
+use reqwest::redirect::Policy;
+use reqwest::{Client, Method, RequestBuilder, Response, StatusCode, Url};
 
 use hermes_core::{AgentError, CommandOutput, TerminalBackend};
 
-/// A [`TerminalBackend`] that delegates to a Daytona workspace via its REST API.
+const CLOUD_TOOLBOX_URL: &str = "https://proxy.app.daytona.io/toolbox";
+const CLOUD_API_URL: &str = "https://app.daytona.io/api";
+
+/// A terminal backend for an explicitly selected Daytona sandbox.
 pub struct DaytonaBackend {
-    /// Base URL for the Daytona API (e.g. "https://api.daytona.io").
-    api_url: String,
-    /// API key for authentication.
+    toolbox: Result<Url, &'static str>,
     api_key: Option<String>,
-    /// Workspace ID to target.
-    workspace_id: Option<String>,
-    /// Default timeout in seconds.
     default_timeout: u64,
-    /// Maximum output size in bytes.
     max_output_size: usize,
-    /// HTTP client for making API requests.
     client: Client,
 }
 
 impl DaytonaBackend {
-    /// Create a new Daytona backend.
+    /// Attach using a trusted Toolbox base URL before the sandbox ID.
     ///
-    /// - `api_url`: If None, falls back to the `DAYTONA_API_URL` env var or
-    ///   `https://api.daytona.io`.
-    /// - `api_key`: If None, falls back to the `DAYTONA_API_KEY` env var.
-    /// - `workspace_id`: If None, falls back to the `DAYTONA_WORKSPACE_ID` env var.
+    /// Missing arguments use DAYTONA_TOOLBOX_URL, DAYTONA_API_KEY and
+    /// DAYTONA_SANDBOX_ID. DAYTONA_WORKSPACE_ID remains an alias for the ID.
+    /// An explicitly customised control plane also needs a Toolbox URL.
     pub fn new(
-        api_url: Option<String>,
+        toolbox_url: Option<String>,
         api_key: Option<String>,
-        workspace_id: Option<String>,
+        sandbox_id: Option<String>,
         default_timeout: u64,
         max_output_size: usize,
     ) -> Self {
-        let api_url = api_url
-            .or_else(|| std::env::var("DAYTONA_API_URL").ok())
-            .unwrap_or_else(|| "https://api.daytona.io".to_string());
-
-        let api_key = api_key.or_else(|| std::env::var("DAYTONA_API_KEY").ok());
-        let workspace_id = workspace_id.or_else(|| std::env::var("DAYTONA_WORKSPACE_ID").ok());
-
+        let toolbox_url = toolbox_url.or_else(|| std::env::var("DAYTONA_TOOLBOX_URL").ok());
+        let sandbox_id = sandbox_id
+            .or_else(|| std::env::var("DAYTONA_SANDBOX_ID").ok())
+            .or_else(|| std::env::var("DAYTONA_WORKSPACE_ID").ok());
+        let custom_control_plane = toolbox_url.is_none()
+            && std::env::var("DAYTONA_API_URL").is_ok_and(|value| {
+                let url = value.trim().trim_end_matches('/');
+                !url.is_empty() && url != CLOUD_API_URL
+            });
+        let toolbox = if custom_control_plane {
+            Err("Set DAYTONA_TOOLBOX_URL for a custom Daytona control plane")
+        } else {
+            sandbox_url(
+                toolbox_url.as_deref().unwrap_or(CLOUD_TOOLBOX_URL),
+                sandbox_id.as_deref(),
+            )
+        };
         Self {
-            api_url: api_url.trim_end_matches('/').to_string(),
-            api_key,
-            workspace_id,
+            toolbox,
+            api_key: api_key.or_else(|| std::env::var("DAYTONA_API_KEY").ok()),
             default_timeout,
             max_output_size,
-            client: Client::new(),
+            client: Client::builder()
+                .redirect(Policy::none())
+                .build()
+                .expect("initialise Daytona HTTP client"),
         }
     }
 
-    /// Get the workspace ID, returning an error if not configured.
-    fn workspace_id(&self) -> Result<&str, AgentError> {
-        self.workspace_id
+    fn request(
+        &self,
+        method: Method,
+        path: &[&str],
+        timeout_secs: u64,
+    ) -> Result<RequestBuilder, AgentError> {
+        let mut url = self
+            .toolbox
+            .as_ref()
+            .map_err(|message| AgentError::Config((*message).into()))?
+            .clone();
+        let api_key = self
+            .api_key
             .as_deref()
-            .ok_or_else(|| AgentError::Config("Daytona workspace ID not configured".into()))
-    }
-
-    /// Build an authenticated request builder for the given method and path.
-    fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
-        let url = format!("{}{}", self.api_url, path);
-        let mut req = self.client.request(method, &url);
-        if let Some(ref key) = self.api_key {
-            req = req.bearer_auth(key);
-        }
-        req
-    }
-
-    fn truncate_output(&self, s: String) -> String {
-        if s.len() > self.max_output_size {
-            s[..s.floor_char_boundary(self.max_output_size)].to_string()
-        } else {
-            s
-        }
+            .filter(|key| !key.trim().is_empty())
+            .ok_or_else(|| AgentError::Config("DAYTONA_API_KEY is required".into()))?;
+        url.path_segments_mut()
+            .expect("validated Daytona Toolbox URL")
+            .extend(path.iter().copied());
+        Ok(self
+            .client
+            .request(method, url)
+            .bearer_auth(api_key)
+            .timeout(Duration::from_secs(timeout_secs.saturating_add(10))))
     }
 }
 
-/// Request body for executing a command.
+fn sandbox_url(toolbox: &str, id: Option<&str>) -> Result<Url, &'static str> {
+    let id = id
+        .map(str::trim)
+        .filter(|id| {
+            !id.is_empty()
+                && id
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_')
+        })
+        .ok_or("DAYTONA_SANDBOX_ID must be a sandbox ID")?;
+    let mut url = Url::parse(toolbox.trim()).map_err(|_| "Invalid Daytona Toolbox URL")?;
+    let loopback = url.host_str().is_some_and(|host| {
+        host.trim_matches(['[', ']'])
+            .parse::<IpAddr>()
+            .is_ok_and(|address| address.is_loopback())
+    });
+    if url.host_str().is_none()
+        || !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+        || !url.username().is_empty()
+        || url.password().is_some()
+        || url.query().is_some()
+        || url.fragment().is_some()
+    {
+        return Err("Daytona Toolbox URL must be HTTPS, or HTTP on loopback, without user information, query or fragment");
+    }
+    url.path_segments_mut()
+        .map_err(|_| "Invalid Daytona Toolbox URL path")?
+        .pop_if_empty()
+        .push(id);
+    Ok(url)
+}
+
 #[derive(serde::Serialize)]
-struct ExecuteRequest {
-    command: String,
+struct ExecuteRequest<'a> {
+    command: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
-    workdir: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    timeout: Option<u64>,
+    cwd: Option<&'a str>,
+    timeout: u64,
 }
 
-/// Response body from executing a command.
 #[derive(serde::Deserialize)]
+#[serde(rename_all = "camelCase")]
 struct ExecuteResponse {
     exit_code: i32,
-    stdout: String,
-    stderr: String,
+    result: Option<String>,
 }
 
-/// Response body for file existence check.
-#[derive(serde::Deserialize)]
-struct FileExistsResponse {
-    exists: bool,
+fn request_error(operation: &str, error: reqwest::Error) -> AgentError {
+    if error.is_timeout() {
+        AgentError::Timeout(format!("Daytona {operation} timed out"))
+    } else {
+        AgentError::Io(format!("Daytona {operation} request failed"))
+    }
+}
+
+fn checked(response: Response, operation: &str) -> Result<Response, AgentError> {
+    let status = response.status();
+    if status == StatusCode::REQUEST_TIMEOUT {
+        return Err(AgentError::Timeout(format!(
+            "Daytona {operation} timed out"
+        )));
+    }
+    if !status.is_success() {
+        return Err(AgentError::Io(format!(
+            "Daytona {operation} returned {status}"
+        )));
+    }
+    Ok(response)
 }
 
 #[async_trait]
@@ -112,56 +170,28 @@ impl TerminalBackend for DaytonaBackend {
         _background: bool,
         _pty: bool,
     ) -> Result<CommandOutput, AgentError> {
-        let workspace_id = self.workspace_id()?;
-        let timeout_secs = timeout.unwrap_or(self.default_timeout);
-
-        let path = format!("/workspace/{}/execute", workspace_id);
-        let body = ExecuteRequest {
-            command: command.to_string(),
-            workdir: workdir.map(|s| s.to_string()),
-            timeout: Some(timeout_secs),
-        };
-
-        let result = tokio::time::timeout(
-            std::time::Duration::from_secs(timeout_secs + 10), // Add buffer for network
-            async {
-                let resp = self
-                    .request(reqwest::Method::POST, &path)
-                    .json(&body)
-                    .send()
-                    .await
-                    .map_err(|e| AgentError::Io(format!("Daytona API request failed: {}", e)))?;
-
-                if !resp.status().is_success() {
-                    let status = resp.status();
-                    let text = resp.text().await.unwrap_or_default();
-                    return Err(AgentError::Io(format!(
-                        "Daytona API returned status {}: {}",
-                        status, text
-                    )));
-                }
-
-                let data: ExecuteResponse = resp.json().await.map_err(|e| {
-                    AgentError::Io(format!("Failed to parse Daytona response: {}", e))
-                })?;
-
-                Ok(CommandOutput {
-                    exit_code: data.exit_code,
-                    stdout: self.truncate_output(data.stdout),
-                    stderr: self.truncate_output(data.stderr),
-                })
-            },
-        )
-        .await;
-
-        match result {
-            Ok(Ok(output)) => Ok(output),
-            Ok(Err(e)) => Err(e),
-            Err(_) => Err(AgentError::Timeout(format!(
-                "Daytona command timed out after {} seconds",
-                timeout_secs
-            ))),
-        }
+        let timeout = timeout.unwrap_or(self.default_timeout);
+        let response = self
+            .request(Method::POST, &["process", "execute"], timeout)?
+            .json(&ExecuteRequest {
+                command,
+                cwd: workdir,
+                timeout,
+            })
+            .send()
+            .await
+            .map_err(|error| request_error("execute", error))?;
+        let data = checked(response, "execute")?
+            .json::<ExecuteResponse>()
+            .await
+            .map_err(|error| request_error("execute response", error))?;
+        let mut stdout = data.result.unwrap_or_default();
+        stdout.truncate(stdout.floor_char_boundary(self.max_output_size));
+        Ok(CommandOutput {
+            exit_code: data.exit_code,
+            stdout,
+            stderr: String::new(),
+        })
     }
 
     async fn read_file(
@@ -170,109 +200,56 @@ impl TerminalBackend for DaytonaBackend {
         offset: Option<u64>,
         limit: Option<u64>,
     ) -> Result<String, AgentError> {
-        let workspace_id = self.workspace_id()?;
-        let api_path = format!(
-            "/workspace/{}/file?path={}&offset={}&limit={}",
-            workspace_id,
-            urlencoding(path),
-            offset.unwrap_or(0),
-            limit.unwrap_or(0),
-        );
-
-        let resp = self
-            .request(reqwest::Method::GET, &api_path)
+        let response = self
+            .request(Method::GET, &["files", "download"], self.default_timeout)?
+            .query(&[("path", path)])
             .send()
             .await
-            .map_err(|e| AgentError::Io(format!("Daytona read_file request failed: {}", e)))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AgentError::Io(format!(
-                "Daytona read_file returned status {}: {}",
-                status, text
-            )));
-        }
-
-        let content = resp
+            .map_err(|error| request_error("download", error))?;
+        let content = checked(response, "download")?
             .text()
             .await
-            .map_err(|e| AgentError::Io(format!("Failed to read Daytona response: {}", e)))?;
+            .map_err(|error| request_error("download response", error))?;
+        if offset.is_none() && limit.is_none() {
+            return Ok(content);
+        }
 
-        Ok(content)
+        let start = usize::try_from(offset.unwrap_or(0)).unwrap_or(usize::MAX);
+        let count = limit
+            .and_then(|limit| usize::try_from(limit).ok())
+            .unwrap_or(usize::MAX);
+        Ok(content
+            .lines()
+            .skip(start)
+            .take(count)
+            .collect::<Vec<_>>()
+            .join("\n"))
     }
 
     async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
-        let workspace_id = self.workspace_id()?;
-        let api_path = format!(
-            "/workspace/{}/file?path={}",
-            workspace_id,
-            urlencoding(path),
-        );
-
-        let resp = self
-            .request(reqwest::Method::PUT, &api_path)
-            .header("Content-Type", "application/octet-stream")
-            .body(content.to_string())
+        let response = self
+            .request(Method::POST, &["files", "upload-v2"], self.default_timeout)?
+            .query(&[("path", path)])
+            .header(reqwest::header::CONTENT_TYPE, "application/octet-stream")
+            .body(content.to_owned())
             .send()
             .await
-            .map_err(|e| AgentError::Io(format!("Daytona write_file request failed: {}", e)))?;
-
-        if !resp.status().is_success() {
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AgentError::Io(format!(
-                "Daytona write_file returned status {}: {}",
-                status, text
-            )));
-        }
-
+            .map_err(|error| request_error("upload", error))?;
+        checked(response, "upload")?;
         Ok(())
     }
 
     async fn file_exists(&self, path: &str) -> Result<bool, AgentError> {
-        let workspace_id = self.workspace_id()?;
-        let api_path = format!(
-            "/workspace/{}/file/exists?path={}",
-            workspace_id,
-            urlencoding(path),
-        );
-
-        let resp = self
-            .request(reqwest::Method::GET, &api_path)
+        let response = self
+            .request(Method::GET, &["files", "info"], self.default_timeout)?
+            .query(&[("path", path)])
             .send()
             .await
-            .map_err(|e| AgentError::Io(format!("Daytona file_exists request failed: {}", e)))?;
-
-        if !resp.status().is_success() {
-            // If we get a 404, the file doesn't exist
-            if resp.status() == reqwest::StatusCode::NOT_FOUND {
-                return Ok(false);
-            }
-            let status = resp.status();
-            let text = resp.text().await.unwrap_or_default();
-            return Err(AgentError::Io(format!(
-                "Daytona file_exists returned status {}: {}",
-                status, text
-            )));
+            .map_err(|error| request_error("file info", error))?;
+        if response.status() == StatusCode::NOT_FOUND {
+            return Ok(false);
         }
-
-        let data: FileExistsResponse = resp
-            .json()
-            .await
-            .map_err(|e| AgentError::Io(format!("Failed to parse Daytona response: {}", e)))?;
-
-        Ok(data.exists)
+        checked(response, "file info")?;
+        Ok(true)
     }
-}
-
-/// Minimal percent-encoding for URL paths.
-fn urlencoding(s: &str) -> String {
-    s.replace('%', "%25")
-        .replace(' ', "%20")
-        .replace('/', "%2F")
-        .replace('?', "%3F")
-        .replace('#', "%23")
-        .replace('&', "%26")
-        .replace('=', "%3D")
 }
