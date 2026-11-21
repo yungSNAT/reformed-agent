@@ -20,7 +20,7 @@ cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --
 python3 scripts/generate-behavioral-similarity-diff.py --check
 python3 scripts/generate-deep-problem-solving-diff.py --check
 cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-ci
-python3 scripts/generate-gpar-01-04-proof.py
+cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof
 python3 scripts/generate-sota-harness-hardening.py --check
 python3 scripts/generate-parity-dashboard.py
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --upstream-ref upstream/main
