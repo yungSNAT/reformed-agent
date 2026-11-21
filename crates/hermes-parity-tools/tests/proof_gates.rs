@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use std::process::{Command, Output};
 
-use serde_json::{Value, json};
+use serde_json::{json, Value};
 
 fn parity_tool(root: &Path, command: &str) -> Command {
     let mut tool = Command::new(env!("CARGO_BIN_EXE_hermes-parity-tools"));
