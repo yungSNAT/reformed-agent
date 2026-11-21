@@ -3,7 +3,7 @@
 use std::collections::BTreeMap;
 use std::time::Duration;
 
-use hermes_core::TerminalBackend;
+use hermes_core::{AgentError, TerminalBackend};
 use hermes_environments::daytona::DaytonaBackend;
 use reqwest::Url;
 use serde_json::{json, Value};
@@ -197,4 +197,19 @@ async fn keeps_the_request_on_the_configured_toolbox_endpoint() {
         .unwrap_err();
     assert!(error.to_string().contains("307"));
     assert!(server.await.unwrap());
+}
+
+#[tokio::test]
+async fn reports_a_remote_command_timeout() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let backend = backend(&listener);
+    let server = tokio::spawn(async move {
+        respond(&listener, "408 Request Timeout", r#"{"message":"expired"}"#).await;
+    });
+    let error = backend
+        .execute_command("printf fixture", Some(1), None, false, false)
+        .await
+        .unwrap_err();
+    server.await.unwrap();
+    assert!(matches!(error, AgentError::Timeout(_)));
 }
