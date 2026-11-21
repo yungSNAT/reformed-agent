@@ -348,16 +348,8 @@ pub async fn setup(model: Option<&str>, open_browser: bool) -> Result<bool, Agen
 
     let token = result.token.unwrap_or_default();
     let username = result.username.unwrap_or_default();
-    let display_username: String = username.chars().filter(|c| !c.is_control()).collect();
 
-    println!(
-        "\n✅ Login successful! User: {}",
-        if display_username.is_empty() {
-            "(unknown)"
-        } else {
-            &display_username
-        }
-    );
+    println!("\n✅ Login successful!");
 
     // Save token
     save_token(&token, &username)?;
