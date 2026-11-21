@@ -6,6 +6,7 @@
 pub mod auth_gate;
 pub mod credits;
 pub mod errors;
+pub mod file_edit;
 pub mod git;
 pub mod mcp;
 pub mod nous_urls;

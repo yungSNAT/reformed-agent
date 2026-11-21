@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, TerminalBackend, ToolError, ToolHandler, ToolSchema};
 
-use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::Arc;
 
 use crate::credential_guard::CredentialGuard;
+pub(crate) use hermes_core::file_edit::file_edit_lock;
 
 const DEFAULT_READ_OFFSET: i64 = 1;
 const DEFAULT_READ_LIMIT: i64 = 500;
@@ -188,44 +188,6 @@ pub fn resolve_tool_path(
     clean_path(base.join(expanded))
 }
 
-/// The lock `write_file`, `patch` and `hash_edit` hold on a file, shared by
-/// every path that resolves to it. Tool calls in one batch run in parallel, and
-/// an edit reads, changes and writes the whole file, so calls on one file take
-/// turns. Locks no call holds are dropped as others are handed out. A file not
-/// yet created is keyed by its nearest existing folder's real path, so it keeps
-/// its lock once it exists; a symlink to it is keyed as the file it names.
-pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
-        LazyLock::new(Mutex::default);
-    // Follow a dangling symlink to the file a write through it creates (40
-    // links at most, as the kernel allows).
-    let mut named = path.to_path_buf();
-    for _ in 0..40 {
-        if tokio::fs::metadata(&named).await.is_ok() {
-            break;
-        }
-        let Ok(target) = tokio::fs::read_link(&named).await else {
-            break;
-        };
-        named = named.parent().unwrap_or(Path::new("")).join(target);
-    }
-    let mut file = named.clone();
-    for existing in named.ancestors() {
-        if let Ok(real) = tokio::fs::canonicalize(existing).await {
-            let missing = named.strip_prefix(existing).unwrap_or(Path::new(""));
-            file = if missing.as_os_str().is_empty() {
-                real
-            } else {
-                real.join(missing)
-            };
-            break;
-        }
-    }
-    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
-    Arc::clone(locks.entry(file).or_default())
-}
-
 pub fn content_looks_like_internal_read_status(content: &str) -> bool {
     if !content.contains(READ_DEDUP_STATUS_MESSAGE) {
         return false;
@@ -351,10 +313,8 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
-        let edit_lock = file_edit_lock(Path::new(path)).await;
-        let _turn = edit_lock.lock().await;
         self.backend
-            .write_file(path, content)
+            .write_file_for_tool(path, content)
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
@@ -1208,6 +1168,67 @@ mod tests {
         drop(turn);
         write.execute(params).await.unwrap();
         assert_eq!(std::fs::read_to_string(&path).unwrap(), "after\n");
+    }
+
+    #[test]
+    fn local_writes_wait_for_the_resolved_file_edit_lock() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("work");
+        let home = tmp.path().join("home");
+        std::fs::create_dir(&cwd).unwrap();
+        std::fs::create_dir(&home).unwrap();
+        let backend = Arc::new(hermes_environments::LocalBackend::new(30, 100_000));
+        let write = WriteFileHandler::new(backend.clone());
+
+        crate::test_env::with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("TERMINAL_CWD", Some(&cwd)),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new().unwrap().block_on(async {
+                    for (input, path) in [
+                        ("lock-fixture.txt", cwd.join("lock-fixture.txt")),
+                        ("~/lock-fixture.txt", home.join("lock-fixture.txt")),
+                    ] {
+                        tokio::fs::write(&path, "before\n").await.unwrap();
+                        let edit_lock = file_edit_lock(&path).await;
+                        let turn = edit_lock.lock().await;
+                        let params = json!({"path": input, "content": "after\n"});
+                        let outcome = tokio::time::timeout(
+                            std::time::Duration::from_millis(200),
+                            write.execute(params.clone()),
+                        )
+                        .await;
+                        assert!(
+                            outcome.is_err(),
+                            "write used a different edit lock for {input}"
+                        );
+                        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "before\n");
+                        drop(turn);
+                        write.execute(params).await.unwrap();
+                        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "after\n");
+                    }
+                    let path = cwd.join("lock-fixture.txt");
+                    let edit_lock = file_edit_lock(&path).await;
+                    let _turn = edit_lock.lock().await;
+                    // Custom backends may call the lower-level writer whilst
+                    // the file tool owns this lock for them.
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        backend.write_file(path.to_str().unwrap(), "delegated\n"),
+                    )
+                    .await
+                    .expect("lower-level write tried to reacquire the lock")
+                    .unwrap();
+                    assert_eq!(
+                        tokio::fs::read_to_string(&path).await.unwrap(),
+                        "delegated\n"
+                    );
+                });
+            },
+        );
     }
 
     /// A file created through a symlinked folder keeps the lock it had before

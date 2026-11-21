@@ -1,7 +1,7 @@
 //! Local terminal backend – executes commands on the same host.
 
 use std::collections::{BTreeSet, HashMap};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -400,6 +400,30 @@ impl Default for LocalBackend {
     }
 }
 
+async fn write_resolved_file(
+    requested: &str,
+    resolved: &Path,
+    content: &str,
+) -> Result<(), AgentError> {
+    hermes_config::tool_guard::check_write(resolved)
+        .await
+        .map_err(AgentError::ToolExecution)?;
+
+    if let Some(parent) = resolved.parent() {
+        if !parent.as_os_str().is_empty() {
+            tokio::fs::create_dir_all(parent).await.map_err(|error| {
+                AgentError::Io(format!(
+                    "Failed to create parent directory for '{requested}': {error}"
+                ))
+            })?;
+        }
+    }
+
+    tokio::fs::write(resolved, content)
+        .await
+        .map_err(|error| AgentError::Io(format!("Failed to write file '{requested}': {error}")))
+}
+
 #[async_trait]
 impl TerminalBackend for LocalBackend {
     async fn execute_command(
@@ -741,27 +765,14 @@ impl TerminalBackend for LocalBackend {
 
     async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
         let resolved = resolve_path(path)?;
-        hermes_config::tool_guard::check_write(&resolved)
-            .await
-            .map_err(AgentError::ToolExecution)?;
+        write_resolved_file(path, &resolved, content).await
+    }
 
-        // Ensure parent directory exists
-        if let Some(parent) = resolved.parent() {
-            if !parent.as_os_str().is_empty() {
-                tokio::fs::create_dir_all(parent).await.map_err(|e| {
-                    AgentError::Io(format!(
-                        "Failed to create parent directory for '{}': {}",
-                        path, e
-                    ))
-                })?;
-            }
-        }
-
-        tokio::fs::write(&resolved, content)
-            .await
-            .map_err(|e| AgentError::Io(format!("Failed to write file '{}': {}", path, e)))?;
-
-        Ok(())
+    async fn write_file_for_tool(&self, path: &str, content: &str) -> Result<(), AgentError> {
+        let resolved = resolve_path(path)?;
+        let edit_lock = hermes_core::file_edit::file_edit_lock(&resolved).await;
+        let _turn = edit_lock.lock().await;
+        write_resolved_file(path, &resolved, content).await
     }
 
     async fn file_exists(&self, path: &str) -> Result<bool, AgentError> {
