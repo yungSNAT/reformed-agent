@@ -255,6 +255,13 @@ fn requeue_leftover_steer(
 }
 
 impl CliAcpPromptExecutor {
+    fn tools_for_prompt(
+        &self,
+        _session: &hermes_acp::SessionState,
+    ) -> hermes_agent::agent_loop::ToolRegistry {
+        crate::app::bridge_tool_registry(&self.tool_registry)
+    }
+
     fn current_tool_schemas(&self) -> Vec<hermes_core::ToolSchema> {
         hermes_tool_planning::resolve_platform_tool_schemas(
             self.config.as_ref(),
@@ -316,7 +323,7 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         let mut agent_config = crate::app::build_agent_config(&self.config, &model);
         agent_config.session_id = Some(session.session_id.clone());
 
-        let agent_tools = Arc::new(crate::app::bridge_tool_registry(&self.tool_registry));
+        let agent_tools = Arc::new(self.tools_for_prompt(session));
         let interrupt =
             register_interrupt(&self.interrupts, &self.session_manager, &session.session_id);
         let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));

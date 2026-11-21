@@ -233,6 +233,57 @@
         assert!(out.contains("Added: mcp_srv_ping"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn acp_local_terminal_uses_the_prompt_sessions_working_directory() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let first_path = first.path().canonicalize().unwrap();
+        let second_path = second.path().canonicalize().unwrap();
+        let config = GatewayConfig::default();
+        let backend = crate::terminal_backend::build_terminal_backend(&config);
+        let terminal = hermes_tools::tools::terminal::TerminalHandler::new(backend);
+        let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
+        tool_registry.register(
+            "terminal",
+            "terminal",
+            hermes_tools::ToolHandler::schema(&terminal),
+            Arc::new(terminal),
+        );
+        let executor = CliAcpPromptExecutor {
+            config: Arc::new(config),
+            tool_registry,
+            interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
+        };
+        let first_session = hermes_acp::SessionState::new(
+            "session-1".into(),
+            first_path.to_str().unwrap().to_owned(),
+        );
+        let second_session = hermes_acp::SessionState::new(
+            "session-2".into(),
+            second_path.to_str().unwrap().to_owned(),
+        );
+        let first_tools = executor.tools_for_prompt(&first_session);
+        let second_tools = executor.tools_for_prompt(&second_session);
+        let first_call = &first_tools.get("terminal").unwrap().handler;
+        let second_call = &second_tools.get("terminal").unwrap().handler;
+
+        let first_output = first_call(json!({"command": "pwd", "task_id": "session-2"})).unwrap();
+        assert!(
+            first_output.contains(first_path.to_str().unwrap()),
+            "{first_output}"
+        );
+        let second_output = second_call(json!({"command": "pwd"})).unwrap();
+        assert!(
+            second_output.contains(second_path.to_str().unwrap()),
+            "{second_output}"
+        );
+        let explicit = first_call(json!({"command": "pwd", "workdir": second_path})).unwrap();
+        assert!(explicit.contains(second_path.to_str().unwrap()), "{explicit}");
+    }
+
     #[test]
     fn acp_prompt_executor_respects_mcp_toolset_gate() {
         let mut config = GatewayConfig::default();
