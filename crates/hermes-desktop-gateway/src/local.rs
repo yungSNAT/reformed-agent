@@ -948,3 +948,22 @@ fn loopback_origin(origin: &str) -> bool {
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{claim, lock_held};
+
+    #[test]
+    fn dropping_runtime_unlocks_with_a_duplicated_descriptor() {
+        let home = tempfile::tempdir().unwrap();
+        let mut runtime = claim(home.path()).unwrap().unwrap();
+        let duplicate = runtime.lock.try_clone().unwrap();
+
+        runtime.stop_serving();
+        assert!(lock_held(home.path()));
+
+        drop(runtime);
+        assert!(!lock_held(home.path()));
+        assert_eq!(duplicate.metadata().unwrap().len(), 0);
+    }
+}
