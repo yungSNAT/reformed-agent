@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T06:07:48.777371+00:00`
+Generated: `2026-11-21T06:34:17.956994+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`b55d7cdfe82053d22db22867913f63a8f52e4dfb`)
+- Local ref: `HEAD` (`985cc8ab58fdbfb08d03dff5d3862cd92930ae8b`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-21T06:07:48.777371+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1681 |
+| Commits ahead local (`local` ancestry only) | 1682 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1412 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1413 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2062 |
+| Files only in local tree | 2065 |
 | Shared files identical content | 564 |
 | Shared files different content | 1509 |
-| Total files changed (`local` vs `upstream`) | 27417 |
+| Total files changed (`local` vs `upstream`) | 27420 |
 | Insertions (`local` vs `upstream`) | 4528868 |
-| Deletions (`local` vs `upstream`) | 952454 |
+| Deletions (`local` vs `upstream`) | 953721 |
 
 ## Top 40 upstream-only buckets
 
@@ -138,7 +138,7 @@ Generated: `2026-11-21T06:07:48.777371+00:00`
 | `tests/tools` | 30 |
 | `tests/hermes_cli` | 28 |
 | `third_party/rustsec-patches` | 28 |
-| `crates/hermes-core` | 24 |
+| `crates/hermes-core` | 25 |
 | `plugins/memory` | 24 |
 | `tests/gateway` | 23 |
 | `crates/hermes-acp` | 22 |
@@ -150,11 +150,11 @@ Generated: `2026-11-21T06:07:48.777371+00:00`
 | `skills/github` | 16 |
 | `crates/hermes-desktop-gateway` | 14 |
 | `crates/hermes-parity-tests` | 14 |
+| `crates/hermes-mcp` | 12 |
 | `crates/hermes-skills` | 12 |
 | `tests/acp` | 11 |
 | `tests/stress` | 11 |
 | `ui-tui/src` | 11 |
-| `crates/hermes-mcp` | 10 |
 | `docs/roadmaps` | 10 |
 | `tests/plugins` | 10 |
 | `.github/workflows` | 9 |
@@ -176,7 +176,7 @@ Generated: `2026-11-21T06:07:48.777371+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1412`
+- Local unique by patch-id: `1413`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
