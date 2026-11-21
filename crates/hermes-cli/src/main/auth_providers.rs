@@ -611,8 +611,11 @@ fn mask_secret(secret: &str) -> String {
     if secret.is_empty() {
         return "(empty)".to_string();
     }
-    if secret.len() <= 8 {
-        return "*".repeat(secret.len());
+    // Showing the first and last 4 characters of a short secret reveals most
+    // of it, and a star per character reveals its length; mask short secrets
+    // with a fixed string instead.
+    if secret.chars().count() < 20 {
+        return "********".to_string();
     }
     format!(
         "{}***{}",
