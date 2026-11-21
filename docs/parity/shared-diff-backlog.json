@@ -16166,7 +16166,7 @@
       "classification": "intentional_divergence",
       "classification_path": "tests",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "fca565191902eef3cdff6d2a81d38088e493f873",
+      "local_blob": "86d54bd2b82aceffbafc5b764cd41c859472c0be",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "tests/website/test_generate_skill_docs.py",
@@ -22436,7 +22436,7 @@
       "classification": "policy_only",
       "classification_path": "website/scripts",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "d55c6e55c31f214acaf10f75887a38b8bc36c049",
+      "local_blob": "b679d1ad69ebcb22073725f363ec92f28aba559c",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/scripts/generate-skill-docs.py",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-21T09:34:25.761885+00:00",
+  "generated_at_utc": "2026-11-21T10:13:14.805440+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "6a59eb6454cfb154f619061eb8ebea0f5388ab6c",
+    "local_sha": "c65b7df199f767af2afad79c4442741131fe8a2b",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
