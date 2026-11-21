@@ -747,7 +747,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tui_charge_rejects_ambiguous_keys_before_submission() {
+    async fn tui_charge_renders_the_key_before_submission() {
         let _guard = test_env_lock::lock_async().await;
         let _env = EnvSnapshot::capture(&[
             "HERMES_HOME",
@@ -809,6 +809,63 @@ mod tests {
                 .await
                 .is_some_and(|requests| requests.is_empty()),
             "rejected TUI charge inputs must not send any requests"
+        );
+
+        let command = "/billing charge 50 --confirm";
+        let mut state = crate::tui::TuiState::default();
+        let theme = crate::skin_engine::resolve_theme("reformation");
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30))
+            .expect("create test terminal");
+        let key = crate::tui::draw_slash_command_frame(&mut app, &mut state, command, |app, state| {
+            terminal
+                .draw(|frame| crate::tui::render(frame, app, state, &theme))
+                .expect("draw charge frame");
+            Ok(())
+        })
+        .expect("prepare charge frame")
+        .expect("generated billing key");
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            screen.contains(&format!("Billing charge idempotency key: {key}"))
+                && server
+                    .received_requests()
+                    .await
+                    .is_some_and(|requests| requests.is_empty()),
+            "the first rendered frame should display the key before any billing request"
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/api/billing/charge"))
+            .and(wiremock::matchers::header("idempotency-key", key.as_str()))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "chargeId": "fixture-charge"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            app.handle_input_with_charge_key(command, Some(&key))
+                .await
+                .is_ok(),
+            "submit with the key already displayed"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_some_and(|requests| requests.len() == 1),
+            "exactly one request should reach the fixture"
+        );
+        assert!(
+            app.input_history.last().is_some_and(|line| line == command)
+                && !app.input_history.iter().any(|line| line.contains(&key)),
+            "input history should keep the original command without the generated key"
         );
     }
 

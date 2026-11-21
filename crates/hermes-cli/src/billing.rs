@@ -317,7 +317,7 @@ async fn read_charge_acknowledgement(
         .or(acknowledgement.charge_id.as_deref())
         .filter(|id| {
             // The displayed ID must round-trip as one CLI argument and one URL path segment.
-            !matches!(*id, "" | "." | "..")
+            !matches!(*id, "" | "." | ".." | "--")
                 && id.len() <= MAX_CHARGE_ID_BYTES
                 && id.bytes().all(is_plain_billing_reference_byte)
         })
@@ -716,7 +716,7 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     let charge_id = render_billing_reference(charge_id);
     let idempotency_key = render_billing_reference(&idempotency_key);
     Ok(format!(
-        "Billing charge submitted\n  charge_id: {charge_id}\n  idempotency_key: {idempotency_key}\nPoll with: hermes billing charge-status <charge-id>"
+        "Billing charge submitted\n  charge_id: {charge_id}\n  idempotency_key: {idempotency_key}\nPoll with: hermes billing charge-status {charge_id}"
     ))
 }
 
@@ -1571,6 +1571,7 @@ mod tests {
             (202, r#"["fixture-charge","fixture-charge"]"#, false),
             (202, r#"{"chargeId":"."}"#, false),
             (202, r#"{"chargeId":".."}"#, false),
+            (202, r#"{"chargeId":"--"}"#, false),
             (202, r#"{"chargeId":"before\u0000after"}"#, false),
             (202, r#"{"chargeId":"before\u001bafter"}"#, false),
             (202, r#"{"chargeId":"two parts"}"#, false),
@@ -1610,7 +1611,10 @@ mod tests {
             };
             if accepted {
                 assert!(
-                    result.is_ok_and(|output| output.contains("charge_id: fixture-charge")),
+                    result.is_ok_and(|output| {
+                        output.contains("charge_id: fixture-charge")
+                            && output.contains("hermes billing charge-status fixture-charge")
+                    }),
                     "the documented acknowledgement should retain its charge identifier"
                 );
             } else {
@@ -1730,6 +1734,77 @@ mod tests {
                 .await
                 .is_some_and(|requests| requests.len() == 1),
             "only the original charge request should reach the Portal"
+        );
+    }
+
+    #[tokio::test]
+    async fn charge_submission_disconnect_after_delivery_preserves_recovery_key() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listen");
+        let portal = format!("http://{}", listener.local_addr().expect("local address"));
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", &portal);
+        save_nous_auth_state(&sample_state("access".into(), portal)).expect("save state");
+
+        let receive = tokio::spawn(tokio::time::timeout(Duration::from_secs(5), async move {
+            let (stream, _) = listener.accept().await.expect("accept charge request");
+            let mut request = BufReader::new(stream);
+            let mut line = String::new();
+            request.read_line(&mut line).await.expect("request line");
+            assert_eq!(line, "POST /api/billing/charge HTTP/1.1\r\n");
+            let mut original_key = false;
+            loop {
+                line.clear();
+                assert!(request.read_line(&mut line).await.expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((_, value)) = line
+                    .split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                {
+                    original_key = value.trim() == "fixture-Recovery_09";
+                }
+            }
+            const EXPECTED_BODY: &[u8] = br#"{"amountUsd":50.0}"#;
+            let mut body = [0; EXPECTED_BODY.len()];
+            request.read_exact(&mut body).await.expect("charge body");
+            assert_eq!(&body, EXPECTED_BODY);
+            assert!(
+                original_key,
+                "the delivered request should use the original key"
+            );
+            // Drop the connection after receipt, before the server sends an acknowledgement.
+        }));
+
+        let result = handle_billing_args(&[
+            "charge".into(),
+            "50".into(),
+            "--confirm".into(),
+            "--idempotency-key=fixture-Recovery_09".into(),
+        ])
+        .await;
+        assert!(
+            receive.await.is_ok_and(|received| received.is_ok()),
+            "the loopback server should receive the complete charge request"
+        );
+        assert!(
+            result.is_err_and(|error| {
+                let message = error.to_string();
+                message.contains("could not be confirmed")
+                    && message.contains("Could not reach Nous Portal")
+                    && message.contains("Idempotency key: fixture-Recovery_09")
+                    && !message.contains("Billing charge submitted")
+            }),
+            "a disconnected submission should report an uncertain outcome with the original key"
         );
     }
 
