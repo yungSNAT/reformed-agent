@@ -121,7 +121,7 @@ fn specifier_client(settings: &AuxiliaryTaskConfig) -> Result<AuxiliaryClient, A
         },
     );
     let provider = GenericProvider::new(endpoint.as_str(), key, model)
-        .without_redirects()?
+        .with_direct_endpoint()?
         .with_completion_response_limit(MAX_RESPONSE_BYTES);
     Ok(AuxiliaryClient::builder()
         .config(auxiliary)

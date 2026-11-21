@@ -14,7 +14,7 @@ pub struct GenericProvider {
     client: Arc<Mutex<Client>>,
     /// Optional total request timeout applied to newly-built clients.
     request_timeout: Option<Duration>,
-    block_redirects: bool,
+    direct_endpoint: bool,
     completion_response_limit: Option<usize>,
     /// Last time we rebuilt the client transport.
     client_refreshed_at: Arc<Mutex<Instant>>,
@@ -42,7 +42,7 @@ impl GenericProvider {
             model: model.into(),
             client: Arc::new(Mutex::new(build_provider_http_client(request_timeout))),
             request_timeout,
-            block_redirects: false,
+            direct_endpoint: false,
             completion_response_limit: None,
             client_refreshed_at: Arc::new(Mutex::new(Instant::now())),
             extra_headers: Vec::new(),
@@ -79,9 +79,9 @@ impl GenericProvider {
         self
     }
 
-    /// Bind requests and transport retries to this endpoint without following redirects.
-    pub fn without_redirects(mut self) -> Result<Self, AgentError> {
-        self.block_redirects = true;
+    /// Connect directly to this endpoint, including after a transport rebuild.
+    pub fn with_direct_endpoint(mut self) -> Result<Self, AgentError> {
+        self.direct_endpoint = true;
         self.client = Arc::new(Mutex::new(self.build_client()?));
         Ok(self)
     }
@@ -257,13 +257,14 @@ impl GenericProvider {
     }
 
     fn build_client(&self) -> Result<Client, AgentError> {
-        if self.block_redirects {
+        if self.direct_endpoint {
             return provider_http_client_builder(self.request_timeout, STREAM_IDLE_TIMEOUT)
                 .redirect(reqwest::redirect::Policy::none())
+                .no_proxy()
                 .build()
                 .map_err(|_| {
                     AgentError::Config(
-                        "Could not build the no-redirect provider client".to_string(),
+                        "Could not build the direct provider client".to_string(),
                     )
                 });
         }
