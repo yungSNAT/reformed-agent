@@ -501,10 +501,14 @@ async fn run_charge_status_command(args: &[String]) -> Result<String, AgentError
         .get_charge_status(charge_id)
         .await
         .map_err(billing_error_to_agent_error)?;
-    Ok(format!(
+    Ok(render_charge_status(&payload))
+}
+
+fn render_charge_status(payload: &Value) -> String {
+    format!(
         "Billing charge status\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
-    ))
+        serde_json::to_string_pretty(payload).unwrap_or_else(|_| payload.to_string())
+    )
 }
 
 async fn run_auto_reload_command(args: &[String]) -> Result<String, AgentError> {
@@ -1072,6 +1076,30 @@ mod tests {
         ));
         let token = scoped_jwt(json!(["profile", BILLING_MANAGE_SCOPE]));
         assert!(nous_token_has_billing_scope(None, Some(&token)));
+    }
+
+    #[test]
+    fn charge_status_displays_only_documented_settlement_fields() {
+        let output = render_charge_status(&json!({
+            "status": "settled",
+            "amountUsd": "50.00",
+            "settledAt": "2026-11-21T00:00:00Z",
+            "processorDetail": "unrelated-provider-detail-fixture"
+        }));
+        let result: Value = serde_json::from_str(
+            output
+                .strip_prefix("Billing charge status\n")
+                .expect("status heading"),
+        )
+        .expect("charge status JSON");
+        assert_eq!(
+            result,
+            json!({
+                "status": "settled",
+                "amountUsd": "50.00",
+                "settledAt": "2026-11-21T00:00:00Z"
+            })
+        );
     }
 
     #[tokio::test]
