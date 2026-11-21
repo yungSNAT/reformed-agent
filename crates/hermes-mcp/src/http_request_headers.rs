@@ -26,6 +26,9 @@ pub(crate) struct ParameterHeader {
 
 impl ParameterHeader {
     pub(crate) fn from_schema(schema: &Value) -> Result<Vec<Self>, &'static str> {
+        if !schema.is_object() {
+            return Err("tool inputSchema must be a JSON Schema object");
+        }
         let mut headers = Vec::new();
         collect_annotations(schema, &mut Vec::new(), true, &mut headers)?;
         let unique: HashSet<_> = headers.iter().map(|header| &header.name).collect();
@@ -269,6 +272,8 @@ mod tests {
     #[test]
     fn annotated_tools_reject_unreachable_duplicate_or_invalid_header_names() {
         for schema in [
+            Value::Null,
+            json!(true),
             json!({"items":{"type":"string","x-mcp-header":"Array"}}),
             json!({"properties":{"a":{"type":"string","x-mcp-header":"Same"},"b":{"type":"boolean","x-mcp-header":"same"}}}),
             json!({"properties":{"a":{"type":"string","x-mcp-header":" two words "}}}),

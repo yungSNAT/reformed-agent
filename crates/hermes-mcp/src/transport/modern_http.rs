@@ -2,14 +2,14 @@ use super::{enforce_message_size, is_event_stream, sse_event_fields, SseResponse
 use crate::http_request_headers::{add_protocol_headers, protocol_owned_header, ParameterHeader};
 use crate::McpError;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
-use reqwest::{Client, StatusCode};
+use reqwest::{Client, StatusCode, Url};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 pub(super) struct ModernHttp {
     client: Client,
-    url: String,
+    url: Url,
     auth_token: Option<String>,
     configured_headers: Vec<(String, String)>,
     timeout: Duration,
@@ -18,19 +18,36 @@ pub(super) struct ModernHttp {
 }
 
 impl ModernHttp {
-    pub(super) fn new(transport: &super::HttpSseTransport) -> Self {
-        Self {
+    pub(super) fn new(transport: &super::HttpSseTransport) -> Result<Self, McpError> {
+        let url = Url::parse(&transport.url)
+            .map_err(|_| McpError::Config("Invalid modern MCP HTTP endpoint".into()))?;
+        let loopback = url.host_str().is_some_and(|host| {
+            host == "localhost"
+                || host
+                    .trim_matches(['[', ']'])
+                    .parse::<std::net::IpAddr>()
+                    .is_ok_and(|address| address.is_loopback())
+        });
+        if !(url.scheme() == "https" || (url.scheme() == "http" && loopback))
+            || !url.username().is_empty()
+            || url.password().is_some()
+        {
+            return Err(McpError::Config(
+                "Modern MCP requires HTTPS or loopback HTTP and separate authentication".into(),
+            ));
+        }
+        Ok(Self {
             client: Client::builder()
                 .redirect(reqwest::redirect::Policy::none())
                 .build()
                 .expect("HTTP client builds as Client::new() does"),
-            url: transport.url.clone(),
+            url,
             auth_token: transport.auth_token.clone(),
             configured_headers: transport.headers.clone(),
             timeout: transport.sse_read_timeout,
             max_message_bytes: transport.max_message_bytes,
             tool_headers: HashMap::new(),
-        }
+        })
     }
 
     pub(super) async fn exchange(
@@ -58,7 +75,7 @@ impl ModernHttp {
         enforce_message_size(body.len(), self.max_message_bytes)?;
         let mut response = self
             .client
-            .post(&self.url)
+            .post(self.url.clone())
             .headers(headers)
             .timeout(self.timeout)
             .body(body)

@@ -73,6 +73,7 @@ Set `modern_http: true` on a `url` entry to probe for MCP 2026-07-28 with
 handshake. Once discovery succeeds, Hermes sends each request as its own POST
 with the version, method and schema-defined parameter headers. You can refresh
 `tools/list` if the server changes its parameter headers before retrying a call.
+Use HTTPS for remote endpoints and HTTP only for a loopback fixture or server.
 This mode supports JSON and request-scoped event streams. Subscriptions and
 input-required continuations are pending.
 

@@ -1100,9 +1100,9 @@ impl HttpSseTransport {
         self
     }
 
-    pub(crate) fn with_modern_http(mut self, enabled: bool) -> Self {
-        self.modern_http = enabled.then(|| ModernHttp::new(&self));
-        self
+    pub(crate) fn with_modern_http(mut self, enabled: bool) -> Result<Self, McpError> {
+        self.modern_http = enabled.then(|| ModernHttp::new(&self)).transpose()?;
+        Ok(self)
     }
 
     /// Build the full URL for an MCP endpoint.
@@ -2103,7 +2103,7 @@ mod tests {
             assert!(!head.contains("mcp-session-id"));
             let head = answer_once(
                 &server,
-                json_reply(r#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","tools":[{"name":"valid","inputSchema":{"type":"object","properties":{"options":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}}},{"name":"invalid","inputSchema":{"type":"object","properties":{"value":{"type":"number","x-mcp-header":"Value"}}}}]}}"#),
+                json_reply(r#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","tools":[{"name":"valid","inputSchema":{"type":"object","properties":{"options":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}}},{"name":"invalid","inputSchema":{"type":"object","properties":{"value":{"type":"number","x-mcp-header":"Value"}}}},{"name":"null-schema","inputSchema":null}]}}"#),
             )
             .await;
             assert!(head.contains("mcp-method: tools/list\r\n"));
@@ -2162,6 +2162,27 @@ mod tests {
         let error = result.expect_err("incompatible modern version");
         assert!(matches!(error, McpError::Protocol { code: -32022, .. }));
         assert!(!error.to_string().contains("synthetic private diagnostic"));
+    }
+
+    #[test]
+    fn modern_http_accepts_only_https_or_loopback_without_url_credentials() {
+        for endpoint in [
+            "http://example.invalid/mcp",
+            "https://synthetic@example.invalid/mcp",
+        ] {
+            assert!(HttpSseTransport::new(endpoint, None)
+                .with_modern_http(true)
+                .is_err());
+        }
+        for endpoint in [
+            "http://127.0.0.1:5050/mcp",
+            "http://[::1]/mcp",
+            "https://example.invalid/mcp",
+        ] {
+            assert!(HttpSseTransport::new(endpoint, None)
+                .with_modern_http(true)
+                .is_ok());
+        }
     }
 
     #[tokio::test]

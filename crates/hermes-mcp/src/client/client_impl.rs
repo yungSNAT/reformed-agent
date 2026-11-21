@@ -879,7 +879,7 @@ impl McpClient {
                             .iter()
                             .map(|(name, value)| (name.clone(), value.clone())),
                     )
-                    .with_modern_http(self.config.modern_http == Some(true)),
+                    .with_modern_http(self.config.modern_http == Some(true))?,
             ))
         } else {
             Err(McpError::Config(
