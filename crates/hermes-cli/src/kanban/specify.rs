@@ -576,7 +576,6 @@ mod tests {
             add_triage(&mut store, "imports");
         }
         lock.save(&store).unwrap();
-        drop(lock);
         assert!(snapshot_triage(&path, &Selection::All(None)).is_err());
         assert_eq!(
             snapshot_triage(&path, &Selection::Task("K-0001".into()))
