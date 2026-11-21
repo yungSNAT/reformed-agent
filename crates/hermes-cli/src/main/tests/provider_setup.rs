@@ -894,6 +894,25 @@
     }
 
     #[test]
+    fn google_gemini_pool_add_message_omits_the_account_label() {
+        let entry = AuthPoolEntry {
+            id: "b460ea".to_string(),
+            label: "fixture-account@example.invalid".to_string(),
+            auth_type: "oauth".to_string(),
+            source: "fixture".to_string(),
+            access_token: String::new(),
+            last_status: None,
+            last_status_at: None,
+            last_error_code: None,
+        };
+
+        assert_eq!(
+            google_gemini_pool_add_message(&entry),
+            "Added Google Gemini OAuth credential (id=b460ea)."
+        );
+    }
+
+    #[test]
     fn oauth_provider_set_matches_snapshot_registry() {
         let actual: std::collections::BTreeSet<&str> =
             hermes_cli::providers::OAUTH_CAPABLE_PROVIDERS
