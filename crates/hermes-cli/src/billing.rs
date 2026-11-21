@@ -206,6 +206,18 @@ impl BillingError {
             payload: None,
         }
     }
+
+    fn invalid_response(status: StatusCode) -> Self {
+        Self {
+            kind: BillingErrorKind::Http,
+            status: Some(status.as_u16()),
+            error: Some("invalid_response".into()),
+            message: "Nous Portal returned an unreadable billing response.".into(),
+            portal_url: None,
+            retry_after: None,
+            payload: None,
+        }
+    }
 }
 
 impl fmt::Display for BillingError {
@@ -343,6 +355,7 @@ impl NousBillingClient {
         body: Option<Value>,
         extra_header: Option<(&str, String)>,
     ) -> Result<Value, BillingError> {
+        let updating = method == Method::PATCH;
         let url = format!("{}{}", self.portal_base_url.trim_end_matches('/'), path);
         let mut req = self
             .client
@@ -371,11 +384,22 @@ impl NousBillingClient {
             .get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
-        let text = resp.text().await.unwrap_or_default();
+        let require_valid_update = updating && status.is_success();
+        let text = match resp.text().await {
+            Ok(text) => text,
+            Err(_) if require_valid_update => return Err(BillingError::invalid_response(status)),
+            Err(_) => String::new(),
+        };
         let payload = if text.trim().is_empty() {
             json!({})
         } else {
-            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}))
+            match serde_json::from_str::<Value>(&text) {
+                Ok(payload) => payload,
+                Err(_) if require_valid_update => {
+                    return Err(BillingError::invalid_response(status))
+                }
+                Err(_) => json!({}),
+            }
         };
         if !status.is_success() {
             return Err(BillingError::from_response(
@@ -564,14 +588,21 @@ async fn run_auto_reload_command(args: &[String]) -> Result<String, AgentError> 
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let payload = client
+    client
         .patch_auto_reload(true, threshold, top_up)
         .await
-        .map_err(billing_error_to_agent_error)?;
-    Ok(format!(
-        "Billing auto-reload updated\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
-    ))
+        .map_err(|error| {
+            if error.kind == BillingErrorKind::Network
+                || error.status.is_some_and(|status| (200..300).contains(&status))
+            {
+                AgentError::ToolExecution(format!(
+                    "Auto-reload update could not be confirmed. {error} Check the current setting before repeating the request."
+                ))
+            } else {
+                billing_error_to_agent_error(error)
+            }
+        })?;
+    Ok("Billing auto-reload updated\n{\"ok\":true}".to_string())
 }
 
 fn billing_error_to_agent_error(err: BillingError) -> AgentError {
@@ -1288,6 +1319,19 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 35.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "8")
+                    .set_body_json(json!({"error": "rate_limited"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
 
         let cli = handle_billing_args(&[
             "auto-reload".into(),
@@ -1298,6 +1342,8 @@ mod tests {
         .await;
         let empty = handle_billing_slash_args(&["auto-reload", "25", "50", "--confirm"]).await;
         let malformed = handle_billing_slash_args(&["auto-reload", "30", "50", "--confirm"]).await;
+        let rate_limited =
+            handle_billing_slash_args(&["auto-reload", "35", "50", "--confirm"]).await;
 
         for output in [cli, empty] {
             let output = output.expect("confirmed auto-reload update");
@@ -1313,6 +1359,8 @@ mod tests {
         assert!(error.contains("Auto-reload update could not be confirmed."));
         assert!(error.contains("Check the current setting before repeating the request."));
         assert!(!error.contains("provider-only-invalid-fixture"));
+        let error = rate_limited.unwrap_err().to_string();
+        assert!(error.contains("Retry after 8s."));
     }
 
     #[tokio::test]
