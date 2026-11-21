@@ -10,7 +10,8 @@
 <div align="center">
 
 [![CI](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/ci.yml?query=branch%3Amain) [![Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/audit.yml?query=branch%3Amain) [![SonarCloud](https://sonarcloud.io/api/project_badges/measure?project=yungSNAT_reformed-agent&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=yungSNAT_reformed-agent)<br>
-[![rust: 1.99.1](.github/assets/badges/rust.svg)](rust-toolchain.toml) [![licence: MIT (fork contributions)](.github/assets/badges/licence.svg)](#licence) [![fork of: hermes-agent-ultra](.github/assets/badges/fork-of.svg)](https://github.com/sheawinkler/hermes-agent-ultra)<br>
+[![rust: 1.99.1](.github/assets/badges/rust.svg)](rust-toolchain.toml) [![licence: MIT (fork contributions)](.github/assets/badges/licence.svg)](#licence) [![fork of: hermes-agent-ultra](.github/assets/badges/fork-of.svg)](https://github.com/sheawinkler/hermes-agent-ultra)
+
 [![CodeQL](https://github.com/yungSNAT/reformed-agent/actions/workflows/github-code-scanning/codeql/badge.svg?branch=main)](https://github.com/yungSNAT/reformed-agent/actions/workflows/github-code-scanning/codeql) [![OpenSSF Scorecard](https://img.shields.io/ossf-scorecard/github.com/yungSNAT/reformed-agent?label=Scorecard&labelColor=000000&style=flat)](https://scorecard.dev/viewer/?uri=github.com/yungSNAT/reformed-agent)
 
 [Install](#install) · [Use](#use) · [Against Hermes Agent](#against-hermes-agent) · [Against OpenClaw](#against-openclaw) · [Status](#status) · [Footprint](#footprint) · [What Reformed changes](#what-reformed-changes) · [Documentation](#documentation) · [Development](#development) · [Inherited from Ultra](#inherited-from-hermes-agent-ultra) · [Credits](#credits) · [Licence](#licence)
