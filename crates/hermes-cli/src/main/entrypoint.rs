@@ -512,7 +512,7 @@ async fn run_main() {
             json,
         }) => run_incident_pack(cli, snapshot, output, json),
         CliCommand::Status => run_status(cli),
-        CliCommand::Kanban(KanbanArgs { args }) => run_kanban(args),
+        CliCommand::Kanban(KanbanArgs { args }) => run_kanban(cli, args).await,
         CliCommand::Dashboard(DashboardArgs {
             host,
             port,

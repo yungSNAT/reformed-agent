@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-11-21T13:18:51.951188+00:00",
+  "generated_at_utc": "2026-11-21T14:15:23.901294+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "22d1b1c3d06fe81a9b2c98fa455e40e4d4064a27",
+    "local_sha": "e1a0fd7690c0714963dea5eb1de634e6ef096646",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
@@ -14,12 +14,12 @@
     "upstream_patch_represented": 0,
     "local_patch_unique": 1428,
     "files_only_upstream": 24117,
-    "files_only_local": 2067,
+    "files_only_local": 2073,
     "files_shared_identical": 564,
     "files_shared_different": 1509,
-    "tree_files_changed": 27422,
+    "tree_files_changed": 27428,
     "tree_insertions": 4528874,
-    "tree_deletions": 955243
+    "tree_deletions": 956066
   },
   "top_upstream_only": [
     {
@@ -348,7 +348,7 @@
   "top_local_only": [
     {
       "path": "crates/hermes-cli",
-      "count": 199
+      "count": 205
     },
     {
       "path": "skills/creative",
@@ -672,7 +672,7 @@
   "top_unique_to_local": [
     {
       "path": "crates/hermes-cli",
-      "count": 199
+      "count": 205
     },
     {
       "path": "skills/creative",
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 413,
       "shared_different": 0,
-      "local_only": 457,
+      "local_only": 463,
       "risk": "critical",
       "effort": "XL"
     },
