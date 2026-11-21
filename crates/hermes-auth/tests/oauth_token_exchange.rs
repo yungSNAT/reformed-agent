@@ -7,6 +7,36 @@ use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
 #[tokio::test]
+async fn token_exchanges_report_a_redirect_without_following_it() {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/oauth/token"))
+        .respond_with(ResponseTemplate::new(302).insert_header("Location", "/renamed"))
+        .expect(2)
+        .mount(&server)
+        .await;
+    let endpoints = OAuth2Endpoints {
+        authorize_url: "https://id.example/authorize".into(),
+        token_url: format!("{}/oauth/token", server.uri()),
+        client_id: "public-client".into(),
+        redirect_uri: "http://127.0.0.1:9999/cb".into(),
+        scopes: vec![],
+        client_secret: None,
+        client_auth_method: OAuth2ClientAuthMethod::default(),
+    };
+
+    let code = exchange_authorization_code("acme", &endpoints, "fixture-code", "verifier").await;
+    let refresh = exchange_refresh_token("acme", &endpoints, "fixture-refresh").await;
+    assert!(
+        matches!(code, Err(AgentError::AuthFailed(message)) if message == "token exchange failed (HTTP 302)")
+    );
+    assert!(
+        matches!(refresh, Err(AgentError::AuthFailed(message)) if message == "token refresh failed (HTTP 302)")
+    );
+    assert_eq!(server.received_requests().await.unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn exchange_authorization_code_parses_token_json() {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
