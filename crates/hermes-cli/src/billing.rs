@@ -1248,6 +1248,74 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn auto_reload_acknowledges_a_confirmed_update_without_provider_details() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+
+        for (threshold, response) in [
+            (
+                20.0,
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"processorDetail": "provider-only-update-fixture"})),
+            ),
+            (25.0, ResponseTemplate::new(204)),
+        ] {
+            Mock::given(method("PATCH"))
+                .and(path("/api/billing/auto-top-up"))
+                .and(body_json(json!({
+                    "enabled": true, "threshold": threshold, "topUpAmount": 50.0,
+                })))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 30.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("provider-only-invalid-fixture"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let cli = handle_billing_args(&[
+            "auto-reload".into(),
+            "20".into(),
+            "50".into(),
+            "--confirm".into(),
+        ])
+        .await;
+        let empty = handle_billing_slash_args(&["auto-reload", "25", "50", "--confirm"]).await;
+        let malformed = handle_billing_slash_args(&["auto-reload", "30", "50", "--confirm"]).await;
+
+        for output in [cli, empty] {
+            let output = output.expect("confirmed auto-reload update");
+            let fields: Value = serde_json::from_str(
+                output
+                    .strip_prefix("Billing auto-reload updated\n")
+                    .unwrap(),
+            )
+            .expect("confirmation JSON");
+            assert_eq!(fields, json!({"ok": true}));
+        }
+        let error = malformed.unwrap_err().to_string();
+        assert!(error.contains("Auto-reload update could not be confirmed."));
+        assert!(error.contains("Check the current setting before repeating the request."));
+        assert!(!error.contains("provider-only-invalid-fixture"));
+    }
+
+    #[tokio::test]
     async fn client_maps_state_and_charge_contracts() {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
