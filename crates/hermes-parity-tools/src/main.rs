@@ -7,6 +7,7 @@ mod adapter_matrix;
 mod coverage_audit;
 mod coverage_tests;
 mod decimal_limit;
+mod deep_problem_solving;
 mod divergence;
 mod fork_carry;
 mod git;
@@ -105,6 +106,8 @@ enum Command {
     SecurityReleaseGate(security_release_gate::SecurityReleaseGateArgs),
     #[command(name = "generate-gpar-01-04-proof")]
     GparClosure(gpar_closure::ClosureArgs),
+    #[command(name = "generate-deep-problem-solving-diff", args_override_self = true)]
+    DeepProblemSolving(deep_problem_solving::DeepProblemSolvingArgs),
 }
 
 fn main() {
@@ -126,6 +129,7 @@ fn main() {
         Command::ReleaseSecretScan(args) => release_secret_scan::run(args),
         Command::SecurityReleaseGate(args) => security_release_gate::run(args),
         Command::GparClosure(args) => gpar_closure::run(args),
+        Command::DeepProblemSolving(args) => deep_problem_solving::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
