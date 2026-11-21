@@ -1,4 +1,4 @@
-//! Report the cases and evidence behind the deep problem-solving gate.
+//! Report the cases and evidence behind the case-based parity gates.
 
 mod markdown;
 
@@ -38,6 +38,63 @@ pub struct DeepProblemSolvingArgs {
     min_total_cases: i64,
     /// Return failure for an unmet gate without writing the reports.
     #[arg(long)]
+    check: bool,
+}
+
+#[derive(Args, Debug)]
+pub struct BehavioralSimilarityArgs {
+    #[arg(long, default_value = ".")]
+    repo_root: String,
+    #[arg(long, default_value = "docs/parity/behavioral-similarity-cases.json")]
+    cases: String,
+    #[arg(long, default_value = "docs/parity/behavioral-similarity-diff.json")]
+    out_json: String,
+    #[arg(long, default_value = "docs/parity/behavioral-similarity-diff.md")]
+    out_md: String,
+    #[arg(long, default_value_t = 5, allow_negative_numbers = true)]
+    min_superiority_cases: i64,
+    /// Return failure for an unmet gate without writing the reports.
+    #[arg(long)]
+    check: bool,
+}
+
+struct ProofKind {
+    description: &'static str,
+    report_title: &'static str,
+    ratio_title: &'static str,
+    ratio_key: &'static str,
+    gate_ratio_key: &'static str,
+    ratio_failure_key: &'static str,
+    ratio_failure_message: &'static str,
+}
+
+const DEEP: ProofKind = ProofKind {
+    description: "deep problem-solving",
+    report_title: "Deep Problem-Solving Diff",
+    ratio_title: "Deep problem-solving ratio",
+    ratio_key: "deep_problem_solving_ratio",
+    gate_ratio_key: "min_deep_problem_solving_ratio",
+    ratio_failure_key: "deep_problem_solving_ratio",
+    ratio_failure_message: "deep problem-solving ratio is below 1.0",
+};
+
+const BEHAVIORAL: ProofKind = ProofKind {
+    description: "behavioral",
+    report_title: "Behavioral Similarity Diff",
+    ratio_title: "Similarity ratio",
+    ratio_key: "behavioral_similarity_ratio",
+    gate_ratio_key: "min_similarity_ratio",
+    ratio_failure_key: "similarity_ratio",
+    ratio_failure_message: "behavioral similarity ratio is below 1.0",
+};
+
+struct ReportRequest {
+    repo_root: String,
+    cases: String,
+    out_json: String,
+    out_md: String,
+    min_superiority_cases: i64,
+    min_total_cases: Option<i64>,
     check: bool,
 }
 
@@ -237,7 +294,12 @@ struct Evidence {
     failures: Vec<Py>,
 }
 
-fn evidence(cases: &[Py], min_superior: i128, min_total: i128) -> Result<Evidence, String> {
+fn evidence(
+    cases: &[Py],
+    kind: &ProofKind,
+    min_superior: i128,
+    min_total: Option<i128>,
+) -> Result<Evidence, String> {
     let mut classifications = BTreeMap::new();
     let mut domains = BTreeMap::new();
     let mut equal_or_better = 0_usize;
@@ -270,18 +332,24 @@ fn evidence(cases: &[Py], min_superior: i128, min_total: i128) -> Result<Evidenc
     };
 
     let mut failures = Vec::new();
-    if (total as i128) < min_total {
-        failures.push(failure(
+    match min_total {
+        Some(limit) if (total as i128) < limit => failures.push(failure(
             "total_cases",
             "deep problem-solving case count is below threshold",
             total.into(),
-            Py::Int(min_total),
-        ));
+            Py::Int(limit),
+        )),
+        None if total == 0 => failures.push(Py::dict([
+            ("kind", "empty_cases".into()),
+            ("message", "behavioral case manifest is empty".into()),
+        ])),
+        _ => (),
     }
+    let description = kind.description;
     if ratio < 1.0 {
         failures.push(failure(
-            "deep_problem_solving_ratio",
-            "deep problem-solving ratio is below 1.0",
+            kind.ratio_failure_key,
+            kind.ratio_failure_message,
             ratio.into(),
             1.0.into(),
         ));
@@ -289,44 +357,44 @@ fn evidence(cases: &[Py], min_superior: i128, min_total: i128) -> Result<Evidenc
     if (superior as i128) < min_superior {
         failures.push(failure(
             "superiority_cases",
-            "strictly superior deep problem-solving cases are below threshold",
+            &format!("strictly superior {description} cases are below threshold"),
             superior.into(),
             Py::Int(min_superior),
         ));
     }
-    for (kind, message, actual) in [
+    for (failure_key, message, actual) in [
         (
             "regressions",
-            "deep problem-solving regressions are present",
+            format!("{description} regressions are present"),
             count("regression"),
         ),
         (
             "gaps",
-            "deep problem-solving gaps are present",
+            format!("{description} gaps are present"),
             count("gap"),
         ),
         (
             "unverified",
-            "unverified deep problem-solving cases are present",
+            format!("unverified {description} cases are present"),
             count("unverified"),
         ),
         (
             "missing_rust_test_refs",
-            "deep problem-solving cases reference missing Rust tests",
+            format!("{description} cases reference missing Rust tests"),
             missing_refs,
         ),
         (
             "missing_source_artifacts",
-            "deep problem-solving cases reference missing source artifacts",
+            format!("{description} cases reference missing source artifacts"),
             missing_artifacts,
         ),
     ] {
         if actual > 0 {
-            failures.push(failure(kind, message, actual.into(), Py::Int(0)));
+            failures.push(failure(failure_key, &message, actual.into(), Py::Int(0)));
         }
     }
 
-    let summary = Py::dict([
+    let mut summary = Py::dict([
         ("total_cases", total.into()),
         ("equal_or_better_cases", equal_or_better.into()),
         ("superior_cases", superior.into()),
@@ -340,23 +408,25 @@ fn evidence(cases: &[Py], min_superior: i128, min_total: i128) -> Result<Evidenc
         ("unverified_cases", count("unverified").into()),
         ("missing_rust_test_refs", missing_refs.into()),
         ("missing_source_artifacts", missing_artifacts.into()),
-        ("deep_problem_solving_ratio", ratio.into()),
+        (kind.ratio_key, ratio.into()),
         ("classification_counts", counts_json(classifications)),
         ("domain_counts", counts_json(domains)),
         ("min_superiority_cases", Py::Int(min_superior)),
-        ("min_total_cases", Py::Int(min_total)),
     ]);
-    let gate = Py::dict([
+    let mut gate = Py::dict([
         ("pass", failures.is_empty().into()),
         ("failures", failures.len().into()),
-        ("min_deep_problem_solving_ratio", 1.0.into()),
+        (kind.gate_ratio_key, 1.0.into()),
         ("min_superiority_cases", Py::Int(min_superior)),
-        ("min_total_cases", Py::Int(min_total)),
         ("max_regressions", Py::Int(0)),
         ("max_gaps", Py::Int(0)),
         ("max_unverified_cases", Py::Int(0)),
         ("max_missing_rust_test_refs", Py::Int(0)),
     ]);
+    if let Some(limit) = min_total {
+        summary.set("min_total_cases", Py::Int(limit));
+        gate.set("min_total_cases", Py::Int(limit));
+    }
     Ok(Evidence {
         summary,
         gate,
@@ -365,13 +435,43 @@ fn evidence(cases: &[Py], min_superior: i128, min_total: i128) -> Result<Evidenc
 }
 
 pub fn run(args: DeepProblemSolvingArgs) -> Result<i32, String> {
+    report(
+        &DEEP,
+        ReportRequest {
+            repo_root: args.repo_root,
+            cases: args.cases,
+            out_json: args.out_json,
+            out_md: args.out_md,
+            min_superiority_cases: args.min_superiority_cases,
+            min_total_cases: Some(args.min_total_cases),
+            check: args.check,
+        },
+    )
+}
+
+pub fn run_behavioral(args: BehavioralSimilarityArgs) -> Result<i32, String> {
+    report(
+        &BEHAVIORAL,
+        ReportRequest {
+            repo_root: args.repo_root,
+            cases: args.cases,
+            out_json: args.out_json,
+            out_md: args.out_md,
+            min_superiority_cases: args.min_superiority_cases,
+            min_total_cases: None,
+            check: args.check,
+        },
+    )
+}
+
+fn report(kind: &ProofKind, args: ReportRequest) -> Result<i32, String> {
     let root = resolve_argument(Path::new(&args.repo_root))?;
     let path = resolve_argument(&py::join(&root, &args.cases))?;
     let source =
         fs::read_to_string(&path).map_err(|error| format!("{}: {error}", path.display()))?;
     let manifest = py::loads(&source)?;
     if !manifest.is_dict() {
-        return Err("deep problem-solving manifest must be an object".to_string());
+        return Err(format!("{} manifest must be an object", kind.description));
     }
     let mut tests = TestsByFile::new();
     for directory in ["crates", "tests"] {
@@ -385,8 +485,9 @@ pub fn run(args: DeepProblemSolvingArgs) -> Result<i32, String> {
         .collect();
     let evidence = evidence(
         &cases,
+        kind,
         args.min_superiority_cases.into(),
-        args.min_total_cases.into(),
+        args.min_total_cases.map(i128::from),
     )?;
     let json_path = resolve_argument(&py::join(&root, &args.out_json))?;
     let markdown_path = resolve_argument(&py::join(&root, &args.out_md))?;
@@ -430,7 +531,7 @@ pub fn run(args: DeepProblemSolvingArgs) -> Result<i32, String> {
     }) {
         return Err(format!("case {field} is missing"));
     }
-    let markdown = markdown::render(&generated, &evidence, &cases);
+    let markdown = markdown::render(kind, &generated, &evidence, &cases);
     write_report(&markdown_path, markdown)?;
     println!("Wrote {}", py::path_str(&json_path));
     println!("Wrote {}", py::path_str(&markdown_path));

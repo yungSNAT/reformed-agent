@@ -2,9 +2,9 @@ use std::fmt::Write;
 
 use crate::py::{self, Py};
 
-use super::{as_list, field_text, Evidence};
+use super::{as_list, field_text, Evidence, ProofKind};
 
-const METRICS: [&str; 11] = [
+const METRICS: [&str; 10] = [
     "total_cases",
     "equal_or_better_cases",
     "superior_cases",
@@ -15,19 +15,25 @@ const METRICS: [&str; 11] = [
     "unverified_cases",
     "missing_rust_test_refs",
     "missing_source_artifacts",
-    "deep_problem_solving_ratio",
 ];
 
-pub(super) fn render(generated: &str, evidence: &Evidence, cases: &[Py]) -> String {
+pub(super) fn render(
+    kind: &ProofKind,
+    generated: &str,
+    evidence: &Evidence,
+    cases: &[Py],
+) -> String {
     let summary = &evidence.summary;
     let gate = if evidence.failures.is_empty() {
         "PASS"
     } else {
         "FAIL"
     };
-    let mut output = format!("# Deep Problem-Solving Diff\n\nGenerated: `{generated}`\n\n## Gate\n\n- Gate: **{gate}**\n");
+    let title = kind.report_title;
+    let mut output =
+        format!("# {title}\n\nGenerated: `{generated}`\n\n## Gate\n\n- Gate: **{gate}**\n");
     for (title, key) in [
-        ("Deep problem-solving ratio", "deep_problem_solving_ratio"),
+        (kind.ratio_title, kind.ratio_key),
         ("Superior cases", "superior_cases"),
         ("Regressions", "regressions"),
         ("Gaps", "gaps"),
@@ -37,7 +43,7 @@ pub(super) fn render(generated: &str, evidence: &Evidence, cases: &[Py]) -> Stri
         writeln!(output, "- {title}: `{}`", field_text(summary, key)).expect("string write");
     }
     output.push_str("\n## Summary\n\n| Metric | Value |\n| --- | ---: |\n");
-    for key in METRICS {
+    for key in METRICS.into_iter().chain([kind.ratio_key]) {
         writeln!(output, "| `{key}` | {} |", field_text(summary, key)).expect("string write");
     }
 
