@@ -2,6 +2,7 @@ use base64::Engine;
 use hermes_auth::{
     exchange_authorization_code, exchange_refresh_token, OAuth2ClientAuthMethod, OAuth2Endpoints,
 };
+use hermes_core::AgentError;
 use wiremock::matchers::{body_string_contains, header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -183,5 +184,70 @@ async fn token_exchanges_refuse_an_expiry_past_year_9999() {
 
         assert!(code.is_err(), "{expires_in}: {code:?}");
         assert!(refresh.is_err(), "{expires_in}: {refresh:?}");
+    }
+}
+
+#[tokio::test]
+async fn token_exchange_errors_keep_only_the_status_and_standard_code() {
+    let cases = [
+        (
+            400,
+            r#"{"error":"invalid_grant","error_description":"Croft Manor fixture response"}"#
+                .to_string(),
+            Some("invalid_grant"),
+        ),
+        (
+            401,
+            r#"{"error":"invalid_client","error_uri":"https://id.example/private-fixture"}"#
+                .to_string(),
+            Some("invalid_client"),
+        ),
+        (
+            400,
+            r#"{"error":"provider-specific fixture value"}"#.to_string(),
+            None,
+        ),
+        (502, "Upstream fixture response".to_string(), None),
+        (
+            400,
+            format!(
+                r#"{{"error":"invalid_grant","error_description":"{}"}}"#,
+                "a".repeat(16_384)
+            ),
+            None,
+        ),
+    ];
+
+    for (status, body, code) in cases {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/oauth/token"))
+            .respond_with(ResponseTemplate::new(status).set_body_string(body))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let endpoints = OAuth2Endpoints {
+            authorize_url: "https://id.example/authorize".to_string(),
+            token_url: format!("{}/oauth/token", server.uri()),
+            client_id: "public-client".to_string(),
+            redirect_uri: "http://127.0.0.1:9999/cb".to_string(),
+            scopes: vec![],
+            client_secret: None,
+            client_auth_method: OAuth2ClientAuthMethod::default(),
+        };
+
+        let exchange = exchange_authorization_code("acme", &endpoints, "code", "verifier").await;
+        let refresh = exchange_refresh_token("acme", &endpoints, "old-refresh").await;
+        for (flow, result) in [("token exchange", exchange), ("token refresh", refresh)] {
+            let Err(AgentError::AuthFailed(message)) = result else {
+                panic!("{flow} should report authentication failure with HTTP {status}");
+            };
+            let mut expected = format!("{flow} failed (HTTP {status})");
+            if let Some(code) = code {
+                expected.push_str(": ");
+                expected.push_str(code);
+            }
+            assert_eq!(message, expected);
+        }
     }
 }

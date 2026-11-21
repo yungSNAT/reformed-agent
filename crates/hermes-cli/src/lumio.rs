@@ -121,6 +121,7 @@ pub struct LoginResult {
 /// 5. Fetches user info
 pub async fn login(open_browser: bool) -> LoginResult {
     let state = format!("{:032x}", rand_u128());
+    let base_url = lumio_base_url();
 
     // Bind to a random port
     let listener = match TcpListener::bind("127.0.0.1:0") {
@@ -138,8 +139,7 @@ pub async fn login(open_browser: bool) -> LoginResult {
     let redirect_uri = format!("http://localhost:{port}/callback");
 
     let authorize_url = format!(
-        "{}/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=read&state={}",
-        lumio_base_url(),
+        "{base_url}/api/oauth2/authorize?client_id={}&redirect_uri={}&response_type=code&scope=read&state={}",
         lumio_client_id(),
         urlencoding::encode(&redirect_uri),
         state,
@@ -229,19 +229,22 @@ pub async fn login(open_browser: bool) -> LoginResult {
                     }
 
                     // Check for error
-                    if let Some(err) = params.get("error") {
-                        let desc = params
-                            .get("error_description")
-                            .cloned()
-                            .unwrap_or_else(|| err.clone());
-                        let html = error_page(&desc);
+                    if let Some(error) = params.get("error") {
+                        let message = match error.as_str() {
+                            "access_denied" => "Authorization was denied",
+                            "server_error" | "temporarily_unavailable" => {
+                                "The authorization service is unavailable, please retry"
+                            }
+                            _ => "Authorization failed, please retry",
+                        };
+                        let html = error_page(message);
                         let _ = write_http_response(&mut stream, 200, &html);
                         if let Some(sender) = tx.lock().unwrap().take() {
                             let _ = sender.send(LoginResult {
                                 success: false,
                                 token: None,
                                 username: None,
-                                error: Some(desc),
+                                error: Some(message.into()),
                             });
                         }
                         return;
@@ -267,7 +270,7 @@ pub async fn login(open_browser: bool) -> LoginResult {
 
                     // Exchange code for token (blocking HTTP call)
                     let redirect = format!("http://localhost:{port}/callback");
-                    match exchange_code_blocking(&code, &redirect) {
+                    match exchange_code_blocking(&base_url, &code, &redirect) {
                         Ok((token, username)) => {
                             let html = success_page(&username);
                             let _ = write_http_response(&mut stream, 200, &html);
@@ -346,14 +349,7 @@ pub async fn setup(model: Option<&str>, open_browser: bool) -> Result<bool, Agen
     let token = result.token.unwrap_or_default();
     let username = result.username.unwrap_or_default();
 
-    println!(
-        "\n✅ Login successful! User: {}",
-        if username.is_empty() {
-            "(unknown)"
-        } else {
-            &username
-        }
-    );
+    println!("\n✅ Login successful!");
 
     // Save token
     save_token(&token, &username)?;
@@ -434,7 +430,11 @@ pub fn topup_hint() -> String {
 use std::io::Read;
 
 /// Exchange authorization code for access token (blocking).
-fn exchange_code_blocking(code: &str, redirect_uri: &str) -> Result<(String, String), String> {
+fn exchange_code_blocking(
+    base_url: &str,
+    code: &str,
+    redirect_uri: &str,
+) -> Result<(String, String), String> {
     let client = reqwest::blocking::Client::new();
 
     let body = serde_json::json!({
@@ -445,20 +445,18 @@ fn exchange_code_blocking(code: &str, redirect_uri: &str) -> Result<(String, Str
     });
 
     let resp = client
-        .post(format!("{}/api/oauth2/token", lumio_base_url()))
+        .post(format!("{base_url}/api/oauth2/token"))
         .header("Content-Type", "application/json")
         .json(&body)
         .timeout(std::time::Duration::from_secs(15))
         .send()
-        .map_err(|e| format!("HTTP error: {e}"))?;
+        .map_err(|_| "Could not reach the token endpoint")?;
 
     if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().unwrap_or_default();
-        return Err(format!("HTTP {status}: {body}"));
+        return Err(format!("HTTP {}", resp.status()));
     }
 
-    let data: serde_json::Value = resp.json().map_err(|e| format!("JSON parse: {e}"))?;
+    let data: serde_json::Value = resp.json().map_err(|_| "Invalid token endpoint response")?;
     let token = data
         .get("access_token")
         .and_then(|v| v.as_str())
@@ -466,16 +464,16 @@ fn exchange_code_blocking(code: &str, redirect_uri: &str) -> Result<(String, Str
         .to_string();
 
     // Fetch user info (optional, don't fail on error)
-    let username = fetch_userinfo_blocking(&token).unwrap_or_default();
+    let username = fetch_userinfo_blocking(base_url, &token).unwrap_or_default();
 
     Ok((token, username))
 }
 
 /// Fetch user info from Lumio (blocking).
-fn fetch_userinfo_blocking(token: &str) -> Result<String, String> {
+fn fetch_userinfo_blocking(base_url: &str, token: &str) -> Result<String, String> {
     let client = reqwest::blocking::Client::new();
     let resp = client
-        .get(format!("{}/api/oauth2/userinfo", lumio_base_url()))
+        .get(format!("{base_url}/api/oauth2/userinfo"))
         .header("Authorization", format!("Bearer {token}"))
         .timeout(std::time::Duration::from_secs(10))
         .send()
@@ -561,11 +559,19 @@ fn rand_u128() -> u128 {
     (a << 64) | b
 }
 
+fn escape_html_text(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+}
+
 /// HTML success page shown after authorization.
 fn success_page(username: &str) -> String {
     let user_line = if username.is_empty() {
         String::new()
     } else {
+        let username = escape_html_text(username);
         format!(r#"<p style="color:#6c63ff;margin-top:12px">User: {username}</p>"#)
     };
     format!(
@@ -580,6 +586,7 @@ justify-content:center;min-height:100vh;background:#0f0c29;color:#fff}}
 
 /// HTML error page shown on authorization failure.
 fn error_page(message: &str) -> String {
+    let message = escape_html_text(message);
     format!(
         r#"<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Authorization Failed</title>
 <style>body{{font-family:-apple-system,sans-serif;display:flex;align-items:center;
@@ -619,8 +626,8 @@ mod tests {
 
     #[test]
     fn test_success_page_with_username() {
-        let html = success_page("testuser");
-        assert!(html.contains("testuser"));
+        let html = success_page("Arts & Crafts <team>");
+        assert!(html.contains("Arts &amp; Crafts &lt;team&gt;"));
         assert!(html.contains("Authorization Successful"));
     }
 
@@ -632,9 +639,31 @@ mod tests {
 
     #[test]
     fn test_error_page() {
-        let html = error_page("Something went wrong");
-        assert!(html.contains("Something went wrong"));
+        let html = error_page("Connection <paused> & retried");
+        assert!(html.contains("Connection &lt;paused&gt; &amp; retried"));
         assert!(html.contains("Authorization Failed"));
+    }
+
+    #[tokio::test]
+    async fn test_token_exchange_error_reports_status_only() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/api/oauth2/token"))
+            .respond_with(ResponseTemplate::new(400).set_body_string("Synthetic provider detail"))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let base_url = server.uri();
+        let result = tokio::task::spawn_blocking(move || {
+            exchange_code_blocking(&base_url, "fixture-code", "http://localhost/callback")
+        })
+        .await
+        .unwrap();
+        assert_eq!(result.unwrap_err(), "HTTP 400 Bad Request");
     }
 
     #[test]
