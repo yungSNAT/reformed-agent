@@ -1429,6 +1429,28 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_protects_the_configured_auth_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("profile");
+        let store = tmp.path().join("provider-state.json");
+        let configured = PathBuf::from(format!("  {}  ", store.display()));
+
+        with_env(
+            &[
+                ("HERMES_HOME", Some(&home)),
+                ("HERMES_AUTH_FILE", Some(&configured)),
+                ("HERMES_WRITE_SAFE_ROOT", Some(tmp.path())),
+            ],
+            || {
+                assert!(is_write_denied(&store));
+                assert!(is_link_target_write_denied(&store));
+                assert!(is_write_denied(&home.join("auth.json")));
+                assert!(!is_write_denied(&tmp.path().join("provider-state-notes.json")));
+            },
+        );
+    }
+
+    #[test]
     fn write_deny_allows_the_temporary_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
