@@ -3,13 +3,11 @@
 use std::collections::BTreeMap;
 use std::fmt::Write;
 use std::fs;
-use std::sync::LazyLock;
 
-use clap::Args;
-use regex::Regex;
-
+use crate::decimal_limit;
 use crate::py::{self, Py};
 use crate::report_io::{resolve_argument, write_report};
+use clap::Args;
 
 const TICKETS: [(u8, &str); 4] = [
     (20, "GPAR-01 tests+CI parity"),
@@ -17,29 +15,11 @@ const TICKETS: [(u8, &str); 4] = [
     (22, "GPAR-03 UX parity"),
     (23, "GPAR-04 gateway/plugin-memory parity"),
 ];
-static INTEGER_TEXT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^[+-]?\p{Nd}(?:_?\p{Nd})*$").expect("decimal pattern"));
-static DECIMAL_DIGIT: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"^\p{Nd}$").expect("decimal digit"));
-
 #[derive(Args, Debug)]
 pub struct ClosureArgs {
     /// Repository root.
     #[arg(long, default_value = ".")]
     repo_root: String,
-}
-
-fn decimal_digit(ch: char) -> u8 {
-    let point = u32::from(ch);
-    let start = (0..=point)
-        .rev()
-        .take_while(|code| {
-            char::from_u32(*code)
-                .is_some_and(|c| DECIMAL_DIGIT.is_match(c.encode_utf8(&mut [0; 4])))
-        })
-        .last()
-        .expect("validated decimal digit");
-    ((point - start) % 10) as u8
 }
 
 fn scoped_ticket(value: Option<&Py>) -> Result<Option<usize>, String> {
@@ -52,18 +32,7 @@ fn scoped_ticket(value: Option<&Py>) -> Result<Option<usize>, String> {
                 .contains(&number)
                 .then_some(number as u8)
         }
-        Some(Py::Str(text)) if INTEGER_TEXT.is_match(text.trim()) => {
-            let text = text.trim();
-            if text.starts_with('-') {
-                return Ok(None);
-            }
-            text.trim_start_matches('+')
-                .chars()
-                .filter(|&ch| ch != '_')
-                .try_fold(0_u8, |number, ch| {
-                    number.checked_mul(10)?.checked_add(decimal_digit(ch))
-                })
-        }
+        Some(Py::Str(text)) => u8::try_from(decimal_limit::parse(text)?.count).ok(),
         _ => return Err("target_ticket must be an integer".to_string()),
     };
     Ok(TICKETS.iter().position(|(id, _)| Some(*id) == number))
