@@ -1522,6 +1522,7 @@ mod tests {
     #[tokio::test]
     async fn charge_submission_requires_a_single_verified_acknowledgement() {
         let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let tmp = tempdir().expect("tempdir");
         let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
         let _home = EnvVarGuard::set("HOME", tmp.path());
@@ -1646,6 +1647,7 @@ mod tests {
     #[tokio::test]
     async fn charge_submission_keeps_the_original_destination_and_key() {
         let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let tmp = tempdir().expect("tempdir");
         let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
         let _home = EnvVarGuard::set("HOME", tmp.path());
@@ -1743,6 +1745,7 @@ mod tests {
         use tokio::net::TcpListener;
 
         let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let tmp = tempdir().expect("tempdir");
         let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
         let _home = EnvVarGuard::set("HOME", tmp.path());
@@ -1914,7 +1917,10 @@ mod tests {
 
     #[tokio::test]
     async fn client_maps_state_and_charge_contracts() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         Mock::given(method("GET"))
             .and(path("/api/billing/state"))
             .and(header("authorization", "Bearer access"))
@@ -1948,7 +1954,9 @@ mod tests {
 
     #[tokio::test]
     async fn charge_status_timeout_reports_the_cause_without_the_request_url() {
+        let _guard = test_env_lock::lock_async().await;
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         Mock::given(method("GET"))
             .and(path("/api/billing/charge/private-charge-fixture"))
             .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
@@ -1982,7 +1990,10 @@ mod tests {
 
     #[tokio::test]
     async fn client_maps_typed_error_envelopes() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         Mock::given(method("POST"))
             .and(path("/api/billing/charge"))
             .respond_with(ResponseTemplate::new(403).set_body_json(json!({

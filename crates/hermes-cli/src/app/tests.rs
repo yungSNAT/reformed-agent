@@ -755,6 +755,7 @@ mod tests {
             "HERMES_AUTH_FILE",
             "HERMES_NOUS_OAUTH_FILE",
             "HERMES_PORTAL_BASE_URL",
+            "NO_PROXY",
         ]);
         let tmp = tempfile::tempdir().expect("tempdir");
         let server = MockServer::start().await;
@@ -763,6 +764,7 @@ mod tests {
         std::env::set_var("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
         std::env::set_var("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
         std::env::set_var("HERMES_PORTAL_BASE_URL", server.uri());
+        std::env::set_var("NO_PROXY", "127.0.0.1");
         let state = serde_json::from_value(serde_json::json!({
             "portal_base_url": server.uri(),
             "inference_base_url": server.uri(),
