@@ -147,6 +147,7 @@ fn terminal_verification_recording_enabled() -> bool {
 pub struct TerminalHandler {
     backend: Arc<dyn TerminalBackend>,
     approval: ApprovalManager,
+    session_workdir: Option<String>,
     task_cwds: Arc<Mutex<HashMap<String, String>>>,
     gateway_approval: Option<GatewayApprovalBinding>,
 }
@@ -156,6 +157,7 @@ impl TerminalHandler {
         Self {
             backend,
             approval: ApprovalManager::new(),
+            session_workdir: None,
             task_cwds: Arc::new(Mutex::new(HashMap::new())),
             gateway_approval: None,
         }
@@ -165,6 +167,12 @@ impl TerminalHandler {
     /// that user's approval, as [`crate::gateway_approval`] describes.
     pub fn with_gateway_approval(mut self, binding: GatewayApprovalBinding) -> Self {
         self.gateway_approval = Some(binding);
+        self
+    }
+
+    /// Use the caller's working directory when the tool call omits `workdir`.
+    pub fn with_session_workdir(mut self, workdir: String) -> Self {
+        self.session_workdir = Some(workdir);
         self
     }
 
@@ -271,10 +279,12 @@ impl ToolHandler for TerminalHandler {
         let task_workdir = explicit_workdir
             .is_none()
             .then(|| {
-                params
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|task_id| self.task_cwd(task_id))
+                self.session_workdir.clone().or_else(|| {
+                    params
+                        .get("task_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|task_id| self.task_cwd(task_id))
+                })
             })
             .flatten();
         let env_workdir = explicit_workdir
