@@ -17,7 +17,7 @@ cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --c
 cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
 cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --max-commits 0
-python3 scripts/generate-behavioral-similarity-diff.py --check
+cargo run --locked -q -p hermes-parity-tools -- generate-behavioral-similarity-diff --check
 cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check
 cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-ci
 cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof
