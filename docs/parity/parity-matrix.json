@@ -1,8 +1,8 @@
 {
-  "generated_at_utc": "2026-11-21T08:53:33.477118+00:00",
+  "generated_at_utc": "2026-11-21T09:23:36.918861+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "c466a74634b4dd99d5b2e9c1f119795eaba3efb5",
+    "local_sha": "7c5d714a7a8acdab44c838facabde6f1bf5c5e73",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
@@ -19,7 +19,7 @@
     "files_shared_different": 1509,
     "tree_files_changed": 27422,
     "tree_insertions": 4528868,
-    "tree_deletions": 954758
+    "tree_deletions": 954778
   },
   "top_upstream_only": [
     {

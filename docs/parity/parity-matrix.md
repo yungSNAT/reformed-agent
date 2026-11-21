@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T08:53:33.477118+00:00`
+Generated: `2026-11-21T09:23:36.918861+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`c466a74634b4dd99d5b2e9c1f119795eaba3efb5`)
+- Local ref: `HEAD` (`7c5d714a7a8acdab44c838facabde6f1bf5c5e73`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -23,7 +23,7 @@ Generated: `2026-11-21T08:53:33.477118+00:00`
 | Shared files different content | 1509 |
 | Total files changed (`local` vs `upstream`) | 27422 |
 | Insertions (`local` vs `upstream`) | 4528868 |
-| Deletions (`local` vs `upstream`) | 954758 |
+| Deletions (`local` vs `upstream`) | 954778 |
 
 ## Top 40 upstream-only buckets
 
