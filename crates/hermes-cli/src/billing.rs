@@ -357,10 +357,14 @@ impl NousBillingClient {
                 .header(header::CONTENT_TYPE, "application/json")
                 .json(&body);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| BillingError::network(format!("Could not reach Nous Portal: {e}")))?;
+        let resp = req.send().await.map_err(|error| {
+            let message = if error.is_timeout() {
+                "Nous Portal did not respond in time."
+            } else {
+                "Could not reach Nous Portal."
+            };
+            BillingError::network(message)
+        })?;
         let status = resp.status();
         let retry_after = resp
             .headers()
