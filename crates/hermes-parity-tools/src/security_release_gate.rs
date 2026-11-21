@@ -2,7 +2,7 @@
 
 use std::fs;
 use std::path::Path;
-use std::process::{Command, ExitStatus};
+use std::process::{Command, ExitStatus, Stdio};
 use std::time::Instant;
 
 use clap::Args;
@@ -61,6 +61,7 @@ impl ProcessOutput {
     fn capture(command: &mut Command, root: &Path) -> Result<Self, String> {
         let output = command
             .current_dir(root)
+            .stdin(Stdio::inherit())
             .output()
             .map_err(|error| error.to_string())?;
         let decode = |bytes| {
@@ -128,7 +129,7 @@ fn shell_check(root: &Path, command: &str) -> Result<Py, String> {
     ))
 }
 
-fn list(value: Option<&Py>, key: &str) -> Result<usize, String> {
+fn list_len(value: Option<&Py>, key: &str) -> Result<usize, String> {
     match value {
         None | Some(Py::Null) => Ok(0),
         Some(Py::List(values)) => Ok(values.len()),
@@ -167,18 +168,23 @@ fn sbom(root: &Path, path: &Path) -> Result<Py, String> {
             return Ok(result);
         }
     };
+    if !metadata.is_dict() {
+        return Err("cargo metadata must be an object".to_string());
+    }
     let packages = match metadata.get("packages") {
         Some(Py::List(packages)) => packages.as_slice(),
         None | Some(Py::Null) => &[],
         _ => return Err("cargo metadata: packages must be an array".to_string()),
     };
-    let members = list(metadata.get("workspace_members"), "workspace_members")?;
-    let nodes = list(
-        metadata
-            .get("resolve")
-            .and_then(|resolve| resolve.get("nodes")),
-        "nodes",
-    )?;
+    if packages.iter().any(|package| !package.is_dict()) {
+        return Err("cargo metadata: each package must be an object".to_string());
+    }
+    let members = list_len(metadata.get("workspace_members"), "workspace_members")?;
+    let nodes = match metadata.get("resolve") {
+        None | Some(Py::Null) => 0,
+        Some(resolve) if resolve.is_dict() => list_len(resolve.get("nodes"), "nodes")?,
+        _ => return Err("cargo metadata: resolve must be an object".to_string()),
+    };
     let packages_json = packages
         .iter()
         .map(|pkg| {
@@ -196,7 +202,7 @@ fn sbom(root: &Path, path: &Path) -> Result<Py, String> {
         ("resolve_node_count", nodes.into()),
         ("packages", Py::List(packages_json)),
     ]);
-    write_json(path, &inventory)?;
+    write_report(path, py::dumps(&inventory, Some(2), false) + "\n")?;
     result.set("package_count", packages.len().into());
     result.set("workspace_member_count", members.into());
     Ok(result)
