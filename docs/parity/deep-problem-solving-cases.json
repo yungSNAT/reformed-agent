@@ -163,7 +163,8 @@
       "ultra_behavior": "Ultra has a quorum fanout path with independent voters, explicit counter-argument requirements, degraded-output detection, synthesis rules, and persisted quorum artifacts.",
       "why": "This is an explicit deep-synthesis mechanism beyond baseline single-model turn handling.",
       "source_artifacts": [
-        "crates/hermes-cli/src/app.rs"
+        "crates/hermes-cli/src/app/app_impl/inference_quorum.rs",
+        "crates/hermes-cli/src/app/app_impl_interaction/quorum_fanout.rs"
       ],
       "rust_tests": [
         {
@@ -185,6 +186,10 @@
         {
           "file": "crates/hermes-cli/src/app/tests.rs",
           "name": "test_quorum_mode_armed_once_triggers_without_system_hint"
+        },
+        {
+          "file": "crates/hermes-cli/src/app/tests.rs",
+          "name": "test_run_agent_quorum_arm_persists_artifact_even_on_voter_failures"
         }
       ]
     },
