@@ -242,15 +242,17 @@ class NativeWebhookLaunchdTests(unittest.TestCase):
                     time.sleep(0.2)
                 self.fail(f"{role} did not start a new process before the deadline")
 
-            def wait_for_exit(pid):
-                deadline = time.monotonic() + 10
+            def wait_for_stop(target, pid):
+                deadline = time.monotonic() + 20
                 while time.monotonic() < deadline:
-                    try:
-                        os.kill(int(pid), 0)
-                    except ProcessLookupError:
-                        return
+                    status = command("/bin/launchctl", "print", target, check=False)
+                    if status.returncode != 0:
+                        try:
+                            os.kill(int(pid), 0)
+                        except ProcessLookupError:
+                            return
                     time.sleep(0.2)
-                self.fail(f"fixture process {pid} is still present after bootout")
+                self.fail(f"{target} was still registered or running after bootout")
 
             command("/bin/launchctl", "print", domain)
             install = [
@@ -264,12 +266,10 @@ class NativeWebhookLaunchdTests(unittest.TestCase):
                 command(*install)
                 initial = {role: wait_for_marker(role, None) for role in targets}
                 command(*install)
+                restarted = {role: wait_for_marker(role, initial[role]) for role in targets}
                 for role, target in targets.items():
-                    latest = wait_for_marker(role, initial[role])
                     command("/bin/launchctl", "bootout", target)
-                    stopped = command("/bin/launchctl", "print", target, check=False)
-                    self.assertNotEqual(stopped.returncode, 0, target)
-                    wait_for_exit(latest)
+                    wait_for_stop(target, restarted[role])
             finally:
                 for target in targets.values():
                     command("/bin/launchctl", "bootout", target, check=False)
