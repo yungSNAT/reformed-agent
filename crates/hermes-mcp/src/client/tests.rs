@@ -227,6 +227,120 @@ async fn standard_stdio_cancels_timed_out_tools_and_ignores_their_late_results()
 }
 
 #[tokio::test]
+async fn modern_stdio_rejects_invalid_matching_response_envelopes() {
+    let valid_result = json!({"resultType": "complete", "content": []});
+    let valid_error = json!({"code": -32601, "message": "method not found"});
+    for response in [
+        json!({"id": 1, "result": valid_result}),
+        json!({"jsonrpc": "1.0", "id": 1, "result": valid_result}),
+        json!({"jsonrpc": "2.0", "id": 1}),
+        json!({"jsonrpc": "2.0", "id": 1, "result": valid_result, "error": valid_error}),
+        json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601}}),
+    ] {
+        let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+        client.modern_stdio = true;
+        client.connected = true;
+        client.transport = Some(Box::new(FakeTransport::new(
+            vec![response],
+            Arc::new(AtomicBool::new(false)),
+        )));
+
+        let err = client
+            .call_tool("echo", json!({}))
+            .await
+            .expect_err("a malformed matching response must fail");
+        assert!(matches!(err, McpError::Protocol { code: -32700, .. }), "{err}");
+        assert!(!client.is_connected());
+        assert!(client.transport.is_none());
+    }
+}
+
+#[tokio::test]
+async fn modern_stdio_ignores_another_response_id_and_keeps_valid_rpc_errors() {
+    let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+    client.modern_stdio = true;
+    client.connected = true;
+    client.transport = Some(Box::new(FakeTransport::new(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 9, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "unrelated"}]
+            }}),
+            json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "synthetic"}}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "next"}]
+            }}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+    )));
+
+    let err = client.call_tool("echo", json!({})).await.unwrap_err();
+    assert!(matches!(err, McpError::Protocol { code: -32000, .. }), "{err}");
+    assert!(client.is_connected());
+    assert_eq!(client.call_tool("echo", json!({})).await.unwrap(), "next");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn modern_stdio_reconnects_after_terminal_reads_for_the_next_call_only() {
+    for failure in ["eof", "malformed"] {
+        let dir = TempDir::new().expect("temp dir");
+        let calls = dir.path().join("calls");
+        let script = r#"
+            while IFS= read -r line; do
+                id=${line#*\"id\":}
+                id=${id%%,*}
+                case "$line" in
+                    *'"server/discover"'*)
+                        result='{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}'
+                        ;;
+                    *'"tools/list"'*)
+                        result='{"resultType":"complete","tools":[{"name":"echo","inputSchema":{"type":"object"}}]}'
+                        ;;
+                    *'"tools/call"'*)
+                        if [ ! -f "$1" ]; then
+                            echo first >> "$1"
+                            if [ "$2" = malformed ]; then echo '{'; fi
+                            exit 0
+                        fi
+                        echo second >> "$1"
+                        result='{"resultType":"complete","content":[{"type":"text","text":"next"}]}'
+                        ;;
+                    *) exit 1 ;;
+                esac
+                printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+            done
+        "#;
+        let mut config = McpServerConfig::stdio(
+            "env",
+            vec![
+                "sh".into(), "-c".into(), script.into(), "test-mcp".into(),
+                calls.display().to_string(), failure.into(),
+            ],
+        );
+        config.stdio_mode = Some(McpStdioMode::StandardStdio);
+        let registry = Arc::new(hermes_tools::ToolRegistry::new());
+        let mut manager = McpManager::new(registry.clone());
+        manager.connect("fixture", config).await.unwrap();
+        let tool_name = super::mcp_registered_tool_name("fixture", "echo");
+
+        let reply = registry.dispatch_async(&tool_name, json!({})).await;
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert!(reply.get("error").is_some(), "{reply}");
+        assert_eq!(std::fs::read_to_string(&calls).unwrap(), "first\n");
+        assert!(!manager.is_connected("fixture"));
+        assert!(!manager.get_status()["fixture"].connected);
+
+        assert_eq!(
+            manager.call_tool("fixture", "echo", json!({})).await.unwrap(),
+            "next"
+        );
+        assert_eq!(std::fs::read_to_string(&calls).unwrap(), "first\nsecond\n");
+        assert!(manager.is_connected("fixture"));
+        manager.disconnect_all().await.unwrap();
+    }
+}
+
+#[tokio::test]
 async fn an_unsupported_protocol_ends_the_connection_before_tool_discovery() {
     let config = serde_json::from_value(json!({"url": "http://127.0.0.1/mcp"})).unwrap();
     let mut client = McpClient::new(config);
