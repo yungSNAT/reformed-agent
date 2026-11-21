@@ -14,6 +14,21 @@ fn tui_event(event: CrosstermEvent) -> Option<Event> {
     }
 }
 
+pub(crate) fn draw_slash_command_frame(
+    app: &mut App,
+    state: &mut TuiState,
+    input: &str,
+    draw: impl FnOnce(&App, &mut TuiState) -> Result<(), AgentError>,
+) -> Result<Option<String>, AgentError> {
+    let key = crate::billing::prepare_tui_charge_key(input);
+    if let Some(key) = &key {
+        app.push_ui_assistant(format!("Billing charge idempotency key: {key}"));
+        state.jump_to_latest();
+    }
+    draw(app, state)?;
+    Ok(key)
+}
+
 /// Run the interactive TUI with the given App.
 ///
 /// This is the main entry point for the interactive TUI mode.
@@ -320,9 +335,13 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
                                         ));
                                         state.status_message =
                                             format!("Running {command_name}…");
-                                        draw_frame_now(&mut tui, &app, &mut state)?;
+                                        let prepared_charge_key = draw_slash_command_frame(
+                                            &mut app, &mut state, &input, |app, state| {
+                                                draw_frame_now(&mut tui, app, state)
+                                            },
+                                        )?;
                                         let session_before_command = app.session_id.clone();
-                                        match app.handle_input(&input).await {
+                                        match app.handle_input_with_charge_key(&input, prepared_charge_key.as_deref()).await {
                                             Ok(_) => {
                                                 state.finish_processing_cycle("✔ completed in");
                                                 if let Some(prefill) =
