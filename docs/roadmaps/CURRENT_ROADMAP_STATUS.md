@@ -40,7 +40,7 @@ future upstream commits cannot create new drift.
 | Released binary smoke | PASS for current tag | `bash scripts/smoke-release-artifact.sh --version v0.21.3` |
 | Upstream missing queue | `pending = 0` before release | `cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --max-commits 0` |
 | Global parity proof | Pass release gate locally | `cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-release` |
-| SOTA harness coverage | All domains covered | `python3 scripts/generate-sota-harness-hardening.py --check` |
+| SOTA harness coverage | All domains covered | `cargo run --locked -q -p hermes-parity-tools -- generate-sota-harness-hardening --check` |
 | Behavioral similarity diff | Outcome similarity `1.0`, no regressions or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-behavioral-similarity-diff --check` |
 | Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check` |
 | Runtime placeholder discipline | Clean | `scripts/check-runtime-placeholders.sh` |
