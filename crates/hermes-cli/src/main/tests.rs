@@ -537,12 +537,20 @@ mod tests {
 
     #[test]
     fn mask_secret_hides_token_body() {
-        let raw = "abcdefgh1234567890";
+        let raw = "abcdefgh1234567890wxyz";
         let masked = mask_secret(raw);
         assert!(!masked.contains(raw));
         assert!(masked.starts_with("abcd"));
-        assert!(masked.ends_with("7890"));
+        assert!(masked.ends_with("wxyz"));
         assert!(masked.contains("***"));
+    }
+
+    #[test]
+    fn mask_secret_hides_all_of_a_short_secret_and_its_length() {
+        for raw in ["a", "abcdefgh", "abcdefghi", "abcdefgh1234", "abcdefgh1234567890x"] {
+            assert_eq!(mask_secret(raw), "********", "{raw:?}");
+        }
+        assert_eq!(mask_secret(""), "(empty)");
     }
 
     #[cfg(feature = "gateway-api-server")]
