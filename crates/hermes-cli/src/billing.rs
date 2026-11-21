@@ -384,22 +384,24 @@ impl NousBillingClient {
             .get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
-        let require_valid_update = updating && status.is_success();
-        let text = match resp.text().await {
-            Ok(text) => text,
-            Err(_) if require_valid_update => return Err(BillingError::invalid_response(status)),
-            Err(_) => String::new(),
-        };
+        if updating && status.is_success() {
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|_| BillingError::invalid_response(status))?;
+            let text =
+                std::str::from_utf8(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+            return if text.trim().is_empty() {
+                Ok(json!({}))
+            } else {
+                serde_json::from_str(text).map_err(|_| BillingError::invalid_response(status))
+            };
+        }
+        let text = resp.text().await.unwrap_or_default();
         let payload = if text.trim().is_empty() {
             json!({})
         } else {
-            match serde_json::from_str::<Value>(&text) {
-                Ok(payload) => payload,
-                Err(_) if require_valid_update => {
-                    return Err(BillingError::invalid_response(status))
-                }
-                Err(_) => json!({}),
-            }
+            serde_json::from_str::<Value>(&text).unwrap_or_else(|_| json!({}))
         };
         if !status.is_success() {
             return Err(BillingError::from_response(
@@ -1297,9 +1299,11 @@ mod tests {
                     .set_body_json(json!({"processorDetail": "provider-only-update-fixture"})),
             ),
             (25.0, ResponseTemplate::new(204)),
+            (26.0, ResponseTemplate::new(200).set_body_string(" \n\t")),
         ] {
             Mock::given(method("PATCH"))
                 .and(path("/api/billing/auto-top-up"))
+                .and(header("authorization", "Bearer access"))
                 .and(body_json(json!({
                     "enabled": true, "threshold": threshold, "topUpAmount": 50.0,
                 })))
@@ -1332,6 +1336,18 @@ mod tests {
             .expect(1)
             .mount(&server)
             .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 31.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(b"{\"unknown\":\"\xff\"}".to_vec(), "application/json"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
 
         let cli = handle_billing_args(&[
             "auto-reload".into(),
@@ -1341,11 +1357,14 @@ mod tests {
         ])
         .await;
         let empty = handle_billing_slash_args(&["auto-reload", "25", "50", "--confirm"]).await;
+        let whitespace = handle_billing_slash_args(&["auto-reload", "26", "50", "--confirm"]).await;
         let malformed = handle_billing_slash_args(&["auto-reload", "30", "50", "--confirm"]).await;
+        let invalid_utf8 =
+            handle_billing_slash_args(&["auto-reload", "31", "50", "--confirm"]).await;
         let rate_limited =
             handle_billing_slash_args(&["auto-reload", "35", "50", "--confirm"]).await;
 
-        for output in [cli, empty] {
+        for output in [cli, empty, whitespace] {
             let output = output.expect("confirmed auto-reload update");
             let fields: Value = serde_json::from_str(
                 output
@@ -1355,10 +1374,12 @@ mod tests {
             .expect("confirmation JSON");
             assert_eq!(fields, json!({"ok": true}));
         }
-        let error = malformed.unwrap_err().to_string();
-        assert!(error.contains("Auto-reload update could not be confirmed."));
-        assert!(error.contains("Check the current setting before repeating the request."));
-        assert!(!error.contains("provider-only-invalid-fixture"));
+        for outcome in [malformed, invalid_utf8] {
+            let error = outcome.unwrap_err().to_string();
+            assert!(error.contains("Auto-reload update could not be confirmed."));
+            assert!(error.contains("Check the current setting before repeating the request."));
+            assert!(!error.contains("provider-only-invalid-fixture"));
+        }
         let error = rate_limited.unwrap_err().to_string();
         assert!(error.contains("Retry after 8s."));
     }
