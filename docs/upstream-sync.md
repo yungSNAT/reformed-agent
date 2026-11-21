@@ -103,7 +103,7 @@ audit reports live upstream drift separately from the checks against this pin.
   - Compares chaos reports and fails on attempts/fallback/outcome regressions
 - `scripts/generate-readme-sync-status.py`
   - Regenerates README “Live Upstream Sync Status” block from latest `.sync-reports/upstream-sync-*.txt`
-- `scripts/generate-parity-dashboard.py`
+- `hermes-parity-tools generate-parity-dashboard`
   - Builds `docs/parity/PARITY_DASHBOARD.md` from parity JSON artifacts
 
 ## One-shot Manual Sync
@@ -119,7 +119,7 @@ python3 scripts/run-zero-copy-hotpath-bench.py --repo-root .
 python3 scripts/run-elite-sync-gate.py --repo-root .
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-mode worktree
 python3 scripts/run-self-evolution-loop.py --repo-root . --json
-python3 scripts/generate-parity-dashboard.py --repo-root .
+cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root .
 python3 scripts/generate-readme-sync-status.py --repo-root .
 bash scripts/sync-upstream.sh --elite-gate
 bash scripts/sync-upstream.sh --elite-gate --elite-rollback-cmd "git reset --hard origin/main"

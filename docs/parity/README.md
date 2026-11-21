@@ -17,20 +17,21 @@ cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --c
 cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --check --allow-warnings
 cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --max-commits 0
-python3 scripts/generate-behavioral-similarity-diff.py --check
-python3 scripts/generate-deep-problem-solving-diff.py --check
+cargo run --locked -q -p hermes-parity-tools -- generate-behavioral-similarity-diff --check
+cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check
 cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-ci
-python3 scripts/generate-gpar-01-04-proof.py
-python3 scripts/generate-sota-harness-hardening.py --check
-python3 scripts/generate-parity-dashboard.py
+cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof
+cargo run --locked -q -p hermes-parity-tools -- generate-gpar-01-04-proof --check
+cargo run --locked -q -p hermes-parity-tools -- generate-sota-harness-hardening --check
+cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --upstream-ref upstream/main
 ```
 
 By default this command fetches upstream directly from GitHub
 (`git fetch upstream --prune`) before computing metrics.
 
-The coverage audit writes JSON and Markdown with its default invocation. Run it
-with `--check` to evaluate the gate without writing either report.
+The coverage audit and GPAR proof write JSON and Markdown by default. Run either
+with `--check` to evaluate its gate without writing reports.
 
 ## Outputs
 

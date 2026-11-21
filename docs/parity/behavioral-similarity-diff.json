@@ -9,7 +9,7 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/commands.rs",
+          "file": "crates/hermes-cli/src/commands/tests/surface_and_compression.rs",
           "name": "test_golden_upstream_surface_aliases_are_registered"
         },
         {
@@ -23,7 +23,7 @@
       ],
       "score": 1.0,
       "source_artifacts": [
-        "crates/hermes-cli/src/commands.rs",
+        "crates/hermes-cli/src/commands/mod.rs",
         "crates/hermes-cli/src/main/tests/env_profile_diagnostics/gateway_runtime.rs",
         "crates/hermes-source-parity-tests/tests/cli_command_contract.rs"
       ],
@@ -45,11 +45,11 @@
           "name": "test_resolve_web_toolset"
         },
         {
-          "file": "crates/hermes-acp/src/tools.rs",
+          "file": "crates/hermes-acp/src/tools/tests.rs",
           "name": "format_tool_result_renders_web_search_results"
         },
         {
-          "file": "crates/hermes-acp/src/tools.rs",
+          "file": "crates/hermes-acp/src/tools/tests.rs",
           "name": "format_tool_result_shows_web_extract_failures"
         }
       ],
@@ -80,11 +80,11 @@
           "name": "test_apply_pressure_tuning_forces_fast_mode_and_sources"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
           "name": "test_build_inference_messages_injects_runtime_reformulation"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
           "name": "test_objective_context_autopin_sets_topic_for_default_path"
         }
       ],
@@ -115,7 +115,7 @@
           "name": "test_scan_context_injection"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
           "name": "test_build_inference_messages_injects_runtime_reformulation"
         }
       ],
@@ -138,15 +138,15 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests.rs",
           "name": "test_collect_quorum_models_dedup_and_limit"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
           "name": "test_compose_quorum_messages_coalesces_systems_before_user_messages"
         },
         {
-          "file": "crates/hermes-cli/src/app.rs",
+          "file": "crates/hermes-cli/src/app/tests/session_runtime.rs",
           "name": "test_quorum_output_is_degraded_non_answer"
         }
       ],
@@ -168,19 +168,19 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests.rs",
           "name": "auth_provider_aliases_cover_primary_chains"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests.rs",
           "name": "oneshot_auto_verify_provider_supports_core_oauth_providers"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
           "name": "auth_verify_nous_repairs_stale_singleton_from_vault_invoke_jwt"
         },
         {
-          "file": "crates/hermes-app-runtime/src/lib.rs",
+          "file": "crates/hermes-app-runtime/src/lib_tests.rs",
           "name": "test_build_agent_config_preserves_same_host_provider_api_modes"
         }
       ],
@@ -205,11 +205,11 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-provider-runtime/src/lib.rs",
+          "file": "crates/hermes-provider-runtime/src/lib_tests.rs",
           "name": "build_provider_routes_chatgpt_openai_oauth_to_responses_backend"
         },
         {
-          "file": "crates/hermes-cli/src/auth.rs",
+          "file": "crates/hermes-cli/src/auth/tests.rs",
           "name": "discover_existing_openai_oauth_reads_env_path"
         },
         {
@@ -252,15 +252,15 @@
           "name": "canonical_provider_id_normalizes_common_aliases"
         },
         {
-          "file": "crates/hermes-provider-runtime/src/lib.rs",
+          "file": "crates/hermes-provider-runtime/src/lib_tests.rs",
           "name": "provider_default_base_url_supports_upstream_aliases"
         },
         {
-          "file": "crates/hermes-provider-runtime/src/lib.rs",
+          "file": "crates/hermes-provider-runtime/src/lib_tests.rs",
           "name": "allow_no_api_key_for_local_backends_and_private_base_urls"
         },
         {
-          "file": "crates/hermes-config/src/loader.rs",
+          "file": "crates/hermes-config/src/loader/tests/env_overrides.rs",
           "name": "apply_env_overrides_supports_direct_provider_env_vars"
         }
       ],
@@ -284,15 +284,15 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
           "name": "gateway_platform_access_policy_reads_telegram_chat_lists"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
           "name": "gateway_dm_manager_group_authorization_matches_upstream_contract"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests/provider_setup.rs",
           "name": "gateway_dm_manager_whatsapp_lid_mapping_authorizes_phone_allowlist"
         }
       ],
@@ -314,15 +314,15 @@
       "missing_source_artifacts": [],
       "rust_tests": [
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests.rs",
           "name": "telegram_gateway_message_preserves_group_topic_in_chat_id"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests.rs",
           "name": "cron_platform_delivery_target_applies_telegram_cron_thread_at_fire_time"
         },
         {
-          "file": "crates/hermes-cli/src/main.rs",
+          "file": "crates/hermes-cli/src/main/tests.rs",
           "name": "cron_platform_delivery_text_uses_full_output_and_suppresses_silent"
         },
         {
@@ -448,7 +448,7 @@
     "pass": true
   },
   "gate_failures": [],
-  "generated_at_utc": "2026-06-24T00:21:16.048264+00:00",
+  "generated_at_utc": "2026-11-21T04:53:32.747603+00:00",
   "manifest": "docs/parity/behavioral-similarity-cases.json",
   "schema_version": 1,
   "summary": {

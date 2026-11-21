@@ -4,11 +4,11 @@
     "project": "hermes-agent-ultra",
     "topic": "parity/sota"
   },
-  "generated_at_utc": "2026-07-03T20:16:19.312670+00:00",
+  "generated_at_utc": "2026-11-21T04:53:33.486546+00:00",
   "latest_gate_state": {
     "ci_gate_pass": false,
     "queue_pending": 0,
-    "release_gate_pass": true,
+    "release_gate_pass": false,
     "sota_harness_gate_pass": true,
     "test_coverage_gate_pass": true
   },
