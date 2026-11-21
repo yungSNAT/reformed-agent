@@ -13,6 +13,7 @@ mod git;
 mod global_proof;
 mod parity_matrix;
 mod release_readiness;
+mod release_secret_scan;
 mod report_io;
 mod shared_diff_backlog;
 mod slash_gate;
@@ -95,6 +96,9 @@ enum Command {
         infer_long_args = true
     )]
     ReleaseReadiness(release_readiness::ReadinessArgs),
+    /// Scan tracked release source and redact all findings.
+    #[command(name = "release_secret_scan")]
+    ReleaseSecretScan(release_secret_scan::ScanArgs),
 }
 
 fn main() {
@@ -113,6 +117,7 @@ fn main() {
         Command::UpstreamQueue(args) => upstream_queue::run(args),
         Command::GlobalProof(args) => global_proof::run(args),
         Command::ReleaseReadiness(args) => release_readiness::run(args),
+        Command::ReleaseSecretScan(args) => release_secret_scan::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
