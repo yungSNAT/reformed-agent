@@ -304,13 +304,20 @@ async fn read_charge_acknowledgement(
         }
         bytes.extend_from_slice(&chunk);
     }
+    let payload: Value =
+        serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+    if !payload.is_object() {
+        return Err(BillingError::invalid_response(status));
+    }
     let acknowledgement: ChargeAcknowledgement =
         serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))?;
     acknowledgement
         .camel_case_id
         .as_deref()
         .or(acknowledgement.charge_id.as_deref())
-        .filter(|id| !id.is_empty() && id.len() <= MAX_CHARGE_ID_BYTES && id.trim() == *id)
+        .filter(|id| {
+            !matches!(*id, "" | "." | "..") && id.len() <= MAX_CHARGE_ID_BYTES && id.trim() == *id
+        })
         .filter(|id| {
             acknowledgement
                 .charge_id
@@ -318,7 +325,7 @@ async fn read_charge_acknowledgement(
                 .is_none_or(|legacy| *id == legacy)
         })
         .ok_or_else(|| BillingError::invalid_response(status))?;
-    serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))
+    Ok(payload)
 }
 
 pub struct NousBillingClient {
@@ -343,6 +350,16 @@ impl NousBillingClient {
         let portal_base_url = resolve_portal_base_url(Some(state));
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECONDS))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|url| url.path().ends_with(CHARGE_PATH))
+                {
+                    return attempt.stop();
+                }
+                reqwest::redirect::Policy::default().redirect(attempt)
+            }))
             .user_agent(format!("hermes-agent-ultra/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| BillingError::network(format!("build billing client: {e}")))?;
@@ -644,7 +661,7 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     let payload = client.post_charge(amount, &idempotency_key).await.map_err(|error| {
         let status = error.status;
         let network = error.kind == BillingErrorKind::Network;
-        if network || status.is_some_and(|status| matches!(status, 200..=299 | 408 | 429 | 500..=599)) {
+        if network || status.is_some_and(|status| matches!(status, 200..=399 | 408 | 429 | 500..=599)) {
             return AgentError::ToolExecution(format!(
                 "Billing charge submission could not be confirmed. {error} Check the charge in Nous Portal. Contact support if the outcome remains unclear. Any deliberate repeat requires the same key, amount and billing context. Idempotency key: {}",
                 render_billing_reference(&idempotency_key)
@@ -1508,6 +1525,9 @@ mod tests {
                 false,
             ),
             (202, "{", false),
+            (202, r#"["fixture-charge","fixture-charge"]"#, false),
+            (202, r#"{"chargeId":"."}"#, false),
+            (202, r#"{"chargeId":".."}"#, false),
             (200, r#"{"chargeId":"fixture-charge"}"#, false),
             (408, r#"{"message":"provider-only-acknowledgement"}"#, false),
             (429, r#"{"message":"provider-only-acknowledgement"}"#, false),
@@ -1554,6 +1574,51 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn charge_submission_keeps_the_original_destination_and_key() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        let other = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+        Mock::given(path(CHARGE_PATH))
+            .respond_with(
+                ResponseTemplate::new(202).set_body_json(json!({ "chargeId": "fixture-charge" })),
+            )
+            .expect(0)
+            .mount(&other)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(CHARGE_PATH))
+            .and(header("idempotency-key", "fixture-key"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("Location", format!("{}{CHARGE_PATH}", other.uri())),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let result = handle_billing_slash_args(&[
+            "charge",
+            "50",
+            "--confirm",
+            "--idempotency-key=fixture-key",
+        ])
+        .await;
+        assert!(
+            result.is_err_and(|error| {
+                let output = error.to_string();
+                output.contains("could not be confirmed") && output.contains("fixture-key")
+            }),
+            "a changed destination should leave the outcome uncertain with the original key"
+        );
     }
 
     #[tokio::test]
