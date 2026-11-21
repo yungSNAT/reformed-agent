@@ -8,4 +8,5 @@ exec "${PARITY_PYTHON:-python3}" -m pytest --noconftest -p no:cacheprovider -q \
   tests/test_golden_parity_harness.py \
   tests/test_release_readiness_summary.py \
   tests/test_upstream_webhook_queues.py \
+  tests/test_upstream_webhook_launchd.py \
   tests/test_upstream_webhook_sync_rust_only_guard.py
