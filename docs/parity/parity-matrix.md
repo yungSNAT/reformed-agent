@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T11:24:48.921856+00:00`
+Generated: `2026-11-21T12:19:39.131611+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`095459b7e03f0033ab6c7fae8167029679080a08`)
+- Local ref: `HEAD` (`74f1ee8ebeb8d6afde9ce87d3f00612901550673`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,10 +13,10 @@ Generated: `2026-11-21T11:24:48.921856+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1689 |
+| Commits ahead local (`local` ancestry only) | 1687 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1420 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1418 |
 | Files only in upstream tree | 24117 |
 | Files only in local tree | 2067 |
 | Shared files identical content | 564 |
@@ -176,7 +176,7 @@ Generated: `2026-11-21T11:24:48.921856+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1420`
+- Local unique by patch-id: `1418`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
