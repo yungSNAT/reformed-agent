@@ -122,10 +122,10 @@ async fn standard_stdio_discovers_then_sends_metadata_without_reverse_requests()
 }
 
 #[tokio::test]
-async fn standard_stdio_falls_back_only_when_discovery_is_not_implemented() {
+async fn standard_stdio_falls_back_on_legacy_errors_and_rejects_modern_version_error() {
     let mut config = McpServerConfig::stdio("fake", Vec::new());
     config.stdio_mode = Some(McpStdioMode::StandardStdio);
-    for code in [-32601, -32022] {
+    for code in [-32601, -32602, -32022] {
         let mut client = McpClient::new(config.clone());
         let sent = Arc::new(Mutex::new(Vec::new()));
         let closed = Arc::new(AtomicBool::new(false));
@@ -146,7 +146,7 @@ async fn standard_stdio_falls_back_only_when_discovery_is_not_implemented() {
             .finish_connect_with_transport(Box::new(transport))
             .await;
         let sent = sent.lock().unwrap();
-        if code == -32601 {
+        if code != -32022 {
             result.expect("legacy initialize on the same transport");
             assert_eq!(sent.len(), 4);
             assert_eq!(sent[1]["method"], "initialize");
@@ -159,6 +159,71 @@ async fn standard_stdio_falls_back_only_when_discovery_is_not_implemented() {
             assert!(closed.load(Ordering::SeqCst));
         }
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn standard_stdio_cancels_timed_out_tools_and_ignores_their_late_results() {
+    struct DelayedResponse {
+        transport: FakeTransport,
+        delay_next: bool,
+    }
+
+    #[async_trait]
+    impl McpTransport for DelayedResponse {
+        async fn start(&mut self) -> Result<(), McpError> {
+            Ok(())
+        }
+
+        async fn send(&mut self, message: serde_json::Value) -> Result<(), McpError> {
+            self.delay_next = message["method"] == "tools/call" && message["id"] == 1;
+            self.transport.send(message).await
+        }
+
+        async fn receive(&mut self) -> Result<serde_json::Value, McpError> {
+            if self.delay_next {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            self.transport.receive().await
+        }
+
+        async fn close(&mut self) -> Result<(), McpError> {
+            self.transport.close().await
+        }
+    }
+
+    let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = FakeTransport::new_with_sent(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "late"}]
+            }}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "next"}]
+            }}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+        sent.clone(),
+    );
+    client.transport = Some(Box::new(DelayedResponse {
+        transport,
+        delay_next: false,
+    }));
+    client.modern_stdio = true;
+
+    let err = client
+        .send_modern_request("tools/call", json!({}), std::time::Duration::from_millis(5))
+        .await
+        .expect_err("first response should time out");
+    assert!(matches!(err, McpError::ConnectionError(_)));
+    assert_eq!(client.call_tool("echo", json!({})).await.unwrap(), "next");
+
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["id"], 1);
+    assert_eq!(sent[1]["method"], "notifications/cancelled");
+    assert_eq!(sent[1]["params"]["requestId"], 1);
+    assert_eq!(sent[2]["id"], 2);
 }
 
 #[tokio::test]

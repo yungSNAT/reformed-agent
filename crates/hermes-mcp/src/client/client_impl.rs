@@ -1,5 +1,6 @@
 const MODERN_STDIO_VERSION: &str = "2026-07-28";
 const STDIO_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
+const STDIO_CANCEL_TIMEOUT: Duration = Duration::from_secs(1);
 
 impl McpClient {
     /// Create a new client for the given config. Does not connect yet.
@@ -106,7 +107,7 @@ impl McpClient {
 
         self.connected = true;
         self.connected_at = Some(Instant::now());
-        self.ping_unsupported = self.modern_stdio;
+        self.ping_unsupported = false;
 
         Ok(())
     }
@@ -133,10 +134,20 @@ impl McpClient {
     /// Sends a `tools/list` JSON-RPC request and parses the response into
     /// a `Vec<ToolSchema>`. The result is also cached internally.
     pub async fn list_tools(&mut self) -> Result<Vec<ToolSchema>, McpError> {
-        let result = self
-            .send_request("tools/list", serde_json::json!({}))
-            .await?;
+        self.list_tools_with_timeout(self.connect_timeout).await
+    }
 
+    async fn list_tools_with_timeout(
+        &mut self,
+        modern_timeout: Duration,
+    ) -> Result<Vec<ToolSchema>, McpError> {
+        let params = serde_json::json!({});
+        let result = if self.modern_stdio {
+            self.send_modern_request("tools/list", params, modern_timeout)
+                .await?
+        } else {
+            self.send_request("tools/list", params).await?
+        };
         let tools_response: ToolsListResponse =
             serde_json::from_value(result).map_err(|e| McpError::Serialization(e.to_string()))?;
 
@@ -167,7 +178,9 @@ impl McpClient {
 
         let timeout = mcp_call_timeout_duration();
         let started = Instant::now();
-        let result =
+        let result = if self.modern_stdio {
+            self.send_modern_request("tools/call", params, timeout).await?
+        } else {
             match tokio::time::timeout(timeout, self.send_request("tools/call", params)).await {
                 Ok(res) => res?,
                 Err(_) => {
@@ -178,7 +191,8 @@ impl McpClient {
                         timeout.as_secs_f64()
                     )));
                 }
-            };
+            }
+        };
 
         if result
             .get("isError")
@@ -248,6 +262,13 @@ impl McpClient {
 
     /// Cheaply exercise the MCP session so HTTP/SSE servers do not expire it idle.
     pub async fn keepalive_probe(&mut self) -> Result<(), McpError> {
+        if self.modern_stdio {
+            // Modern stdio has no ping and runs on a local process. Use the
+            // caller's keepalive budget, allowing time to signal cancellation.
+            self.list_tools_with_timeout(Duration::from_secs(MCP_KEEPALIVE_PROBE_TIMEOUT_SECS))
+                .await?;
+            return Ok(());
+        }
         if !self.ping_unsupported {
             match tokio::time::timeout(
                 Duration::from_secs(MCP_KEEPALIVE_PROBE_TIMEOUT_SECS),
@@ -861,10 +882,9 @@ impl McpClient {
     /// Send a JSON-RPC request and return the `result` field from the response.
     async fn send_request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
         if self.modern_stdio {
-            let id = self
-                .send_wire_request(method, Self::modern_stdio_params(params)?)
-                .await?;
-            return Self::parse_modern_result(self.receive_modern_response(id).await?);
+            return self
+                .send_modern_request(method, params, self.connect_timeout)
+                .await;
         }
         let id = self.send_wire_request(method, params).await?;
         loop {
@@ -943,6 +963,63 @@ impl McpClient {
         }
     }
 
+    async fn send_modern_request(
+        &mut self,
+        method: &str,
+        params: Value,
+        timeout: Duration,
+    ) -> Result<Value, McpError> {
+        let timed_out = || {
+            McpError::ConnectionError(format!(
+                "MCP {method} timed out after {:.1}s",
+                timeout.as_secs_f64()
+            ))
+        };
+        let params = Self::modern_stdio_params(params)?;
+        let deadline = tokio::time::Instant::now() + timeout;
+        let id = match tokio::time::timeout_at(deadline, self.send_wire_request(method, params))
+            .await
+        {
+            Ok(Ok(id)) => id,
+            Ok(Err(error)) => {
+                if matches!(error, McpError::ConnectionError(_)) {
+                    self.abort_modern_stdio();
+                }
+                return Err(error);
+            }
+            Err(_) => {
+                // A cancelled write may have emitted only part of the line.
+                self.abort_modern_stdio();
+                return Err(timed_out());
+            }
+        };
+        if let Ok(response) =
+            tokio::time::timeout_at(deadline, self.receive_modern_response(id)).await
+        {
+            return Self::parse_modern_result(response?);
+        }
+
+        let params = serde_json::json!({"requestId": id, "reason": "Request timed out"});
+        let sent = tokio::time::timeout(
+            STDIO_CANCEL_TIMEOUT,
+            self.send_notification("notifications/cancelled", params),
+        )
+        .await;
+        if !matches!(sent, Ok(Ok(()))) {
+            self.abort_modern_stdio();
+        }
+        Err(timed_out())
+    }
+
+    fn abort_modern_stdio(&mut self) {
+        // Dropping a StdioTransport kills its child even after a partial write.
+        self.transport = None;
+        self.connected = false;
+        self.connected_at = None;
+        self.tools.clear();
+        self.resources.clear();
+    }
+
     async fn discover_modern_stdio(&mut self) -> Result<bool, McpError> {
         let params = Self::modern_stdio_params(serde_json::json!({}))?;
         // The connect deadline also covers the write. A partial write is never
@@ -957,8 +1034,12 @@ impl McpClient {
             return Ok(false);
         };
         let response = response?;
-        if response.pointer("/error/code").and_then(Value::as_i64) == Some(-32601) {
-            return Ok(false);
+        if let Some(code) = response.pointer("/error/code").and_then(Value::as_i64) {
+            // Unrecognised errors can be a legacy server rejecting a request
+            // before initialize. Recognised modern errors are authoritative.
+            if !matches!(code, -32022..=-32020) {
+                return Ok(false);
+            }
         }
         let result = Self::parse_modern_result(response)?;
         if !result
