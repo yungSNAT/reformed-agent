@@ -270,18 +270,24 @@
         let first_call = &first_tools.get("terminal").unwrap().handler;
         let second_call = &second_tools.get("terminal").unwrap().handler;
 
-        let first_output =
-            first_call(serde_json::json!({"command": "pwd", "task_id": "session-2"})).unwrap();
-        assert_eq!(first_output.trim(), first_path.to_str().unwrap());
-        let second_output = second_call(serde_json::json!({"command": "pwd"})).unwrap();
-        assert_eq!(second_output.trim(), second_path.to_str().unwrap());
-        let explicit =
-            first_call(serde_json::json!({"command": "pwd", "workdir": second_path})).unwrap();
-        assert_eq!(explicit.trim(), second_path.to_str().unwrap());
+        let decode = |output: String| serde_json::from_str::<serde_json::Value>(&output).unwrap();
+        let first_output = decode(
+            first_call(serde_json::json!({"command": "pwd", "task_id": "session-2"})).unwrap(),
+        );
+        assert_eq!(first_output["result"], first_path.to_str().unwrap());
+        let second_output = decode(second_call(serde_json::json!({"command": "pwd"})).unwrap());
+        assert_eq!(second_output["result"], second_path.to_str().unwrap());
+        let explicit = decode(
+            first_call(serde_json::json!({"command": "pwd", "workdir": second_path})).unwrap(),
+        );
+        assert_eq!(explicit["result"], second_path.to_str().unwrap());
 
         first.close().unwrap();
-        let missing = first_call(serde_json::json!({"command": "pwd"})).unwrap();
-        assert!(missing.contains("Command did not run."), "{missing}");
+        let missing = decode(first_call(serde_json::json!({"command": "pwd"})).unwrap());
+        assert!(missing["error"]
+            .as_str()
+            .unwrap()
+            .contains("Command did not run."));
     }
 
     #[test]
