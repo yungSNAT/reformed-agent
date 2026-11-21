@@ -1,5 +1,6 @@
 import os
 import plistlib
+import shutil
 import subprocess
 import tempfile
 import unittest
@@ -11,6 +12,60 @@ SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 
 @unittest.skipUnless(os.name == "posix", "launchd wrappers require Bash")
 class WebhookLaunchdTests(unittest.TestCase):
+    def test_guided_setup_preserves_literal_overrides(self):
+        with tempfile.TemporaryDirectory() as scratch:
+            root = Path(scratch).resolve()
+            wrappers = root / "scripts"
+            wrappers.mkdir()
+            for name in (
+                "run-upstream-webhook-listener.sh",
+                "run-upstream-webhook-worker.sh",
+                "upstream_webhook_sync.py",
+            ):
+                (wrappers / name).touch()
+            installer = wrappers / "install-upstream-webhook-launchd.sh"
+            shutil.copyfile(SCRIPTS / installer.name, installer)
+            installer.chmod(0o700)
+            status = wrappers / "status-upstream-webhook-launchd.sh"
+            status.write_text("#!/bin/sh\nexit 97\n")
+            status.chmod(0o700)
+            config = root / "generated-settings"
+            key = "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH"
+            value = str(root / "Team's reports & notes")
+            setup = [
+                "env", f"PATH={os.defpath}", "UPSTREAM_SYNC_AUTO_GENERATE_SECRET=0",
+                "bash", str(SCRIPTS / "setup-upstream-webhook-launchd.sh"),
+                "--repo-root", str(root), "--agents-dir", str(root / "agents"),
+                "--env-file", str(config), "--log-dir", str(root / "logs"),
+                "--show-only", "--no-auto-secret",
+            ]
+
+            result = subprocess.run(
+                [*setup, "--set", f"{key}={value}"], capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn("Show-only mode complete.", result.stdout)
+            roundtrip = subprocess.run(
+                [
+                    "bash", "-c", 'set -eu; source "$1"; printf "%s" "$UPSTREAM_SYNC_SUMMARY_LOCAL_PATH"',
+                    "settings", str(config),
+                ],
+                text=True,
+                capture_output=True,
+                check=True,
+                timeout=15,
+            )
+            self.assertEqual(roundtrip.stdout, value)
+
+            before = config.read_bytes()
+            bad_key = subprocess.run(
+                [*setup, "--set", f"{key}=unused", "--set", "invalid-key=value"],
+                capture_output=True, text=True, timeout=15,
+            )
+            self.assertEqual(bad_key.returncode, 2)
+            self.assertIn("Invalid --set key", bad_key.stderr)
+            self.assertEqual(config.read_bytes(), before)
+
     def test_generated_settings_are_valid_shell_assignments(self):
         with tempfile.TemporaryDirectory() as scratch:
             root = Path(scratch).resolve()
