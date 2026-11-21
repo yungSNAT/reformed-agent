@@ -61,7 +61,7 @@ pub struct LocalRuntime {
     /// Shared with the control socket and the router, so connections accepted before a stop
     /// mint and redeem nothing after it.
     tickets: Arc<Tickets>,
-    /// `gateway.lock`, whose `flock` is released when this closes, after the files go.
+    /// `gateway.lock`, whose `flock` is released after the files go.
     lock: std::fs::File,
 }
 
@@ -96,9 +96,10 @@ impl Drop for LocalRuntime {
     fn drop(&mut self) {
         self.stop_serving();
         // The lock file stays, emptied of its pid: unlinking the inode this still locks would let
-        // a new claimant lock a fresh one at the path whilst this process still runs. The lock
-        // itself is released after this returns.
+        // a new claimant lock a fresh one at the path whilst cleanup still owns the home.
         let _ = self.lock.set_len(0);
+        // A forked child may retain the descriptor until exec. Release the flock even then.
+        let _ = self.lock.unlock();
     }
 }
 
