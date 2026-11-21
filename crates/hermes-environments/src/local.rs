@@ -739,11 +739,17 @@ impl TerminalBackend for LocalBackend {
         Ok(selected_lines.join("\n"))
     }
 
+    fn locks_local_file_edits(&self) -> bool {
+        true
+    }
+
     async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError> {
         let resolved = resolve_path(path)?;
         hermes_config::tool_guard::check_write(&resolved)
             .await
             .map_err(AgentError::ToolExecution)?;
+        let edit_lock = hermes_core::file_edit::file_edit_lock(&resolved).await;
+        let _turn = edit_lock.lock().await;
 
         // Ensure parent directory exists
         if let Some(parent) = resolved.parent() {

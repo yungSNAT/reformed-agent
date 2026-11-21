@@ -6,11 +6,11 @@ use serde_json::{json, Value};
 
 use hermes_core::{tool_schema, JsonSchema, TerminalBackend, ToolError, ToolHandler, ToolSchema};
 
-use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
+use std::sync::Arc;
 
 use crate::credential_guard::CredentialGuard;
+pub(crate) use hermes_core::file_edit::file_edit_lock;
 
 const DEFAULT_READ_OFFSET: i64 = 1;
 const DEFAULT_READ_LIMIT: i64 = 500;
@@ -188,44 +188,6 @@ pub fn resolve_tool_path(
     clean_path(base.join(expanded))
 }
 
-/// The lock `write_file`, `patch` and `hash_edit` hold on a file, shared by
-/// every path that resolves to it. Tool calls in one batch run in parallel, and
-/// an edit reads, changes and writes the whole file, so calls on one file take
-/// turns. Locks no call holds are dropped as others are handed out. A file not
-/// yet created is keyed by its nearest existing folder's real path, so it keeps
-/// its lock once it exists; a symlink to it is keyed as the file it names.
-pub(crate) async fn file_edit_lock(path: &Path) -> Arc<tokio::sync::Mutex<()>> {
-    static LOCKS: LazyLock<Mutex<HashMap<PathBuf, Arc<tokio::sync::Mutex<()>>>>> =
-        LazyLock::new(Mutex::default);
-    // Follow a dangling symlink to the file a write through it creates (40
-    // links at most, as the kernel allows).
-    let mut named = path.to_path_buf();
-    for _ in 0..40 {
-        if tokio::fs::metadata(&named).await.is_ok() {
-            break;
-        }
-        let Ok(target) = tokio::fs::read_link(&named).await else {
-            break;
-        };
-        named = named.parent().unwrap_or(Path::new("")).join(target);
-    }
-    let mut file = named.clone();
-    for existing in named.ancestors() {
-        if let Ok(real) = tokio::fs::canonicalize(existing).await {
-            let missing = named.strip_prefix(existing).unwrap_or(Path::new(""));
-            file = if missing.as_os_str().is_empty() {
-                real
-            } else {
-                real.join(missing)
-            };
-            break;
-        }
-    }
-    let mut locks = LOCKS.lock().unwrap_or_else(PoisonError::into_inner);
-    locks.retain(|_, lock| Arc::strong_count(lock) > 1);
-    Arc::clone(locks.entry(file).or_default())
-}
-
 pub fn content_looks_like_internal_read_status(content: &str) -> bool {
     if !content.contains(READ_DEDUP_STATUS_MESSAGE) {
         return false;
@@ -351,8 +313,11 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
-        let edit_lock = file_edit_lock(Path::new(path)).await;
-        let _turn = edit_lock.lock().await;
+        let _turn = if self.backend.locks_local_file_edits() {
+            None
+        } else {
+            Some(file_edit_lock(Path::new(path)).await.lock_owned().await)
+        };
         self.backend
             .write_file(path, content)
             .await
