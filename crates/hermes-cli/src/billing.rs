@@ -1278,6 +1278,34 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn charge_status_timeout_reports_the_cause_without_the_request_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/private-charge-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .mount(&server)
+            .await;
+        let mut client =
+            NousBillingClient::from_state(&sample_state("access".into(), server.uri()))
+                .expect("client");
+        client.client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(75))
+            .build()
+            .expect("HTTP client");
+
+        let error = client
+            .get_charge_status("private-charge-fixture")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, BillingErrorKind::Network);
+        let rendered = billing_error_to_agent_error(error).to_string();
+        assert!(!rendered.contains(&server.uri()), "{rendered}");
+        assert!(!rendered.contains("private-charge-fixture"), "{rendered}");
+        assert!(rendered.contains("Nous Portal did not respond in time."));
+    }
+
+    #[tokio::test]
     async fn client_maps_typed_error_envelopes() {
         let server = MockServer::start().await;
         Mock::given(method("POST"))
