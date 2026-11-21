@@ -7,6 +7,7 @@ pub mod auth_gate;
 pub mod credits;
 pub mod errors;
 pub mod git;
+pub mod mcp;
 pub mod nous_urls;
 pub mod providers;
 pub mod schema_sanitizer;

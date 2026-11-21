@@ -11,6 +11,16 @@ struct ManagedMcpClient {
     keepalive_task: Option<tokio::task::JoinHandle<()>>,
 }
 
+impl ManagedMcpClient {
+    fn is_connected(&self) -> bool {
+        self.available.load(Ordering::SeqCst)
+            && self
+                .client
+                .try_lock()
+                .map_or(true, |client| client.is_connected())
+    }
+}
+
 fn mcp_keepalive_interval_duration(config: &McpServerConfig) -> Duration {
     Duration::from_secs(
         config
@@ -201,7 +211,7 @@ impl McpConnects {
 fn existing_report(name: String, existing: &ManagedMcpClient) -> McpDiscoveryReport {
     McpDiscoveryReport {
         name,
-        connected: existing.available.load(Ordering::SeqCst),
+        connected: existing.is_connected(),
         transport_type: existing.transport_type.clone(),
         tool_count: existing.cached_tools.len(),
         error: None,
@@ -497,7 +507,7 @@ impl McpManager {
     pub fn is_connected(&self, name: &str) -> bool {
         self.clients
             .get(name)
-            .is_some_and(|c| c.available.load(Ordering::SeqCst))
+            .is_some_and(ManagedMcpClient::is_connected)
     }
 
     /// Get the list of connected server names.
@@ -544,10 +554,14 @@ impl McpManager {
 
         let reconnect_config: McpServerConfig = {
             let mut client = managed.client.lock().await;
+            let was_modern = client.uses_modern_protocol();
             match client.call_tool(tool_name, args.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    if is_stale_transport_error(&err) {
+                    if !was_modern
+                        && !client.uses_modern_protocol()
+                        && is_stale_transport_error(&err)
+                    {
                         warn!(
                             "MCP stale transport detected on '{}' ({}); reconnecting once",
                             server_name, err
@@ -738,7 +752,7 @@ impl McpManager {
             .map(|(name, client)| {
                 let status = McpServerStatus {
                     name: name.clone(),
-                    connected: client.available.load(Ordering::SeqCst),
+                    connected: client.is_connected(),
                     tool_count: client.cached_tools.len(),
                     resource_count: client.cached_resources.len(),
                     transport_type: client.transport_type.clone(),

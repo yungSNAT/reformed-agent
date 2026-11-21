@@ -7,6 +7,7 @@ use super::{
 use crate::transport::McpTransport;
 use crate::McpError;
 use async_trait::async_trait;
+use hermes_core::mcp::McpStdioMode;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +76,280 @@ impl McpTransport for FakeTransport {
     async fn close(&mut self) -> Result<(), McpError> {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+#[tokio::test]
+async fn standard_stdio_discovers_then_sends_metadata_without_reverse_requests() {
+    let mut config = McpServerConfig::stdio("fake", Vec::new());
+    config.stdio_mode = Some(McpStdioMode::StandardStdio);
+    let mut client = McpClient::new(config);
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = FakeTransport::new_with_sent(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 1, "method": "sampling/createMessage", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}
+            }}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {"resultType": "complete", "tools": []}}),
+            json!({"jsonrpc": "2.0", "id": 3, "result": {"resultType": "complete", "tools": []}}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+        sent.clone(),
+    );
+    client
+        .finish_connect_with_transport(Box::new(transport))
+        .await
+        .expect("connect to modern stdio server");
+    client.keepalive_probe().await.expect("keepalive");
+
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["method"], "server/discover");
+    assert_eq!(sent[1]["method"], "tools/list");
+    assert_eq!(sent[2]["method"], "tools/list");
+    for request in sent.iter() {
+        let meta = &request["params"]["_meta"];
+        assert_eq!(
+            meta["io.modelcontextprotocol/protocolVersion"],
+            "2026-07-28"
+        );
+        assert_eq!(
+            meta["io.modelcontextprotocol/clientCapabilities"],
+            json!({})
+        );
+    }
+}
+
+#[tokio::test]
+async fn standard_stdio_falls_back_on_legacy_errors_and_rejects_modern_version_error() {
+    let mut config = McpServerConfig::stdio("fake", Vec::new());
+    config.stdio_mode = Some(McpStdioMode::StandardStdio);
+    for code in [-32601, -32602, -32022] {
+        let mut client = McpClient::new(config.clone());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let transport = FakeTransport::new_with_sent(
+            vec![
+                json!({"jsonrpc": "2.0", "id": 1, "error": {
+                    "code": code, "message": "synthetic protocol response",
+                }}),
+                json!({"jsonrpc": "2.0", "id": 2, "result": {
+                    "protocolVersion": "2025-11-25", "capabilities": {}, "serverInfo": {"name": "fake"}
+                }}),
+                json!({"jsonrpc": "2.0", "id": 3, "result": {"tools": []}}),
+            ],
+            closed.clone(),
+            sent.clone(),
+        );
+        let result = client
+            .finish_connect_with_transport(Box::new(transport))
+            .await;
+        let sent = sent.lock().unwrap();
+        if code != -32022 {
+            result.expect("legacy initialize on the same transport");
+            assert_eq!(sent.len(), 4);
+            assert_eq!(sent[1]["method"], "initialize");
+            assert_eq!(sent[2]["method"], "notifications/initialized");
+            assert_eq!(sent[3]["method"], "tools/list");
+            assert!(sent[3]["params"].get("_meta").is_none());
+        } else {
+            result.expect_err("an explicit version error must fail");
+            assert_eq!(sent.len(), 1);
+            assert!(closed.load(Ordering::SeqCst));
+        }
+    }
+}
+
+#[tokio::test(start_paused = true)]
+async fn standard_stdio_cancels_timed_out_tools_and_ignores_their_late_results() {
+    struct DelayedResponse {
+        transport: FakeTransport,
+        delay_next: bool,
+    }
+
+    #[async_trait]
+    impl McpTransport for DelayedResponse {
+        async fn start(&mut self) -> Result<(), McpError> {
+            Ok(())
+        }
+
+        async fn send(&mut self, message: serde_json::Value) -> Result<(), McpError> {
+            self.delay_next = message["method"] == "tools/call" && message["id"] == 1;
+            self.transport.send(message).await
+        }
+
+        async fn receive(&mut self) -> Result<serde_json::Value, McpError> {
+            if self.delay_next {
+                tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+            }
+            self.transport.receive().await
+        }
+
+        async fn close(&mut self) -> Result<(), McpError> {
+            self.transport.close().await
+        }
+    }
+
+    let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = FakeTransport::new_with_sent(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "late"}]
+            }}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "next"}]
+            }}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+        sent.clone(),
+    );
+    client.transport = Some(Box::new(DelayedResponse {
+        transport,
+        delay_next: false,
+    }));
+    client.modern_stdio = true;
+
+    let err = client
+        .send_modern_request("tools/call", json!({}), std::time::Duration::from_millis(5))
+        .await
+        .expect_err("first response should time out");
+    assert!(matches!(err, McpError::ConnectionError(_)));
+    assert_eq!(client.call_tool("echo", json!({})).await.unwrap(), "next");
+
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["id"], 1);
+    assert_eq!(sent[1]["method"], "notifications/cancelled");
+    assert_eq!(sent[1]["params"]["requestId"], 1);
+    assert_eq!(sent[2]["id"], 2);
+}
+
+#[tokio::test]
+async fn modern_stdio_rejects_invalid_matching_response_envelopes() {
+    let valid_result = json!({"resultType": "complete", "content": []});
+    let valid_error = json!({"code": -32601, "message": "method not found"});
+    for response in [
+        json!({"id": 1, "result": valid_result}),
+        json!({"jsonrpc": "1.0", "id": 1, "result": valid_result}),
+        json!({"jsonrpc": "2.0", "id": 1}),
+        json!({"jsonrpc": "2.0", "id": 1, "result": valid_result, "error": valid_error}),
+        json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32601}}),
+    ] {
+        let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+        client.modern_stdio = true;
+        client.connected = true;
+        client.transport = Some(Box::new(FakeTransport::new(
+            vec![response],
+            Arc::new(AtomicBool::new(false)),
+        )));
+
+        let err = client
+            .call_tool("echo", json!({}))
+            .await
+            .expect_err("a malformed matching response must fail");
+        assert!(
+            matches!(err, McpError::Protocol { code: -32700, .. }),
+            "{err}"
+        );
+        assert!(!client.is_connected());
+        assert!(client.transport.is_none());
+    }
+}
+
+#[tokio::test]
+async fn modern_stdio_ignores_another_response_id_and_keeps_valid_rpc_errors() {
+    let mut client = McpClient::new(McpServerConfig::stdio("fake", Vec::new()));
+    client.modern_stdio = true;
+    client.connected = true;
+    client.transport = Some(Box::new(FakeTransport::new(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 9, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "unrelated"}]
+            }}),
+            json!({"jsonrpc": "2.0", "id": 1, "error": {"code": -32000, "message": "synthetic"}}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {
+                "resultType": "complete", "content": [{"type": "text", "text": "next"}]
+            }}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+    )));
+
+    let err = client.call_tool("echo", json!({})).await.unwrap_err();
+    assert!(
+        matches!(err, McpError::Protocol { code: -32000, .. }),
+        "{err}"
+    );
+    assert!(client.is_connected());
+    assert_eq!(client.call_tool("echo", json!({})).await.unwrap(), "next");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn modern_stdio_reconnects_after_terminal_reads_for_the_next_call_only() {
+    for failure in ["eof", "malformed"] {
+        let dir = TempDir::new().expect("temp dir");
+        let calls = dir.path().join("calls");
+        let script = r#"
+            while IFS= read -r line; do
+                id=${line#*\"id\":}
+                id=${id%%,*}
+                case "$line" in
+                    *'"server/discover"'*)
+                        result='{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}'
+                        ;;
+                    *'"tools/list"'*)
+                        result='{"resultType":"complete","tools":[{"name":"echo","inputSchema":{"type":"object"}}]}'
+                        ;;
+                    *'"tools/call"'*)
+                        if [ ! -f "$1" ]; then
+                            echo first >> "$1"
+                            if [ "$2" = malformed ]; then echo '{'; fi
+                            exit 0
+                        fi
+                        echo second >> "$1"
+                        result='{"resultType":"complete","content":[{"type":"text","text":"next"}]}'
+                        ;;
+                    *) exit 1 ;;
+                esac
+                printf '{"jsonrpc":"2.0","id":%s,"result":%s}\n' "$id" "$result"
+            done
+        "#;
+        let mut config = McpServerConfig::stdio(
+            "env",
+            vec![
+                "sh".into(),
+                "-c".into(),
+                script.into(),
+                "test-mcp".into(),
+                calls.display().to_string(),
+                failure.into(),
+            ],
+        );
+        config.stdio_mode = Some(McpStdioMode::StandardStdio);
+        let registry = Arc::new(hermes_tools::ToolRegistry::new());
+        let mut manager = McpManager::new(registry.clone());
+        manager.connect("fixture", config).await.unwrap();
+        let tool_name = super::mcp_registered_tool_name("fixture", "echo");
+
+        let reply = registry.dispatch_async(&tool_name, json!({})).await;
+        let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+        assert!(reply.get("error").is_some(), "{reply}");
+        assert_eq!(std::fs::read_to_string(&calls).unwrap(), "first\n");
+        assert!(!manager.is_connected("fixture"));
+        assert!(!manager.get_status()["fixture"].connected);
+
+        assert_eq!(
+            manager
+                .call_tool("fixture", "echo", json!({}))
+                .await
+                .unwrap(),
+            "next"
+        );
+        assert_eq!(std::fs::read_to_string(&calls).unwrap(), "first\nsecond\n");
+        assert!(manager.is_connected("fixture"));
+        manager.disconnect_all().await.unwrap();
     }
 }
 

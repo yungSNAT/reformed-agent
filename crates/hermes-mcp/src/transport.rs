@@ -5,7 +5,7 @@
 //! - **HttpTransport**: Communicates via HTTP/SSE with a remote MCP server
 //!
 //! The transport layer handles:
-//! - Message framing with Content-Length header + JSON body
+//! - Newline-delimited JSON and legacy Content-Length stdio framing
 //! - Connection lifecycle (start, send, receive, close)
 //! - Error handling and connection lifecycle
 
@@ -19,12 +19,26 @@ use serde_json::Value;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, Command};
+use tokio::io::BufReader;
+use tokio::process::{Child, ChildStdout, Command};
 use tracing::{error, info, trace};
 
 use hermes_core::subprocess::CommandNoWindowExt;
 
 use crate::McpError;
+
+mod modern_http;
+use modern_http::ModernHttp;
+
+pub(crate) fn valid_modern_response_envelope(reply: &Value) -> bool {
+    reply["jsonrpc"] == "2.0"
+        && reply.get("method").is_none()
+        && match (reply.get("result"), reply.get("error")) {
+            (Some(_), None) => true,
+            (None, Some(error)) => error["code"].is_i64() && error["message"].is_string(),
+            _ => false,
+        }
+}
 
 const MCP_PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_STRICT: usize = 1024 * 1024;
@@ -421,6 +435,11 @@ pub trait McpTransport: Send + Sync {
     /// that send it on subsequent requests.
     fn set_negotiated_protocol_version(&mut self, _version: &'static str) {}
 
+    /// Probe an opted-in HTTP endpoint before starting the legacy handshake.
+    async fn probe_modern_http(&mut self, _message: Value) -> Result<Option<Value>, McpError> {
+        Ok(None)
+    }
+
     /// Send a JSON-RPC message.
     async fn send(&mut self, message: Value) -> Result<(), McpError>;
 
@@ -437,12 +456,8 @@ pub trait McpTransport: Send + Sync {
 
 /// Transport that communicates via stdin/stdout with a child process.
 ///
-/// Uses the MCP message framing protocol:
-/// - Each message is prefixed with a `Content-Length` header
-/// - The body is a UTF-8 encoded JSON string
-/// - Messages are separated by `\r\n\r\n` between header and body
-///
-/// This is the standard transport for local MCP server processes.
+/// Defaults to Hermes' legacy Content-Length framing for existing servers.
+/// Standard MCP servers use one JSON message per line.
 pub struct StdioTransport {
     /// The command to execute.
     command: String,
@@ -452,6 +467,9 @@ pub struct StdioTransport {
     env: HashMap<String, String>,
     /// The child process.
     child: Option<Child>,
+    standard_framing: bool,
+    standard_stdout: Option<BufReader<ChildStdout>>,
+    pending_line: Vec<u8>,
     /// Background discovery should not let OAuth helpers prompt on stdin.
     suppress_interactive_oauth: bool,
     /// Whether the transport has been started.
@@ -471,9 +489,17 @@ impl StdioTransport {
             args: args.to_vec(),
             env: env.clone(),
             child: None,
+            standard_framing: false,
+            standard_stdout: None,
+            pending_line: Vec::new(),
             suppress_interactive_oauth,
             started: false,
         }
+    }
+
+    pub(crate) fn with_standard_framing(mut self) -> Self {
+        self.standard_framing = true;
+        self
     }
 
     fn effective_child_env(&self, profile: McpSandboxProfile) -> HashMap<String, String> {
@@ -546,10 +572,13 @@ impl McpTransport for StdioTransport {
         }
         cmd.suppress_windows_console();
 
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
         })?;
 
+        if self.standard_framing {
+            self.standard_stdout = child.stdout.take().map(BufReader::new);
+        }
         self.child = Some(child);
         self.started = true;
 
@@ -571,18 +600,25 @@ impl McpTransport for StdioTransport {
             serde_json::to_string(&message).map_err(|e| McpError::Serialization(e.to_string()))?;
         let max_message_bytes = max_message_bytes_from_env();
         enforce_message_size(body.len(), max_message_bytes)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
-
         trace!("Sending MCP message: {} bytes", body.len());
 
-        stdin
-            .write_all(header.as_bytes())
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
+        if !self.standard_framing {
+            let header = format!("Content-Length: {}\r\n\r\n", body.len());
+            stdin
+                .write_all(header.as_bytes())
+                .await
+                .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
+        }
         stdin
             .write_all(body.as_bytes())
             .await
             .map_err(|e| McpError::ConnectionError(format!("Write body failed: {}", e)))?;
+        if self.standard_framing {
+            stdin
+                .write_all(b"\n")
+                .await
+                .map_err(|e| McpError::ConnectionError(format!("Write delimiter failed: {}", e)))?;
+        }
         stdin
             .flush()
             .await
@@ -592,6 +628,10 @@ impl McpTransport for StdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
+        if let Some(stdout) = &mut self.standard_stdout {
+            return read_stdio_line(stdout, &mut self.pending_line, max_message_bytes_from_env())
+                .await;
+        }
         let child = self
             .child
             .as_mut()
@@ -674,9 +714,37 @@ impl McpTransport for StdioTransport {
                 }
             }
         }
+        self.standard_stdout = None;
+        self.pending_line.clear();
         self.started = false;
         Ok(())
     }
+}
+
+async fn read_stdio_line(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    pending: &mut Vec<u8>,
+    limit: usize,
+) -> Result<Value, McpError> {
+    // Keep partial bytes across an interrupted discovery read. The extra two
+    // bytes accommodate CRLF without counting the delimiter against the limit.
+    let remaining = limit.saturating_add(2).saturating_sub(pending.len());
+    reader
+        .take(remaining as u64)
+        .read_until(b'\n', pending)
+        .await
+        .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+    let bytes = std::mem::take(pending);
+    let Some(body) = bytes.strip_suffix(b"\n") else {
+        enforce_message_size(bytes.len(), limit)?;
+        return Err(McpError::ConnectionClosed);
+    };
+    let body = body.strip_suffix(b"\r").unwrap_or(body);
+    enforce_message_size(body.len(), limit)?;
+    serde_json::from_slice(body).map_err(|e| McpError::Protocol {
+        code: -32700,
+        message: format!("JSON parse error: {e}"),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -981,6 +1049,7 @@ pub struct HttpSseTransport {
     started: bool,
     /// Messages from the last POST not yet received, oldest first.
     pending: VecDeque<Value>,
+    modern_http: Option<ModernHttp>,
     /// Whether the server is the older HTTP+SSE kind.
     legacy_sse: bool,
     /// Whether a POST has succeeded, settling which kind the server is.
@@ -1020,6 +1089,7 @@ impl HttpSseTransport {
                 .expect("HTTP client builds as Client::new() does"),
             started: false,
             pending: VecDeque::new(),
+            modern_http: None,
             legacy_sse: false,
             kind_known: false,
             message_endpoint: None,
@@ -1038,6 +1108,11 @@ impl HttpSseTransport {
     pub fn with_headers(mut self, headers: impl IntoIterator<Item = (String, String)>) -> Self {
         self.headers = headers.into_iter().collect();
         self
+    }
+
+    pub(crate) fn with_modern_http(mut self, enabled: bool) -> Result<Self, McpError> {
+        self.modern_http = enabled.then(|| ModernHttp::new(&self)).transpose()?;
+        Ok(self)
     }
 
     /// Build the full URL for an MCP endpoint.
@@ -1374,11 +1449,27 @@ impl McpTransport for HttpSseTransport {
         self.protocol_version = Some(version);
     }
 
+    async fn probe_modern_http(&mut self, message: Value) -> Result<Option<Value>, McpError> {
+        let Some(modern) = self.modern_http.as_mut() else {
+            return Ok(None);
+        };
+        let reply = modern.exchange(&message, true).await?;
+        if reply.is_none() {
+            self.modern_http = None;
+        }
+        Ok(reply)
+    }
+
     async fn start(&mut self) -> Result<(), McpError> {
         if self.started {
             return Err(McpError::ConnectionError(
                 "Transport already started".to_string(),
             ));
+        }
+
+        if self.modern_http.is_some() {
+            self.started = true;
+            return Ok(());
         }
 
         // Reachability only: a Streamable HTTP server need not answer a GET,
@@ -1400,6 +1491,10 @@ impl McpTransport for HttpSseTransport {
     }
 
     async fn send(&mut self, message: Value) -> Result<(), McpError> {
+        if let Some(modern) = &mut self.modern_http {
+            self.pending.extend(modern.exchange(&message, false).await?);
+            return Ok(());
+        }
         let mut response = self.post(&message).await?;
         let status = response.status();
         if !status.is_success() {
@@ -1528,6 +1623,28 @@ impl McpTransport for HttpSseTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn stdio_line_read_retains_partial_and_pipelined_messages() {
+        let (mut writer, reader) = tokio::io::duplex(32);
+        let mut reader = BufReader::new(reader);
+        let mut pending = Vec::new();
+        writer.write_all(b"{\"id\":").await.unwrap();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            read_stdio_line(&mut reader, &mut pending, 8),
+        )
+        .await
+        .is_err());
+        writer.write_all(b"1}\r\n{\"id\":2}\n").await.unwrap();
+        for id in [1, 2] {
+            let value = read_stdio_line(&mut reader, &mut pending, 8).await.unwrap();
+            assert_eq!(value["id"], id);
+        }
+
+        writer.write_all(b"1234567890123").await.unwrap();
+        assert!(read_stdio_line(&mut reader, &mut pending, 8).await.is_err());
+    }
 
     #[cfg(target_os = "linux")]
     #[tokio::test]
@@ -1973,6 +2090,109 @@ mod tests {
             .await
             .expect("write reply");
         head
+    }
+
+    #[tokio::test]
+    async fn modern_http_discovers_and_mirrors_a_nested_parameter_on_a_scoped_stream() {
+        use crate::{McpClient, McpServerConfig};
+        use serde_json::json;
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let mut config = McpServerConfig::http(url);
+        config.modern_http = Some(true);
+        let mut client = McpClient::new(config);
+        let responder = async {
+            let head = answer_once(
+                &server,
+                json_reply(r#"{"jsonrpc":"2.0","id":1,"result":{"resultType":"complete","supportedVersions":["2026-07-28"],"capabilities":{"tools":{}}}}"#),
+            )
+            .await;
+            assert!(head.starts_with("post /mcp "));
+            assert!(head.contains("mcp-method: server/discover\r\n"));
+            assert!(head.contains("mcp-protocol-version: 2026-07-28\r\n"));
+            assert!(!head.contains("mcp-session-id"));
+            let head = answer_once(
+                &server,
+                json_reply(r#"{"jsonrpc":"2.0","id":2,"result":{"resultType":"complete","tools":[{"name":"valid","inputSchema":{"type":"object","properties":{"options":{"type":"object","properties":{"region":{"type":"string","x-mcp-header":"Region"}}}}}},{"name":"invalid","inputSchema":{"type":"object","properties":{"value":{"type":"number","x-mcp-header":"Value"}}}},{"name":"null-schema","inputSchema":null}]}}"#),
+            )
+            .await;
+            assert!(head.contains("mcp-method: tools/list\r\n"));
+
+            let events = concat!(
+                ": ready\r\n\r\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"resultType\":\"complete\"}}\r\n\r\n",
+                "data: {\"jsonrpc\":\"2.0\",\"id\":3,\"result\":{\"resultType\":\"complete\",\"content\":[{\"type\":\"text\",\"text\":\"synthetic\"}]}}\r\n\r\n"
+            );
+            let head = answer_once(
+                &server,
+                format!("HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\n\r\n{events}", events.len()),
+            )
+            .await;
+            assert!(head.contains("mcp-method: tools/call\r\n"));
+            assert!(head.contains("mcp-name: valid\r\n"));
+            assert!(head.contains("mcp-param-region: local\r\n"));
+        };
+        let exercise = async {
+            client.connect().await.unwrap();
+            assert_eq!(client.cached_tools().len(), 1);
+            assert_eq!(client.cached_tools()[0].name, "valid");
+            let output = client
+                .call_tool("valid", json!({"options": {"region": "local"}}))
+                .await
+                .unwrap();
+            assert_eq!(output, "synthetic");
+            client.disconnect().await.unwrap();
+        };
+        tokio::time::timeout(Duration::from_secs(5), async {
+            tokio::join!(exercise, responder);
+        })
+        .await
+        .expect("loopback protocol fixture timed out");
+    }
+
+    #[tokio::test]
+    async fn modern_http_keeps_version_refusals_authoritative() {
+        use crate::{McpClient, McpServerConfig};
+        let server = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/mcp", server.local_addr().unwrap());
+        let mut config = McpServerConfig::http(url);
+        config.modern_http = Some(true);
+        let mut client = McpClient::new(config);
+        let body = r#"{"jsonrpc":"2.0","id":1,"error":{"code":-32022,"message":"synthetic private diagnostic","data":{"supported":["2025-11-25"]}}}"#;
+        let response = format!(
+            "HTTP/1.1 400 Bad Request\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len(),
+        );
+        let (result, head) = tokio::time::timeout(Duration::from_secs(4), async {
+            tokio::join!(client.connect(), answer_once(&server, response))
+        })
+        .await
+        .expect("discovery should fail promptly");
+        assert!(head.contains("mcp-method: server/discover\r\n"));
+        let error = result.expect_err("incompatible modern version");
+        assert!(matches!(error, McpError::Protocol { code: -32022, .. }));
+        assert!(!error.to_string().contains("synthetic private diagnostic"));
+    }
+
+    #[test]
+    fn modern_http_accepts_only_https_or_loopback_without_url_credentials() {
+        for endpoint in [
+            "http://example.invalid/mcp",
+            "https://synthetic@example.invalid/mcp",
+        ] {
+            assert!(HttpSseTransport::new(endpoint, None)
+                .with_modern_http(true)
+                .is_err());
+        }
+        for endpoint in [
+            "http://127.0.0.1:5050/mcp",
+            "http://[::1]/mcp",
+            "https://example.invalid/mcp",
+        ] {
+            assert!(HttpSseTransport::new(endpoint, None)
+                .with_modern_http(true)
+                .is_ok());
+        }
     }
 
     #[tokio::test]
