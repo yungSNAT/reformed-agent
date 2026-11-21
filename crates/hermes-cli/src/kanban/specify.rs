@@ -83,6 +83,26 @@ async fn specify_board(
     let mut outcomes = Vec::with_capacity(tasks.len());
     for task in tasks {
         let id = task.id.clone();
+        let read_path = path.clone();
+        let selected_board = board_id.clone();
+        let captured = task.clone();
+        let current = tokio::task::spawn_blocking(move || {
+            let lock = KanbanStoreLock::open(read_path)?;
+            let store = lock.load()?;
+            Ok::<_, AgentError>(
+                store
+                    .boards
+                    .iter()
+                    .find(|board| board.id == selected_board)
+                    .is_some_and(|board| board.tasks.contains(&captured)),
+            )
+        })
+        .await
+        .map_err(store_worker_error)??;
+        if !current {
+            outcomes.push(format!("{id}: task changed before specification"));
+            continue;
+        }
         let mut request = AuxiliaryRequest::new(
             AuxiliaryTask::from_name(TASK),
             vec![
@@ -214,6 +234,7 @@ fn promote(
 #[cfg(test)]
 mod tests {
     use std::pin::Pin;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
     use async_trait::async_trait;
@@ -241,7 +262,27 @@ mod tests {
         )
     }
 
-    struct Specifier(&'static str);
+    struct Specifier {
+        reply: &'static str,
+        on_call: Option<Box<dyn Fn() + Send + Sync>>,
+    }
+
+    fn test_client(
+        reply: &'static str,
+        on_call: Option<Box<dyn Fn() + Send + Sync>>,
+    ) -> AuxiliaryClient {
+        AuxiliaryClient::builder()
+            .config(AuxiliaryConfig {
+                consult_env: false,
+                ..AuxiliaryConfig::default()
+            })
+            .add_candidate(ProviderCandidate::new(
+                AuxiliarySource::Custom,
+                "specifier",
+                Arc::new(Specifier { reply, on_call }),
+            ))
+            .build()
+    }
 
     #[async_trait]
     impl LlmProvider for Specifier {
@@ -266,8 +307,11 @@ mod tests {
                 })
             );
             assert_eq!(extra_body, Some(&json!({"test_option": true})));
+            if let Some(on_call) = &self.on_call {
+                on_call();
+            }
             Ok(LlmResponse {
-                message: Message::assistant(self.0),
+                message: Message::assistant(self.reply),
                 finish_reason: Some("stop".into()),
                 model: model.unwrap_or("specifier").to_string(),
                 usage: None,
@@ -303,17 +347,7 @@ mod tests {
                 KanbanLane::Todo,
             ),
         ] {
-            let client = AuxiliaryClient::builder()
-                .config(AuxiliaryConfig {
-                    consult_env: false,
-                    ..AuxiliaryConfig::default()
-                })
-                .add_candidate(ProviderCandidate::new(
-                    AuxiliarySource::Custom,
-                    "specifier",
-                    Arc::new(Specifier(reply)),
-                ))
-                .build();
+            let client = test_client(reply, None);
             let output = specify_board(
                 path.clone(),
                 Selection::parse(&["--all", "--tenant", "imports"]).unwrap(),
@@ -338,6 +372,52 @@ mod tests {
             }
             assert_eq!(tasks[1], unrelated);
         }
+    }
+
+    #[tokio::test]
+    async fn kanban_specify_does_not_send_a_later_task_removed_during_the_sweep() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("boards.json");
+        let lock = KanbanStoreLock::open(path.clone()).unwrap();
+        let mut store = lock.load().unwrap();
+        add_triage(&mut store, "imports");
+        add_triage(&mut store, "imports");
+        lock.save(&store).unwrap();
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let calls_for_provider = Arc::clone(&calls);
+        let path_for_provider = path.clone();
+        let client = test_client(
+            "Verify each imported row.",
+            Some(Box::new(move || {
+                assert_eq!(calls_for_provider.fetch_add(1, Ordering::Relaxed), 0);
+                {
+                    let sidecar = std::fs::OpenOptions::new()
+                        .read(true)
+                        .write(true)
+                        .open(path_for_provider.with_extension("lock"))
+                        .unwrap();
+                    sidecar.try_lock().expect("lock released before inference");
+                }
+                let lock = KanbanStoreLock::open(path_for_provider.clone()).unwrap();
+                let mut store = lock.load().unwrap();
+                move_task(&mut store.boards[0].tasks[1], KanbanLane::Blocked, None);
+                lock.save(&store).unwrap();
+            })),
+        );
+        let output = specify_board(
+            path.clone(),
+            Selection::All(None),
+            &client,
+            Some(json!({"test_option": true})),
+        )
+        .await
+        .unwrap();
+        assert_eq!(calls.load(Ordering::Relaxed), 1);
+        assert!(output.contains("K-0002: task changed before specification"));
+        let store = KanbanStoreLock::open(path).unwrap().load().unwrap();
+        assert_eq!(store.boards[0].tasks[0].lane, KanbanLane::Todo);
+        assert_eq!(store.boards[0].tasks[1].lane, KanbanLane::Blocked);
     }
 
     #[test]
