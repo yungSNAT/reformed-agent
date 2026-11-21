@@ -26,6 +26,7 @@ ENV_FILE="${HOME}/.hermes-agent-ultra/upstream-webhook-sync.env"
 LOG_DIR="${HOME}/.hermes-agent-ultra/logs"
 LOAD_SERVICES="1"
 DEFAULT_HOSTNAME="$(hostname -s 2>/dev/null || hostname)"
+DEFAULT_ELITE_CMD="python3 scripts/run-elite-sync-gate.py"
 AUTO_GENERATE_SECRET="${UPSTREAM_SYNC_AUTO_GENERATE_SECRET:-1}"
 
 ensure_env_key() {
@@ -38,21 +39,20 @@ ensure_env_key() {
   fi
   tmp="$(mktemp)"
   cat "${file}" > "${tmp}"
-  printf '\n%s=%s\n' "${key}" "${value}" >> "${tmp}"
+  printf '\n%s=%q\n' "${key}" "${value}" >> "${tmp}"
   mv "${tmp}" "${file}"
 }
 
-upsert_env_key() {
+replace_env_value() {
   local file="$1"
   local key="$2"
-  local value="$3"
+  local previous="$3"
+  local value="$4"
   local tmp
   tmp="$(mktemp)"
-  awk -v k="${key}" -v v="${value}" '
-    BEGIN { done=0 }
-    $0 ~ ("^" k "=") { print k "=" v; done=1; next }
+  WEBHOOK_SETTING_VALUE="$(printf '%q' "${value}")" awk -v k="${key}" -v old="${key}=${previous}" '
+    $0 == old { print k "=" ENVIRON["WEBHOOK_SETTING_VALUE"]; next }
     { print }
-    END { if (!done) print k "=" v }
   ' "${file}" > "${tmp}"
   mv "${tmp}" "${file}"
 }
@@ -132,9 +132,9 @@ if [[ ! -f "${ENV_FILE}" ]]; then
 
 GITHUB_WEBHOOK_SECRET=
 UPSTREAM_SYNC_BACKEND=sqlite
-UPSTREAM_SYNC_SQLITE_PATH=${REPO_ROOT}/.sync-queue/upstream-events.db
+UPSTREAM_SYNC_SQLITE_PATH=$(printf '%q' "${REPO_ROOT}/.sync-queue/upstream-events.db")
 UPSTREAM_SYNC_RUNTIME_ROLE=dev
-UPSTREAM_SYNC_ALLOWED_HOSTNAME=${DEFAULT_HOSTNAME}
+UPSTREAM_SYNC_ALLOWED_HOSTNAME=$(printf '%q' "${DEFAULT_HOSTNAME}")
 UPSTREAM_SYNC_DISABLE_DEV_GUARD=0
 
 UPSTREAM_SYNC_EXPECTED_REPO=NousResearch/hermes-agent
@@ -146,7 +146,7 @@ UPSTREAM_SYNC_PATH=/github/upstream-sync
 UPSTREAM_SYNC_STRATEGY=merge
 UPSTREAM_SYNC_STRICT_RISK_GATE=1
 UPSTREAM_SYNC_ELITE_GATE=0
-UPSTREAM_SYNC_ELITE_CMD=python3 scripts/run-elite-sync-gate.py
+UPSTREAM_SYNC_ELITE_CMD=$(printf '%q' "${DEFAULT_ELITE_CMD}")
 UPSTREAM_SYNC_ELITE_ROLLBACK_CMD=
 UPSTREAM_SYNC_ALLOW_RISK_PATHS=0
 UPSTREAM_SYNC_NO_TESTS=0
@@ -168,12 +168,12 @@ UPSTREAM_SYNC_GLOBAL_PARITY_MAX_QUEUE_COMMITS=0
 
 # Automation summary sink chain (ContextLattice first; fallback to github/local).
 UPSTREAM_SYNC_SUMMARY_SINK_ORDER=contextlattice,github,local
-UPSTREAM_SYNC_SUMMARY_CONTEXT_PROJECT=${REPO_ROOT##*/}
+UPSTREAM_SYNC_SUMMARY_CONTEXT_PROJECT=$(printf '%q' "${REPO_ROOT##*/}")
 UPSTREAM_SYNC_SUMMARY_CONTEXT_TOPIC_PATH=ops/upstream-sync
 UPSTREAM_SYNC_SUMMARY_CONTEXT_FILE_NAME=ops/upstream-sync.md
 UPSTREAM_SYNC_SUMMARY_CONTEXT_TIMEOUT_SECS=8
 UPSTREAM_SYNC_SUMMARY_GITHUB_ISSUE=13
-UPSTREAM_SYNC_SUMMARY_LOCAL_PATH=${REPO_ROOT}/.sync-reports/upstream-sync-summary-fallback.log
+UPSTREAM_SYNC_SUMMARY_LOCAL_PATH=$(printf '%q' "${REPO_ROOT}/.sync-reports/upstream-sync-summary-fallback.log")
 
 # Optional Nous/Codex assist command invoked for risk_blocked/conflict/dead.
 UPSTREAM_SYNC_ASSIST_CMD=
@@ -208,13 +208,17 @@ ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_SUMMARY_CONTEXT_TIMEOUT_SECS" "8"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_SUMMARY_GITHUB_ISSUE" "13"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_SUMMARY_LOCAL_PATH" "${REPO_ROOT}/.sync-reports/upstream-sync-summary-fallback.log"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_GATE" "0"
-ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "python3 scripts/run-elite-sync-gate.py"
+ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${DEFAULT_ELITE_CMD}"
 ensure_env_key "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_ROLLBACK_CMD" ""
+if grep -Fxq "UPSTREAM_SYNC_ELITE_CMD=${DEFAULT_ELITE_CMD}" "${ENV_FILE}"; then
+  replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_ELITE_CMD" "${DEFAULT_ELITE_CMD}" "${DEFAULT_ELITE_CMD}"
+fi
 if grep -qE '^UPSTREAM_SYNC_EXPECTED_REPO=Lumio-Research/hermes-agent-rs$' "${ENV_FILE}"; then
-  upsert_env_key "${ENV_FILE}" "UPSTREAM_SYNC_EXPECTED_REPO" "NousResearch/hermes-agent"
+  replace_env_value "${ENV_FILE}" "UPSTREAM_SYNC_EXPECTED_REPO" \
+    "Lumio-Research/hermes-agent-rs" "NousResearch/hermes-agent"
 fi
 if is_true "${AUTO_GENERATE_SECRET}" && grep -qE '^GITHUB_WEBHOOK_SECRET=$' "${ENV_FILE}"; then
-  upsert_env_key "${ENV_FILE}" "GITHUB_WEBHOOK_SECRET" "$(generate_secret)"
+  replace_env_value "${ENV_FILE}" "GITHUB_WEBHOOK_SECRET" "" "$(generate_secret)"
 fi
 chmod 600 "${ENV_FILE}"
 
