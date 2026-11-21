@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "bca711219f846784247f19b355e0786defdd58dc",
+      "local_blob": "711f62b31da03ab56abe8fa9381bbedfdb78e689",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -22687,10 +22687,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-21T02:14:03.794366+00:00",
+  "generated_at_utc": "2026-11-21T04:01:32.395165+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "bdee076514bfda7f02c0f212d3526e06bdd88c08",
+    "local_sha": "8bf4faa6b68ef6df9ee2576f30745fbd3ae22853",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
