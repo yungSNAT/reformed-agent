@@ -1462,6 +1462,27 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_resolves_relative_auth_override_from_the_process_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let relative_store = Path::new("relative-provider-state.json");
+        let process_dir = std::env::current_dir().expect("process directory");
+        let store = process_dir.join(relative_store);
+
+        with_env(
+            &[
+                ("HERMES_AUTH_FILE", Some(relative_store)),
+                ("TERMINAL_CWD", Some(tmp.path())),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                assert!(is_write_denied(&store));
+                assert!(is_link_target_write_denied(&store));
+                assert!(!is_write_denied(relative_store));
+            },
+        );
+    }
+
+    #[test]
     fn write_deny_allows_the_temporary_directory() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
