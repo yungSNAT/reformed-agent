@@ -1646,6 +1646,13 @@ mod tests {
                 "an invalid charge destination should fail before submission"
             );
         }
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_some_and(|requests| requests.len() == 1),
+            "only the original charge request should reach the Portal"
+        );
     }
 
     #[tokio::test]
