@@ -1209,10 +1209,7 @@
         })
         .await
         .expect_err("401 probe should reject credentials");
-        assert!(
-            err.contains("HTTP 401 Unauthorized") && err.contains("invalid or blocked"),
-            "unexpected error: {err}"
-        );
+        assert_eq!(err, "live_probe_failed: HTTP 401 Unauthorized");
     }
 
     #[tokio::test]
