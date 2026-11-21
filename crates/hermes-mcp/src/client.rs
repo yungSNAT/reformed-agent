@@ -235,6 +235,9 @@ pub struct McpServerConfig {
     /// Opt in to standard MCP stdio framing and select its handshake.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdio_mode: Option<McpStdioMode>,
+    /// Probe for modern per-request Streamable HTTP before legacy initialize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modern_http: Option<bool>,
     /// URL for remote (HTTP/SSE) MCP servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -267,6 +270,7 @@ impl std::fmt::Debug for McpServerConfig {
             .field("args", &self.args)
             .field("env", &self.env)
             .field("stdio_mode", &self.stdio_mode)
+            .field("modern_http", &self.modern_http)
             .field("url", &self.url)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field(
@@ -293,6 +297,7 @@ impl PartialEq for McpServerConfig {
             && self.args == other.args
             && self.env == other.env
             && self.stdio_mode == other.stdio_mode
+            && self.modern_http == other.modern_http
             && self.url == other.url
             && self.headers == other.headers
             && self.supports_parallel_tool_calls == other.supports_parallel_tool_calls
@@ -310,6 +315,7 @@ impl McpServerConfig {
             args,
             env: HashMap::new(),
             stdio_mode: None,
+            modern_http: None,
             url: None,
             headers: HashMap::new(),
             supports_parallel_tool_calls: false,
@@ -327,6 +333,7 @@ impl McpServerConfig {
             args: Vec::new(),
             env: HashMap::new(),
             stdio_mode: None,
+            modern_http: None,
             url: Some(url.into()),
             headers: HashMap::new(),
             supports_parallel_tool_calls: false,
@@ -766,6 +773,7 @@ pub struct McpClient {
     ping_unsupported: bool,
     /// Whether this connection uses the current per-request protocol.
     modern_stdio: bool,
+    modern_http: bool,
     /// Bound on `connect`, from building the transport to tool discovery.
     connect_timeout: Duration,
 }

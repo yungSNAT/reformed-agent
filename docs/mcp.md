@@ -66,6 +66,16 @@ mcp_servers:
 A matching `mcp_servers.json` record can also set `stdio_mode`. An explicit
 value in `config.yaml` takes precedence when both files set it.
 
+### Per-request Streamable HTTP
+
+Set `modern_http: true` on a `url` entry to probe for MCP 2026-07-28 with
+`server/discover`. Compatible older responses can lead to the legacy
+handshake. Once discovery succeeds, Hermes sends each request as its own POST
+with the version, method and schema-defined parameter headers. You can refresh
+`tools/list` if the server changes its parameter headers before retrying a call.
+This mode supports JSON and request-scoped event streams. Subscriptions and
+input-required continuations are pending.
+
 ### Hosted tool catalogue
 
 A hosted catalogue such as [Composio Connect](https://docs.composio.dev/docs/composio-connect) exposes its app integrations (1,500+ apps, by its own count) through one Streamable HTTP MCP server. Add it to `config.yaml` with its key in an environment variable:

@@ -33,6 +33,8 @@ pub struct McpServerEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdio_mode: Option<McpStdioMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modern_http: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(default = "default_enabled")]
     pub enabled: bool,
@@ -98,6 +100,8 @@ struct RawMcpServerEntry {
     #[serde(default)]
     stdio_mode: Option<McpStdioMode>,
     #[serde(default)]
+    modern_http: Option<bool>,
+    #[serde(default)]
     url: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
@@ -155,6 +159,7 @@ fn parse_entry(name: &str, raw: RawMcpServerEntry) -> Result<McpServerEntry, Str
         args: raw.args,
         env: raw.env,
         stdio_mode: raw.stdio_mode,
+        modern_http: raw.modern_http,
         url,
         enabled: raw.enabled.unwrap_or(true),
         supports_parallel_tool_calls: raw.supports_parallel_tool_calls,

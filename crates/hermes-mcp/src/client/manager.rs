@@ -547,7 +547,7 @@ impl McpManager {
             match client.call_tool(tool_name, args.clone()).await {
                 Ok(value) => return Ok(value),
                 Err(err) => {
-                    if is_stale_transport_error(&err) {
+                    if !client.uses_modern_protocol() && is_stale_transport_error(&err) {
                         warn!(
                             "MCP stale transport detected on '{}' ({}); reconnecting once",
                             server_name, err

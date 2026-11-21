@@ -1,4 +1,4 @@
-const MODERN_STDIO_VERSION: &str = "2026-07-28";
+const MODERN_PROTOCOL_VERSION: &str = "2026-07-28";
 const STDIO_DISCOVERY_TIMEOUT: Duration = Duration::from_secs(2);
 const STDIO_CANCEL_TIMEOUT: Duration = Duration::from_secs(1);
 
@@ -21,6 +21,7 @@ impl McpClient {
             connected_at: None,
             ping_unsupported: false,
             modern_stdio: false,
+            modern_http: false,
             connect_timeout: Duration::from_secs(MCP_CONNECT_TIMEOUT_SECS),
         }
     }
@@ -70,12 +71,15 @@ impl McpClient {
             transport.start().await?;
             self.transport = Some(transport);
             self.modern_stdio = false;
-            if self.config.is_stdio()
-                && self.config.stdio_mode == Some(McpStdioMode::StandardStdio)
-            {
-                self.modern_stdio = self.discover_modern_stdio().await?;
+            self.modern_http = false;
+            if self.config.is_stdio() {
+                if self.config.stdio_mode == Some(McpStdioMode::StandardStdio) {
+                    self.modern_stdio = self.discover_modern_stdio().await?;
+                }
+            } else if self.config.modern_http == Some(true) {
+                self.modern_http = self.discover_modern_http().await?;
             }
-            if !self.modern_stdio {
+            if !self.uses_modern_protocol() {
                 self.initialize().await?;
             }
             self.discover_tools().await
@@ -142,7 +146,7 @@ impl McpClient {
         modern_timeout: Duration,
     ) -> Result<Vec<ToolSchema>, McpError> {
         let params = serde_json::json!({});
-        let result = if self.modern_stdio {
+        let result = if self.uses_modern_protocol() {
             self.send_modern_request("tools/list", params, modern_timeout)
                 .await?
         } else {
@@ -178,7 +182,7 @@ impl McpClient {
 
         let timeout = mcp_call_timeout_duration();
         let started = Instant::now();
-        let result = if self.modern_stdio {
+        let result = if self.uses_modern_protocol() {
             self.send_modern_request("tools/call", params, timeout).await?
         } else {
             match tokio::time::timeout(timeout, self.send_request("tools/call", params)).await {
@@ -262,6 +266,9 @@ impl McpClient {
 
     /// Cheaply exercise the MCP session so HTTP/SSE servers do not expire it idle.
     pub async fn keepalive_probe(&mut self) -> Result<(), McpError> {
+        if self.modern_http {
+            return Ok(());
+        }
         if self.modern_stdio {
             // Modern stdio has no ping and runs on a local process. Use the
             // caller's keepalive budget, allowing time to signal cancellation.
@@ -865,12 +872,14 @@ impl McpClient {
                 None
             };
             Ok(Box::new(
-                HttpSseTransport::new(url, auth_token).with_headers(
-                    self.config
-                        .headers
-                        .iter()
-                        .map(|(name, value)| (name.clone(), value.clone())),
-                ),
+                HttpSseTransport::new(url, auth_token)
+                    .with_headers(
+                        self.config
+                            .headers
+                            .iter()
+                            .map(|(name, value)| (name.clone(), value.clone())),
+                    )
+                    .with_modern_http(self.config.modern_http == Some(true)),
             ))
         } else {
             Err(McpError::Config(
@@ -881,7 +890,7 @@ impl McpClient {
 
     /// Send a JSON-RPC request and return the `result` field from the response.
     async fn send_request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
-        if self.modern_stdio {
+        if self.uses_modern_protocol() {
             return self
                 .send_modern_request(method, params, self.connect_timeout)
                 .await;
@@ -906,27 +915,33 @@ impl McpClient {
     }
 
     async fn send_wire_request(&mut self, method: &str, params: Value) -> Result<u64, McpError> {
+        let (id, message) = self.wire_request(method, params);
+        self.transport_mut()?.send(message).await?;
+        Ok(id)
+    }
+
+    fn wire_request(&mut self, method: &str, params: Value) -> (u64, Value) {
         let id = self.next_id;
         self.next_id += 1;
-        self.transport_mut()?
-            .send(serde_json::json!({
+        (
+            id,
+            serde_json::json!({
                 "jsonrpc": "2.0",
                 "id": id,
                 "method": method,
                 "params": params,
-            }))
-            .await?;
-        Ok(id)
+            }),
+        )
     }
 
-    fn modern_stdio_params(mut params: Value) -> Result<Value, McpError> {
+    fn modern_params(mut params: Value) -> Result<Value, McpError> {
         let params_object = params.as_object_mut().ok_or_else(|| {
             McpError::InvalidParams("MCP request parameters must be an object".to_string())
         })?;
         params_object.insert(
             "_meta".to_string(),
             serde_json::json!({
-                "io.modelcontextprotocol/protocolVersion": MODERN_STDIO_VERSION,
+                "io.modelcontextprotocol/protocolVersion": MODERN_PROTOCOL_VERSION,
                 "io.modelcontextprotocol/clientInfo": {
                     "name": "hermes-agent",
                     "version": env!("CARGO_PKG_VERSION"),
@@ -975,7 +990,16 @@ impl McpClient {
                 timeout.as_secs_f64()
             ))
         };
-        let params = Self::modern_stdio_params(params)?;
+        let params = Self::modern_params(params)?;
+        if self.modern_http {
+            // Dropping a timed-out POST closes only its response stream.
+            return tokio::time::timeout(timeout, async {
+                let id = self.send_wire_request(method, params).await?;
+                Self::parse_modern_result(self.receive_modern_response(id).await?)
+            })
+            .await
+            .unwrap_or_else(|_| Err(timed_out()));
+        }
         let deadline = tokio::time::Instant::now() + timeout;
         let id = match tokio::time::timeout_at(deadline, self.send_wire_request(method, params))
             .await
@@ -1021,7 +1045,7 @@ impl McpClient {
     }
 
     async fn discover_modern_stdio(&mut self) -> Result<bool, McpError> {
-        let params = Self::modern_stdio_params(serde_json::json!({}))?;
+        let params = Self::modern_params(serde_json::json!({}))?;
         // The connect deadline also covers the write. A partial write is never
         // grounds to reuse the stream for the legacy handshake.
         let id = self.send_wire_request("server/discover", params).await?;
@@ -1041,18 +1065,45 @@ impl McpClient {
                 return Ok(false);
             }
         }
+        Self::validate_discovery(response)?;
+        Ok(true)
+    }
+
+    async fn discover_modern_http(&mut self) -> Result<bool, McpError> {
+        let params = Self::modern_params(serde_json::json!({}))?;
+        let (_, message) = self.wire_request("server/discover", params);
+        let response = self.transport_mut()?.probe_modern_http(message).await?;
+        let Some(response) = response else {
+            return Ok(false);
+        };
+        Self::validate_discovery(response)?;
+        Ok(true)
+    }
+
+    fn uses_modern_protocol(&self) -> bool {
+        self.modern_stdio || self.modern_http
+    }
+
+    fn validate_discovery(response: Value) -> Result<(), McpError> {
         let result = Self::parse_modern_result(response)?;
-        if !result
-            .get("supportedVersions")
-            .and_then(Value::as_array)
-            .is_some_and(|versions| versions.iter().any(|version| version == MODERN_STDIO_VERSION))
-        {
+        let versions = result["supportedVersions"].as_array().filter(|versions| {
+            versions.iter().all(Value::is_string)
+        });
+        if versions.is_none() || !result["capabilities"].is_object() {
             return Err(McpError::Protocol {
-                code: -32022,
-                message: "MCP server did not offer the current stdio protocol version".to_string(),
+                code: -32602,
+                message: "MCP discovery response omitted valid versions or capabilities".to_string(),
             });
         }
-        Ok(true)
+        if !versions.is_some_and(|versions| {
+            versions.iter().any(|version| version == MODERN_PROTOCOL_VERSION)
+        }) {
+            return Err(McpError::Protocol {
+                code: -32022,
+                message: "MCP server did not offer the current protocol version".to_string(),
+            });
+        }
+        Ok(())
     }
 
     fn transport_mut(&mut self) -> Result<&mut Box<dyn McpTransport>, McpError> {

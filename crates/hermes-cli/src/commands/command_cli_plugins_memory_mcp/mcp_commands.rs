@@ -497,6 +497,7 @@ fn update_yaml_mcp_server(
             name: name.to_string(),
             command,
             stdio_mode: None,
+            modern_http: None,
             url,
             // Re-adding a server redefines it: headers written for its old
             // target are not carried to a new one.

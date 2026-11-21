@@ -419,6 +419,8 @@ pub struct McpServerEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdio_mode: Option<hermes_core::mcp::McpStdioMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub modern_http: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     /// Headers sent with every request to a `url` server, such as a hosted
     /// catalogue's API key header; `${VAR}` references are expanded on load.
@@ -439,6 +441,7 @@ impl std::fmt::Debug for McpServerEntry {
             .field("name", &self.name)
             .field("command", &self.command)
             .field("stdio_mode", &self.stdio_mode)
+            .field("modern_http", &self.modern_http)
             .field("url", &self.url)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field(
