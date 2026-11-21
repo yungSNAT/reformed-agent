@@ -399,6 +399,13 @@ impl NousBillingClient {
         let amount = parse_amount_number(amount_usd).ok_or_else(|| {
             BillingError::invalid_request("A valid charge amount is required.", "invalid_amount")
         })?;
+        let base = reqwest::Url::parse(&self.portal_base_url);
+        if !base.is_ok_and(|url| url.query().is_none() && url.fragment().is_none()) {
+            return Err(BillingError::invalid_request(
+                "Nous Portal needs a valid base URL without a query or fragment before submitting a charge.",
+                "invalid_portal_base_url",
+            ));
+        }
         self.request(
             Method::POST,
             CHARGE_PATH,
@@ -1491,6 +1498,7 @@ mod tests {
         let _nous_oauth =
             EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
 
         for (index, (status, body, accepted)) in [
@@ -1586,6 +1594,7 @@ mod tests {
         let _nous_oauth =
             EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         let other = MockServer::start().await;
         save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
         Mock::given(path(CHARGE_PATH))
@@ -1619,6 +1628,24 @@ mod tests {
             }),
             "a changed destination should leave the outcome uncertain with the original key"
         );
+
+        for component in ["?attempt=1", "#example"] {
+            let _invalid_portal = EnvVarGuard::set(
+                "HERMES_PORTAL_BASE_URL",
+                format!("{}{component}", server.uri()),
+            );
+            let result = handle_billing_slash_args(&[
+                "charge",
+                "50",
+                "--confirm",
+                "--idempotency-key=fixture-key",
+            ])
+            .await;
+            assert!(
+                result.is_err_and(|error| error.to_string().contains("valid base URL")),
+                "an invalid charge destination should fail before submission"
+            );
+        }
     }
 
     #[tokio::test]
