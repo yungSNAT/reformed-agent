@@ -162,12 +162,6 @@ impl BillingError {
             .get("error")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        let message = payload
-            .get("message")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or_else(|| error.clone())
-            .unwrap_or_else(|| format!("Billing request failed ({status})."));
         let portal_url = payload
             .get("portalUrl")
             .and_then(Value::as_str)
@@ -177,18 +171,55 @@ impl BillingError {
         } else if status == StatusCode::FORBIDDEN && error.as_deref() == Some("insufficient_scope")
         {
             BillingErrorKind::ScopeRequired
-        } else if status == StatusCode::TOO_MANY_REQUESTS
-            || status == StatusCode::SERVICE_UNAVAILABLE
+        } else if status == StatusCode::SERVICE_UNAVAILABLE
+            || (status == StatusCode::TOO_MANY_REQUESTS
+                && error.as_deref() != Some("upgrade_cap_exceeded"))
         {
             BillingErrorKind::RateLimited
         } else {
             BillingErrorKind::Http
         };
+        let message = match (&kind, error.as_deref()) {
+            (BillingErrorKind::RateLimited, Some("stripe_unavailable"))
+                if status == StatusCode::SERVICE_UNAVAILABLE =>
+            {
+                "The payment service is temporarily unavailable."
+            }
+            (BillingErrorKind::Auth, Some("session_revoked")) => {
+                "Your Nous Portal session was logged out."
+            }
+            (BillingErrorKind::Auth, _) => "Nous Portal authentication required.",
+            (BillingErrorKind::ScopeRequired, _) => "This action needs the billing:manage scope.",
+            (BillingErrorKind::RateLimited, _) if status == StatusCode::TOO_MANY_REQUESTS => {
+                "Nous Portal is rate limiting billing requests."
+            }
+            (BillingErrorKind::RateLimited, _) => "Nous Portal is temporarily unavailable.",
+            (_, Some("remote_spending_revoked")) if status == StatusCode::FORBIDDEN => {
+                "Remote spending was stopped for this terminal."
+            }
+            (_, Some("cli_billing_disabled" | "remote_spending_disabled")) => {
+                "Remote spending is disabled for this account."
+            }
+            (_, Some("role_required")) => "Your account role does not allow this billing action.",
+            (_, Some("no_payment_method")) => "Set up a payment method in Nous Portal.",
+            (_, Some("idempotency_conflict")) => {
+                "The idempotency key belongs to another request. Check the existing charge."
+            }
+            (_, Some("monthly_cap_exceeded")) => {
+                "This charge would exceed the monthly spending cap."
+            }
+            (_, Some("stripe_unavailable")) => "The payment service is temporarily unavailable.",
+            (_, Some("upgrade_cap_exceeded")) => {
+                "The daily limit for plan changes was reached. Try again tomorrow."
+            }
+            _ if status == StatusCode::FORBIDDEN => "Billing request denied.",
+            _ => "Billing request failed.",
+        };
         Self {
             kind,
             status: Some(status.as_u16()),
             error,
-            message,
+            message: message.to_string(),
             portal_url,
             retry_after,
             payload: Some(Box::new(payload)),
@@ -1472,6 +1503,86 @@ mod tests {
         assert_eq!(
             err.portal_url.as_deref(),
             Some(expected_portal_url.as_str())
+        );
+        assert!(
+            billing_error_to_agent_error(err).to_string()
+                == "Authentication failed: This action needs the billing:manage scope. (403) Run `hermes billing step-up` to request billing:manage.",
+            "the scope error must retain step-up guidance"
+        );
+    }
+
+    #[test]
+    fn billing_http_errors_use_fixed_diagnostics() {
+        let portal = "https://portal.example";
+        let unknown = BillingError::from_response(
+            StatusCode::BAD_REQUEST,
+            json!({"error": "custom_error_code", "message": "Example account detail"}),
+            None,
+            portal,
+        );
+        assert!(
+            unknown.to_string() == "Billing request failed. (400)",
+            "an unrecognised billing response must have a fixed diagnostic"
+        );
+
+        let revoked = BillingError::from_response(
+            StatusCode::UNAUTHORIZED,
+            json!({"error": "session_revoked", "message": "Example session detail"}),
+            None,
+            portal,
+        );
+        assert_eq!(revoked.kind, BillingErrorKind::Auth);
+        assert!(
+            revoked.to_string() == "Your Nous Portal session was logged out. (401)",
+            "a revoked session must get the logged-out diagnostic"
+        );
+
+        let conflict = BillingError::from_response(
+            StatusCode::CONFLICT,
+            json!({"error": "idempotency_conflict", "message": "Example request detail"}),
+            None,
+            portal,
+        );
+        assert!(
+            conflict.to_string()
+                == "The idempotency key belongs to another request. Check the existing charge. (409)",
+            "a conflict must direct to the existing charge"
+        );
+
+        let limited = BillingError::from_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"message": "Example rate limit detail"}),
+            Some(2),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(limited).to_string()
+                == "Authentication failed: Nous Portal is rate limiting billing requests. (429) Retry after 2s.",
+            "a rate-limit error must retain the retry delay"
+        );
+
+        let unavailable = BillingError::from_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "stripe_unavailable"}),
+            Some(75),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(unavailable).to_string()
+                == "Authentication failed: The payment service is temporarily unavailable. (503) Retry after 75s.",
+            "a payment outage must retain its cause and delay"
+        );
+
+        let daily_cap = BillingError::from_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "upgrade_cap_exceeded"}),
+            Some(2),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(daily_cap).to_string()
+                == "Authentication failed: The daily limit for plan changes was reached. Try again tomorrow. (429)",
+            "a daily cap must direct to the next day"
         );
     }
 
