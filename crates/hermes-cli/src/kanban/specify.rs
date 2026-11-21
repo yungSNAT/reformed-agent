@@ -1,11 +1,15 @@
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use hermes_agent::oneshot::{strip_wrapping_code_fence, truncate_template_text};
-use hermes_agent::{build_auxiliary_client_with_main_runtime, AuxiliaryMainRuntime};
-use hermes_config::GatewayConfig;
+use hermes_agent::{
+    build_auxiliary_client_with_main_runtime, AuxiliaryMainRuntime, GenericProvider,
+};
+use hermes_config::{AuxiliaryTaskConfig, GatewayConfig};
 use hermes_core::{AgentError, Message};
 use hermes_intelligence::auxiliary::{
-    AuxiliaryClient, AuxiliaryConfig, AuxiliaryRequest, AuxiliaryTask, TaskOverride,
+    resolve_task_settings, AuxiliaryClient, AuxiliaryConfig, AuxiliaryRequest, AuxiliarySource,
+    AuxiliaryTask, ExplicitOverrides, ProviderCandidate, TaskOverride,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -43,8 +47,32 @@ pub async fn specify_kanban(args: &[&str], config: &GatewayConfig) -> Result<Str
     let Some(selection) = Selection::parse(args) else {
         return Ok(USAGE.to_string());
     };
-    let task = AuxiliaryTask::from_name(TASK);
     let settings = config.auxiliary.get(TASK).cloned().unwrap_or_default();
+    let mut extra_body = settings.extra_body.clone();
+    if let Some(Value::Object(fields)) = &mut extra_body {
+        for reserved in [
+            "messages",
+            "model",
+            "stream",
+            "tools",
+            "tool_choice",
+            "parallel_tool_calls",
+            "functions",
+            "function_call",
+        ] {
+            fields.remove(reserved);
+        }
+    }
+    let client = specifier_client(config, settings)?;
+    specify_board(kanban_store_path(), selection, &client, extra_body).await
+}
+
+fn specifier_client(
+    config: &GatewayConfig,
+    settings: AuxiliaryTaskConfig,
+) -> Result<AuxiliaryClient, AgentError> {
+    let task = AuxiliaryTask::from_name(TASK);
+    let task_key = normalize_optional(Some(settings.api_key));
     let mut auxiliary = AuxiliaryConfig::new();
     auxiliary.set_task(
         &task,
@@ -52,18 +80,80 @@ pub async fn specify_kanban(args: &[&str], config: &GatewayConfig) -> Result<Str
             provider: normalize_optional(Some(settings.provider)),
             model: normalize_optional(Some(settings.model)),
             base_url: normalize_optional(Some(settings.base_url)),
-            api_key: normalize_optional(Some(settings.api_key)),
+            api_key: task_key.clone(),
             timeout_secs: Some(settings.timeout.unwrap_or(120)),
         },
     );
+    let resolved = resolve_task_settings(&task, &ExplicitOverrides::default(), &auxiliary);
+    auxiliary.consult_env = false;
+    auxiliary.set_task(
+        &task,
+        TaskOverride {
+            provider: Some(resolved.provider.clone()),
+            model: resolved.model.clone(),
+            timeout_secs: Some(resolved.timeout.as_secs()),
+            ..TaskOverride::default()
+        },
+    );
+    if let Some(base_url) = resolved.base_url {
+        let endpoint = reqwest::Url::parse(&base_url)
+            .ok()
+            .filter(|url| {
+                matches!(url.scheme(), "http" | "https")
+                    && url.host().is_some()
+                    && url.username().is_empty()
+                    && url.password().is_none()
+            })
+            .ok_or_else(|| AgentError::Config("Invalid triage specifier base URL.".to_string()))?;
+        let model = resolved.model.unwrap_or_else(|| "gpt-4o-mini".to_string());
+        let provider = GenericProvider::new(
+            endpoint.as_str(),
+            resolved
+                .api_key
+                .unwrap_or_else(|| "local-no-key".to_string()),
+            model.clone(),
+        )
+        .without_redirects()?;
+        return Ok(AuxiliaryClient::builder()
+            .config(auxiliary)
+            .add_candidate(ProviderCandidate::new(
+                AuxiliarySource::Custom,
+                model,
+                Arc::new(provider),
+            ))
+            .build());
+    }
+    if let Some(key) = std::env::var("AUXILIARY_TRIAGE_SPECIFIER_API_KEY")
+        .ok()
+        .and_then(|value| normalize_optional(Some(value)))
+        .or(task_key)
+    {
+        let Some(model) = resolved.model.filter(|_| resolved.provider != "auto") else {
+            return Err(AgentError::Config(
+                "Set a triage specifier provider and model or an explicit base URL for its API key."
+                    .to_string(),
+            ));
+        };
+        let runtime = AuxiliaryMainRuntime::new(&resolved.provider, model).with_api_key(key);
+        let (client, wiring) = build_auxiliary_client_with_main_runtime(auxiliary, Some(runtime));
+        if !wiring
+            .registered
+            .contains(&format!("main:{}", resolved.provider))
+        {
+            return Err(AgentError::Config(
+                "Could not bind the triage specifier API key to its configured provider."
+                    .to_string(),
+            ));
+        }
+        return Ok(client);
+    }
     let main = config
         .model
         .as_deref()
         .and_then(|model| model.split_once(':'))
         .filter(|(provider, model)| !provider.trim().is_empty() && !model.trim().is_empty())
         .map(|(provider, model)| AuxiliaryMainRuntime::new(provider.trim(), model.trim()));
-    let (client, _) = build_auxiliary_client_with_main_runtime(auxiliary, main);
-    specify_board(kanban_store_path(), selection, &client, settings.extra_body).await
+    Ok(build_auxiliary_client_with_main_runtime(auxiliary, main).0)
 }
 
 async fn specify_board(
@@ -235,12 +325,10 @@ fn promote(
 mod tests {
     use std::pin::Pin;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::sync::Arc;
 
     use async_trait::async_trait;
     use futures::Stream;
     use hermes_core::{LlmProvider, LlmResponse, StreamChunk, ToolSchema};
-    use hermes_intelligence::auxiliary::{AuxiliarySource, ProviderCandidate};
 
     use super::*;
     use crate::kanban::{add_task, create_or_select_board, KanbanStore, NewKanbanTaskInput};
@@ -277,7 +365,7 @@ mod tests {
                 ..AuxiliaryConfig::default()
             })
             .add_candidate(ProviderCandidate::new(
-                AuxiliarySource::Custom,
+                AuxiliarySource::Anthropic,
                 "specifier",
                 Arc::new(Specifier { reply, on_call }),
             ))

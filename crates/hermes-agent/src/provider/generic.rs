@@ -14,6 +14,7 @@ pub struct GenericProvider {
     client: Arc<Mutex<Client>>,
     /// Optional total request timeout applied to newly-built clients.
     request_timeout: Option<Duration>,
+    block_redirects: bool,
     /// Last time we rebuilt the client transport.
     client_refreshed_at: Arc<Mutex<Instant>>,
     /// Optional custom headers to send with every request.
@@ -40,6 +41,7 @@ impl GenericProvider {
             model: model.into(),
             client: Arc::new(Mutex::new(build_provider_http_client(request_timeout))),
             request_timeout,
+            block_redirects: false,
             client_refreshed_at: Arc::new(Mutex::new(Instant::now())),
             extra_headers: Vec::new(),
             rate_limiter: None,
@@ -69,10 +71,17 @@ impl GenericProvider {
     /// Set an optional total request timeout used by this provider and rebuilds.
     pub fn with_optional_request_timeout_seconds(mut self, seconds: Option<f64>) -> Self {
         self.request_timeout = request_timeout_duration(seconds);
-        if let Ok(mut client) = self.client.lock() {
-            *client = build_provider_http_client(self.request_timeout);
+        if let (Ok(client), Ok(mut cached)) = (self.build_client(), self.client.lock()) {
+            *cached = client;
         }
         self
+    }
+
+    /// Bind requests and transport retries to this endpoint without following redirects.
+    pub fn without_redirects(mut self) -> Result<Self, AgentError> {
+        self.block_redirects = true;
+        self.client = Arc::new(Mutex::new(self.build_client()?));
+        Ok(self)
     }
 
     /// Set a total request timeout in seconds.
@@ -235,14 +244,28 @@ impl GenericProvider {
     fn current_client(&self) -> Client {
         self.client
             .lock()
-            .map(|c| c.clone())
-            .unwrap_or_else(|_| build_provider_http_client(self.request_timeout))
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
+    }
+
+    fn build_client(&self) -> Result<Client, AgentError> {
+        if self.block_redirects {
+            return provider_http_client_builder(self.request_timeout, STREAM_IDLE_TIMEOUT)
+                .redirect(reqwest::redirect::Policy::none())
+                .build()
+                .map_err(|_| {
+                    AgentError::Config(
+                        "Could not build the no-redirect provider client".to_string(),
+                    )
+                });
+        }
+        Ok(build_provider_http_client(self.request_timeout))
     }
 
     fn refresh_client(&self, reason: &str) {
         tracing::warn!("rebuilding primary HTTP client: {}", reason);
-        if let Ok(mut c) = self.client.lock() {
-            *c = build_provider_http_client(self.request_timeout);
+        if let (Ok(client), Ok(mut cached)) = (self.build_client(), self.client.lock()) {
+            *cached = client;
         }
         if let Ok(mut t) = self.client_refreshed_at.lock() {
             *t = Instant::now();
