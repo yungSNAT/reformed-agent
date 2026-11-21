@@ -354,9 +354,11 @@ pub trait TerminalBackend: Send + Sync {
     /// Write content to a file.
     async fn write_file(&self, path: &str, content: &str) -> Result<(), AgentError>;
 
-    /// Whether `write_file` takes the shared local edit lock after resolving its path.
-    fn locks_local_file_edits(&self) -> bool {
-        false
+    /// Write from the file tool. Local backends can lock the resolved path here.
+    async fn write_file_for_tool(&self, path: &str, content: &str) -> Result<(), AgentError> {
+        let edit_lock = crate::file_edit::file_edit_lock(std::path::Path::new(path)).await;
+        let _turn = edit_lock.lock().await;
+        self.write_file(path, content).await
     }
 
     /// Check whether a file exists at the given path.

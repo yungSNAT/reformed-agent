@@ -313,13 +313,8 @@ impl ToolHandler for WriteFileHandler {
 
         CredentialGuard::new().check_write_access(Path::new(path), content)?;
 
-        let _turn = if self.backend.locks_local_file_edits() {
-            None
-        } else {
-            Some(file_edit_lock(Path::new(path)).await.lock_owned().await)
-        };
         self.backend
-            .write_file(path, content)
+            .write_file_for_tool(path, content)
             .await
             .map_err(|e| ToolError::ExecutionFailed(e.to_string()))?;
 
@@ -1182,9 +1177,8 @@ mod tests {
         let home = tmp.path().join("home");
         std::fs::create_dir(&cwd).unwrap();
         std::fs::create_dir(&home).unwrap();
-        let write = WriteFileHandler::new(Arc::new(hermes_environments::LocalBackend::new(
-            30, 100_000,
-        )));
+        let backend = Arc::new(hermes_environments::LocalBackend::new(30, 100_000));
+        let write = WriteFileHandler::new(backend.clone());
 
         crate::test_env::with_env(
             &[
@@ -1216,6 +1210,22 @@ mod tests {
                         write.execute(params).await.unwrap();
                         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "after\n");
                     }
+                    let path = cwd.join("lock-fixture.txt");
+                    let edit_lock = file_edit_lock(&path).await;
+                    let _turn = edit_lock.lock().await;
+                    // Custom backends may call the lower-level writer whilst
+                    // the file tool owns this lock for them.
+                    tokio::time::timeout(
+                        std::time::Duration::from_secs(2),
+                        backend.write_file(path.to_str().unwrap(), "delegated\n"),
+                    )
+                    .await
+                    .expect("lower-level write tried to reacquire the lock")
+                    .unwrap();
+                    assert_eq!(
+                        tokio::fs::read_to_string(&path).await.unwrap(),
+                        "delegated\n"
+                    );
                 });
             },
         );
