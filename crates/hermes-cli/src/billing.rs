@@ -398,13 +398,12 @@ impl NousBillingClient {
                 "idempotency_key_required",
             ));
         }
-        if idempotency_key.trim() != idempotency_key
-            || !idempotency_key
-                .bytes()
-                .all(|byte| matches!(byte, b' '..=b'~'))
+        if !idempotency_key
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'\'' | b'"' | b'\\'))
         {
             return Err(BillingError::invalid_request(
-                "Idempotency-Key must use printable ASCII without leading or trailing whitespace.",
+                "Idempotency-Key must use printable ASCII without whitespace, quotes or backslashes.",
                 "invalid_idempotency_key",
             ));
         }
@@ -627,6 +626,29 @@ async fn run_billing_step_up() -> Result<String, AgentError> {
     })
 }
 
+fn parse_charge_options<'a>(
+    args: impl IntoIterator<Item = &'a str>,
+) -> Result<(bool, Option<&'a str>), AgentError> {
+    let mut confirmed = false;
+    let mut key = None;
+    for arg in args {
+        if !confirmed && matches!(arg, "--confirm" | "--yes") {
+            confirmed = true;
+        } else if let Some(supplied) = arg
+            .strip_prefix("--idempotency-key=")
+            .filter(|_| key.is_none())
+        {
+            key = Some(supplied);
+        } else {
+            return Err(AgentError::ToolExecution(
+                "Unknown or repeated charge option. Use --confirm and at most one --idempotency-key=<key>."
+                    .to_string(),
+            ));
+        }
+    }
+    Ok((confirmed, key))
+}
+
 pub(crate) fn prepare_tui_charge_key(input: &str) -> Option<String> {
     let (command, args) = input.trim().split_once(' ')?;
     if command != "/billing" {
@@ -636,17 +658,8 @@ pub(crate) fn prepare_tui_charge_key(input: &str) -> Option<String> {
     if args.next()? != "charge" || parse_amount_number(args.next()?).is_none() {
         return None;
     }
-    let options: Vec<_> = args.collect();
-    if !options
-        .iter()
-        .any(|arg| matches!(*arg, "--confirm" | "--yes"))
-        || options
-            .iter()
-            .any(|arg| arg.starts_with("--idempotency-key="))
-    {
-        return None;
-    }
-    Some(Uuid::new_v4().to_string())
+    let (confirmed, key) = parse_charge_options(args).ok()?;
+    (confirmed && key.is_none()).then(|| Uuid::new_v4().to_string())
 }
 
 fn announce_charge_key(key: &str) -> Result<(), AgentError> {
@@ -667,17 +680,15 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     let Some(amount) = args.get(1).map(String::as_str) else {
         return Ok("Usage: hermes billing charge <amount-usd> --confirm".to_string());
     };
-    if !args.iter().any(|arg| arg == "--confirm" || arg == "--yes") {
+    let (confirmed, supplied_key) = parse_charge_options(args[2..].iter().map(String::as_str))?;
+    if !confirmed {
         return Ok(format!(
             "Refusing to create a live billing charge without `--confirm`.\nManage on portal: {}",
             fallback_portal_url(&resolve_portal_base_url_from_store())
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let idempotency_key = if let Some(key) = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--idempotency-key="))
-    {
+    let idempotency_key = if let Some(key) = supplied_key {
         key.to_string()
     } else {
         let key = Uuid::new_v4().to_string();
