@@ -1037,7 +1037,7 @@ impl AgentLoop {
                 )
                 .with_model(model_name)
                 .with_optional_request_timeout_seconds(request_timeout_seconds);
-                Arc::new(p)
+                Arc::new(if provider == "copilot" { p.with_model_catalog() } else { p })
             }
             _ => {
                 let url = base_url.unwrap_or_else(|| "https://api.openai.com/v1".to_string());
