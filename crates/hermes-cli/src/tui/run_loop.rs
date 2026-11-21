@@ -320,9 +320,14 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
                                         ));
                                         state.status_message =
                                             format!("Running {command_name}…");
+                                        let prepared_charge_key = crate::billing::prepare_tui_charge_key(&input);
+                                        if let Some(key) = &prepared_charge_key {
+                                            app.push_ui_assistant(format!("Billing charge idempotency key: {key}"));
+                                            state.jump_to_latest();
+                                        }
                                         draw_frame_now(&mut tui, &app, &mut state)?;
                                         let session_before_command = app.session_id.clone();
-                                        match app.handle_input(&input).await {
+                                        match app.handle_input_with_charge_key(&input, prepared_charge_key.as_deref()).await {
                                             Ok(_) => {
                                                 state.finish_processing_cycle("✔ completed in");
                                                 if let Some(prefill) =

@@ -263,6 +263,64 @@ impl fmt::Display for BillingError {
 
 impl std::error::Error for BillingError {}
 
+const CHARGE_PATH: &str = "/api/billing/charge";
+
+#[derive(Deserialize)]
+struct ChargeAcknowledgement {
+    #[serde(
+        default,
+        rename = "chargeId",
+        deserialize_with = "read_present_charge_id"
+    )]
+    camel_case_id: Option<String>,
+    #[serde(default, deserialize_with = "read_present_charge_id")]
+    charge_id: Option<String>,
+}
+
+fn read_present_charge_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
+async fn read_charge_acknowledgement(
+    mut response: reqwest::Response,
+) -> Result<Value, BillingError> {
+    const MAX_ACKNOWLEDGEMENT_BYTES: usize = 64 * 1024;
+    const MAX_CHARGE_ID_BYTES: usize = 1024;
+    let status = response.status();
+    if status != StatusCode::ACCEPTED {
+        return Err(BillingError::invalid_response(status));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| BillingError::invalid_response(status))?
+    {
+        if chunk.len() > MAX_ACKNOWLEDGEMENT_BYTES - bytes.len() {
+            return Err(BillingError::invalid_response(status));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let acknowledgement: ChargeAcknowledgement =
+        serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+    acknowledgement
+        .camel_case_id
+        .as_deref()
+        .or(acknowledgement.charge_id.as_deref())
+        .filter(|id| !id.is_empty() && id.len() <= MAX_CHARGE_ID_BYTES && id.trim() == *id)
+        .filter(|id| {
+            acknowledgement
+                .charge_id
+                .as_deref()
+                .is_none_or(|legacy| *id == legacy)
+        })
+        .ok_or_else(|| BillingError::invalid_response(status))?;
+    serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))
+}
+
 pub struct NousBillingClient {
     access_token: String,
     portal_base_url: String,
@@ -326,7 +384,7 @@ impl NousBillingClient {
         })?;
         self.request(
             Method::POST,
-            "/api/billing/charge",
+            CHARGE_PATH,
             Some(json!({ "amountUsd": amount })),
             Some(("Idempotency-Key", key.to_string())),
         )
@@ -415,6 +473,9 @@ impl NousBillingClient {
             .get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
+        if path == CHARGE_PATH && status.is_success() {
+            return read_charge_acknowledgement(resp).await;
+        }
         if updating && status.is_success() {
             let bytes = resp
                 .bytes()
@@ -499,7 +560,7 @@ pub async fn handle_billing_slash_args(args: &[&str]) -> Result<String, AgentErr
 }
 
 fn billing_usage() -> &'static str {
-    "Usage:\n  hermes billing\n  hermes billing portal\n  hermes billing limit\n  hermes billing step-up\n  hermes billing charge <amount-usd> --confirm\n  hermes billing charge-status <charge-id>\n  hermes billing auto-reload <threshold-usd> <top-up-usd> --confirm"
+    "Usage:\n  hermes billing\n  hermes billing portal\n  hermes billing limit\n  hermes billing step-up\n  hermes billing charge <amount-usd> --confirm [--idempotency-key=<key>]\n  hermes billing charge-status <charge-id>\n  hermes billing auto-reload <threshold-usd> <top-up-usd> --confirm"
 }
 
 async fn run_billing_step_up() -> Result<String, AgentError> {
@@ -523,6 +584,42 @@ async fn run_billing_step_up() -> Result<String, AgentError> {
     })
 }
 
+pub(crate) fn prepare_tui_charge_key(input: &str) -> Option<String> {
+    let (command, args) = input.trim().split_once(' ')?;
+    if command != "/billing" {
+        return None;
+    }
+    let mut args = args.split_whitespace();
+    if args.next()? != "charge" || parse_amount_number(args.next()?).is_none() {
+        return None;
+    }
+    let options: Vec<_> = args.collect();
+    if !options
+        .iter()
+        .any(|arg| matches!(*arg, "--confirm" | "--yes"))
+        || options
+            .iter()
+            .any(|arg| arg.starts_with("--idempotency-key="))
+    {
+        return None;
+    }
+    Some(Uuid::new_v4().to_string())
+}
+
+fn announce_charge_key(key: &str) -> Result<(), AgentError> {
+    use std::io::{self, Write};
+
+    let mut output = io::stderr().lock();
+    writeln!(output, "Billing charge idempotency key: {key}")
+        .and_then(|()| output.flush())
+        .map_err(|_| {
+            AgentError::ToolExecution(
+                "Could not display the idempotency key. Charge cancelled before submission."
+                    .to_string(),
+            )
+        })
+}
+
 async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     let Some(amount) = args.get(1).map(String::as_str) else {
         return Ok("Usage: hermes billing charge <amount-usd> --confirm".to_string());
@@ -534,23 +631,49 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let idempotency_key = args
+    let idempotency_key = if let Some(key) = args
         .iter()
         .find_map(|arg| arg.strip_prefix("--idempotency-key="))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let payload = client
-        .post_charge(amount, &idempotency_key)
-        .await
-        .map_err(billing_error_to_agent_error)?;
+    {
+        key.trim().to_string()
+    } else {
+        let key = Uuid::new_v4().to_string();
+        announce_charge_key(&key)?;
+        key
+    };
+    let payload = client.post_charge(amount, &idempotency_key).await.map_err(|error| {
+        let status = error.status;
+        let network = error.kind == BillingErrorKind::Network;
+        if network || status.is_some_and(|status| matches!(status, 200..=299 | 408 | 429 | 500..=599)) {
+            return AgentError::ToolExecution(format!(
+                "Billing charge submission could not be confirmed. {error} Check the charge in Nous Portal. Contact support if the outcome remains unclear. Any deliberate repeat requires the same key, amount and billing context. Idempotency key: {}",
+                render_billing_reference(&idempotency_key)
+            ));
+        }
+        billing_error_to_agent_error(error)
+    })?;
     let charge_id = payload
         .get("chargeId")
         .or_else(|| payload.get("charge_id"))
         .and_then(Value::as_str)
-        .unwrap_or("<missing>");
+        .ok_or_else(|| {
+        AgentError::ToolExecution("Billing charge submission could not be confirmed. Check the charge in Nous Portal before submitting again.".to_string())
+    })?;
+    let charge_id = render_billing_reference(charge_id);
+    let idempotency_key = render_billing_reference(&idempotency_key);
     Ok(format!(
-        "Billing charge submitted\n  charge_id: {charge_id}\n  idempotency_key: {idempotency_key}\nPoll with: hermes billing charge-status {charge_id}"
+        "Billing charge submitted\n  charge_id: {charge_id}\n  idempotency_key: {idempotency_key}\nPoll with: hermes billing charge-status <charge-id>"
     ))
+}
+
+fn render_billing_reference(value: &str) -> String {
+    if value
+        .bytes()
+        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
+    {
+        return value.to_string();
+    }
+    format!("{value:?}")
 }
 
 async fn run_charge_status_command(args: &[String]) -> Result<String, AgentError> {
@@ -1311,6 +1434,36 @@ mod tests {
         }
     }
 
+    #[test]
+    fn tui_prepares_a_key_only_for_an_explicitly_confirmed_charge() {
+        let key = prepare_tui_charge_key("/billing charge 50 --confirm").expect("recovery key");
+        assert!(
+            Uuid::parse_str(&key).is_ok(),
+            "the recovery key must be a UUID"
+        );
+        for other in [
+            "/billing charge 50",
+            "/billing charge 50 --yes --idempotency-key=caller-key",
+            "/billing charge invalid --yes",
+            "/billing auto-reload 20 50 --yes",
+            "/other charge 50 --confirm",
+        ] {
+            assert!(prepare_tui_charge_key(other).is_none());
+        }
+    }
+
+    #[test]
+    fn charge_reference_rendering_keeps_plain_ids_and_escapes_terminal_controls() {
+        assert_eq!(
+            render_billing_reference("fixture-charge.1"),
+            "fixture-charge.1"
+        );
+        assert!(
+            render_billing_reference("example\x1b[0m\nnext") == r#""example\u{1b}[0m\nnext""#,
+            "an opaque identifier must be readable without embedding terminal controls"
+        );
+    }
+
     #[tokio::test]
     async fn charge_submission_requires_a_single_verified_acknowledgement() {
         let _guard = test_env_lock::lock_async().await;
@@ -1344,7 +1497,21 @@ mod tests {
                 r#"{"chargeId":"fixture-charge","charge_id":"other"}"#,
                 false,
             ),
+            (
+                202,
+                r#"{"chargeId":null,"charge_id":"fixture-charge"}"#,
+                false,
+            ),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":null}"#,
+                false,
+            ),
+            (202, "{", false),
             (200, r#"{"chargeId":"fixture-charge"}"#, false),
+            (408, r#"{"message":"provider-only-acknowledgement"}"#, false),
+            (429, r#"{"message":"provider-only-acknowledgement"}"#, false),
+            (503, r#"{"message":"provider-only-acknowledgement"}"#, false),
         ]
         .into_iter()
         .enumerate()
@@ -1380,6 +1547,7 @@ mod tests {
                         let output = error.to_string();
                         output.contains("could not be confirmed")
                             && output.contains("Nous Portal")
+                            && output.contains(&key)
                             && !output.contains("provider-only-acknowledgement")
                     }),
                     "a non-conforming acknowledgement should report an uncertain outcome"

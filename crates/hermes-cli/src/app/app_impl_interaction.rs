@@ -24,6 +24,14 @@ impl App {
     /// If the input starts with `/` it is treated as a slash command.
     /// Otherwise it is sent as a user message to the agent.
     pub async fn handle_input(&mut self, input: &str) -> Result<(), AgentError> {
+        self.handle_input_with_charge_key(input, None).await
+    }
+
+    pub(crate) async fn handle_input_with_charge_key(
+        &mut self,
+        input: &str,
+        prepared_charge_key: Option<&str>,
+    ) -> Result<(), AgentError> {
         let trimmed = input.trim();
         if trimmed.is_empty() {
             return Ok(());
@@ -40,10 +48,14 @@ impl App {
             // Parse the slash command and its arguments
             let parts: Vec<&str> = trimmed.splitn(2, ' ').collect();
             let cmd = parts[0];
-            let args: Vec<&str> = parts
+            let mut args: Vec<&str> = parts
                 .get(1)
                 .map(|s| s.split_whitespace().collect())
                 .unwrap_or_default();
+            let prepared_arg = prepared_charge_key.map(|key| format!("--idempotency-key={key}"));
+            if cmd == "/billing" && args.first() == Some(&"charge") {
+                args.extend(prepared_arg.as_deref());
+            }
 
             let result = crate::commands::handle_slash_command(self, cmd, &args).await?;
             if result == crate::commands::CommandResult::Quit {
@@ -576,7 +588,6 @@ impl App {
             self.agent.run(messages, tool_schemas).await
         }
     }
-
 }
 
 include!("app_impl_interaction/quorum_fanout.rs");
@@ -846,7 +857,6 @@ impl App {
 
         Ok(())
     }
-
 }
 
 include!("app_impl_interaction/session_snapshots.rs");
