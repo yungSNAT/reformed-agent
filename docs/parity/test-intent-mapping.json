@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-21T13:18:52.624335+00:00",
+  "generated_at_utc": "2026-11-21T13:55:35.692440+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -75,7 +75,7 @@
       ]
     },
     {
-      "evidence_count": 190,
+      "evidence_count": 191,
       "evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",

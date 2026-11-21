@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-21T13:18:53.360711+00:00",
+  "generated_at_utc": "2026-11-21T13:55:36.416796+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -747,7 +747,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 59,
+      "direct_test_evidence_count": 60,
       "direct_test_evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -775,7 +775,7 @@
         "crates/hermes-cli/src/commands/hermes_migrate.rs",
         "crates/hermes-cli/src/commands/hermes_migrate/tests.rs"
       ],
-      "evidence_count": 190,
+      "evidence_count": 191,
       "evidence_sample": [
         "crates/hermes-app-runtime/src/lib.rs",
         "crates/hermes-app-runtime/src/lib_tests.rs",
@@ -1188,8 +1188,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 545,
-    "rust_test_functions": 16517,
+    "rust_test_files": 546,
+    "rust_test_functions": 16537,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,
