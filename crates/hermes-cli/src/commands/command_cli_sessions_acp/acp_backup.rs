@@ -214,6 +214,7 @@ fn acp_usage_from_agent_usage(usage: &hermes_core::UsageStats) -> hermes_acp::Us
 struct CliAcpPromptExecutor {
     config: Arc<hermes_config::GatewayConfig>,
     tool_registry: Arc<hermes_tools::ToolRegistry>,
+    terminal_backend: Arc<dyn hermes_core::TerminalBackend>,
     interrupts: Arc<Mutex<HashMap<String, hermes_agent::InterruptController>>>,
     /// The server's sink: streamed text and reasoning go out as they arrive.
     event_sink: Arc<hermes_acp::EventSink>,
@@ -257,9 +258,19 @@ fn requeue_leftover_steer(
 impl CliAcpPromptExecutor {
     fn tools_for_prompt(
         &self,
-        _session: &hermes_acp::SessionState,
+        session: &hermes_acp::SessionState,
     ) -> hermes_agent::agent_loop::ToolRegistry {
-        crate::app::bridge_tool_registry(&self.tool_registry)
+        let mut overrides = hermes_tools::ToolOverrides::new();
+        if self.config.terminal.backend == hermes_config::TerminalBackendType::Local
+            && std::path::Path::new(&session.cwd).is_absolute()
+        {
+            let handler = hermes_tools::tools::terminal::TerminalHandler::new(
+                Arc::clone(&self.terminal_backend),
+            )
+            .with_session_workdir(session.cwd.clone());
+            overrides.insert("terminal".into(), Arc::new(handler));
+        }
+        crate::app::bridge_tool_registry_with(&self.tool_registry, overrides)
     }
 
     fn current_tool_schemas(&self) -> Vec<hermes_core::ToolSchema> {
@@ -478,7 +489,11 @@ pub async fn handle_cli_acp(
             ));
             let skill_provider: Arc<dyn hermes_core::SkillProvider> =
                 Arc::new(hermes_skills::SkillManager::new(skill_store));
-            hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
+            hermes_tools::register_builtin_tools(
+                &tool_registry,
+                Arc::clone(&terminal_backend),
+                skill_provider,
+            );
             crate::runtime_tool_wiring::wire_stdio_clarify_backend(&tool_registry);
             let cron_data_dir = hermes_config::cron_dir();
             tokio::fs::create_dir_all(&cron_data_dir)
@@ -505,6 +520,7 @@ pub async fn handle_cli_acp(
             let prompt_executor = Arc::new(CliAcpPromptExecutor {
                 config: Arc::new(config.clone()),
                 tool_registry: tool_registry.clone(),
+                terminal_backend,
                 interrupts: Arc::new(Mutex::new(HashMap::new())),
                 event_sink: event_sink.clone(),
                 session_manager: session_manager.clone(),

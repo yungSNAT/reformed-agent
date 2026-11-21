@@ -95,6 +95,9 @@
         let executor = CliAcpPromptExecutor {
             config: Arc::new(GatewayConfig::default()),
             tool_registry: Arc::new(hermes_tools::ToolRegistry::new()),
+            terminal_backend: crate::terminal_backend::build_terminal_backend(
+                &GatewayConfig::default(),
+            ),
             interrupts,
             event_sink: Arc::new(hermes_acp::EventSink::default()),
             session_manager: Arc::new(hermes_acp::SessionManager::new()),
@@ -242,7 +245,7 @@
         let second_path = second.path().canonicalize().unwrap();
         let config = GatewayConfig::default();
         let backend = crate::terminal_backend::build_terminal_backend(&config);
-        let terminal = hermes_tools::tools::terminal::TerminalHandler::new(backend);
+        let terminal = hermes_tools::tools::terminal::TerminalHandler::new(Arc::clone(&backend));
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
         tool_registry.register(
             "terminal",
@@ -253,6 +256,7 @@
         let executor = CliAcpPromptExecutor {
             config: Arc::new(config),
             tool_registry,
+            terminal_backend: backend,
             interrupts: Arc::new(Mutex::new(HashMap::new())),
             event_sink: Arc::new(hermes_acp::EventSink::default()),
             session_manager: Arc::new(hermes_acp::SessionManager::new()),
@@ -292,6 +296,7 @@
             .insert("cli".to_string(), vec!["file".to_string()]);
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
         let executor = CliAcpPromptExecutor {
+            terminal_backend: crate::terminal_backend::build_terminal_backend(&config),
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
@@ -358,6 +363,7 @@
             .insert("cli".to_string(), vec!["srv".to_string()]);
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
         let executor = CliAcpPromptExecutor {
+            terminal_backend: crate::terminal_backend::build_terminal_backend(&config),
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
