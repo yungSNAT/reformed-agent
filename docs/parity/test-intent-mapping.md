@@ -1,6 +1,6 @@
 # Test Intent Mapping
 
-Generated: `2026-11-21T05:35:55.938603+00:00`
+Generated: `2026-11-21T06:07:49.348627+00:00`
 
 | Intent | Mapped | Evidence Count |
 | --- | --- | ---: |
@@ -12,7 +12,7 @@ Generated: `2026-11-21T05:35:55.938603+00:00`
 | `skills-management-contract` | yes | 78 |
 | `cron-and-scheduler-runtime` | yes | 81 |
 | `memory-plugin-integration` | yes | 12 |
-| `environment-lifecycle-contract` | yes | 17 |
+| `environment-lifecycle-contract` | yes | 18 |
 | `tool-call-parser-contract` | yes | 3 |
 
 - Mapping ratio: `10` / `10` = `1.0`.

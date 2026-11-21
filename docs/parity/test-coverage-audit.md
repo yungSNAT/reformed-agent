@@ -1,6 +1,6 @@
 # Test Coverage Audit
 
-Generated: `2026-11-21T05:35:56.712088+00:00`
+Generated: `2026-11-21T06:07:50.035711+00:00`
 
 ## Gate
 
@@ -15,8 +15,8 @@ Generated: `2026-11-21T05:35:56.712088+00:00`
 | `tracked_behavior_rows` | 511 |
 | `covered_behavior_rows` | 33 |
 | `tracked_behavior_coverage_ratio` | 0.0646 |
-| `rust_test_files` | 541 |
-| `rust_test_functions` | 16425 |
+| `rust_test_files` | 542 |
+| `rust_test_functions` | 16429 |
 | `coverage_manifest_entries` | 501 |
 | `coverage_manifest_entries_with_valid_rust_tests` | 23 |
 | `coverage_manifest_deferred_entries` | 141 |
@@ -47,7 +47,7 @@ Generated: `2026-11-21T05:35:56.712088+00:00`
 | `skills-management-contract` | `direct_rust_test` | 78 | 25 |
 | `cron-and-scheduler-runtime` | `direct_rust_test` | 81 | 26 |
 | `memory-plugin-integration` | `direct_rust_test` | 12 | 12 |
-| `environment-lifecycle-contract` | `direct_rust_test` | 17 | 12 |
+| `environment-lifecycle-contract` | `direct_rust_test` | 18 | 13 |
 | `tool-call-parser-contract` | `direct_rust_test` | 3 | 3 |
 
 ## Critical Gaps

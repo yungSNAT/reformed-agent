@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-21T05:35:56.712088+00:00",
+  "generated_at_utc": "2026-11-21T06:07:50.035711+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -1097,7 +1097,7 @@
     },
     {
       "classification": "direct_rust_test",
-      "direct_test_evidence_count": 12,
+      "direct_test_evidence_count": 13,
       "direct_test_evidence_sample": [
         "crates/hermes-environments/src/docker.rs",
         "crates/hermes-environments/src/file_sync.rs",
@@ -1109,10 +1109,11 @@
         "crates/hermes-environments/src/singularity.rs",
         "crates/hermes-environments/src/ssh.rs",
         "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/daytona_toolbox.rs",
         "crates/hermes-environments/tests/foreground_stdin.rs",
         "crates/hermes-environments/tests/tool_guard.rs"
       ],
-      "evidence_count": 17,
+      "evidence_count": 18,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -1129,6 +1130,7 @@
         "crates/hermes-environments/src/ssh.rs",
         "crates/hermes-environments/src/training/mod.rs",
         "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/daytona_toolbox.rs",
         "crates/hermes-environments/tests/foreground_stdin.rs",
         "crates/hermes-environments/tests/tool_guard.rs"
       ],
@@ -1186,8 +1188,8 @@
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
     "queue_total": 1,
-    "rust_test_files": 541,
-    "rust_test_functions": 16425,
+    "rust_test_files": 542,
+    "rust_test_functions": 16429,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,

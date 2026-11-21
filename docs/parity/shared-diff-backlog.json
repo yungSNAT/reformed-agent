@@ -19871,7 +19871,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "c12d18baee46a67bf183e30d203c591f924bd77b",
+      "local_blob": "21fdb5687f96e66f917de3b7b3421972e760b588",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/user-guide/configuration.md",
@@ -22702,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-21T05:36:13.571556+00:00",
+  "generated_at_utc": "2026-11-21T06:08:05.334185+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "0ba80d4c7064151849103666d8ad68d28f309b4a",
+    "local_sha": "b55d7cdfe82053d22db22867913f63a8f52e4dfb",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },

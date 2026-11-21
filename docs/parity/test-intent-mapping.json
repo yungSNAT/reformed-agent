@@ -1,5 +1,5 @@
 {
-  "generated_at_utc": "2026-11-21T05:35:55.938603+00:00",
+  "generated_at_utc": "2026-11-21T06:07:49.348627+00:00",
   "intent_unit": "domain_intent",
   "intents": [
     {
@@ -273,7 +273,7 @@
       ]
     },
     {
-      "evidence_count": 17,
+      "evidence_count": 18,
       "evidence_sample": [
         "crates/hermes-environments/src/daytona.rs",
         "crates/hermes-environments/src/docker.rs",
@@ -290,6 +290,7 @@
         "crates/hermes-environments/src/ssh.rs",
         "crates/hermes-environments/src/training/mod.rs",
         "crates/hermes-environments/tests/backend_integration.rs",
+        "crates/hermes-environments/tests/daytona_toolbox.rs",
         "crates/hermes-environments/tests/foreground_stdin.rs",
         "crates/hermes-environments/tests/tool_guard.rs"
       ],
