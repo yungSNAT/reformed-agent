@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T19:27:04.221755+00:00`
+Generated: `2026-11-21T19:54:22.644875+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`7fe8ebdfe89bfb762db692c1ded99bac878a4075`)
+- Local ref: `HEAD` (`6f39dec203d31aea2686f6c708cbc9e593af1dac`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-21T19:27:04.221755+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1700 |
+| Commits ahead local (`local` ancestry only) | 1693 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1431 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1424 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2074 |
+| Files only in local tree | 2075 |
 | Shared files identical content | 564 |
 | Shared files different content | 1509 |
-| Total files changed (`local` vs `upstream`) | 27429 |
+| Total files changed (`local` vs `upstream`) | 27430 |
 | Insertions (`local` vs `upstream`) | 4528874 |
-| Deletions (`local` vs `upstream`) | 956916 |
+| Deletions (`local` vs `upstream`) | 956995 |
 
 ## Top 40 upstream-only buckets
 
@@ -119,7 +119,7 @@ Generated: `2026-11-21T19:27:04.221755+00:00`
 
 | Bucket | Files |
 | --- | ---: |
-| `crates/hermes-cli` | 205 |
+| `crates/hermes-cli` | 206 |
 | `skills/creative` | 142 |
 | `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 121 |
@@ -176,7 +176,7 @@ Generated: `2026-11-21T19:27:04.221755+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1431`
+- Local unique by patch-id: `1424`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
