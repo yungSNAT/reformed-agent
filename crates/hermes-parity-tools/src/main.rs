@@ -15,6 +15,7 @@ mod parity_matrix;
 mod release_readiness;
 mod release_secret_scan;
 mod report_io;
+mod security_release_gate;
 mod shared_diff_backlog;
 mod slash_gate;
 mod surface_gate;
@@ -99,6 +100,8 @@ enum Command {
     /// Scan tracked release source and redact all findings.
     #[command(name = "release_secret_scan")]
     ReleaseSecretScan(release_secret_scan::ScanArgs),
+    #[command(name = "run-security-release-gate-v2")]
+    SecurityReleaseGate(security_release_gate::SecurityReleaseGateArgs),
 }
 
 fn main() {
@@ -118,6 +121,7 @@ fn main() {
         Command::GlobalProof(args) => global_proof::run(args),
         Command::ReleaseReadiness(args) => release_readiness::run(args),
         Command::ReleaseSecretScan(args) => release_secret_scan::run(args),
+        Command::SecurityReleaseGate(args) => security_release_gate::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
