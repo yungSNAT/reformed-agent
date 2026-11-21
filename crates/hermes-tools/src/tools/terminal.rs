@@ -1160,10 +1160,20 @@ mod tests {
         std::fs::remove_dir(&deleted).unwrap();
         std::fs::remove_dir(deleted.parent().unwrap()).unwrap();
 
-        let result = block_on(handler.execute(json!({"command": "pwd", "task_id": "session"})));
-        let notice = result.unwrap_or_else(|error| error.to_string());
+        let params = json!({"command": "pwd", "task_id": "session"});
+        let notice = block_on(handler.execute(params.clone()))
+            .unwrap_err()
+            .to_string();
         assert!(notice.contains(deleted.to_str().unwrap()), "{notice}");
         assert!(notice.contains(&format!("{parent:?}")), "{notice}");
+        assert!(notice.contains("Command did not run."), "{notice}");
+
+        let explicit_missing = json!({"command": "pwd", "workdir": deleted});
+        assert!(block_on(handler.execute(explicit_missing)).is_err());
+        let retry = json!({"command": "pwd", "task_id": "session", "workdir": parent});
+        let output = block_on(handler.execute(retry)).unwrap();
+        assert_eq!(output.trim(), parent.to_str().unwrap());
+        assert!(block_on(handler.execute(params)).is_err());
     }
 
     #[test]

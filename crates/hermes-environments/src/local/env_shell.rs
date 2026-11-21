@@ -166,7 +166,37 @@ async fn guard_command(
     hermes_config::tool_guard::check_command(command, &cwd)
         .await
         .map_err(AgentError::ToolExecution)?;
+    if let Some(path) = &workdir {
+        if let Some(reason) = missing_workdir_error(path).await {
+            return Err(AgentError::ToolExecution(reason));
+        }
+    }
     Ok(workdir)
+}
+
+async fn missing_workdir_error(path: &std::path::Path) -> Option<String> {
+    let error = tokio::fs::symlink_metadata(path).await.err()?;
+    if error.kind() != std::io::ErrorKind::NotFound {
+        return None;
+    }
+
+    let mut message = format!("Working directory {path:?} is missing. Command did not run.");
+    if path.is_absolute() {
+        for parent in path.ancestors().skip(1) {
+            if parent.parent().is_none() {
+                break;
+            }
+            match tokio::fs::symlink_metadata(parent).await {
+                Ok(metadata) if metadata.is_dir() => {
+                    message.push_str(&format!(" Retry with an explicit workdir of {parent:?}."));
+                    break;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                _ => break,
+            }
+        }
+    }
+    Some(message)
 }
 
 fn resolve_path(input: &str) -> Result<PathBuf, AgentError> {
