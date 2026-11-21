@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--repo-root", default=".", help="Repository root")
     parser.add_argument(
         "--secret-scan-cmd",
-        default="python3 scripts/release_secret_scan.py --repo-root . --report .sync-reports/release-secret-scan.json",
+        default="cargo run --locked -q -p hermes-parity-tools -- release_secret_scan --repo-root . --report .sync-reports/release-secret-scan.json",
         help="Secret scan command",
     )
     parser.add_argument(

@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-21T01:39:59.808071+00:00",
+  "generated_at_utc": "2026-11-21T02:13:47.018741+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "93a40676b37092f6fc5b27376b845d21f1251a34",
+    "local_sha": "bdee076514bfda7f02c0f212d3526e06bdd88c08",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1670,
+    "commits_ahead": 1671,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1401,
+    "local_patch_unique": 1402,
     "files_only_upstream": 24117,
     "files_only_local": 2057,
     "files_shared_identical": 565,
     "files_shared_different": 1508,
     "tree_files_changed": 27411,
     "tree_insertions": 4528861,
-    "tree_deletions": 951317
+    "tree_deletions": 951449
   },
   "top_upstream_only": [
     {
@@ -407,12 +407,12 @@
       "count": 39
     },
     {
-      "path": "tests/tools",
+      "path": "crates/hermes-parity-tools",
       "count": 30
     },
     {
-      "path": "crates/hermes-parity-tools",
-      "count": 28
+      "path": "tests/tools",
+      "count": 30
     },
     {
       "path": "tests/hermes_cli",
@@ -731,12 +731,12 @@
       "count": 39
     },
     {
-      "path": "tests/tools",
+      "path": "crates/hermes-parity-tools",
       "count": 30
     },
     {
-      "path": "crates/hermes-parity-tools",
-      "count": 28
+      "path": "tests/tools",
+      "count": 30
     },
     {
       "path": "tests/hermes_cli",
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 363,
+      "local_only": 364,
       "risk": "critical",
       "effort": "XL"
     },
@@ -848,7 +848,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 8048,
       "shared_different": 697,
-      "local_only": 359,
+      "local_only": 358,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1401,
+    "local_patch_unique": 1402,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
