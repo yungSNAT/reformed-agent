@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T04:10:31.772952+00:00`
+Generated: `2026-11-21T04:53:06.797987+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`b68c0735ce36f7179bd9528511c6927ce6f3ea1d`)
+- Local ref: `HEAD` (`54a8365f555902d98d6ef98557384acec22b44ae`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-21T04:10:31.772952+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1680 |
+| Commits ahead local (`local` ancestry only) | 1695 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1410 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1426 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2059 |
+| Files only in local tree | 2061 |
 | Shared files identical content | 564 |
 | Shared files different content | 1509 |
-| Total files changed (`local` vs `upstream`) | 27414 |
+| Total files changed (`local` vs `upstream`) | 27416 |
 | Insertions (`local` vs `upstream`) | 4528861 |
-| Deletions (`local` vs `upstream`) | 951891 |
+| Deletions (`local` vs `upstream`) | 952188 |
 
 ## Top 40 upstream-only buckets
 
@@ -134,7 +134,7 @@ Generated: `2026-11-21T04:10:31.772952+00:00`
 | `optional-skills/mlops` | 42 |
 | `crates/hermes-config` | 41 |
 | `crates/hermes-intelligence` | 39 |
-| `crates/hermes-parity-tools` | 32 |
+| `crates/hermes-parity-tools` | 39 |
 | `tests/tools` | 30 |
 | `tests/hermes_cli` | 28 |
 | `third_party/rustsec-patches` | 28 |
@@ -176,7 +176,7 @@ Generated: `2026-11-21T04:10:31.772952+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1410`
+- Local unique by patch-id: `1426`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 

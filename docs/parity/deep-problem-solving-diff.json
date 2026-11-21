@@ -205,11 +205,16 @@
         {
           "file": "crates/hermes-cli/src/app/tests.rs",
           "name": "test_quorum_mode_armed_once_triggers_without_system_hint"
+        },
+        {
+          "file": "crates/hermes-cli/src/app/tests.rs",
+          "name": "test_run_agent_quorum_arm_persists_artifact_even_on_voter_failures"
         }
       ],
       "score": 1.0,
       "source_artifacts": [
-        "crates/hermes-cli/src/app.rs"
+        "crates/hermes-cli/src/app/app_impl/inference_quorum.rs",
+        "crates/hermes-cli/src/app/app_impl_interaction/quorum_fanout.rs"
       ],
       "ultra_behavior": "Ultra has a quorum fanout path with independent voters, explicit counter-argument requirements, degraded-output detection, synthesis rules, and persisted quorum artifacts.",
       "upstream_behavior": "Difficult questions should surface disagreement, counter-cases, confidence, and thin-evidence limitations instead of collapsing to a single unsupported answer.",
@@ -440,7 +445,7 @@
     "pass": true
   },
   "gate_failures": [],
-  "generated_at_utc": "2026-11-21T02:32:37.550161+00:00",
+  "generated_at_utc": "2026-11-21T04:53:31.084883+00:00",
   "manifest": "docs/parity/deep-problem-solving-cases.json",
   "schema_version": 1,
   "summary": {
