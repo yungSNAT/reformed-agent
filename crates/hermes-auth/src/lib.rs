@@ -472,6 +472,42 @@ fn apply_oauth_client_auth(
     }
 }
 
+async fn oauth_token_endpoint_error(response: reqwest::Response, operation: &str) -> AgentError {
+    let status = response.status().as_u16();
+    let detail = match standard_oauth_error_code(response).await {
+        Some(code) => format!("{operation} failed (HTTP {status}): {code}"),
+        None => format!("{operation} failed (HTTP {status})"),
+    };
+    AgentError::AuthFailed(detail)
+}
+
+async fn standard_oauth_error_code(mut response: reqwest::Response) -> Option<&'static str> {
+    const MAX_OAUTH_ERROR_BYTES: usize = 8 * 1024;
+
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.ok()? {
+        if chunk.len() > MAX_OAUTH_ERROR_BYTES - body.len() {
+            return None;
+        }
+        body.extend_from_slice(&chunk);
+    }
+    #[derive(serde::Deserialize)]
+    struct TokenEndpointError {
+        error: String,
+    }
+    let error: TokenEndpointError = serde_json::from_slice(&body).ok()?;
+    // Keep RFC 6749 codes for recovery decisions without exposing provider text.
+    const STANDARD_CODES: [&str; 6] = [
+        "invalid_request",
+        "invalid_client",
+        "invalid_grant",
+        "unauthorized_client",
+        "unsupported_grant_type",
+        "invalid_scope",
+    ];
+    STANDARD_CODES.into_iter().find(|code| *code == error.error)
+}
+
 /// Exchange `authorization_code` + PKCE verifier at `token_url` (RFC 6749, form body).
 pub async fn exchange_authorization_code(
     provider_id: &str,
@@ -495,14 +531,10 @@ pub async fn exchange_authorization_code(
         .form(&pairs)
         .send()
         .await
-        .map_err(|e| AgentError::Io(e.to_string()))?;
+        .map_err(|e| AgentError::Io(e.without_url().to_string()))?;
 
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(AgentError::AuthFailed(format!(
-            "token exchange failed: {}",
-            text
-        )));
+        return Err(oauth_token_endpoint_error(resp, "token exchange").await);
     }
 
     let body: TokenEndpointJson = resp
@@ -540,14 +572,10 @@ pub async fn exchange_refresh_token(
         .form(&pairs)
         .send()
         .await
-        .map_err(|e| AgentError::Io(e.to_string()))?;
+        .map_err(|e| AgentError::Io(e.without_url().to_string()))?;
 
     if !resp.status().is_success() {
-        let text = resp.text().await.unwrap_or_default();
-        return Err(AgentError::AuthFailed(format!(
-            "token refresh failed: {}",
-            text
-        )));
+        return Err(oauth_token_endpoint_error(resp, "token refresh").await);
     }
 
     let body: TokenEndpointJson = resp
