@@ -514,28 +514,26 @@ fn render_charge_status(payload: &Value) -> Result<String, AgentError> {
             ));
         }
     };
-    let unverified_details = || {
-        AgentError::ToolExecution(format!(
-            "The provider reported {status}, but the charge details could not be verified. Check the existing charge before resubmitting."
-        ))
-    };
     let mut display = json!({ "status": status });
     if let Some(amount) = payload.get("amountUsd") {
-        if !amount.is_null()
-            && !parse_money_value(amount).is_some_and(|value| !value.starts_with('-'))
+        if amount.is_null() {
+            display["amountUsd"] = Value::Null;
+        } else if let Some(decimal) =
+            parse_money_value(amount).filter(|value| !value.starts_with('-'))
         {
-            return Err(unverified_details());
+            display["amountUsd"] = if amount.is_string() {
+                Value::String(decimal)
+            } else {
+                amount.clone()
+            };
         }
-        display["amountUsd"] = amount.clone();
     }
-    if let Some(settled_at) = payload.get("settledAt") {
-        if !settled_at.is_null()
-            && !settled_at.as_str().is_some_and(|value| {
+    if let Some(settled_at) = payload.get("settledAt").filter(|field| {
+        field.is_null()
+            || field.as_str().is_some_and(|value| {
                 !value.contains('[') && value.parse::<jiff::Timestamp>().is_ok()
             })
-        {
-            return Err(unverified_details());
-        }
+    }) {
         display["settledAt"] = settled_at.clone();
     }
     if let Some(reason @ ("authentication_required" | "payment_method_expired" | "card_declined")) =
@@ -1175,32 +1173,42 @@ mod tests {
     }
 
     #[test]
-    fn charge_status_reports_unverified_responses_without_provider_details() {
-        for (payload, reason) in [
-            (json!(null), "Charge status could not be verified."),
+    fn charge_status_preserves_verified_fields_when_other_details_are_invalid() {
+        for (payload, expected) in [
             (
-                json!({"status": "provider-only-detail"}),
-                "Charge status could not be verified.",
+                json!({"status": "failed", "amountUsd": {"detail": "provider-only-detail"}, "reason": "card_declined"}),
+                json!({"status": "failed", "reason": "card_declined"}),
             ),
             (
-                json!({"status": "settled", "amountUsd": {"detail": "provider-only-detail"}}),
-                "The provider reported settled",
+                json!({"status": "settled", "amountUsd": "-20.00", "settledAt": "2026-11-21T19:00:00Z"}),
+                json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z"}),
             ),
             (
-                json!({"status": "settled", "amountUsd": "-20.00"}),
-                "The provider reported settled",
-            ),
-            (
-                json!({"status": "settled", "settledAt": "2026-11-31T19:00:00Z"}),
-                "The provider reported settled",
+                json!({"status": "settled", "amountUsd": " 50.00 ", "settledAt": "2026-11-31T19:00:00Z"}),
+                json!({"status": "settled", "amountUsd": "50.00"}),
             ),
             (
                 json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z[provider-only-detail]"}),
-                "The provider reported settled",
+                json!({"status": "settled"}),
             ),
         ] {
+            let output = render_charge_status(&payload).expect("verified charge status");
+            let rendered: Value =
+                serde_json::from_str(output.strip_prefix("Billing charge status\n").unwrap())
+                    .expect("charge status JSON");
+            assert_eq!(rendered, expected);
+        }
+    }
+
+    #[test]
+    fn charge_status_reports_an_unknown_state_without_provider_details() {
+        for payload in [
+            json!(null),
+            json!({"status": "provider-only-detail"}),
+            json!({"status": false}),
+        ] {
             let err = render_charge_status(&payload).unwrap_err().to_string();
-            assert!(err.contains(reason), "{err}");
+            assert!(err.contains("Charge status could not be verified."));
             assert!(err.contains("Check the existing charge before resubmitting."));
             assert!(!err.contains("provider-only-detail"));
         }
