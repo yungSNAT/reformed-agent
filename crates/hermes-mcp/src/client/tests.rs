@@ -249,7 +249,10 @@ async fn modern_stdio_rejects_invalid_matching_response_envelopes() {
             .call_tool("echo", json!({}))
             .await
             .expect_err("a malformed matching response must fail");
-        assert!(matches!(err, McpError::Protocol { code: -32700, .. }), "{err}");
+        assert!(
+            matches!(err, McpError::Protocol { code: -32700, .. }),
+            "{err}"
+        );
         assert!(!client.is_connected());
         assert!(client.transport.is_none());
     }
@@ -274,7 +277,10 @@ async fn modern_stdio_ignores_another_response_id_and_keeps_valid_rpc_errors() {
     )));
 
     let err = client.call_tool("echo", json!({})).await.unwrap_err();
-    assert!(matches!(err, McpError::Protocol { code: -32000, .. }), "{err}");
+    assert!(
+        matches!(err, McpError::Protocol { code: -32000, .. }),
+        "{err}"
+    );
     assert!(client.is_connected());
     assert_eq!(client.call_tool("echo", json!({})).await.unwrap(), "next");
 }
@@ -313,8 +319,12 @@ async fn modern_stdio_reconnects_after_terminal_reads_for_the_next_call_only() {
         let mut config = McpServerConfig::stdio(
             "env",
             vec![
-                "sh".into(), "-c".into(), script.into(), "test-mcp".into(),
-                calls.display().to_string(), failure.into(),
+                "sh".into(),
+                "-c".into(),
+                script.into(),
+                "test-mcp".into(),
+                calls.display().to_string(),
+                failure.into(),
             ],
         );
         config.stdio_mode = Some(McpStdioMode::StandardStdio);
@@ -331,7 +341,10 @@ async fn modern_stdio_reconnects_after_terminal_reads_for_the_next_call_only() {
         assert!(!manager.get_status()["fixture"].connected);
 
         assert_eq!(
-            manager.call_tool("fixture", "echo", json!({})).await.unwrap(),
+            manager
+                .call_tool("fixture", "echo", json!({}))
+                .await
+                .unwrap(),
             "next"
         );
         assert_eq!(std::fs::read_to_string(&calls).unwrap(), "first\nsecond\n");

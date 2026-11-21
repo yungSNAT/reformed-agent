@@ -30,6 +30,16 @@ use crate::McpError;
 mod modern_http;
 use modern_http::ModernHttp;
 
+pub(crate) fn valid_modern_response_envelope(reply: &Value) -> bool {
+    reply["jsonrpc"] == "2.0"
+        && reply.get("method").is_none()
+        && match (reply.get("result"), reply.get("error")) {
+            (Some(_), None) => true,
+            (None, Some(error)) => error["code"].is_i64() && error["message"].is_string(),
+            _ => false,
+        }
+}
+
 const MCP_PROTOCOL_VERSION_HEADER: &str = "MCP-Protocol-Version";
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_STRICT: usize = 1024 * 1024;
 const DEFAULT_MCP_MAX_MESSAGE_BYTES_BALANCED: usize = 2 * 1024 * 1024;

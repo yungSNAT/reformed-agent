@@ -66,6 +66,10 @@ mcp_servers:
 A matching `mcp_servers.json` record can also set `stdio_mode`. An explicit
 value in `config.yaml` takes precedence when both files set it.
 
+After a terminal MCP 2026-07-28 stdio failure, the next request reconnects.
+The failed call returns an error. Check its outcome before retrying a tool
+call that could have made changes.
+
 ### Per-request Streamable HTTP
 
 Set `modern_http: true` on a `url` entry to probe for MCP 2026-07-28 with

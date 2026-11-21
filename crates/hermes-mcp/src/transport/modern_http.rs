@@ -274,10 +274,7 @@ async fn read_scoped_stream(
 }
 
 fn response_matches(reply: &Value, id: &Value) -> bool {
-    reply["jsonrpc"] == "2.0"
-        && reply.get("id") == Some(id)
-        && reply.get("method").is_none()
-        && (reply.get("result").is_some() ^ reply.get("error").is_some())
+    reply.get("id") == Some(id) && super::valid_modern_response_envelope(reply)
 }
 
 fn invalid_result() -> McpError {

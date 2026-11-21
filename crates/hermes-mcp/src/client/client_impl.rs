@@ -118,13 +118,15 @@ impl McpClient {
 
     /// Disconnect from the MCP server and release resources.
     pub async fn disconnect(&mut self) -> Result<(), McpError> {
+        self.connected = false;
+        self.connected_at = None;
+        self.modern_stdio = false;
+        self.modern_http = false;
+        self.tools.clear();
+        self.resources.clear();
         if let Some(mut transport) = self.transport.take() {
             transport.close().await?;
         }
-        self.connected = false;
-        self.connected_at = None;
-        self.tools.clear();
-        self.resources.clear();
         Ok(())
     }
 
@@ -138,6 +140,7 @@ impl McpClient {
     /// Sends a `tools/list` JSON-RPC request and parses the response into
     /// a `Vec<ToolSchema>`. The result is also cached internally.
     pub async fn list_tools(&mut self) -> Result<Vec<ToolSchema>, McpError> {
+        self.recover_modern_stdio().await?;
         self.list_tools_with_timeout(self.connect_timeout).await
     }
 
@@ -150,7 +153,7 @@ impl McpClient {
             self.send_modern_request("tools/list", params, modern_timeout)
                 .await?
         } else {
-            self.send_request("tools/list", params).await?
+            self.send_legacy_request("tools/list", params).await?
         };
         let tools_response: ToolsListResponse =
             serde_json::from_value(result).map_err(|e| McpError::Serialization(e.to_string()))?;
@@ -175,6 +178,7 @@ impl McpClient {
     /// content items are joined into a single string value; other content
     /// types are returned as raw JSON.
     pub async fn call_tool(&mut self, name: &str, arguments: Value) -> Result<Value, McpError> {
+        self.recover_modern_stdio().await?;
         let params = serde_json::json!({
             "name": name,
             "arguments": arguments,
@@ -185,7 +189,8 @@ impl McpClient {
         let result = if self.uses_modern_protocol() {
             self.send_modern_request("tools/call", params, timeout).await?
         } else {
-            match tokio::time::timeout(timeout, self.send_request("tools/call", params)).await {
+            match tokio::time::timeout(timeout, self.send_legacy_request("tools/call", params)).await
+            {
                 Ok(res) => res?,
                 Err(_) => {
                     let elapsed = started.elapsed().as_secs_f64();
@@ -266,6 +271,7 @@ impl McpClient {
 
     /// Cheaply exercise the MCP session so HTTP/SSE servers do not expire it idle.
     pub async fn keepalive_probe(&mut self) -> Result<(), McpError> {
+        self.recover_modern_stdio().await?;
         if self.modern_http {
             return Ok(());
         }
@@ -890,11 +896,16 @@ impl McpClient {
 
     /// Send a JSON-RPC request and return the `result` field from the response.
     async fn send_request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
+        self.recover_modern_stdio().await?;
         if self.uses_modern_protocol() {
             return self
                 .send_modern_request(method, params, self.connect_timeout)
                 .await;
         }
+        self.send_legacy_request(method, params).await
+    }
+
+    async fn send_legacy_request(&mut self, method: &str, params: Value) -> Result<Value, McpError> {
         let id = self.send_wire_request(method, params).await?;
         loop {
             let response = self.transport_mut()?.receive().await?;
@@ -958,7 +969,13 @@ impl McpClient {
         loop {
             let response = self.transport_mut()?.receive().await?;
             if response.get("method").is_none() && Self::response_matches_id(&response, id) {
-                return Ok(response);
+                if crate::transport::valid_modern_response_envelope(&response) {
+                    return Ok(response);
+                }
+                return Err(McpError::Protocol {
+                    code: -32700,
+                    message: "Malformed or incomplete modern MCP response".into(),
+                });
             }
         }
     }
@@ -1020,7 +1037,13 @@ impl McpClient {
         if let Ok(response) =
             tokio::time::timeout_at(deadline, self.receive_modern_response(id)).await
         {
-            return Self::parse_modern_result(response?);
+            return match response {
+                Ok(response) => Self::parse_modern_result(response),
+                Err(err) => {
+                    self.abort_modern_stdio();
+                    Err(err)
+                }
+            };
         }
 
         let params = serde_json::json!({"requestId": id, "reason": "Request timed out"});
@@ -1042,6 +1065,19 @@ impl McpClient {
         self.connected_at = None;
         self.tools.clear();
         self.resources.clear();
+    }
+
+    async fn recover_modern_stdio(&mut self) -> Result<(), McpError> {
+        // Recover at the next explicit request. The failed call may already
+        // have run on the server, so never resend it here.
+        if !self.modern_stdio || self.transport.is_some() {
+            return Ok(());
+        }
+        let result = self.connect().await;
+        if result.is_err() {
+            self.modern_stdio = true;
+        }
+        result
     }
 
     async fn discover_modern_stdio(&mut self) -> Result<bool, McpError> {
@@ -1260,7 +1296,7 @@ impl McpClient {
             }
         });
 
-        let result = self.send_request("initialize", params).await?;
+        let result = self.send_legacy_request("initialize", params).await?;
         let init_result: InitializeResult =
             serde_json::from_value(result).map_err(|e| McpError::Serialization(e.to_string()))?;
 
@@ -1286,7 +1322,7 @@ impl McpClient {
 
     /// Internal alias used during connect().
     async fn discover_tools(&mut self) -> Result<(), McpError> {
-        self.list_tools().await?;
+        self.list_tools_with_timeout(self.connect_timeout).await?;
         Ok(())
     }
 }
