@@ -206,6 +206,18 @@ impl BillingError {
             payload: None,
         }
     }
+
+    fn invalid_response(status: StatusCode) -> Self {
+        Self {
+            kind: BillingErrorKind::Http,
+            status: Some(status.as_u16()),
+            error: Some("invalid_response".into()),
+            message: "Nous Portal returned an unreadable billing response.".into(),
+            portal_url: None,
+            retry_after: None,
+            payload: None,
+        }
+    }
 }
 
 impl fmt::Display for BillingError {
@@ -343,6 +355,7 @@ impl NousBillingClient {
         body: Option<Value>,
         extra_header: Option<(&str, String)>,
     ) -> Result<Value, BillingError> {
+        let updating = method == Method::PATCH;
         let url = format!("{}{}", self.portal_base_url.trim_end_matches('/'), path);
         let mut req = self
             .client
@@ -357,16 +370,33 @@ impl NousBillingClient {
                 .header(header::CONTENT_TYPE, "application/json")
                 .json(&body);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| BillingError::network(format!("Could not reach Nous Portal: {e}")))?;
+        let resp = req.send().await.map_err(|error| {
+            let message = if error.is_timeout() {
+                "Nous Portal did not respond in time."
+            } else {
+                "Could not reach Nous Portal."
+            };
+            BillingError::network(message)
+        })?;
         let status = resp.status();
         let retry_after = resp
             .headers()
             .get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
+        if updating && status.is_success() {
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|_| BillingError::invalid_response(status))?;
+            let text =
+                std::str::from_utf8(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+            return if text.trim().is_empty() {
+                Ok(json!({}))
+            } else {
+                serde_json::from_str(text).map_err(|_| BillingError::invalid_response(status))
+            };
+        }
         let text = resp.text().await.unwrap_or_default();
         let payload = if text.trim().is_empty() {
             json!({})
@@ -501,9 +531,49 @@ async fn run_charge_status_command(args: &[String]) -> Result<String, AgentError
         .get_charge_status(charge_id)
         .await
         .map_err(billing_error_to_agent_error)?;
+    render_charge_status(&payload)
+}
+
+fn render_charge_status(payload: &Value) -> Result<String, AgentError> {
+    let status = match payload.get("status").and_then(Value::as_str) {
+        Some(status @ ("pending" | "settled" | "failed")) => status,
+        _ => {
+            return Err(AgentError::ToolExecution(
+                "Charge status could not be verified. Check the existing charge before resubmitting."
+                    .to_string(),
+            ));
+        }
+    };
+    let mut display = json!({ "status": status });
+    if let Some(amount) = payload.get("amountUsd") {
+        if amount.is_null() {
+            display["amountUsd"] = Value::Null;
+        } else if let Some(decimal) =
+            parse_money_value(amount).filter(|value| !value.starts_with('-'))
+        {
+            display["amountUsd"] = if amount.is_string() {
+                Value::String(decimal)
+            } else {
+                amount.clone()
+            };
+        }
+    }
+    if let Some(settled_at) = payload.get("settledAt").filter(|field| {
+        field.is_null()
+            || field.as_str().is_some_and(|value| {
+                !value.contains('[') && value.parse::<jiff::Timestamp>().is_ok()
+            })
+    }) {
+        display["settledAt"] = settled_at.clone();
+    }
+    if let Some(reason @ ("authentication_required" | "payment_method_expired" | "card_declined")) =
+        payload.get("reason").and_then(Value::as_str)
+    {
+        display["reason"] = json!(reason);
+    }
     Ok(format!(
         "Billing charge status\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+        serde_json::to_string_pretty(&display).unwrap_or_else(|_| display.to_string())
     ))
 }
 
@@ -520,14 +590,21 @@ async fn run_auto_reload_command(args: &[String]) -> Result<String, AgentError> 
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let payload = client
+    client
         .patch_auto_reload(true, threshold, top_up)
         .await
-        .map_err(billing_error_to_agent_error)?;
-    Ok(format!(
-        "Billing auto-reload updated\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
-    ))
+        .map_err(|error| {
+            if error.kind == BillingErrorKind::Network
+                || error.status.is_some_and(|status| (200..300).contains(&status))
+            {
+                AgentError::ToolExecution(format!(
+                    "Auto-reload update could not be confirmed. {error} Check the current setting before repeating the request."
+                ))
+            } else {
+                billing_error_to_agent_error(error)
+            }
+        })?;
+    Ok("Billing auto-reload updated\n{\"ok\":true}".to_string())
 }
 
 fn billing_error_to_agent_error(err: BillingError) -> AgentError {
@@ -1074,6 +1151,239 @@ mod tests {
         assert!(nous_token_has_billing_scope(None, Some(&token)));
     }
 
+    #[test]
+    fn charge_status_displays_only_documented_settlement_fields() {
+        let output = render_charge_status(&json!({
+            "status": "settled",
+            "amountUsd": "50.00",
+            "settledAt": "2026-11-21T00:00:00Z",
+            "processorDetail": "unrelated-provider-detail-fixture"
+        }))
+        .expect("verified settlement");
+        let result: Value = serde_json::from_str(
+            output
+                .strip_prefix("Billing charge status\n")
+                .expect("status heading"),
+        )
+        .expect("charge status JSON");
+        assert_eq!(
+            result,
+            json!({
+                "status": "settled",
+                "amountUsd": "50.00",
+                "settledAt": "2026-11-21T00:00:00Z"
+            })
+        );
+    }
+
+    #[test]
+    fn charge_status_preserves_known_states_and_valid_optional_values() {
+        for (payload, expected) in [
+            (json!({"status": "pending"}), json!({"status": "pending"})),
+            (
+                json!({
+                    "status": "settled",
+                    "amountUsd": 50.125,
+                    "settledAt": "2026-11-21T11:00:00.500+11:00"
+                }),
+                json!({
+                    "status": "settled",
+                    "amountUsd": 50.125,
+                    "settledAt": "2026-11-21T11:00:00.500+11:00"
+                }),
+            ),
+            (
+                json!({"status": "failed", "reason": "authentication_required", "settledAt": null}),
+                json!({"status": "failed", "reason": "authentication_required", "settledAt": null}),
+            ),
+            (
+                json!({"status": "failed", "reason": "provider-only-detail"}),
+                json!({"status": "failed"}),
+            ),
+        ] {
+            let output = render_charge_status(&payload).expect("verified charge status");
+            let rendered: Value =
+                serde_json::from_str(output.strip_prefix("Billing charge status\n").unwrap())
+                    .expect("charge status JSON");
+            assert_eq!(rendered, expected);
+        }
+    }
+
+    #[test]
+    fn charge_status_preserves_verified_fields_when_other_details_are_invalid() {
+        for (payload, expected) in [
+            (
+                json!({"status": "failed", "amountUsd": {"detail": "provider-only-detail"}, "reason": "card_declined"}),
+                json!({"status": "failed", "reason": "card_declined"}),
+            ),
+            (
+                json!({"status": "settled", "amountUsd": "-20.00", "settledAt": "2026-11-21T19:00:00Z"}),
+                json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z"}),
+            ),
+            (
+                json!({"status": "settled", "amountUsd": " 50.00 ", "settledAt": "2026-11-31T19:00:00Z"}),
+                json!({"status": "settled", "amountUsd": "50.00"}),
+            ),
+            (
+                json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z[provider-only-detail]"}),
+                json!({"status": "settled"}),
+            ),
+        ] {
+            let output = render_charge_status(&payload).expect("verified charge status");
+            let rendered: Value =
+                serde_json::from_str(output.strip_prefix("Billing charge status\n").unwrap())
+                    .expect("charge status JSON");
+            assert_eq!(rendered, expected);
+        }
+    }
+
+    #[test]
+    fn charge_status_reports_an_unknown_state_without_provider_details() {
+        for payload in [
+            json!(null),
+            json!({"status": "provider-only-detail"}),
+            json!({"status": false}),
+        ] {
+            let err = render_charge_status(&payload).unwrap_err().to_string();
+            assert!(err.contains("Charge status could not be verified."));
+            assert!(err.contains("Check the existing charge before resubmitting."));
+            assert!(!err.contains("provider-only-detail"));
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_and_slash_reject_charge_status_without_exposing_payload() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "provider-only-detail"
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let cli = handle_billing_args(&["charge-status".into(), "fixture".into()]).await;
+        let slash = handle_billing_slash_args(&["charge-status", "fixture"]).await;
+        for outcome in [cli, slash] {
+            let err = outcome.unwrap_err().to_string();
+            assert!(err.contains("Charge status could not be verified."));
+            assert!(!err.contains("provider-only-detail"));
+        }
+    }
+
+    #[tokio::test]
+    async fn auto_reload_acknowledges_a_confirmed_update_without_provider_details() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+
+        for (threshold, response) in [
+            (
+                20.0,
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"processorDetail": "provider-only-update-fixture"})),
+            ),
+            (25.0, ResponseTemplate::new(204)),
+            (26.0, ResponseTemplate::new(200).set_body_string(" \n\t")),
+        ] {
+            Mock::given(method("PATCH"))
+                .and(path("/api/billing/auto-top-up"))
+                .and(header("authorization", "Bearer access"))
+                .and(body_json(json!({
+                    "enabled": true, "threshold": threshold, "topUpAmount": 50.0,
+                })))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 30.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("provider-only-invalid-fixture"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 35.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "8")
+                    .set_body_json(json!({"error": "rate_limited"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 31.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(b"{\"unknown\":\"\xff\"}".to_vec(), "application/json"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let cli = handle_billing_args(&[
+            "auto-reload".into(),
+            "20".into(),
+            "50".into(),
+            "--confirm".into(),
+        ])
+        .await;
+        let empty = handle_billing_slash_args(&["auto-reload", "25", "50", "--confirm"]).await;
+        let whitespace = handle_billing_slash_args(&["auto-reload", "26", "50", "--confirm"]).await;
+        let malformed = handle_billing_slash_args(&["auto-reload", "30", "50", "--confirm"]).await;
+        let invalid_utf8 =
+            handle_billing_slash_args(&["auto-reload", "31", "50", "--confirm"]).await;
+        let rate_limited =
+            handle_billing_slash_args(&["auto-reload", "35", "50", "--confirm"]).await;
+
+        for output in [cli, empty, whitespace] {
+            let output = output.expect("confirmed auto-reload update");
+            let fields: Value = serde_json::from_str(
+                output
+                    .strip_prefix("Billing auto-reload updated\n")
+                    .unwrap(),
+            )
+            .expect("confirmation JSON");
+            assert_eq!(fields, json!({"ok": true}));
+        }
+        for outcome in [malformed, invalid_utf8] {
+            let error = outcome.unwrap_err().to_string();
+            assert!(error.contains("Auto-reload update could not be confirmed."));
+            assert!(error.contains("Check the current setting before repeating the request."));
+            assert!(!error.contains("provider-only-invalid-fixture"));
+        }
+        let error = rate_limited.unwrap_err().to_string();
+        assert!(error.contains("Retry after 8s."));
+    }
+
     #[tokio::test]
     async fn client_maps_state_and_charge_contracts() {
         let server = MockServer::start().await;
@@ -1106,6 +1416,40 @@ mod tests {
         );
         let charge = client.post_charge("50", "key-1").await.expect("charge");
         assert_eq!(charge.get("chargeId").and_then(Value::as_str), Some("ch_1"));
+    }
+
+    #[tokio::test]
+    async fn charge_status_timeout_reports_the_cause_without_the_request_url() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/private-charge-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .mount(&server)
+            .await;
+        let mut client =
+            NousBillingClient::from_state(&sample_state("access".into(), server.uri()))
+                .expect("client");
+        client.client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(75))
+            .build()
+            .expect("HTTP client");
+
+        let error = client
+            .get_charge_status("private-charge-fixture")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, BillingErrorKind::Network);
+        let rendered = billing_error_to_agent_error(error).to_string();
+        assert!(
+            !rendered.contains(&server.uri()),
+            "The timeout diagnosis included its request destination."
+        );
+        assert!(
+            !rendered.contains("private-charge-fixture"),
+            "The timeout diagnosis included its charge reference."
+        );
+        assert!(rendered.contains("Nous Portal did not respond in time."));
     }
 
     #[tokio::test]
