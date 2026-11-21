@@ -14,6 +14,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
+use hermes_core::mcp::McpStdioMode;
 use hermes_core::{
     normalize_schema_definitions_refs, JsonSchema, ToolError, ToolHandler, ToolSchema,
 };
@@ -231,6 +232,9 @@ pub struct McpServerConfig {
     /// Environment variables to set for the child process.
     #[serde(default)]
     pub env: HashMap<String, String>,
+    /// Opt in to standard MCP stdio framing and select its handshake.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdio_mode: Option<McpStdioMode>,
     /// URL for remote (HTTP/SSE) MCP servers.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
@@ -262,6 +266,7 @@ impl std::fmt::Debug for McpServerConfig {
             .field("command", &self.command)
             .field("args", &self.args)
             .field("env", &self.env)
+            .field("stdio_mode", &self.stdio_mode)
             .field("url", &self.url)
             .field("headers", &self.headers.keys().collect::<Vec<_>>())
             .field(
@@ -287,6 +292,7 @@ impl PartialEq for McpServerConfig {
         self.command == other.command
             && self.args == other.args
             && self.env == other.env
+            && self.stdio_mode == other.stdio_mode
             && self.url == other.url
             && self.headers == other.headers
             && self.supports_parallel_tool_calls == other.supports_parallel_tool_calls
@@ -303,6 +309,7 @@ impl McpServerConfig {
             command: Some(command.into()),
             args,
             env: HashMap::new(),
+            stdio_mode: None,
             url: None,
             headers: HashMap::new(),
             supports_parallel_tool_calls: false,
@@ -319,6 +326,7 @@ impl McpServerConfig {
             command: None,
             args: Vec::new(),
             env: HashMap::new(),
+            stdio_mode: None,
             url: Some(url.into()),
             headers: HashMap::new(),
             supports_parallel_tool_calls: false,
@@ -756,6 +764,8 @@ pub struct McpClient {
     connected_at: Option<Instant>,
     /// Latched when a server returns JSON-RPC -32601 for optional `ping`.
     ping_unsupported: bool,
+    /// Whether this connection uses the current per-request protocol.
+    modern_stdio: bool,
     /// Bound on `connect`, from building the transport to tool discovery.
     connect_timeout: Duration,
 }

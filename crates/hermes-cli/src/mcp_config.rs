@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::path::Path;
 
+use hermes_core::mcp::McpStdioMode;
 use hermes_core::AgentError;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +30,8 @@ pub struct McpServerEntry {
     pub args: Vec<String>,
     #[serde(default)]
     pub env: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stdio_mode: Option<McpStdioMode>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub url: Option<String>,
     #[serde(default = "default_enabled")]
@@ -93,6 +96,8 @@ struct RawMcpServerEntry {
     #[serde(default)]
     env: BTreeMap<String, String>,
     #[serde(default)]
+    stdio_mode: Option<McpStdioMode>,
+    #[serde(default)]
     url: Option<String>,
     #[serde(default)]
     enabled: Option<bool>,
@@ -149,6 +154,7 @@ fn parse_entry(name: &str, raw: RawMcpServerEntry) -> Result<McpServerEntry, Str
         command,
         args: raw.args,
         env: raw.env,
+        stdio_mode: raw.stdio_mode,
         url,
         enabled: raw.enabled.unwrap_or(true),
         supports_parallel_tool_calls: raw.supports_parallel_tool_calls,

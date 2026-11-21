@@ -496,6 +496,7 @@ fn update_yaml_mcp_server(
         cfg.mcp_servers.push(hermes_config::McpServerEntry {
             name: name.to_string(),
             command,
+            stdio_mode: None,
             url,
             // Re-adding a server redefines it: headers written for its old
             // target are not carried to a new one.

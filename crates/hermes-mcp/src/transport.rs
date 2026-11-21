@@ -5,7 +5,7 @@
 //! - **HttpTransport**: Communicates via HTTP/SSE with a remote MCP server
 //!
 //! The transport layer handles:
-//! - Message framing with Content-Length header + JSON body
+//! - Newline-delimited JSON and legacy Content-Length stdio framing
 //! - Connection lifecycle (start, send, receive, close)
 //! - Error handling and connection lifecycle
 
@@ -19,7 +19,8 @@ use serde_json::Value;
 use tokio::io::AsyncBufReadExt;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncWriteExt;
-use tokio::process::{Child, Command};
+use tokio::io::BufReader;
+use tokio::process::{Child, ChildStdout, Command};
 use tracing::{error, info, trace};
 
 use hermes_core::subprocess::CommandNoWindowExt;
@@ -437,12 +438,8 @@ pub trait McpTransport: Send + Sync {
 
 /// Transport that communicates via stdin/stdout with a child process.
 ///
-/// Uses the MCP message framing protocol:
-/// - Each message is prefixed with a `Content-Length` header
-/// - The body is a UTF-8 encoded JSON string
-/// - Messages are separated by `\r\n\r\n` between header and body
-///
-/// This is the standard transport for local MCP server processes.
+/// Defaults to Hermes' legacy Content-Length framing for existing servers.
+/// Standard MCP servers use one JSON message per line.
 pub struct StdioTransport {
     /// The command to execute.
     command: String,
@@ -452,6 +449,9 @@ pub struct StdioTransport {
     env: HashMap<String, String>,
     /// The child process.
     child: Option<Child>,
+    standard_framing: bool,
+    standard_stdout: Option<BufReader<ChildStdout>>,
+    pending_line: Vec<u8>,
     /// Background discovery should not let OAuth helpers prompt on stdin.
     suppress_interactive_oauth: bool,
     /// Whether the transport has been started.
@@ -471,9 +471,17 @@ impl StdioTransport {
             args: args.to_vec(),
             env: env.clone(),
             child: None,
+            standard_framing: false,
+            standard_stdout: None,
+            pending_line: Vec::new(),
             suppress_interactive_oauth,
             started: false,
         }
+    }
+
+    pub(crate) fn with_standard_framing(mut self) -> Self {
+        self.standard_framing = true;
+        self
     }
 
     fn effective_child_env(&self, profile: McpSandboxProfile) -> HashMap<String, String> {
@@ -546,10 +554,13 @@ impl McpTransport for StdioTransport {
         }
         cmd.suppress_windows_console();
 
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
         })?;
 
+        if self.standard_framing {
+            self.standard_stdout = child.stdout.take().map(BufReader::new);
+        }
         self.child = Some(child);
         self.started = true;
 
@@ -571,18 +582,25 @@ impl McpTransport for StdioTransport {
             serde_json::to_string(&message).map_err(|e| McpError::Serialization(e.to_string()))?;
         let max_message_bytes = max_message_bytes_from_env();
         enforce_message_size(body.len(), max_message_bytes)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
-
         trace!("Sending MCP message: {} bytes", body.len());
 
-        stdin
-            .write_all(header.as_bytes())
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
+        if !self.standard_framing {
+            let header = format!("Content-Length: {}\r\n\r\n", body.len());
+            stdin
+                .write_all(header.as_bytes())
+                .await
+                .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
+        }
         stdin
             .write_all(body.as_bytes())
             .await
             .map_err(|e| McpError::ConnectionError(format!("Write body failed: {}", e)))?;
+        if self.standard_framing {
+            stdin
+                .write_all(b"\n")
+                .await
+                .map_err(|e| McpError::ConnectionError(format!("Write delimiter failed: {}", e)))?;
+        }
         stdin
             .flush()
             .await
@@ -592,6 +610,10 @@ impl McpTransport for StdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
+        if let Some(stdout) = &mut self.standard_stdout {
+            return read_stdio_line(stdout, &mut self.pending_line, max_message_bytes_from_env())
+                .await;
+        }
         let child = self
             .child
             .as_mut()
@@ -674,9 +696,37 @@ impl McpTransport for StdioTransport {
                 }
             }
         }
+        self.standard_stdout = None;
+        self.pending_line.clear();
         self.started = false;
         Ok(())
     }
+}
+
+async fn read_stdio_line(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    pending: &mut Vec<u8>,
+    limit: usize,
+) -> Result<Value, McpError> {
+    // Keep partial bytes across an interrupted discovery read. The extra two
+    // bytes accommodate CRLF without counting the delimiter against the limit.
+    let remaining = limit.saturating_add(2).saturating_sub(pending.len());
+    reader
+        .take(remaining as u64)
+        .read_until(b'\n', pending)
+        .await
+        .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+    let bytes = std::mem::take(pending);
+    let Some(body) = bytes.strip_suffix(b"\n") else {
+        enforce_message_size(bytes.len(), limit)?;
+        return Err(McpError::ConnectionClosed);
+    };
+    let body = body.strip_suffix(b"\r").unwrap_or(body);
+    enforce_message_size(body.len(), limit)?;
+    serde_json::from_slice(body).map_err(|e| McpError::Protocol {
+        code: -32700,
+        message: format!("JSON parse error: {e}"),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1528,6 +1578,28 @@ impl McpTransport for HttpSseTransport {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn stdio_line_read_retains_partial_and_pipelined_messages() {
+        let (mut writer, reader) = tokio::io::duplex(32);
+        let mut reader = BufReader::new(reader);
+        let mut pending = Vec::new();
+        writer.write_all(b"{\"id\":").await.unwrap();
+        assert!(tokio::time::timeout(
+            Duration::from_millis(1),
+            read_stdio_line(&mut reader, &mut pending, 8),
+        )
+        .await
+        .is_err());
+        writer.write_all(b"1}\r\n{\"id\":2}\n").await.unwrap();
+        for id in [1, 2] {
+            let value = read_stdio_line(&mut reader, &mut pending, 8).await.unwrap();
+            assert_eq!(value["id"], id);
+        }
+
+        writer.write_all(b"1234567890123").await.unwrap();
+        assert!(read_stdio_line(&mut reader, &mut pending, 8).await.is_err());
+    }
 
     #[cfg(target_os = "linux")]
     #[tokio::test]

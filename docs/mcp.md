@@ -47,6 +47,25 @@ Validation rules:
 - `keepalive_interval` is optional for HTTP/SSE servers. It defaults to 180 seconds and is floored at 5 seconds; set it below a server's idle session TTL when that server expires sessions aggressively.
 - `headers` (config.yaml only) is sent with every request to a `url` server; `${VAR}` references in it are read from the environment when the config loads, so a key need not be written into the file. No redirect, and no message endpoint an older server names, leaves the server's origin, so the headers go only to the server named.
 
+### Local stdio framing
+
+Set `stdio_mode: standard_stdio` on a local server to use newline-delimited
+JSON and discover support for MCP 2026-07-28. If discovery is unsupported or the
+server stays silent, Hermes tries the older initialize handshake on the same
+process. Use `standard_legacy` to start with initialize for an older server that
+already uses newline-delimited JSON. Existing entries default to
+`legacy_framed`, which uses Content-Length and initialize.
+
+```yaml
+mcp_servers:
+  - name: local-sdk
+    command: /path/to/local-mcp-server
+    stdio_mode: standard_stdio
+```
+
+A matching `mcp_servers.json` record can also set `stdio_mode`. An explicit
+value in `config.yaml` takes precedence when both files set it.
+
 ### Hosted tool catalogue
 
 A hosted catalogue such as [Composio Connect](https://docs.composio.dev/docs/composio-connect) exposes its app integrations (1,500+ apps, by its own count) through one Streamable HTTP MCP server. Add it to `config.yaml` with its key in an environment variable:

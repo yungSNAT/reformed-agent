@@ -7,6 +7,7 @@ use super::{
 use crate::transport::McpTransport;
 use crate::McpError;
 use async_trait::async_trait;
+use hermes_core::mcp::McpStdioMode;
 use serde_json::json;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -75,6 +76,88 @@ impl McpTransport for FakeTransport {
     async fn close(&mut self) -> Result<(), McpError> {
         self.closed.store(true, Ordering::SeqCst);
         Ok(())
+    }
+}
+
+#[tokio::test]
+async fn standard_stdio_discovers_then_sends_metadata_without_reverse_requests() {
+    let mut config = McpServerConfig::stdio("fake", Vec::new());
+    config.stdio_mode = Some(McpStdioMode::StandardStdio);
+    let mut client = McpClient::new(config);
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let transport = FakeTransport::new_with_sent(
+        vec![
+            json!({"jsonrpc": "2.0", "id": 1, "method": "sampling/createMessage", "params": {}}),
+            json!({"jsonrpc": "2.0", "id": 1, "result": {
+                "resultType": "complete", "supportedVersions": ["2026-07-28"], "capabilities": {"tools": {}}
+            }}),
+            json!({"jsonrpc": "2.0", "id": 2, "result": {"resultType": "complete", "tools": []}}),
+            json!({"jsonrpc": "2.0", "id": 3, "result": {"resultType": "complete", "tools": []}}),
+        ],
+        Arc::new(AtomicBool::new(false)),
+        sent.clone(),
+    );
+    client
+        .finish_connect_with_transport(Box::new(transport))
+        .await
+        .expect("connect to modern stdio server");
+    client.keepalive_probe().await.expect("keepalive");
+
+    let sent = sent.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert_eq!(sent[0]["method"], "server/discover");
+    assert_eq!(sent[1]["method"], "tools/list");
+    assert_eq!(sent[2]["method"], "tools/list");
+    for request in sent.iter() {
+        let meta = &request["params"]["_meta"];
+        assert_eq!(
+            meta["io.modelcontextprotocol/protocolVersion"],
+            "2026-07-28"
+        );
+        assert_eq!(
+            meta["io.modelcontextprotocol/clientCapabilities"],
+            json!({})
+        );
+    }
+}
+
+#[tokio::test]
+async fn standard_stdio_falls_back_only_when_discovery_is_not_implemented() {
+    let mut config = McpServerConfig::stdio("fake", Vec::new());
+    config.stdio_mode = Some(McpStdioMode::StandardStdio);
+    for code in [-32601, -32022] {
+        let mut client = McpClient::new(config.clone());
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let closed = Arc::new(AtomicBool::new(false));
+        let transport = FakeTransport::new_with_sent(
+            vec![
+                json!({"jsonrpc": "2.0", "id": 1, "error": {
+                    "code": code, "message": "synthetic protocol response",
+                }}),
+                json!({"jsonrpc": "2.0", "id": 2, "result": {
+                    "protocolVersion": "2025-11-25", "capabilities": {}, "serverInfo": {"name": "fake"}
+                }}),
+                json!({"jsonrpc": "2.0", "id": 3, "result": {"tools": []}}),
+            ],
+            closed.clone(),
+            sent.clone(),
+        );
+        let result = client
+            .finish_connect_with_transport(Box::new(transport))
+            .await;
+        let sent = sent.lock().unwrap();
+        if code == -32601 {
+            result.expect("legacy initialize on the same transport");
+            assert_eq!(sent.len(), 4);
+            assert_eq!(sent[1]["method"], "initialize");
+            assert_eq!(sent[2]["method"], "notifications/initialized");
+            assert_eq!(sent[3]["method"], "tools/list");
+            assert!(sent[3]["params"].get("_meta").is_none());
+        } else {
+            result.expect_err("an explicit version error must fail");
+            assert_eq!(sent.len(), 1);
+            assert!(closed.load(Ordering::SeqCst));
+        }
     }
 }
 
