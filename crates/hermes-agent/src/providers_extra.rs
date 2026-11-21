@@ -564,3 +564,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "providers_extra/copilot_catalog_tests.rs"]
+mod copilot_catalog_tests;
