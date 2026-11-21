@@ -15,6 +15,7 @@ pub struct GenericProvider {
     /// Optional total request timeout applied to newly-built clients.
     request_timeout: Option<Duration>,
     block_redirects: bool,
+    completion_response_limit: Option<usize>,
     /// Last time we rebuilt the client transport.
     client_refreshed_at: Arc<Mutex<Instant>>,
     /// Optional custom headers to send with every request.
@@ -42,6 +43,7 @@ impl GenericProvider {
             client: Arc::new(Mutex::new(build_provider_http_client(request_timeout))),
             request_timeout,
             block_redirects: false,
+            completion_response_limit: None,
             client_refreshed_at: Arc::new(Mutex::new(Instant::now())),
             extra_headers: Vec::new(),
             rate_limiter: None,
@@ -82,6 +84,12 @@ impl GenericProvider {
         self.block_redirects = true;
         self.client = Arc::new(Mutex::new(self.build_client()?));
         Ok(self)
+    }
+
+    /// Limit the body read for each non-streaming completion.
+    pub fn with_completion_response_limit(mut self, bytes: usize) -> Self {
+        self.completion_response_limit = Some(bytes);
+        self
     }
 
     /// Set a total request timeout in seconds.
@@ -840,6 +848,33 @@ fn infer_moonshot_schema_type(obj: &serde_json::Map<String, Value>) -> &'static 
     "string"
 }
 
+async fn bounded_completion_response(
+    mut response: reqwest::Response,
+    limit: usize,
+) -> Result<Value, AgentError> {
+    let status = response.status();
+    if !status.is_success() {
+        return Err(AgentError::LlmApi(format!("API error {status}")));
+    }
+    let too_large = || AgentError::LlmApi("Completion response exceeded its size limit.".into());
+    if response.content_length().is_some_and(|length| length > limit as u64) {
+        return Err(too_large());
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| AgentError::LlmApi("Could not read the completion response.".into()))?
+    {
+        if chunk.len() > limit - body.len() {
+            return Err(too_large());
+        }
+        body.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&body)
+        .map_err(|_| AgentError::LlmApi("Completion response was not valid JSON.".into()))
+}
+
 #[async_trait]
 impl LlmProvider for GenericProvider {
     async fn chat_completion(
@@ -878,6 +913,9 @@ impl LlmProvider for GenericProvider {
         self.update_rate_limit(resp.headers());
         self.capture_nous_credits_headers(resp.headers());
 
+        if let Some(limit) = self.completion_response_limit {
+            return parse_openai_response(&bounded_completion_response(resp, limit).await?);
+        }
         if !resp.status().is_success() {
             let status = resp.status();
             let body_text = resp

@@ -591,7 +591,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     } else {
                         override_msg.clone()
                     };
-                    let job = persist_queued_background_job(&task_message)?;
+                    let job = queue_background_job(&task_message)?;
                     task.background_job_id = Some(job.id.clone());
                     move_task(task, KanbanLane::Doing, None);
                     Some((task.id.clone(), job, task_message, board.clone()))
@@ -601,7 +601,6 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             };
             if let Some((task_id, job, task_message, board_snapshot)) = dispatch_result {
                 store_lock.save(&store)?;
-                job.schedule();
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
