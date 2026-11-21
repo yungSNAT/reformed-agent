@@ -109,7 +109,7 @@ run_gate() {
 
   FAILED_STEP="security_release_gate_v2"
   echo "[elite-gate] running security release gate v2"
-  python3 "${REPO_ROOT}/scripts/run-security-release-gate-v2.py" --repo-root "${REPO_ROOT}" || return $?
+  cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root "${REPO_ROOT}" || return $?
 
   FAILED_STEP="performance_autopilot"
   echo "[elite-gate] running performance autopilot"
@@ -136,7 +136,7 @@ run_gate() {
   "checks": [
     "cargo test -p hermes-cli",
     "scripts/run-deterministic-replay-suite.sh",
-    "scripts/run-security-release-gate-v2.py",
+    "crates/hermes-parity-tools (run-security-release-gate-v2)",
     "scripts/run-performance-autopilot.py",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
     "scripts/audit_background_queue.py"
@@ -169,7 +169,7 @@ if [[ "${RUN_RC}" -ne 0 ]]; then
   "checks": [
     "cargo test -p hermes-cli",
     "scripts/run-deterministic-replay-suite.sh",
-    "scripts/run-security-release-gate-v2.py",
+    "crates/hermes-parity-tools (run-security-release-gate-v2)",
     "scripts/run-performance-autopilot.py",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
     "scripts/audit_background_queue.py"
@@ -188,7 +188,7 @@ Nightly elite gate completed.
 - checks:
   - \`cargo test -p hermes-cli\`
   - \`scripts/run-deterministic-replay-suite.sh\`
-  - \`scripts/run-security-release-gate-v2.py\`
+  - \`crates/hermes-parity-tools\` (\`run-security-release-gate-v2\`)
   - \`scripts/run-performance-autopilot.py\`
   - \`crates/hermes-parity-tools\` (\`run-upstream-surface-coverage-gate\`)
   - \`scripts/audit_background_queue.py\`
@@ -204,7 +204,7 @@ cat > "${SUMMARY_META_PATH}" <<EOF
   "checks": [
     "cargo test -p hermes-cli",
     "scripts/run-deterministic-replay-suite.sh",
-    "scripts/run-security-release-gate-v2.py",
+    "crates/hermes-parity-tools (run-security-release-gate-v2)",
     "scripts/run-performance-autopilot.py",
     "crates/hermes-parity-tools (run-upstream-surface-coverage-gate)",
     "scripts/audit_background_queue.py"

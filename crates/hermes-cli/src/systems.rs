@@ -15,6 +15,8 @@ use crate::providers::{known_providers, provider_capability_for};
 const AGENT_CARD_PATH: &str = "/.well-known/agent.json";
 const AGENT_CARD_ALT_PATH: &str = "/agent-card.json";
 const SYSTEM_COUNT: usize = 7;
+const SECURITY_RELEASE_GATE_COMMAND: &str =
+    "cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root .";
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SystemItem {
@@ -471,7 +473,7 @@ fn build_status_report_for_source_root(
             command: "hermes systems release --json".to_string(),
             evidence: vec![
                 ".github/workflows/release.yml runs security gate, cross-builds, signing, and publishing".to_string(),
-                "scripts/run-security-release-gate-v2.py provides local release security checks".to_string(),
+                "hermes-parity-tools provides the local release security gate".to_string(),
             ],
         },
         SystemItem {
@@ -547,9 +549,9 @@ fn build_release_gate_report_for_source_root(source_root: Option<&Path>) -> Rele
         source_file_gate(
             "release security gate",
             source_root,
-            "scripts/run-security-release-gate-v2.py",
+            "crates/hermes-parity-tools/src/security_release_gate.rs",
             "local release gate checks secrets, SBOM metadata, signatures, redaction, and ACP multimodal tests",
-            Some("python3 scripts/run-security-release-gate-v2.py --repo-root ."),
+            Some(SECURITY_RELEASE_GATE_COMMAND),
         ),
         source_file_gate(
             "installer",
@@ -572,7 +574,7 @@ fn build_release_gate_report_for_source_root(source_root: Option<&Path>) -> Rele
             "cargo test -p hermes-cli auth_store_write_is_atomic_owner_only_and_cleans_tmp -- --nocapture".to_string(),
             "cargo test -p hermes-mcp".to_string(),
             "cargo test -p hermes-acp".to_string(),
-            "python3 scripts/run-security-release-gate-v2.py --repo-root .".to_string(),
+            SECURITY_RELEASE_GATE_COMMAND.to_string(),
             "cargo run -p hermes-cli --bin hermes-agent-ultra -- systems status --json".to_string(),
         ],
     }
