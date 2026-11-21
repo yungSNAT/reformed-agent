@@ -1,3 +1,5 @@
+use std::fs::{File, OpenOptions};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
@@ -160,23 +162,75 @@ fn kanban_store_path_in(home: &Path) -> PathBuf {
 }
 
 pub fn load_store() -> Result<KanbanStore, AgentError> {
-    let path = kanban_store_path();
-    load_store_from_path(&path)
+    lock_store()?.load()
+}
+
+/// Atomically replace a board snapshot. Read-modify-write commands hold one
+/// lock across both operations instead.
+pub fn save_store(store: &KanbanStore) -> Result<PathBuf, AgentError> {
+    lock_store()?.save(store)
+}
+
+/// Keep the lock beside the JSON file so replacing the JSON preserves the lock.
+pub(crate) struct KanbanStoreLock {
+    path: PathBuf,
+    _file: File,
+}
+
+pub(crate) fn lock_store() -> Result<KanbanStoreLock, AgentError> {
+    KanbanStoreLock::open(kanban_store_path())
+}
+
+impl KanbanStoreLock {
+    fn open(path: PathBuf) -> Result<Self, AgentError> {
+        let lock_path = path.with_extension("lock");
+        if let Some(parent) = lock_path.parent() {
+            std::fs::create_dir_all(parent).map_err(|error| {
+                AgentError::Io(format!("create {} failed: {error}", parent.display()))
+            })?;
+        }
+        let file = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .create(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| {
+                AgentError::Io(format!("open {} failed: {error}", lock_path.display()))
+            })?;
+        file.lock().map_err(|error| {
+            AgentError::Io(format!("lock {} failed: {error}", lock_path.display()))
+        })?;
+        Ok(Self { path, _file: file })
+    }
+
+    pub(crate) fn load(&self) -> Result<KanbanStore, AgentError> {
+        load_store_from_path(&self.path)
+    }
+
+    pub(crate) fn save(self, store: &KanbanStore) -> Result<PathBuf, AgentError> {
+        save_store_to_path(store, &self.path)
+    }
 }
 
 fn load_store_from_path(path: &Path) -> Result<KanbanStore, AgentError> {
-    if !path.exists() {
-        let store = KanbanStore::default();
-        save_store_to_path(&store, path)?;
-        return Ok(store);
-    }
-    let raw = std::fs::read_to_string(path).map_err(|e| {
-        if e.kind() == std::io::ErrorKind::InvalidData {
-            corrupt_store_error(path, format!("read failed: {e}"))
-        } else {
-            AgentError::Io(format!("read {} failed: {}", path.display(), e))
+    let raw = match std::fs::read_to_string(path) {
+        Ok(raw) => raw,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            let store = KanbanStore::default();
+            save_store_to_path(&store, path)?;
+            return Ok(store);
         }
-    })?;
+        Err(error) if error.kind() == ErrorKind::InvalidData => {
+            return Err(corrupt_store_error(path, format!("read failed: {error}")));
+        }
+        Err(error) => {
+            return Err(AgentError::Io(format!(
+                "read {} failed: {error}",
+                path.display()
+            )));
+        }
+    };
     let mut store = serde_json::from_str::<KanbanStore>(&raw)
         .map_err(|e| corrupt_store_error(path, format!("parse failed: {e}")))?;
     if store.boards.is_empty() {
@@ -189,19 +243,10 @@ fn load_store_from_path(path: &Path) -> Result<KanbanStore, AgentError> {
     Ok(store)
 }
 
-pub fn save_store(store: &KanbanStore) -> Result<PathBuf, AgentError> {
-    let path = kanban_store_path();
-    save_store_to_path(store, &path)
-}
-
 fn save_store_to_path(store: &KanbanStore, path: &Path) -> Result<PathBuf, AgentError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)
-            .map_err(|e| AgentError::Io(format!("failed to create {}: {}", parent.display(), e)))?;
-    }
-    let serialized = serde_json::to_string_pretty(store)
+    let serialized = serde_json::to_vec_pretty(store)
         .map_err(|e| AgentError::Config(format!("serialize kanban store failed: {}", e)))?;
-    std::fs::write(path, serialized)
+    hermes_config::loader::atomic_write_bytes(path, &serialized)
         .map_err(|e| AgentError::Io(format!("write {} failed: {}", path.display(), e)))?;
     Ok(path.to_path_buf())
 }
@@ -1033,6 +1078,42 @@ mod tests {
             assert_eq!(store.boards.len(), 1);
             assert_eq!(store.boards[0].name, "Main");
         });
+    }
+
+    #[test]
+    fn board_update_holds_the_lock_until_the_new_snapshot_is_visible() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let path = kanban_store_path_in(home.path());
+        let first = KanbanStoreLock::open(path.clone()).expect("first lock");
+        let mut snapshot = first.load().expect("load board");
+        create_or_select_board(&mut snapshot, "First", None);
+
+        let contender = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .open(path.with_extension("lock"))
+            .expect("open lock from another handle");
+        assert!(matches!(
+            contender.try_lock(),
+            Err(std::fs::TryLockError::WouldBlock)
+        ));
+        first.save(&snapshot).expect("commit first update");
+        contender.try_lock().expect("commit releases lock");
+        contender.unlock().expect("release contention check");
+
+        let second = KanbanStoreLock::open(path.clone()).expect("second lock");
+        let mut snapshot = second.load().expect("load latest board");
+        create_or_select_board(&mut snapshot, "Second", None);
+        second.save(&snapshot).expect("commit second update");
+
+        let final_lock = KanbanStoreLock::open(path).expect("final lock");
+        let final_store = final_lock.load().expect("reload boards");
+        let names: Vec<_> = final_store
+            .boards
+            .iter()
+            .map(|board| board.name.as_str())
+            .collect();
+        assert_eq!(names, ["Main", "First", "Second"]);
     }
 
     #[test]

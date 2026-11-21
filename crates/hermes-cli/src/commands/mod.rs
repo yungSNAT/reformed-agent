@@ -69,9 +69,9 @@ use crate::alpha_runtime::{
 use crate::app::{build_runtime_cron_scheduler, App, PetDock, PetSettings};
 use crate::kanban::{
     add_attachment_to_task, add_task, archive_done, build_worker_context, claim_task,
-    create_or_select_board, ensure_board, find_task_mut, lane_counts, load_store,
-    maybe_checkpoint_to_contextlattice, move_task, remove_attachment_from_task, save_store,
-    set_blocked, KanbanActionInput, KanbanBoard, KanbanLane, NewKanbanTaskInput,
+    create_or_select_board, ensure_board, find_task_mut, lane_counts, lock_store,
+    maybe_checkpoint_to_contextlattice, move_task, remove_attachment_from_task, set_blocked,
+    KanbanActionInput, KanbanBoard, KanbanLane, NewKanbanTaskInput,
 };
 use crate::mcp_config::{load_mcp_config, load_mcp_config_if_exists, McpTransportKind};
 use crate::model_switch::{

@@ -169,7 +169,8 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         .copied()
         .unwrap_or("status")
         .to_ascii_lowercase();
-    let mut store = load_store()?;
+    let store_lock = lock_store()?;
+    let mut store = store_lock.load()?;
 
     match action.as_str() {
         "status" | "show" => {
@@ -206,7 +207,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 let board = create_or_select_board(&mut store, name, project_path);
                 (board.name.clone(), board.id.clone(), board.clone())
             };
-            save_store(&store)?;
+            store_lock.save(&store)?;
             let checkpoint = maybe_checkpoint_to_contextlattice(
                 &board_snapshot,
                 KanbanActionInput {
@@ -229,7 +230,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 let board = ensure_board(&mut store, Some(name_or_id));
                 (board.name.clone(), board.id.clone())
             };
-            save_store(&store)?;
+            store_lock.save(&store)?;
             Ok(format!("Using board: {} ({})", board_name, board_id))
         }
         "add" => {
@@ -246,7 +247,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     board.clone(),
                 )
             };
-            save_store(&store)?;
+            store_lock.save(&store)?;
             let checkpoint = maybe_checkpoint_to_contextlattice(
                 &board_snapshot,
                 KanbanActionInput {
@@ -286,7 +287,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     .unwrap_or_else(|| task_ref.to_string());
                 (task_id, attachment, board.clone())
             };
-            save_store(&store)?;
+            store_lock.save(&store)?;
             let checkpoint = maybe_checkpoint_to_contextlattice(
                 &board_snapshot,
                 KanbanActionInput {
@@ -349,7 +350,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     .map(|attachment| (attachment, board.clone()))
             };
             if let Some((attachment, board_snapshot)) = removed {
-                save_store(&store)?;
+                store_lock.save(&store)?;
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -407,7 +408,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 task_meta.map(|(task_id, title)| (task_id, title, board.clone()))
             };
             if let Some((task_id, title, board_snapshot)) = maybe_update {
-                save_store(&store)?;
+                store_lock.save(&store)?;
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -443,7 +444,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 task_meta.map(|(task_id, lane)| (task_id, lane, board.clone()))
             };
             if let Some((task_id, lane, board_snapshot)) = maybe_update {
-                save_store(&store)?;
+                store_lock.save(&store)?;
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -488,7 +489,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 task_id.map(|task_id| (task_id, board.clone()))
             };
             if let Some((task_id, board_snapshot)) = maybe_update {
-                save_store(&store)?;
+                store_lock.save(&store)?;
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -523,7 +524,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 task_id.map(|task_id| (task_id, board.clone()))
             };
             if let Some((task_id, board_snapshot)) = maybe_update {
-                save_store(&store)?;
+                store_lock.save(&store)?;
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -544,7 +545,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 let archived = archive_done(board);
                 (archived, board.clone())
             };
-            save_store(&store)?;
+            store_lock.save(&store)?;
             let checkpoint = maybe_checkpoint_to_contextlattice(
                 &board_snapshot,
                 KanbanActionInput {
@@ -574,7 +575,7 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                     } else {
                         override_msg.clone()
                     };
-                    let job = queue_background_job(&task_message)?;
+                    let job = persist_queued_background_job(&task_message)?;
                     task.background_job_id = Some(job.id.clone());
                     move_task(task, KanbanLane::Doing, None);
                     Some((task.id.clone(), job, task_message, board.clone()))
@@ -583,7 +584,8 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
                 }
             };
             if let Some((task_id, job, task_message, board_snapshot)) = dispatch_result {
-                save_store(&store)?;
+                store_lock.save(&store)?;
+                job.schedule();
                 let checkpoint = maybe_checkpoint_to_contextlattice(
                     &board_snapshot,
                     KanbanActionInput {
@@ -606,12 +608,10 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             }
         }
         "sync" => {
-            let board_snapshot = {
-                let board = ensure_board(&mut store, None);
-                board.clone()
-            };
+            drop(store_lock);
+            let board_snapshot = ensure_board(&mut store, None);
             let checkpoint = maybe_checkpoint_to_contextlattice(
-                &board_snapshot,
+                board_snapshot,
                 KanbanActionInput {
                     action: "sync".to_string(),
                     task_id: None,

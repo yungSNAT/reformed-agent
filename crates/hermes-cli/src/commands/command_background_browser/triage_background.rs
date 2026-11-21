@@ -810,6 +810,22 @@ fn handle_trigger_triage_command(
 }
 
 fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
+    let job = persist_queued_background_job(task)?;
+    job.schedule();
+    Ok(job)
+}
+
+impl QueuedBackgroundJob {
+    fn schedule(&self) {
+        schedule_background_job_execution(
+            self.status_path.clone(),
+            self.log_path.clone(),
+            self.task.clone(),
+        );
+    }
+}
+
+fn persist_queued_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
     let task = task.trim();
     if task.is_empty() {
         return Err(AgentError::Config(
@@ -842,7 +858,6 @@ fn queue_background_job(task: &str) -> Result<QueuedBackgroundJob, AgentError> {
     )
     .map_err(|e| AgentError::Io(format!("Failed to write background status: {}", e)))?;
 
-    schedule_background_job_execution(status_path.clone(), log_path.clone(), task.to_string());
     Ok(QueuedBackgroundJob {
         id: status["id"].as_str().unwrap_or("unknown").to_string(),
         task: task.to_string(),
