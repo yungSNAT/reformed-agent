@@ -52,48 +52,64 @@ pub struct SecurityReleaseGateArgs {
 }
 
 struct ProcessOutput {
-    status: ExitStatus,
+    status: Option<ExitStatus>,
     stdout: String,
     stderr: String,
+    error: Option<String>,
 }
 
 impl ProcessOutput {
-    fn capture(command: &mut Command, root: &Path) -> Result<Self, String> {
-        let output = command
-            .current_dir(root)
-            .stdin(Stdio::inherit())
-            .output()
-            .map_err(|error| error.to_string())?;
-        let decode = |bytes| {
+    fn capture(command: &mut Command, root: &Path) -> Self {
+        let output = match command.current_dir(root).stdin(Stdio::inherit()).output() {
+            Ok(output) => output,
+            Err(error) => {
+                return Self {
+                    status: None,
+                    stdout: String::new(),
+                    stderr: String::new(),
+                    error: Some(format!("could not run command: {error}")),
+                };
+            }
+        };
+        let decode = |bytes, stream| {
             String::from_utf8(bytes)
                 .map(|text| text.replace("\r\n", "\n").replace('\r', "\n"))
-                .map_err(|error| format!("could not decode command output: {error}"))
+                .map_err(|error| format!("could not decode command {stream}: {error}"))
         };
-        Ok(Self {
-            status: output.status,
-            stdout: decode(output.stdout)?,
-            stderr: decode(output.stderr)?,
-        })
+        let stdout = decode(output.stdout, "stdout");
+        let stderr = decode(output.stderr, "stderr");
+        let error = stdout.as_ref().err().or_else(|| stderr.as_ref().err());
+        Self {
+            status: Some(output.status),
+            error: error.cloned(),
+            stdout: stdout.unwrap_or_default(),
+            stderr: stderr.unwrap_or_default(),
+        }
+    }
+
+    fn succeeded(&self) -> bool {
+        self.status.is_some_and(|status| status.success()) && self.error.is_none()
     }
 
     fn report(&self, command: &str, details: impl IntoIterator<Item = (&'static str, Py)>) -> Py {
         #[cfg(unix)]
         use std::os::unix::process::ExitStatusExt;
         #[cfg(unix)]
-        let status = self
-            .status
-            .code()
-            .or_else(|| self.status.signal().map(|signal| -signal));
+        let status = self.status.and_then(|status| {
+            status
+                .code()
+                .or_else(|| status.signal().map(|signal| -signal))
+        });
         #[cfg(not(unix))]
-        let status = self.status.code();
-        Py::dict(
+        let status = self.status.and_then(|status| status.code());
+        let mut report = Py::dict(
             [
                 ("command", command.into()),
                 (
                     "exit_code",
                     status.map_or(Py::Null, |code| Py::Int(i128::from(code))),
                 ),
-                ("ok", self.status.success().into()),
+                ("ok", self.succeeded().into()),
             ]
             .into_iter()
             .chain(details)
@@ -101,7 +117,11 @@ impl ProcessOutput {
                 ("stdout_tail", tail(&self.stdout).into()),
                 ("stderr_tail", tail(&self.stderr).into()),
             ]),
-        )
+        );
+        if let Some(error) = &self.error {
+            report.set("error", error.as_str().into());
+        }
+        report
     }
 }
 
@@ -114,19 +134,19 @@ fn tail(text: &str) -> &str {
     &text[start..]
 }
 
-fn shell_check(root: &Path, command: &str) -> Result<Py, String> {
+fn shell_check(root: &Path, command: &str) -> Py {
     let started_at = py::utc_isoformat();
     let start = Instant::now();
-    let output = ProcessOutput::capture(Command::new("bash").args(["-lc", command]), root)?;
+    let output = ProcessOutput::capture(Command::new("bash").args(["-lc", command]), root);
     let finished_at = py::utc_isoformat();
-    Ok(output.report(
+    output.report(
         command,
         [
             ("started_at", started_at.into()),
             ("finished_at", finished_at.into()),
             ("duration_ms", Py::Int(start.elapsed().as_millis() as i128)),
         ],
-    ))
+    )
 }
 
 fn list_len(value: Option<&Py>, key: &str) -> Result<usize, String> {
@@ -144,30 +164,31 @@ fn write_json(path: &Path, report: &Py) -> Result<(), String> {
     write_report(path, py::dumps(report, Some(2), false) + "\n")
 }
 
-fn sbom(root: &Path, path: &Path) -> Result<Py, String> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent).map_err(|error| format!("{}: {error}", parent.display()))?;
-    }
+fn sbom(root: &Path, path: &Path) -> Py {
     let args = ["metadata", "--format-version", "1", "--locked"];
-    let output = ProcessOutput::capture(Command::new("cargo").args(args), root)?;
+    let output = ProcessOutput::capture(Command::new("cargo").args(args), root);
     let mut result = output.report(
         "cargo metadata --format-version 1 --locked",
         [("output", py::path_str(path).into())],
     );
-    if !output.status.success() {
-        return Ok(result);
-    }
-    let metadata = match py::loads(&output.stdout) {
-        Ok(metadata) => metadata,
-        Err(error) => {
-            result.set("ok", false.into());
-            result.set(
-                "error",
-                format!("failed to parse cargo metadata json: {error}").into(),
-            );
-            return Ok(result);
+    if output.succeeded() {
+        match write_sbom_inventory(path, &output.stdout) {
+            Ok((packages, members)) => {
+                result.set("package_count", packages.into());
+                result.set("workspace_member_count", members.into());
+            }
+            Err(error) => {
+                result.set("ok", false.into());
+                result.set("error", error.into());
+            }
         }
-    };
+    }
+    result
+}
+
+fn write_sbom_inventory(path: &Path, stdout: &str) -> Result<(usize, usize), String> {
+    let metadata = py::loads(stdout)
+        .map_err(|error| format!("failed to parse cargo metadata json: {error}"))?;
     if !metadata.is_dict() {
         return Err("cargo metadata must be an object".to_string());
     }
@@ -202,10 +223,8 @@ fn sbom(root: &Path, path: &Path) -> Result<Py, String> {
         ("resolve_node_count", nodes.into()),
         ("packages", Py::List(packages_json)),
     ]);
-    write_report(path, py::dumps(&inventory, Some(2), false) + "\n")?;
-    result.set("package_count", packages.len().into());
-    result.set("workspace_member_count", members.into());
-    Ok(result)
+    write_json(path, &inventory)?;
+    Ok((packages.len(), members))
 }
 
 pub fn run(args: SecurityReleaseGateArgs) -> Result<i32, String> {
@@ -215,19 +234,19 @@ pub fn run(args: SecurityReleaseGateArgs) -> Result<i32, String> {
     }
     let sbom_path = py::join(&root, &args.sbom_output);
     let sections = [
-        ("secret_scan", shell_check(&root, &args.secret_scan_cmd)?),
-        ("sbom", sbom(&root, &sbom_path)?),
+        ("secret_scan", shell_check(&root, &args.secret_scan_cmd)),
+        ("sbom", sbom(&root, &sbom_path)),
         (
             "signature_tests",
-            shell_check(&root, &args.signature_tests_cmd)?,
+            shell_check(&root, &args.signature_tests_cmd),
         ),
         (
             "redaction_tests",
-            shell_check(&root, &args.redaction_tests_cmd)?,
+            shell_check(&root, &args.redaction_tests_cmd),
         ),
         (
             "multimodal_tests",
-            shell_check(&root, &args.multimodal_tests_cmd)?,
+            shell_check(&root, &args.multimodal_tests_cmd),
         ),
     ];
     let total = sections.len();
