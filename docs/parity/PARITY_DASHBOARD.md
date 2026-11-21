@@ -1,14 +1,14 @@
 # Parity Dashboard
 
-_Generated from source artifacts: `2026-11-21T06:34:35.433132+00:00`_
+_Generated from source artifacts: `2026-11-21T06:47:27.955105+00:00`_
 
 ## Snapshot
 
 - Upstream target: `upstream/parity-reference` @ `ae2a81ccc00e9b7c06301523e5bb09608397149c`
-- Workstream snapshot generated: `2026-11-21T17:33:54+11:00`
-- Parity matrix generated: `2026-11-21T06:34:17.956994+00:00`
-- Queue snapshot generated: `2026-11-21T06:34:35.106459+00:00`
-- Proof snapshot generated: `2026-11-21T06:34:35.433132+00:00`
+- Workstream snapshot generated: `2026-11-21T17:45:51+11:00`
+- Parity matrix generated: `2026-11-21T06:47:10.559373+00:00`
+- Queue snapshot generated: `2026-11-21T06:47:27.623969+00:00`
+- Proof snapshot generated: `2026-11-21T06:47:27.955105+00:00`
 
 ## Gate Status
 
@@ -29,7 +29,7 @@ _Generated from source artifacts: `2026-11-21T06:34:35.433132+00:00`_
 | Tracked behavior rows | 511 |
 | Covered behavior rows | 33 |
 | Tracked behavior coverage ratio | 0.0646 |
-| Rust test functions | 16450 |
+| Rust test functions | 16459 |
 | Missing Rust test refs | 0 |
 | Critical gaps | 0 |
 
@@ -84,10 +84,10 @@ _Generated from source artifacts: `2026-11-21T06:34:35.433132+00:00`_
 | Metric | Value |
 | --- | ---: |
 | commits_behind | 1 |
-| commits_ahead | 1682 |
+| commits_ahead | 1685 |
 | upstream_patch_missing | 1 |
 | upstream_patch_represented | 0 |
-| local_patch_unique | 1413 |
+| local_patch_unique | 1416 |
 | files_only_upstream | 24117 |
 | files_only_local | 2065 |
 | files_shared_identical | 564 |
