@@ -310,7 +310,7 @@ async fn dispatch_slash_command(
         "/blueprint" => handle_blueprint_command(app, args).await,
         "/suggestions" => handle_suggestions_command(app, args).await,
         "/agents" => handle_agents_command(app, args),
-        "/kanban" => handle_kanban_command(app, args),
+        "/kanban" => handle_kanban_command(app, args).await,
         "/plan" => handle_plan_command(app, args),
         "/lsp" => handle_lsp_command(app, args),
         "/graph" => handle_graph_command(app, args).await,

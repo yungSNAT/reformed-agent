@@ -64,12 +64,13 @@ fn render_kanban_status(board: &KanbanBoard) -> String {
 fn parse_kanban_add(args: &[&str]) -> Result<NewKanbanTaskInput, AgentError> {
     if args.is_empty() {
         return Err(AgentError::Config(
-            "Usage: /kanban add <title> [--lane <todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]".to_string(),
+            "Usage: /kanban add <title> [--lane <triage|todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--tenant <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]".to_string(),
         ));
     }
     let mut lane = KanbanLane::Todo;
     let mut priority: u8 = 3;
     let mut assignee: Option<String> = None;
+    let mut tenant: Option<String> = None;
     let mut depends_on: Vec<String> = Vec::new();
     let mut description: Option<String> = None;
     let mut goal_mode = false;
@@ -86,7 +87,7 @@ fn parse_kanban_add(args: &[&str]) -> Result<NewKanbanTaskInput, AgentError> {
             };
             lane = KanbanLane::parse(raw).ok_or_else(|| {
                 AgentError::Config(format!(
-                    "Invalid lane `{raw}`. Use: todo|doing|blocked|done."
+                    "Invalid lane `{raw}`. Use: triage|todo|doing|blocked|done."
                 ))
             })?;
         } else if token == "--priority" || token == "-p" {
@@ -107,6 +108,15 @@ fn parse_kanban_add(args: &[&str]) -> Result<NewKanbanTaskInput, AgentError> {
         } else if token == "--assignee" || token == "-a" {
             idx = idx.saturating_add(1);
             assignee = args.get(idx).map(|s| s.to_string());
+        } else if token == "--tenant" {
+            idx += 1;
+            tenant = Some(
+                args.get(idx)
+                    .map(|name| name.trim())
+                    .filter(|name| !name.is_empty() && !name.starts_with('-'))
+                    .ok_or_else(|| AgentError::Config("Missing value for --tenant".to_string()))?
+                    .to_string(),
+            );
         } else if token == "--depends" || token == "--deps" {
             idx = idx.saturating_add(1);
             if let Some(raw) = args.get(idx) {
@@ -156,6 +166,7 @@ fn parse_kanban_add(args: &[&str]) -> Result<NewKanbanTaskInput, AgentError> {
         lane,
         priority,
         assignee,
+        tenant,
         description,
         depends_on,
         goal_mode,
@@ -377,19 +388,19 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
         "move" => {
             let Some(task_ref) = args.get(1).copied() else {
                 return Ok(
-                    "Usage: kanban move <task-id|title> <todo|doing|blocked|done> [summary]"
+                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]"
                         .to_string(),
                 );
             };
             let Some(raw_lane) = args.get(2).copied() else {
                 return Ok(
-                    "Usage: kanban move <task-id|title> <todo|doing|blocked|done> [summary]"
+                    "Usage: kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]"
                         .to_string(),
                 );
             };
             let Some(lane) = KanbanLane::parse(raw_lane) else {
                 return Ok(format!(
-                    "Invalid lane `{raw_lane}`. Use: todo|doing|blocked|done."
+                    "Invalid lane `{raw_lane}`. Use: triage|todo|doing|blocked|done."
                 ));
             };
             let summary = args.get(3..).unwrap_or_default().join(" ");
@@ -570,6 +581,11 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
             let dispatch_result = {
                 let board = ensure_board(&mut store, None);
                 if let Some(task) = find_task_mut(board, task_ref) {
+                    if task.lane == KanbanLane::Triage {
+                        return Ok(
+                            "Specify or move the triage task before dispatching it.".to_string()
+                        );
+                    }
                     let task_message = if override_msg.trim().is_empty() {
                         build_worker_context(task)
                     } else {
@@ -630,13 +646,19 @@ pub fn run_kanban_command(args: &[&str]) -> Result<String, AgentError> {
     }
 }
 
-fn handle_kanban_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
-    emit_command_output(app, run_kanban_command(args)?);
+async fn handle_kanban_command(app: &mut App, args: &[&str]) -> Result<CommandResult, AgentError> {
+    let output = match args {
+        [action, rest @ ..] if action.eq_ignore_ascii_case("specify") => {
+            crate::kanban::specify_kanban(rest, &app.config).await?
+        }
+        _ => run_kanban_command(args)?,
+    };
+    emit_command_output(app, output);
     Ok(CommandResult::Handled)
 }
 
 fn kanban_help_text() -> &'static str {
-    "Kanban commands:\n  hermes kanban status [board]\n  hermes kanban boards\n  hermes kanban init <name> [project-path]\n  hermes kanban use <name-or-id>\n  hermes kanban add <title> [--lane <todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]\n  hermes kanban attach <task-id|title> <file-path>\n  hermes kanban attachments <task-id|title>\n  hermes kanban detach <task-id|title> <attachment-id|filename>\n  hermes kanban move <task-id|title> <todo|doing|blocked|done> [summary]\n  hermes kanban claim <task-id|title> [assignee]\n  hermes kanban block <task-id|title> <reason>\n  hermes kanban done <task-id|title> [summary]\n  hermes kanban archive-done\n  hermes kanban dispatch <task-id|title> [background-task-override]\n  hermes kanban sync\n\nInteractive alias: /kanban <command>"
+    "Kanban commands:\n  hermes kanban status [board]\n  hermes kanban boards\n  hermes kanban init <name> [project-path]\n  hermes kanban use <name-or-id>\n  hermes kanban add <title> [--lane <triage|todo|doing|blocked|done>] [--priority <1..5>] [--assignee <name>] [--tenant <name>] [--depends K-0001,K-0002] [--desc <text>] [--goal] [--goal-max-turns N]\n  hermes kanban specify <task-id> | --all [--tenant <name>]\n    Sends triage titles and descriptions to the configured auxiliary provider.\n  hermes kanban attach <task-id|title> <file-path>\n  hermes kanban attachments <task-id|title>\n  hermes kanban detach <task-id|title> <attachment-id|filename>\n  hermes kanban move <task-id|title> <triage|todo|doing|blocked|done> [summary]\n  hermes kanban claim <task-id|title> [assignee]\n  hermes kanban block <task-id|title> <reason>\n  hermes kanban done <task-id|title> [summary]\n  hermes kanban archive-done\n  hermes kanban dispatch <task-id|title> [background-task-override]\n  hermes kanban sync\n\nInteractive alias: /kanban <command>"
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

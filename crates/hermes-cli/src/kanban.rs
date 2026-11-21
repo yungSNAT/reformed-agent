@@ -7,6 +7,9 @@ use hermes_core::AgentError;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
+mod specify;
+pub use specify::specify_kanban;
+
 const KANBAN_STATE_DIR: &str = "alpha/kanban";
 const KANBAN_STORE_FILE: &str = "boards.json";
 const KANBAN_SCHEMA_VERSION: u32 = 1;
@@ -19,6 +22,7 @@ const DEFAULT_GOAL_MAX_TURNS: u32 = 20;
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum KanbanLane {
+    Triage,
     Todo,
     Doing,
     Blocked,
@@ -28,6 +32,7 @@ pub enum KanbanLane {
 impl KanbanLane {
     pub fn parse(raw: &str) -> Option<Self> {
         match raw.trim().to_ascii_lowercase().as_str() {
+            "triage" => Some(Self::Triage),
             "todo" | "backlog" | "to-do" => Some(Self::Todo),
             "doing" | "in-progress" | "inprogress" | "running" => Some(Self::Doing),
             "blocked" | "stalled" => Some(Self::Blocked),
@@ -38,6 +43,7 @@ impl KanbanLane {
 
     pub fn as_str(self) -> &'static str {
         match self {
+            Self::Triage => "triage",
             Self::Todo => "todo",
             Self::Doing => "doing",
             Self::Blocked => "blocked",
@@ -45,18 +51,26 @@ impl KanbanLane {
         }
     }
 
-    pub fn all() -> [Self; 4] {
-        [Self::Todo, Self::Doing, Self::Blocked, Self::Done]
+    pub fn all() -> [Self; 5] {
+        [
+            Self::Triage,
+            Self::Todo,
+            Self::Doing,
+            Self::Blocked,
+            Self::Done,
+        ]
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KanbanTask {
     pub id: String,
     pub title: String,
     pub lane: KanbanLane,
     pub priority: u8,
     pub assignee: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
     pub description: Option<String>,
     pub depends_on: Vec<String>,
     pub blocked_reason: Option<String>,
@@ -74,7 +88,7 @@ pub struct KanbanTask {
     pub goal_max_turns: Option<u32>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct KanbanAttachment {
     pub id: String,
     pub filename: String,
@@ -127,6 +141,7 @@ pub struct NewKanbanTaskInput {
     pub lane: KanbanLane,
     pub priority: u8,
     pub assignee: Option<String>,
+    pub tenant: Option<String>,
     pub description: Option<String>,
     pub depends_on: Vec<String>,
     pub goal_mode: bool,
@@ -332,6 +347,7 @@ pub fn add_task(board: &mut KanbanBoard, input: NewKanbanTaskInput) -> KanbanTas
         lane: input.lane,
         priority: input.priority.clamp(1, 5),
         assignee: normalize_optional(input.assignee),
+        tenant: normalize_optional(input.tenant),
         description: normalize_optional(input.description),
         depends_on: dedupe_strings(input.depends_on),
         blocked_reason: None,
@@ -638,6 +654,13 @@ pub fn run_kanban_goal_loop(
                     outcome: KanbanGoalLoopOutcome::BlockedByWorker,
                     turns_used,
                     reason: "worker blocked the task".to_string(),
+                };
+            }
+            KanbanLane::Triage => {
+                return KanbanGoalLoopResult {
+                    outcome: KanbanGoalLoopOutcome::Stopped,
+                    turns_used,
+                    reason: "task returned to triage".to_string(),
                 };
             }
             KanbanLane::Todo | KanbanLane::Doing => {}
@@ -1170,6 +1193,7 @@ mod tests {
                     lane: KanbanLane::Todo,
                     priority: 2,
                     assignee: None,
+                    tenant: None,
                     description: None,
                     depends_on: vec![],
                     goal_mode: false,
@@ -1204,6 +1228,7 @@ mod tests {
                     lane: KanbanLane::Todo,
                     priority: 1,
                     assignee: None,
+                    tenant: None,
                     description: None,
                     depends_on: vec![],
                     goal_mode: false,
@@ -1271,6 +1296,7 @@ mod tests {
                     lane: KanbanLane::Todo,
                     priority: 3,
                     assignee: Some("worker".to_string()),
+                    tenant: None,
                     description: Some("summarize attached file".to_string()),
                     depends_on: vec![],
                     goal_mode: false,
@@ -1315,6 +1341,7 @@ mod tests {
                     lane: KanbanLane::Todo,
                     priority: 3,
                     assignee: None,
+                    tenant: None,
                     description: None,
                     depends_on: vec![],
                     goal_mode: false,
@@ -1347,6 +1374,7 @@ mod tests {
             lane: KanbanLane::Doing,
             priority: 1,
             assignee: Some("worker".to_string()),
+            tenant: None,
             description: Some("must pass tests".to_string()),
             depends_on: vec!["K-0001".to_string()],
             blocked_reason: None,
