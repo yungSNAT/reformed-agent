@@ -7,7 +7,7 @@ use clap::Args;
 
 use crate::decimal_limit;
 use crate::py::{self, Py};
-use crate::report_io::{resolve_argument, write_report};
+use crate::report_io::{resolve_argument, truth, write_report};
 
 const PARITY_MATRIX: &str = "docs/parity/parity-matrix.json";
 const WORKSTREAMS: &str = "docs/parity/workstream-status.json";
@@ -60,18 +60,6 @@ fn load(root: &Path, name: &str) -> Result<Py, String> {
         .and_then(|source| py::loads(&source).ok())
         .filter(Py::is_dict)
         .unwrap_or(Py::Null))
-}
-
-fn truth(value: &Py) -> bool {
-    match value {
-        Py::Null => false,
-        Py::Bool(value) => *value,
-        Py::Int(value) => *value != 0,
-        Py::Float(value) => *value != 0.0,
-        Py::Str(value) => !value.is_empty(),
-        Py::List(value) => !value.is_empty(),
-        Py::Dict(value) => !value.is_empty(),
-    }
 }
 
 fn text(value: Option<&Py>, default: &str) -> String {
@@ -147,33 +135,10 @@ fn fraction(value: &Py) -> Result<String, String> {
         Py::Bool(value) => f64::from(u8::from(*value)),
         Py::Int(value) => *value as f64,
         Py::Float(value) => *value,
-        Py::Str(value) => {
-            let trimmed = value.trim();
-            let characters: Vec<_> = trimmed.chars().collect();
-            let mut decimal = String::new();
-            for (index, &character) in characters.iter().enumerate() {
-                if character == '_' {
-                    let before = index
-                        .checked_sub(1)
-                        .and_then(|offset| characters.get(offset));
-                    let after = characters.get(index + 1);
-                    if before
-                        .and_then(|&ch| decimal_limit::decimal_digit(ch))
-                        .is_none()
-                        || after
-                            .and_then(|&ch| decimal_limit::decimal_digit(ch))
-                            .is_none()
-                    {
-                        return Err("invalid decimal separator in dashboard metric".to_string());
-                    }
-                } else {
-                    decimal.push(decimal_limit::decimal_digit(character).unwrap_or(character));
-                }
-            }
-            decimal
-                .parse()
-                .map_err(|_| "expected a decimal dashboard metric")?
-        }
+        Py::Str(value) => decimal_limit::parse_float(value).map_err(|error| match error {
+            "invalid decimal separator" => "invalid decimal separator in dashboard metric",
+            _ => "expected a decimal dashboard metric",
+        })?,
         _ => return Err("expected a decimal dashboard metric".to_string()),
     };
     Ok(if number.is_finite() {

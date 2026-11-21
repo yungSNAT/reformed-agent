@@ -26,6 +26,27 @@ pub(crate) fn decimal_digit(character: char) -> Option<char> {
     char::from_digit(point - zero, 10)
 }
 
+pub(crate) fn parse_float(input: &str) -> Result<f64, &'static str> {
+    let characters: Vec<_> = input.trim().chars().collect();
+    let mut decimal = String::new();
+    for (index, &character) in characters.iter().enumerate() {
+        if character == '_' {
+            let before = index
+                .checked_sub(1)
+                .and_then(|offset| characters.get(offset));
+            let after = characters.get(index + 1);
+            if before.and_then(|&ch| decimal_digit(ch)).is_none()
+                || after.and_then(|&ch| decimal_digit(ch)).is_none()
+            {
+                return Err("invalid decimal separator");
+            }
+        } else {
+            decimal.push(decimal_digit(character).unwrap_or(character));
+        }
+    }
+    decimal.parse().map_err(|_| "expected a decimal")
+}
+
 pub(crate) fn parse(input: &str) -> Result<DecimalLimit, String> {
     let input = input.trim();
     let negative = input.starts_with('-');
