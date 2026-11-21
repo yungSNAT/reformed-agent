@@ -1312,6 +1312,83 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn charge_submission_requires_a_single_verified_acknowledgement() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+
+        for (index, (status, body, accepted)) in [
+            (202u16, r#"{"chargeId":"fixture-charge"}"#, true),
+            (202, r#"{"charge_id":"fixture-charge"}"#, true),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":"fixture-charge"}"#,
+                true,
+            ),
+            (202, r#"{"detail":"provider-only-acknowledgement"}"#, false),
+            (202, r#"{"chargeId":" "}"#, false),
+            (202, r#"{"chargeId":42}"#, false),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","chargeId":"fixture-charge"}"#,
+                false,
+            ),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":"other"}"#,
+                false,
+            ),
+            (200, r#"{"chargeId":"fixture-charge"}"#, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = format!("fixture-idempotency-{index}");
+            Mock::given(method("POST"))
+                .and(path("/api/billing/charge"))
+                .and(header("idempotency-key", key.as_str()))
+                .and(header("authorization", "Bearer access"))
+                .and(body_json(json!({"amountUsd": 50.0})))
+                .respond_with(
+                    ResponseTemplate::new(status).set_body_raw(body.as_bytes(), "application/json"),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let key_arg = format!("--idempotency-key={key}");
+            let result = if index % 2 == 0 {
+                handle_billing_args(&["charge".into(), "50".into(), "--confirm".into(), key_arg])
+                    .await
+            } else {
+                handle_billing_slash_args(&["charge", "50", "--confirm", &key_arg]).await
+            };
+            if accepted {
+                assert!(
+                    result.is_ok_and(|output| output.contains("charge_id: fixture-charge")),
+                    "the documented acknowledgement should retain its charge identifier"
+                );
+            } else {
+                assert!(
+                    result.is_err_and(|error| {
+                        let output = error.to_string();
+                        output.contains("could not be confirmed")
+                            && output.contains("Nous Portal")
+                            && !output.contains("provider-only-acknowledgement")
+                    }),
+                    "a non-conforming acknowledgement should report an uncertain outcome"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn auto_reload_acknowledges_a_confirmed_update_without_provider_details() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
