@@ -446,7 +446,7 @@ mod tests {
         let fixture = tempfile::tempdir().expect("create scan directory");
         let root = fixture.path();
         for file in ["ordinary.rs", "mixed.Rs"] {
-            fs::write(root.join(file), "#[test]\\nfn cited() {}\\n").expect("write fixture");
+            fs::write(root.join(file), "#[test]\nfn cited() {}\n").expect("write fixture");
         }
         let mut tests = TestsByFile::new();
         scan_tests(root, root, &mut tests).expect("scan fixture");
