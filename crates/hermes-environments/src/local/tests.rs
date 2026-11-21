@@ -670,6 +670,22 @@ async fn test_write_and_read_file() {
     let _ = std::fs::remove_dir(&dir);
 }
 
+#[tokio::test]
+async fn unpaged_local_read_preserves_mixed_line_endings_and_final_newline() {
+    let directory = tempdir().unwrap();
+    let target = directory.path().join("notes.txt");
+    let original = "heading\r\nβeta\nfinish\r\n";
+    tokio::fs::write(&target, original).await.unwrap();
+    let path = target.to_str().unwrap();
+    let backend = LocalBackend::default();
+
+    assert_eq!(
+        backend.read_file(path, Some(1), Some(1)).await.unwrap(),
+        "βeta"
+    );
+    assert_eq!(backend.read_file(path, None, None).await.unwrap(), original);
+}
+
 #[test]
 fn test_relative_file_paths_use_terminal_cwd() {
     let _lock = lock_env();

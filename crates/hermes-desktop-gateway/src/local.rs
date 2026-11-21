@@ -61,7 +61,7 @@ pub struct LocalRuntime {
     /// Shared with the control socket and the router, so connections accepted before a stop
     /// mint and redeem nothing after it.
     tickets: Arc<Tickets>,
-    /// `gateway.lock`, whose `flock` is released when this closes, after the files go.
+    /// `gateway.lock`, whose `flock` is released after the files go.
     lock: std::fs::File,
 }
 
@@ -96,9 +96,10 @@ impl Drop for LocalRuntime {
     fn drop(&mut self) {
         self.stop_serving();
         // The lock file stays, emptied of its pid: unlinking the inode this still locks would let
-        // a new claimant lock a fresh one at the path whilst this process still runs. The lock
-        // itself is released after this returns.
+        // a new claimant lock a fresh one at the path whilst cleanup still owns the home.
         let _ = self.lock.set_len(0);
+        // A forked child may retain the descriptor until exec. Release the flock even then.
+        let _ = self.lock.unlock();
     }
 }
 
@@ -947,4 +948,23 @@ fn loopback_origin(origin: &str) -> bool {
         && host
             .parse::<std::net::IpAddr>()
             .is_ok_and(|ip| ip.is_loopback())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{claim, lock_held};
+
+    #[test]
+    fn dropping_runtime_unlocks_with_a_duplicated_descriptor() {
+        let home = tempfile::tempdir().unwrap();
+        let mut runtime = claim(home.path()).unwrap().unwrap();
+        let duplicate = runtime.lock.try_clone().unwrap();
+
+        runtime.stop_serving();
+        assert!(lock_held(home.path()));
+
+        drop(runtime);
+        assert!(!lock_held(home.path()));
+        assert_eq!(duplicate.metadata().unwrap().len(), 0);
+    }
 }

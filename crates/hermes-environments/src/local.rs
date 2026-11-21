@@ -718,6 +718,10 @@ impl TerminalBackend for LocalBackend {
             .await
             .map_err(|e| AgentError::Io(format!("Failed to read file '{}': {}", path, e)))?;
 
+        if offset.is_none() && limit.is_none() {
+            return Ok(content);
+        }
+
         let lines: Vec<&str> = content.lines().collect();
 
         // Apply offset (0-indexed line number to start from)
