@@ -316,7 +316,10 @@ async fn read_charge_acknowledgement(
         .as_deref()
         .or(acknowledgement.charge_id.as_deref())
         .filter(|id| {
-            !matches!(*id, "" | "." | "..") && id.len() <= MAX_CHARGE_ID_BYTES && id.trim() == *id
+            // The displayed ID must round-trip as one CLI argument and one URL path segment.
+            !matches!(*id, "" | "." | "..")
+                && id.len() <= MAX_CHARGE_ID_BYTES
+                && id.bytes().all(is_plain_billing_reference_byte)
         })
         .filter(|id| {
             acknowledgement
@@ -389,20 +392,36 @@ impl NousBillingClient {
         amount_usd: &str,
         idempotency_key: &str,
     ) -> Result<Value, BillingError> {
-        let key = idempotency_key.trim();
-        if key.is_empty() {
+        if idempotency_key.trim().is_empty() {
             return Err(BillingError::invalid_request(
                 "Idempotency-Key is required for a charge.",
                 "idempotency_key_required",
+            ));
+        }
+        if idempotency_key.trim() != idempotency_key
+            || !idempotency_key
+                .bytes()
+                .all(|byte| matches!(byte, b' '..=b'~'))
+        {
+            return Err(BillingError::invalid_request(
+                "Idempotency-Key must use printable ASCII without leading or trailing whitespace.",
+                "invalid_idempotency_key",
             ));
         }
         let amount = parse_amount_number(amount_usd).ok_or_else(|| {
             BillingError::invalid_request("A valid charge amount is required.", "invalid_amount")
         })?;
         let base = reqwest::Url::parse(&self.portal_base_url);
-        if !base.is_ok_and(|url| url.query().is_none() && url.fragment().is_none()) {
+        if !base.is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.has_host()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        }) {
             return Err(BillingError::invalid_request(
-                "Nous Portal needs a valid base URL without a query or fragment before submitting a charge.",
+                "Nous Portal needs a valid base URL using HTTP or HTTPS without credentials, a query or a fragment before submitting a charge.",
                 "invalid_portal_base_url",
             ));
         }
@@ -410,7 +429,7 @@ impl NousBillingClient {
             Method::POST,
             CHARGE_PATH,
             Some(json!({ "amountUsd": amount })),
-            Some(("Idempotency-Key", key.to_string())),
+            Some(("Idempotency-Key", idempotency_key.to_string())),
         )
         .await
     }
@@ -659,7 +678,7 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
         .iter()
         .find_map(|arg| arg.strip_prefix("--idempotency-key="))
     {
-        key.trim().to_string()
+        key.to_string()
     } else {
         let key = Uuid::new_v4().to_string();
         announce_charge_key(&key)?;
@@ -690,11 +709,12 @@ async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     ))
 }
 
+fn is_plain_billing_reference_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
+}
+
 fn render_billing_reference(value: &str) -> String {
-    if value
-        .bytes()
-        .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_'))
-    {
+    if value.bytes().all(is_plain_billing_reference_byte) {
         return value.to_string();
     }
     format!("{value:?}")
@@ -1501,6 +1521,10 @@ mod tests {
         let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
 
+        let mut bounded_body = r#"{"chargeId":"fixture-charge"}"#.to_string();
+        bounded_body.extend(std::iter::repeat_n(' ', 64 * 1024 - bounded_body.len()));
+        let oversized_body = format!("{bounded_body} ");
+        let oversized_id = json!({ "chargeId": "x".repeat(1025) }).to_string();
         for (index, (status, body, accepted)) in [
             (202u16, r#"{"chargeId":"fixture-charge"}"#, true),
             (202, r#"{"charge_id":"fixture-charge"}"#, true),
@@ -1536,6 +1560,15 @@ mod tests {
             (202, r#"["fixture-charge","fixture-charge"]"#, false),
             (202, r#"{"chargeId":"."}"#, false),
             (202, r#"{"chargeId":".."}"#, false),
+            (202, r#"{"chargeId":"before\u0000after"}"#, false),
+            (202, r#"{"chargeId":"before\u001bafter"}"#, false),
+            (202, r#"{"chargeId":"two parts"}"#, false),
+            (202, r#"{"chargeId":"two/segments"}"#, false),
+            (202, r#"{"chargeId":"two%2Fsegments"}"#, false),
+            (202, r#"{"chargeId":"before?after#fragment"}"#, false),
+            (202, bounded_body.as_str(), true),
+            (202, oversized_body.as_str(), false),
+            (202, oversized_id.as_str(), false),
             (200, r#"{"chargeId":"fixture-charge"}"#, false),
             (408, r#"{"message":"provider-only-acknowledgement"}"#, false),
             (429, r#"{"message":"provider-only-acknowledgement"}"#, false),
@@ -1544,7 +1577,7 @@ mod tests {
         .into_iter()
         .enumerate()
         {
-            let key = format!("fixture-idempotency-{index}");
+            let key = format!("fixture-Key_{index}:step");
             Mock::given(method("POST"))
                 .and(path("/api/billing/charge"))
                 .and(header("idempotency-key", key.as_str()))
@@ -1582,6 +1615,17 @@ mod tests {
                 );
             }
         }
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/fixture-charge"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "status": "pending" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let status = handle_billing_args(&["charge-status".into(), "fixture-charge".into()]).await;
+        assert!(
+            status.is_ok_and(|output| output.contains("pending")),
+            "the accepted reference should work directly with charge status"
+        );
     }
 
     #[tokio::test]
@@ -1645,6 +1689,29 @@ mod tests {
                 result.is_err_and(|error| error.to_string().contains("valid base URL")),
                 "an invalid charge destination should fail before submission"
             );
+        }
+        for key in [
+            " fixture-key",
+            "fixture-key ",
+            "fixture-\tkey",
+            "fixture-\u{00e9}",
+        ] {
+            let key_arg = format!("--idempotency-key={key}");
+            for result in [
+                handle_billing_args(&[
+                    "charge".into(),
+                    "50".into(),
+                    "--confirm".into(),
+                    key_arg.clone(),
+                ])
+                .await,
+                handle_billing_slash_args(&["charge", "50", "--confirm", &key_arg]).await,
+            ] {
+                assert!(
+                    result.is_err_and(|error| error.to_string().contains("printable ASCII")),
+                    "an unsupported supplied key should fail without being normalised"
+                );
+            }
         }
         assert!(
             server
