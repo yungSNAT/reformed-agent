@@ -16,7 +16,7 @@ from __future__ import annotations
 import re
 import sys
 from collections import defaultdict
-from pathlib import Path
+from pathlib import Path, PurePath
 from textwrap import dedent
 from typing import Any
 
@@ -276,7 +276,7 @@ def sanitize_yaml_string(s: str) -> str:
     return s
 
 
-def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> dict[str, Any]:
+def derive_skill_meta(skill_path: PurePath, source_dir: PurePath, source_kind: str) -> dict[str, Any]:
     """Extract category + skill slug from filesystem layout.
 
     skills/<cat>/<skill>/SKILL.md           -> cat=<cat>, slug=<skill>
@@ -302,7 +302,7 @@ def derive_skill_meta(skill_path: Path, source_dir: Path, source_kind: str) -> d
         "category": category,
         "sub": sub,
         "slug": slug,
-        "rel_path": str(rel),
+        "rel_path": rel.as_posix(),
     }
 
 
@@ -657,16 +657,7 @@ def write_sidebar(entries):
 
     sidebar_path = REPO / "website" / "sidebars.ts"
     text = sidebar_path.read_text(encoding="utf-8")
-    # Replace the existing Skills block.
-    pattern = re.compile(
-        r"        \{\n"
-        r"          type: 'category',\n"
-        r"          label: 'Skills',\n"
-        r"(?:.*?\n)*?"
-        r"        \},\n",
-        re.DOTALL,
-    )
-    # Safer: match the exact current block shape.
+    # Match the exact current Skills block shape.
     old_block_start = "        {\n          type: 'category',\n          label: 'Skills',\n"
     i = text.find(old_block_start)
     if i == -1:
