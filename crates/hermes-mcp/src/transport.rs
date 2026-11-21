@@ -1875,10 +1875,14 @@ mod tests {
 
         transport.start().await.expect("start the .cmd server");
         let mut written = None;
+        // `>` creates the file before `echo` writes to it, so an empty read
+        // means the script has not finished yet.
         for _ in 0..100 {
             if let Ok(text) = std::fs::read_to_string(&marker) {
-                written = Some(text);
-                break;
+                if !text.is_empty() {
+                    written = Some(text);
+                    break;
+                }
             }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }
