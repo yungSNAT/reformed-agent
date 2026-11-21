@@ -16,7 +16,7 @@ use serde_json::Value;
 
 use hermes_core::{AgentError, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema};
 
-use crate::provider::GenericProvider;
+use crate::provider::{is_openai_dynamic_model_alias, GenericProvider};
 use crate::provider_profiles;
 
 fn openrouter_compatible_extra_body(extra_body: Option<&Value>) -> Option<Value> {
@@ -439,8 +439,11 @@ impl CopilotProvider {
         let wire_model = match body.get("model") {
             Some(Value::String(model)) => model,
             Some(_) => return Some(Cow::Borrowed(body)),
-            None => model.unwrap_or(&self.inner.model),
+            None => model.unwrap_or(&self.inner.model).trim(),
         };
+        if is_openai_dynamic_model_alias(wire_model) {
+            return Some(Cow::Borrowed(body));
+        }
         let support = catalog
             .effort_support(&self.inner.api_key, wire_model)
             .await;

@@ -79,7 +79,7 @@ async fn copilot_clamps_reasoning_to_the_model_override_capabilities() {
 
     let provider = provider(&server);
     let effort = json!({"reasoning_effort": "xhigh", "temperature": 0.2});
-    one_shot(&provider, Some("selected-model"), &effort).await;
+    one_shot(&provider, Some(" selected-model "), &effort).await;
     one_shot(
         &provider,
         Some("selected-model"),
@@ -235,6 +235,23 @@ async fn copilot_skips_catalog_for_a_custom_base_and_disabled_reasoning() {
     )
     .await;
     assert_eq!(chat_requests(&server, 0).await.len(), 3);
+}
+
+#[tokio::test]
+async fn copilot_leaves_dynamic_alias_resolution_to_the_chat_adapter() {
+    let server = MockServer::start().await;
+    mock_chat(&server).await;
+    let provider = provider(&server);
+    one_shot(
+        &provider,
+        None,
+        &json!({"model": "openai:dynamic", "reasoning_effort": "xhigh"}),
+    )
+    .await;
+    let chats = chat_requests(&server, 0).await;
+    assert_eq!(chats.len(), 1);
+    assert_eq!(chats[0]["model"], "default-model");
+    assert_eq!(chats[0]["reasoning_effort"], "xhigh");
 }
 
 #[tokio::test]
