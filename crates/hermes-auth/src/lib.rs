@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use tokio::io::AsyncWriteExt;
 use tokio::sync::RwLock;
-use url::{form_urlencoded, Url};
+use url::{form_urlencoded, Host, Url};
 
 const TOKEN_STORE_ENVELOPE_VERSION: u8 = 1;
 const TOKEN_STORE_KEY_BYTES: usize = 32;
@@ -370,6 +370,7 @@ impl AuthManager {
 #[derive(Debug, Clone)]
 pub struct OAuth2Endpoints {
     pub authorize_url: String,
+    /// Final HTTPS token endpoint. Numeric HTTP loopback addresses are allowed for local use.
     pub token_url: String,
     pub client_id: String,
     pub redirect_uri: String,
@@ -440,6 +441,35 @@ fn oauth_client_secret(endpoints: &OAuth2Endpoints) -> Option<&str> {
         .as_deref()
         .map(str::trim)
         .filter(|value| !value.is_empty())
+}
+
+fn oauth_token_request(endpoint: &str) -> Result<reqwest::RequestBuilder, AgentError> {
+    let url = Url::parse(endpoint)
+        .map_err(|_| AgentError::Config("OAuth token endpoint is not a valid URL".into()))?;
+    if !url.username().is_empty() || url.password().is_some() || url.fragment().is_some() {
+        return Err(AgentError::Config(
+            "OAuth token endpoint must omit user information and fragments".into(),
+        ));
+    }
+    let loopback = match url.host() {
+        Some(Host::Ipv4(ip)) => ip.is_loopback(),
+        Some(Host::Ipv6(ip)) => ip.is_loopback(),
+        _ => false,
+    };
+    let builder = reqwest::Client::builder().redirect(reqwest::redirect::Policy::none());
+    let builder = match url.scheme() {
+        "https" if url.host().is_some() => builder,
+        "http" if loopback => builder.no_proxy(),
+        _ => {
+            return Err(AgentError::Config(
+                "OAuth token endpoint requires HTTPS or a numeric HTTP loopback address".into(),
+            ));
+        }
+    };
+    let client = builder
+        .build()
+        .map_err(|_| AgentError::Io("Could not initialise the OAuth token client".into()))?;
+    Ok(client.post(url).header("Accept", "application/json"))
 }
 
 fn apply_oauth_client_auth(
@@ -515,7 +545,7 @@ pub async fn exchange_authorization_code(
     code: &str,
     code_verifier: &str,
 ) -> Result<OAuthCredential, AgentError> {
-    let client = reqwest::Client::new();
+    let request = oauth_token_request(&endpoints.token_url)?;
     let mut pairs = vec![
         ("grant_type", "authorization_code".to_string()),
         ("code", code.to_string()),
@@ -523,9 +553,6 @@ pub async fn exchange_authorization_code(
         ("client_id", endpoints.client_id.clone()),
         ("code_verifier", code_verifier.to_string()),
     ];
-    let request = client
-        .post(&endpoints.token_url)
-        .header("Accept", "application/json");
     let request = apply_oauth_client_auth(request, endpoints, &mut pairs);
     let resp = request
         .form(&pairs)
@@ -558,15 +585,12 @@ pub async fn exchange_refresh_token(
     endpoints: &OAuth2Endpoints,
     refresh_token: &str,
 ) -> Result<OAuthCredential, AgentError> {
-    let client = reqwest::Client::new();
+    let request = oauth_token_request(&endpoints.token_url)?;
     let mut pairs = vec![
         ("grant_type", "refresh_token".to_string()),
         ("refresh_token", refresh_token.to_string()),
         ("client_id", endpoints.client_id.clone()),
     ];
-    let request = client
-        .post(&endpoints.token_url)
-        .header("Accept", "application/json");
     let request = apply_oauth_client_auth(request, endpoints, &mut pairs);
     let resp = request
         .form(&pairs)
@@ -599,6 +623,32 @@ pub async fn exchange_refresh_token(
 mod tests {
     use super::*;
     use tempfile::tempdir;
+
+    #[test]
+    fn oauth_token_request_requires_https_or_numeric_loopback() {
+        for endpoint in [
+            "https://id.example/token?tenant=fixture",
+            "http://127.0.0.1:7654/token",
+            "http://[::1]:7654/token",
+        ] {
+            let request = oauth_token_request(endpoint).unwrap().build().unwrap();
+            assert_eq!(request.url().as_str(), endpoint);
+        }
+        for endpoint in [
+            "http://id.example/token",
+            "http://localhost/token",
+            "http://0.0.0.0/token",
+            "file:///oauth/token",
+            "https://name@id.example/token",
+            "https://id.example/token#fragment",
+            "unparseable",
+        ] {
+            assert!(matches!(
+                oauth_token_request(endpoint),
+                Err(AgentError::Config(_))
+            ));
+        }
+    }
 
     #[test]
     fn authorization_url_contains_pkce_and_state() {
