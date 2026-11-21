@@ -63,8 +63,8 @@ audit reports live upstream drift separately from the checks against this pin.
 - `scripts/run-elite-sync-gate.py`
   - Runs red-team + adapter chaos + zero-copy hot-path + differential parity + eval trend + security gate v2 + performance autopilot as one gate
   - Emits JSON diagnostics under `.sync-reports/elite-sync-gate-<timestamp>.json`
-- `scripts/run-security-release-gate-v2.py`
-  - Runs release-time secret scan, SBOM generation (`cargo metadata`), provenance signature tests, and redaction regression tests
+- `cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root .`
+  - Runs the release scan, SBOM inventory (`cargo metadata`), provenance signature, redaction and ACP multimodal tests
   - Emits JSON diagnostics under `.sync-reports/security-release-gate-v2-<timestamp>.json`
 - `scripts/run-performance-autopilot.py`
   - Runs hot-path + eval trend checks and emits deterministic tuning recommendations (`json` + `markdown`)

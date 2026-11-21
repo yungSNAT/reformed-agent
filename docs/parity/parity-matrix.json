@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-21T02:13:47.018741+00:00",
+  "generated_at_utc": "2026-11-21T04:10:31.772952+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "bdee076514bfda7f02c0f212d3526e06bdd88c08",
+    "local_sha": "b68c0735ce36f7179bd9528511c6927ce6f3ea1d",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1671,
+    "commits_ahead": 1680,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1402,
+    "local_patch_unique": 1410,
     "files_only_upstream": 24117,
-    "files_only_local": 2057,
-    "files_shared_identical": 565,
-    "files_shared_different": 1508,
-    "tree_files_changed": 27411,
+    "files_only_local": 2059,
+    "files_shared_identical": 564,
+    "files_shared_different": 1509,
+    "tree_files_changed": 27414,
     "tree_insertions": 4528861,
-    "tree_deletions": 951449
+    "tree_deletions": 951891
   },
   "top_upstream_only": [
     {
@@ -245,16 +245,16 @@
       "count": 17
     },
     {
+      "path": "optional-skills/finance",
+      "count": 12
+    },
+    {
       "path": "tests/cron",
       "count": 12
     },
     {
       "path": "tests/plugins",
       "count": 12
-    },
-    {
-      "path": "optional-skills/finance",
-      "count": 11
     },
     {
       "path": "optional-skills/productivity",
@@ -408,7 +408,7 @@
     },
     {
       "path": "crates/hermes-parity-tools",
-      "count": 30
+      "count": 32
     },
     {
       "path": "tests/tools",
@@ -499,11 +499,11 @@
       "count": 10
     },
     {
-      "path": "docs/implementation",
+      "path": ".github/workflows",
       "count": 9
     },
     {
-      "path": "optional-skills/creative",
+      "path": "docs/implementation",
       "count": 9
     }
   ],
@@ -732,7 +732,7 @@
     },
     {
       "path": "crates/hermes-parity-tools",
-      "count": 30
+      "count": 32
     },
     {
       "path": "tests/tools",
@@ -823,11 +823,11 @@
       "count": 10
     },
     {
-      "path": "docs/implementation",
+      "path": ".github/workflows",
       "count": 9
     },
     {
-      "path": "optional-skills/creative",
+      "path": "docs/implementation",
       "count": 9
     }
   ],
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 364,
+      "local_only": 365,
       "risk": "critical",
       "effort": "XL"
     },
@@ -848,7 +848,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 8048,
       "shared_different": 697,
-      "local_only": 358,
+      "local_only": 359,
       "risk": "critical",
       "effort": "XL"
     },
@@ -877,7 +877,7 @@
       "issue": 8,
       "name": "Skills parity",
       "upstream_only": 564,
-      "shared_different": 229,
+      "shared_different": 230,
       "local_only": 436,
       "risk": "high",
       "effort": "XL"
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1402,
+    "local_patch_unique": 1410,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

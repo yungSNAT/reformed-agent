@@ -80,7 +80,7 @@
       "classification": "intentional_divergence",
       "classification_path": "Dockerfile",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "78cf7681ae6b6f535814d0f082e9239e764321f9",
+      "local_blob": "f2567005d23f10fbcea015cbac6efc77f1a1b1f4",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "Dockerfile",
@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "bca711219f846784247f19b355e0786defdd58dc",
+      "local_blob": "711f62b31da03ab56abe8fa9381bbedfdb78e689",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -808,6 +808,21 @@
       "status": "cleared_intentional_divergence",
       "ticket": 25,
       "upstream_blob": "0d04b10e0cb5ec4a88e87e02564f31d4a1be0186",
+      "workstream": "WS4"
+    },
+    {
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
+      "classification_path": "optional-skills/finance",
+      "existing_coverage": "claimed_by_shared_diff_classification",
+      "local_blob": "3793aae040bee6091ae6bff8e72665b7a44409da",
+      "necessity": "approved_divergence",
+      "owner": "sheawinkler",
+      "path": "optional-skills/finance/dcf-model/requirements.txt",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
+      "ticket": 25,
+      "upstream_blob": "0040dc4ada7b9ed59c3f588a75828417bce68332",
       "workstream": "WS4"
     },
     {
@@ -22361,7 +22376,7 @@
       "classification": "policy_only",
       "classification_path": "website",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "865029ef2ee8f6fd44e75a3f80485bbd60bba25a",
+      "local_blob": "3c0fd91b597bd6bd882d6cf78ca9a7c0a4ecf673",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/package-lock.json",
@@ -22687,10 +22702,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-21T02:14:03.794366+00:00",
+  "generated_at_utc": "2026-11-21T04:10:49.160283+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "bdee076514bfda7f02c0f212d3526e06bdd88c08",
+    "local_sha": "b68c0735ce36f7179bd9528511c6927ce6f3ea1d",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
@@ -22698,31 +22713,31 @@
     "by_classification": {
       "branding_only": 1,
       "deferred": 22,
-      "intentional_divergence": 1166,
+      "intentional_divergence": 1167,
       "policy_only": 319
     },
     "by_rust_requirement": {
-      "not_required_for_runtime": 1486,
+      "not_required_for_runtime": 1487,
       "rust_equivalent_or_contract_test_required": 13,
       "rust_native_runtime_parity_required_if_needed": 9
     },
     "by_status": {
-      "cleared_intentional_divergence": 1166,
+      "cleared_intentional_divergence": 1167,
       "cleared_non_runtime": 320,
       "deferred_review": 22
     },
     "by_workstream": {
       "WS3": 134,
-      "WS4": 229,
+      "WS4": 230,
       "WS5": 435,
       "WS6": 697,
       "WS8": 13
     },
-    "cleared_intentional_divergence": 1166,
+    "cleared_intentional_divergence": 1167,
     "cleared_non_runtime": 320,
     "deferred_review": 22,
     "pending_classification": 0,
     "pending_review": 0,
-    "total_shared_different": 1508
+    "total_shared_different": 1509
   }
 }

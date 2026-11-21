@@ -11,7 +11,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
-      - crates/hermes-parity-tools/src/release_secret_scan.rs
+      - crates/hermes-parity-tools/**
       - scripts/install.sh
       - scripts/smoke-release-artifact.sh
       - scripts/generate-homebrew-formula.sh
