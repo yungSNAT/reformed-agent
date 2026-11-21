@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-21T13:18:51.951188+00:00`
+Generated: `2026-11-21T14:15:23.901294+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`22d1b1c3d06fe81a9b2c98fa455e40e4d4064a27`)
+- Local ref: `HEAD` (`e1a0fd7690c0714963dea5eb1de634e6ef096646`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -18,12 +18,12 @@ Generated: `2026-11-21T13:18:51.951188+00:00`
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
 | Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1428 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2067 |
+| Files only in local tree | 2073 |
 | Shared files identical content | 564 |
 | Shared files different content | 1509 |
-| Total files changed (`local` vs `upstream`) | 27422 |
+| Total files changed (`local` vs `upstream`) | 27428 |
 | Insertions (`local` vs `upstream`) | 4528874 |
-| Deletions (`local` vs `upstream`) | 955243 |
+| Deletions (`local` vs `upstream`) | 956066 |
 
 ## Top 40 upstream-only buckets
 
@@ -119,7 +119,7 @@ Generated: `2026-11-21T13:18:51.951188+00:00`
 
 | Bucket | Files |
 | --- | ---: |
-| `crates/hermes-cli` | 199 |
+| `crates/hermes-cli` | 205 |
 | `skills/creative` | 142 |
 | `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 121 |

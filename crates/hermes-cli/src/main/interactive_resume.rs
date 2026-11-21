@@ -253,9 +253,17 @@ async fn run_interactive(cli: Cli) -> Result<(), AgentError> {
     hermes_cli::tui::run(app).await
 }
 
-fn run_kanban(args: Vec<String>) -> Result<(), AgentError> {
+async fn run_kanban(cli: Cli, args: Vec<String>) -> Result<(), AgentError> {
     let arg_refs = args.iter().map(String::as_str).collect::<Vec<_>>();
-    println!("{}", hermes_cli::commands::run_kanban_command(&arg_refs)?);
+    let output = match arg_refs.as_slice() {
+        [action, rest @ ..] if action.eq_ignore_ascii_case("specify") => {
+            let config = load_config(cli.config_dir.as_deref())
+                .map_err(|error| AgentError::Config(error.to_string()))?;
+            hermes_cli::kanban::specify_kanban(rest, &config).await?
+        }
+        _ => hermes_cli::commands::run_kanban_command(&arg_refs)?,
+    };
+    println!("{output}");
     Ok(())
 }
 
