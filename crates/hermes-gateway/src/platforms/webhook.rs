@@ -967,7 +967,8 @@ pub fn fuzz_request(request: &[u8], template: &str) {
     assert!(WebhookAdapter::validate_signature(&hub, body, SECRET));
     let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("HMAC takes any key");
     mac.update(&[b"msg_1.1700000000.", body].concat());
-    let svix_signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let svix_signature =
+        base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
     let svix = HashMap::from([
         ("svix-id".to_string(), "msg_1".to_string()),
         ("svix-timestamp".to_string(), "1700000000".to_string()),
@@ -1012,14 +1013,20 @@ mod tests {
         assert_eq!((method.as_str(), path.as_str()), ("POST", "/webhook"));
         assert_eq!(body, b"{\"a\":1}");
         let (method, path, body) = request_parts(b"", 0, 5);
-        assert_eq!((method.as_str(), path.as_str(), body), ("GET", "/", &b""[..]));
+        assert_eq!(
+            (method.as_str(), path.as_str(), body),
+            ("GET", "/", &b""[..])
+        );
     }
 
     #[test]
     fn content_length_defaults_to_the_bytes_after_the_headers() {
         let buf = b"POST /webhook HTTP/1.1\r\nX: y\r\n\r\nabc";
         let header_end = find_header_end(buf).unwrap();
-        assert_eq!(content_length(&parse_headers(&buf[..header_end]), buf.len(), header_end), 3);
+        assert_eq!(
+            content_length(&parse_headers(&buf[..header_end]), buf.len(), header_end),
+            3
+        );
     }
 
     #[test]
