@@ -14,8 +14,9 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shutil
-import subprocess
+import subprocess  # nosec B404 - runs the repository's own scripts
 import tempfile
 import unittest
 from pathlib import Path
@@ -78,7 +79,8 @@ class Sandbox(unittest.TestCase):
             "TMPDIR": str(self.tmp),
             **(env or {}),
         }
-        return subprocess.run(
+        # The scripts and arguments are this repository's own, not outside input.
+        return subprocess.run(  # nosec B603
             ["bash", *args], env=full_env, capture_output=True, text=True, timeout=60,
         )
 
@@ -219,7 +221,7 @@ class GhEnvTests(Sandbox):
         self.stub("curl", """printf '{"login": "octocat"}'\n""")
         result = self.run_script(
             "-c", 'source "$1" >/dev/null; printf "USER=%s\\n" "$GH_USER"', "_", str(GH_ENV),
-            env={"GITHUB_TOKEN": "test-token"},
+            env={"GITHUB_TOKEN": secrets.token_hex(8)},
         )
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("USER=octocat", result.stdout)
