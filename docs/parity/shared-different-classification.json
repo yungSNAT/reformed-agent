@@ -72,6 +72,13 @@
       "ticket": 305
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "SECURITY.md",
+      "rationale": "Security policy for this repository: its private reporting route, scope and supported versions. Repository process, not runtime behavior.",
+      "ticket": 25
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "cli-config.yaml.example",
