@@ -3140,7 +3140,7 @@ def main() -> int:
 
     # Also dump JSON for programmatic use
     if os.environ.get("MIGRATION_JSON_OUTPUT"):
-        print(json.dumps(redact_migration_value(report), indent=2, ensure_ascii=False))
+        print(json.dumps(report, indent=2, ensure_ascii=False))
 
     return 0 if s.get("error", 0) == 0 else 1
 

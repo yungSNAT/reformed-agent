@@ -31,6 +31,8 @@ def _load(relative: str, stubs: dict[str, dict[str, object]] | None = None) -> t
     path = ROOT / relative
     spec = importlib.util.spec_from_file_location(f"hardening_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
+    # Dataclasses look their module up in sys.modules while the class is built.
+    modules[spec.name] = module
     with mock.patch.dict(sys.modules, modules):
         spec.loader.exec_module(module)
     return module
