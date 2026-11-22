@@ -848,13 +848,14 @@ mod tests {
             token_endpoint: "https://issuer.example/token".to_string(),
             jwks_uri: "https://issuer.example/jwks".to_string(),
         };
-        let url = build_authorization_url(&cfg, &metadata, "state-1", "nonce-1", "challenge-1")
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let url = build_authorization_url(&cfg, &metadata, "state-1", &nonce, "challenge-1")
             .expect("url");
         assert!(url.contains("response_type=code"));
         assert!(url.contains("client_id=hermes-dashboard"));
         assert!(url.contains("code_challenge=challenge-1"));
         assert!(url.contains("code_challenge_method=S256"));
-        assert!(url.contains("nonce=nonce-1"));
+        assert!(url.contains(&format!("nonce={nonce}")));
     }
 
     #[test]

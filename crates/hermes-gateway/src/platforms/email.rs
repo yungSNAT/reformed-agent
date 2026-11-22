@@ -1101,11 +1101,12 @@ mod tests {
         assert!(smtp_err.to_string().contains("email_missing_configuration"));
         assert!(smtp_err.to_string().contains("smtp_host"));
 
+        let unused_password = uuid::Uuid::new_v4().to_string();
         let imap_err = imap_fetch_unseen(
             " ",
             993,
             "agent@example.com",
-            "secret",
+            &unused_password,
             EmailInboundAuthPolicy::from_config(&config()),
         )
         .expect_err("blank IMAP host should fail before TLS/connect");
