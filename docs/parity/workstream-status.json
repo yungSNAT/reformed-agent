@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-22T07:26:38+11:00",
-  "head_sha": "650cb196d23f3f5e5bb3f1468d12a0fca02b6768",
+  "generated_at_utc": "2026-11-22T16:03:47+11:00",
+  "head_sha": "7f4db9d46383da475a5fad98e49e5361f1b05f04",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -42,7 +42,7 @@
       ],
       "metrics": {
         "divergence_documented": false,
-        "local_skill_files": 999,
+        "local_skill_files": 1017,
         "upstream_skill_files": 1127
       },
       "state": "in_progress",

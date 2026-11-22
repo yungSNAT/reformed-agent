@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-21T20:27:01.867379+00:00",
+  "generated_at_utc": "2026-11-22T05:05:29.628839+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "650cb196d23f3f5e5bb3f1468d12a0fca02b6768",
+    "local_sha": "7f4db9d46383da475a5fad98e49e5361f1b05f04",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1694,
+    "commits_ahead": 1698,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1425,
-    "files_only_upstream": 24117,
-    "files_only_local": 2075,
-    "files_shared_identical": 564,
-    "files_shared_different": 1509,
-    "tree_files_changed": 27430,
-    "tree_insertions": 4528874,
-    "tree_deletions": 957075
+    "local_patch_unique": 1429,
+    "files_only_upstream": 24472,
+    "files_only_local": 1798,
+    "files_shared_identical": 554,
+    "files_shared_different": 1164,
+    "tree_files_changed": 27190,
+    "tree_insertions": 4612773,
+    "tree_deletions": 799177
   },
   "top_upstream_only": [
     {
@@ -32,23 +32,23 @@
     },
     {
       "path": "tests/gateway",
-      "count": 1953
+      "count": 2150
     },
     {
       "path": "tests/hermes_cli",
-      "count": 1897
+      "count": 1917
     },
     {
       "path": "tests/agent",
-      "count": 1121
+      "count": 1159
     },
     {
       "path": "tests/tools",
-      "count": 827
+      "count": 908
     },
     {
       "path": "tests/tui_gateway",
-      "count": 411
+      "count": 412
     },
     {
       "path": "ui-tui/src",
@@ -56,7 +56,7 @@
     },
     {
       "path": "tests/e2e",
-      "count": 281
+      "count": 283
     },
     {
       "path": "website/i18n",
@@ -87,12 +87,12 @@
       "count": 202
     },
     {
-      "path": "tests/plugins",
-      "count": 188
+      "path": "tests/cron",
+      "count": 195
     },
     {
-      "path": "tests/cron",
-      "count": 185
+      "path": "tests/plugins",
+      "count": 189
     },
     {
       "path": "tests/pm",
@@ -189,28 +189,24 @@
       "count": 230
     },
     {
-      "path": "tests/gateway",
-      "count": 214
-    },
-    {
-      "path": "tests/tools",
-      "count": 176
-    },
-    {
       "path": "tests/hermes_cli",
-      "count": 165
+      "count": 147
     },
     {
       "path": "ui-tui/src",
       "count": 132
     },
     {
-      "path": "tests/agent",
-      "count": 80
+      "path": "tests/tools",
+      "count": 96
     },
     {
       "path": "skills/creative",
       "count": 69
+    },
+    {
+      "path": "tests/agent",
+      "count": 45
     },
     {
       "path": "ui-tui/packages",
@@ -245,11 +241,11 @@
       "count": 17
     },
     {
-      "path": "optional-skills/finance",
-      "count": 12
+      "path": "tests/gateway",
+      "count": 17
     },
     {
-      "path": "tests/cron",
+      "path": "optional-skills/finance",
       "count": 12
     },
     {
@@ -313,10 +309,6 @@
       "count": 5
     },
     {
-      "path": "tests/providers",
-      "count": 5
-    },
-    {
       "path": "tests/tui_gateway",
       "count": 5
     },
@@ -343,6 +335,14 @@
     {
       "path": "optional-skills/web-development",
       "count": 3
+    },
+    {
+      "path": "plugins/kanban",
+      "count": 3
+    },
+    {
+      "path": "plugins/video_gen",
+      "count": 3
     }
   ],
   "top_local_only": [
@@ -367,10 +367,6 @@
       "count": 114
     },
     {
-      "path": "tests/run_agent",
-      "count": 88
-    },
-    {
       "path": "website/docs",
       "count": 86
     },
@@ -385,10 +381,6 @@
     {
       "path": "docs/parity",
       "count": 59
-    },
-    {
-      "path": "tests/cli",
-      "count": 56
     },
     {
       "path": "skills/mlops",
@@ -411,14 +403,6 @@
       "count": 39
     },
     {
-      "path": "tests/tools",
-      "count": 30
-    },
-    {
-      "path": "tests/hermes_cli",
-      "count": 28
-    },
-    {
       "path": "third_party/rustsec-patches",
       "count": 28
     },
@@ -429,10 +413,6 @@
     {
       "path": "plugins/memory",
       "count": 24
-    },
-    {
-      "path": "tests/gateway",
-      "count": 23
     },
     {
       "path": "crates/hermes-acp",
@@ -479,12 +459,8 @@
       "count": 12
     },
     {
-      "path": "tests/acp",
-      "count": 11
-    },
-    {
-      "path": "tests/stress",
-      "count": 11
+      "path": "tests/run_agent",
+      "count": 12
     },
     {
       "path": "ui-tui/src",
@@ -495,16 +471,40 @@
       "count": 10
     },
     {
-      "path": "tests/plugins",
+      "path": "tests/gateway",
       "count": 10
-    },
-    {
-      "path": ".github/workflows",
-      "count": 9
     },
     {
       "path": "docs/implementation",
       "count": 9
+    },
+    {
+      "path": "optional-skills/creative",
+      "count": 9
+    },
+    {
+      "path": "skills/red-teaming",
+      "count": 9
+    },
+    {
+      "path": "skills/software-development",
+      "count": 9
+    },
+    {
+      "path": ".github/workflows",
+      "count": 8
+    },
+    {
+      "path": "tests/tools",
+      "count": 8
+    },
+    {
+      "path": ".github/assets",
+      "count": 7
+    },
+    {
+      "path": "crates/hermes-http",
+      "count": 7
     }
   ],
   "top_missing_from_local": [
@@ -518,23 +518,23 @@
     },
     {
       "path": "tests/gateway",
-      "count": 1953
+      "count": 2150
     },
     {
       "path": "tests/hermes_cli",
-      "count": 1897
+      "count": 1917
     },
     {
       "path": "tests/agent",
-      "count": 1121
+      "count": 1159
     },
     {
       "path": "tests/tools",
-      "count": 827
+      "count": 908
     },
     {
       "path": "tests/tui_gateway",
-      "count": 411
+      "count": 412
     },
     {
       "path": "ui-tui/src",
@@ -542,7 +542,7 @@
     },
     {
       "path": "tests/e2e",
-      "count": 281
+      "count": 283
     },
     {
       "path": "website/i18n",
@@ -573,12 +573,12 @@
       "count": 202
     },
     {
-      "path": "tests/plugins",
-      "count": 188
+      "path": "tests/cron",
+      "count": 195
     },
     {
-      "path": "tests/cron",
-      "count": 185
+      "path": "tests/plugins",
+      "count": 189
     },
     {
       "path": "tests/pm",
@@ -691,10 +691,6 @@
       "count": 114
     },
     {
-      "path": "tests/run_agent",
-      "count": 88
-    },
-    {
       "path": "website/docs",
       "count": 86
     },
@@ -709,10 +705,6 @@
     {
       "path": "docs/parity",
       "count": 59
-    },
-    {
-      "path": "tests/cli",
-      "count": 56
     },
     {
       "path": "skills/mlops",
@@ -735,14 +727,6 @@
       "count": 39
     },
     {
-      "path": "tests/tools",
-      "count": 30
-    },
-    {
-      "path": "tests/hermes_cli",
-      "count": 28
-    },
-    {
       "path": "third_party/rustsec-patches",
       "count": 28
     },
@@ -753,10 +737,6 @@
     {
       "path": "plugins/memory",
       "count": 24
-    },
-    {
-      "path": "tests/gateway",
-      "count": 23
     },
     {
       "path": "crates/hermes-acp",
@@ -803,12 +783,8 @@
       "count": 12
     },
     {
-      "path": "tests/acp",
-      "count": 11
-    },
-    {
-      "path": "tests/stress",
-      "count": 11
+      "path": "tests/run_agent",
+      "count": 12
     },
     {
       "path": "ui-tui/src",
@@ -819,16 +795,40 @@
       "count": 10
     },
     {
-      "path": "tests/plugins",
+      "path": "tests/gateway",
       "count": 10
-    },
-    {
-      "path": ".github/workflows",
-      "count": 9
     },
     {
       "path": "docs/implementation",
       "count": 9
+    },
+    {
+      "path": "optional-skills/creative",
+      "count": 9
+    },
+    {
+      "path": "skills/red-teaming",
+      "count": 9
+    },
+    {
+      "path": "skills/software-development",
+      "count": 9
+    },
+    {
+      "path": ".github/workflows",
+      "count": 8
+    },
+    {
+      "path": "tests/tools",
+      "count": 8
+    },
+    {
+      "path": ".github/assets",
+      "count": 7
+    },
+    {
+      "path": "crates/hermes-http",
+      "count": 7
     }
   ],
   "workstream_matrix": [
@@ -846,9 +846,9 @@
       "workstream": "WS6",
       "issue": 10,
       "name": "Tests and CI parity",
-      "upstream_only": 8048,
-      "shared_different": 697,
-      "local_only": 359,
+      "upstream_only": 8403,
+      "shared_different": 352,
+      "local_only": 82,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1425,
+    "local_patch_unique": 1429,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
