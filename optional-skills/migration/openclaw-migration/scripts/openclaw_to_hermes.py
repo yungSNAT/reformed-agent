@@ -625,7 +625,8 @@ def _redact_string(value: str) -> str:
 def url_host(url: str) -> str:
     """Lower-case host of ``url``, which may omit its scheme; empty if none."""
     try:
-        return (urlparse(url if "://" in url else "//" + url).hostname or "").lower()
+        has_authority = "://" in url or url.startswith("//")
+        return (urlparse(url if has_authority else "//" + url).hostname or "").lower()
     except ValueError:
         return ""
 

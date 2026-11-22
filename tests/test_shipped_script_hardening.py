@@ -73,6 +73,19 @@ class DomainIntelTlsTests(unittest.TestCase):
         self.assertEqual(helper.call_args_list, [mock.call(), mock.call(verify=False)])
         self.assertIn("expired", result["verification_warning"])
 
+    def test_check_available_takes_its_context_from_the_helper(self) -> None:
+        context = mock.MagicMock()
+        with (
+            mock.patch.object(self.module, "tls_context", return_value=context) as helper,
+            mock.patch.object(self.module.socket, "getaddrinfo", side_effect=OSError),
+            mock.patch.object(self.module.socket, "create_connection", return_value=mock.MagicMock()),
+            mock.patch.object(self.module.urllib.request, "urlopen", side_effect=OSError),
+        ):
+            result = self.module.check_available("example.invalid-tld")
+        helper.assert_called_once_with(verify=False)
+        context.wrap_socket.assert_called_once()
+        self.assertTrue(result["signals"]["ssl_reachable"])
+
 
 class OpenClawHostTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -85,6 +98,8 @@ class OpenClawHostTests(unittest.TestCase):
         self.assertEqual(url_host("https://openai.com.proxy.example/v1"), "openai.com.proxy.example")
         self.assertEqual(url_host("https://proxy.example/openai.com"), "proxy.example")
         self.assertEqual(url_host("http://[::1"), "")
+        self.assertEqual(url_host("//api.openai.com/v1"), "api.openai.com")
+        self.assertEqual(url_host("https://user:pw@API.openai.com:8443/v1"), "api.openai.com")
 
     def _provider_env_vars(self, base_url: str) -> list[str]:
         import tempfile
@@ -108,6 +123,7 @@ class OpenClawHostTests(unittest.TestCase):
 
     def test_provider_key_mapping_reads_the_host(self) -> None:
         self.assertEqual(self._provider_env_vars("https://api.openai.com/v1"), ["OPENAI_API_KEY"])
+        self.assertEqual(self._provider_env_vars("//api.openai.com/v1"), ["OPENAI_API_KEY"])
         self.assertEqual(self._provider_env_vars("https://openai.com.proxy.example/v1"), [])
         self.assertEqual(self._provider_env_vars("https://proxy.example/openai.com/v1"), [])
 
@@ -127,6 +143,8 @@ class SpotifyIdTests(unittest.TestCase):
         normalize = self.module.normalize_spotify_id
         self.assertEqual(normalize("https://open.spotify.com/track/abc123?si=x"), "abc123")
         self.assertEqual(normalize("open.spotify.com/playlist/p1", "playlist"), "p1")
+        self.assertEqual(normalize("//open.spotify.com/track/abc123"), "abc123")
+        self.assertEqual(normalize("https://OPEN.spotify.com:443/track/abc123"), "abc123")
         with self.assertRaises(self.module.SpotifyError):
             normalize("https://open.spotify.com/album/a1", "track")
 
@@ -208,14 +226,49 @@ class HonchoKeyStateTests(unittest.TestCase):
         self.assertNotIn(KEY[-4:], out.getvalue())
         self.assertNotIn(KEY[:6], out.getvalue())
 
+    def _output_until_first_prompt(self, command, **patches) -> str:
+        import contextlib
+        import io
+
+        def prompt(label, *_args, **_kwargs):
+            if label == "Cloud or local?":
+                return "cloud"
+            raise StopAtPrompt
+
+        out = io.StringIO()
+        with (
+            mock.patch.multiple(self.module, _read_config=lambda: {"apiKey": KEY}, _prompt=prompt, **patches),
+            contextlib.redirect_stdout(out),
+            self.assertRaises(StopAtPrompt),
+        ):
+            command(types.SimpleNamespace())
+        return out.getvalue()
+
+    def test_setup_shows_no_part_of_the_key(self) -> None:
+        output = self._output_until_first_prompt(
+            self.module.cmd_setup,
+            _ensure_sdk_installed=lambda: True,
+            _config_path=lambda: Path("honcho.json"),
+            _local_config_path=lambda: Path("honcho.json"),
+            _host_key=lambda: "hermes",
+        )
+        self.assertIn("Current API key: set", output)
+        self.assertNotIn(KEY[-4:], output)
+
+    def test_migrate_shows_no_part_of_the_key(self) -> None:
+        output = self._output_until_first_prompt(self.module.cmd_migrate, _resolve_api_key=lambda _cfg: KEY)
+        self.assertIn("Honcho API key already configured.", output)
+        self.assertNotIn(KEY[-4:], output)
+
+
+class StopAtPrompt(Exception):
+    pass
+
 
 class HindsightSetupTests(unittest.TestCase):
     def test_key_prompt_shows_no_part_of_the_existing_key(self) -> None:
         import contextlib
         import io
-
-        class StopAtPrompt(Exception):
-            pass
 
         class Stdin(io.StringIO):
             def isatty(self) -> bool:
