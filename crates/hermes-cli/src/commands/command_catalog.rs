@@ -1432,3 +1432,7 @@ async fn github_repo_tree(
 }
 
 include!("command_catalog/skill_resolution.rs");
+
+#[cfg(test)]
+#[path = "command_catalog_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog;

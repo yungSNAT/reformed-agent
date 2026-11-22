@@ -482,3 +482,6 @@ async fn fetch_clawhub_skill_files(
     )))
 }
 
+#[cfg(test)]
+#[path = "tap_resolution_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_tap_resolution;

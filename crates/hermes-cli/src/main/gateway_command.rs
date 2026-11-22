@@ -1667,3 +1667,7 @@ async fn run_gateway_setup(cli: &Cli) -> Result<(), AgentError> {
     println!("Next step: `hermes gateway start`");
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "gateway_command_coverage_gen.rs"]
+mod coverage_gen_main_gateway_command;

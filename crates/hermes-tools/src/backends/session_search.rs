@@ -1401,3 +1401,7 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
 }
 
 include!("session_search/tests.rs");
+
+#[cfg(test)]
+#[path = "session_search_coverage_gen.rs"]
+mod coverage_gen;

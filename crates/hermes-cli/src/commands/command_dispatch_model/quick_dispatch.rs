@@ -624,3 +624,7 @@ fn handle_toolcards_command(app: &mut App, args: &[&str]) -> Result<CommandResul
 // ---------------------------------------------------------------------------
 // Individual command handlers
 // ---------------------------------------------------------------------------
+
+#[cfg(test)]
+#[path = "quick_dispatch_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_quick_dispatch;

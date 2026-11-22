@@ -3133,3 +3133,7 @@ mod tests {
             .expect("the remote lookup hung"));
     }
 }
+
+#[cfg(test)]
+#[path = "ultra_features_coverage_gen.rs"]
+mod coverage_gen;

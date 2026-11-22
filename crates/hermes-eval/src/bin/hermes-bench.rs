@@ -216,3 +216,7 @@ async fn run_agent_rollout(
     let rollout = Arc::new(AgentLoopRollout::new(agent).with_full_state(full_state));
     runner.run(adapter, rollout).await
 }
+
+#[cfg(test)]
+#[path = "hermes-bench_coverage_gen.rs"]
+mod coverage_gen;

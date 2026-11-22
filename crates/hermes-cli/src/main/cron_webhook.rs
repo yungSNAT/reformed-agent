@@ -1114,3 +1114,7 @@ async fn run_lumio(action: Option<String>, model: Option<String>) -> Result<(), 
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "cron_webhook_coverage_gen.rs"]
+mod coverage_gen;

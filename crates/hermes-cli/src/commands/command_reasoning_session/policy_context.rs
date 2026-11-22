@@ -784,3 +784,7 @@ fn handle_toolsets_command(app: &mut App) -> Result<CommandResult, AgentError> {
 }
 
 include!("skills_memory_cron.rs");
+
+#[cfg(test)]
+#[path = "policy_context_coverage_gen.rs"]
+mod coverage_gen_commands_command_reasoning_session_policy_context;

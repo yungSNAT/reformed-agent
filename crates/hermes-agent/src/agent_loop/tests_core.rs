@@ -2401,3 +2401,7 @@
 
     include!("tests/coding_route_learning.rs");
     include!("tests/session_end_flush.rs");
+
+#[cfg(test)]
+#[path = "tests_core_coverage_gen.rs"]
+mod coverage_gen;

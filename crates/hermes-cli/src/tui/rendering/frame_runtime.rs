@@ -281,3 +281,6 @@ fn should_route_prompt_via_managed_agent(quorum_armed_once: bool, messages: &[Me
     })
 }
 
+#[cfg(test)]
+#[path = "frame_runtime_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_frame_runtime;

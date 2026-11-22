@@ -1307,3 +1307,7 @@ impl AgentLoop {
     }
 
 }
+
+#[cfg(test)]
+#[path = "methods_prompt_llm_coverage_gen.rs"]
+mod coverage_gen;

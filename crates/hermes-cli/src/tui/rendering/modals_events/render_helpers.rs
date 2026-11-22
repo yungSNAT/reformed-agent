@@ -718,3 +718,6 @@ fn pet_frame_token(
     Some(frames[frame % frames.len()].to_string())
 }
 
+#[cfg(test)]
+#[path = "render_helpers_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_modals_events_render_helpers;

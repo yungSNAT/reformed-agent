@@ -653,3 +653,7 @@ fn unreal_mcp_status(config_dir: &Path) -> (bool, bool) {
         .unwrap_or(false);
     (from_json, from_yaml)
 }
+
+#[cfg(test)]
+#[path = "mcp_commands_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_plugins_memory_mcp_mcp_commands;

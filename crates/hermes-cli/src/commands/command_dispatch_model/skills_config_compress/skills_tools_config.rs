@@ -451,3 +451,7 @@ fn set_config_value(app: &mut App, key: &str, value: &str) -> bool {
         _ => false,
     }
 }
+
+#[cfg(test)]
+#[path = "skills_tools_config_coverage_gen.rs"]
+mod coverage_gen_commands_command_dispatch_model_skills_config_compress_skills_tools_config;

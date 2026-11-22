@@ -924,3 +924,7 @@ impl LlmProvider for NoBackendProvider {
 }
 
 include!("lib_tests.rs");
+
+#[cfg(test)]
+#[path = "lib_coverage_gen.rs"]
+mod coverage_gen;

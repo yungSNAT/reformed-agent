@@ -706,3 +706,7 @@ pub async fn logout(provider: &str) -> Result<String, AgentError> {
         provider.trim()
     ))
 }
+
+#[cfg(test)]
+#[path = "anthropic_nous_openai_coverage_gen.rs"]
+mod coverage_gen_auth_provider_oauth_anthropic_nous_openai;

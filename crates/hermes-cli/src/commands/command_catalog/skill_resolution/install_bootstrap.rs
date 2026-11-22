@@ -523,3 +523,7 @@ async fn maybe_run_skill_bootstrap(
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "install_bootstrap_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_install_bootstrap;

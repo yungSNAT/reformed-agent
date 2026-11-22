@@ -248,3 +248,7 @@ fn build_self_evolution_recommendations_native(
 }
 
 include!("evolve_and_ops.rs");
+
+#[cfg(test)]
+#[path = "release_gates_coverage_gen.rs"]
+mod coverage_gen_commands_command_ops_eval_release_gates;

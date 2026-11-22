@@ -923,3 +923,7 @@ fn init_tracing(verbose: bool, interactive_tui: bool) {
     }
     init_telemetry_from_env("hermes-cli", default);
 }
+
+#[cfg(test)]
+#[path = "entrypoint_coverage_gen.rs"]
+mod coverage_gen_main_entrypoint;

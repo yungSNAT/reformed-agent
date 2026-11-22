@@ -1326,3 +1326,7 @@ mod tests {
         assert!(mistral.to_string().contains("MISTRAL_API_KEY"));
     }
 }
+
+#[cfg(test)]
+#[path = "voice_coverage_gen.rs"]
+mod coverage_gen;

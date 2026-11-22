@@ -533,3 +533,7 @@ mod tests {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "shared_diff_backlog_coverage_gen.rs"]
+mod coverage_gen;

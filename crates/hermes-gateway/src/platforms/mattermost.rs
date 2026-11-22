@@ -1157,3 +1157,7 @@ mod tests {
         assert_eq!(text, "Figure 1\nhttps://cdn.example.com/path/diagram");
     }
 }
+
+#[cfg(test)]
+#[path = "mattermost_coverage_gen.rs"]
+mod coverage_gen_platforms_mattermost;

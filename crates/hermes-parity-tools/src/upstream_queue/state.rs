@@ -272,3 +272,7 @@ impl Overrides {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+#[path = "state_coverage_gen.rs"]
+mod coverage_gen;

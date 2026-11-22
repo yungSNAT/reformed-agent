@@ -1058,3 +1058,7 @@ mod tests {
         assert_ne!(MigrationStatus::Migrated, MigrationStatus::Skipped);
     }
 }
+
+#[cfg(test)]
+#[path = "claw_migrate_coverage_gen.rs"]
+mod coverage_gen_claw_migrate;

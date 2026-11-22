@@ -1557,3 +1557,7 @@ fn generated_runtime_peer_id(config: &HonchoConfig, prefix: &str, runtime_id: &s
 }
 
 include!("honcho/profile_tests.rs");
+
+#[cfg(test)]
+#[path = "honcho_coverage_gen.rs"]
+mod coverage_gen;

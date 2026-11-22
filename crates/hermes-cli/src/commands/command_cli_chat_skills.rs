@@ -841,3 +841,7 @@ pub async fn handle_cli_skills(
     }
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "command_cli_chat_skills_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_chat_skills;

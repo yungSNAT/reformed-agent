@@ -831,3 +831,7 @@ fn handle_walkthrough_command(app: &mut App, args: &[&str]) -> Result<CommandRes
 fn print_help(app: &mut App) {
     emit_command_output(app, render_command_catalog(None));
 }
+
+#[cfg(test)]
+#[path = "catalog_readiness_walkthrough_coverage_gen.rs"]
+mod coverage_gen_commands_command_agentic_workflows_session_ops_catalog_readiness_walkthrough;

@@ -969,3 +969,7 @@ mod tests {
         assert_eq!(&req[http_body_start(req)..], b"<xml/>");
     }
 }
+
+#[cfg(test)]
+#[path = "wecom_callback_coverage_gen.rs"]
+mod coverage_gen_platforms_wecom_callback;

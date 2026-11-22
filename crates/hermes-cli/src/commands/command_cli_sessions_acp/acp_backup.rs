@@ -896,3 +896,7 @@ pub fn handle_cli_version() -> Result<(), hermes_core::AgentError> {
     println!("{}", hermes_core::version::version_label());
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "acp_backup_coverage_gen.rs"]
+mod coverage_gen_commands_command_cli_sessions_acp_acp_backup;

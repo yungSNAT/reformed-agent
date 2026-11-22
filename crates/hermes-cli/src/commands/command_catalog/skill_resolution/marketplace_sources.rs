@@ -357,3 +357,6 @@ fn canonicalize_skills_sh_identifier(identifier: &str) -> String {
         .to_string()
 }
 
+#[cfg(test)]
+#[path = "marketplace_sources_coverage_gen.rs"]
+mod coverage_gen_commands_command_catalog_skill_resolution_marketplace_sources;

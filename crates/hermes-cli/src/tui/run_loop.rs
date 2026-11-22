@@ -640,3 +640,7 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
 
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "run_loop_coverage_gen.rs"]
+mod coverage_gen_tui_run_loop;

@@ -1387,3 +1387,6 @@ async fn weixin_qr_login_flow(
     }
 }
 
+#[cfg(test)]
+#[path = "auth_providers_coverage_gen.rs"]
+mod coverage_gen_main_auth_providers;

@@ -1496,3 +1496,7 @@ impl PlatformAdapter for FeishuAdapter {
 // ---------------------------------------------------------------------------
 
 include!("feishu/tests.rs");
+
+#[cfg(test)]
+#[path = "feishu_coverage_gen.rs"]
+mod coverage_gen_platforms_feishu;

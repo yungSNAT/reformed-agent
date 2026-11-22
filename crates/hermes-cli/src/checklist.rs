@@ -602,3 +602,7 @@ mod tests {
         assert_eq!(clean, "line1 line2 line3 line4");
     }
 }
+
+#[cfg(test)]
+#[path = "checklist_coverage_gen.rs"]
+mod coverage_gen_checklist;

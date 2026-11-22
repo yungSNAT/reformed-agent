@@ -1509,3 +1509,7 @@ fn handle_objective_command(app: &mut App, args: &[&str]) -> Result<CommandResul
     );
     Ok(CommandResult::Handled)
 }
+
+#[cfg(test)]
+#[path = "graph_objective_coverage_gen.rs"]
+mod coverage_gen;

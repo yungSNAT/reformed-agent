@@ -1269,3 +1269,7 @@ mod tests {
         assert!(out.contains(r#""removed":1"#));
     }
 }
+
+#[cfg(test)]
+#[path = "disk_cleanup_coverage_gen.rs"]
+mod coverage_gen;

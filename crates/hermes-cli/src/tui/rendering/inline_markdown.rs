@@ -388,3 +388,6 @@ fn sanitize_line_to_default_language_ascii(line: &str, compact_ws: bool) -> Opti
     Some(format!("{leading}{body}"))
 }
 
+#[cfg(test)]
+#[path = "inline_markdown_coverage_gen.rs"]
+mod coverage_gen_tui_rendering_inline_markdown;

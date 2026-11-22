@@ -847,3 +847,7 @@ include!("browser/cloud_backend_impls.rs");
 include!("browser/local_backends.rs");
 #[cfg(test)]
 pub(crate) mod tests;
+
+#[cfg(test)]
+#[path = "browser_coverage_gen.rs"]
+mod coverage_gen;

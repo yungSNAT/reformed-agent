@@ -834,3 +834,7 @@ mod tests {
         assert!(result.contains("created"));
     }
 }
+
+#[cfg(test)]
+#[path = "skills_coverage_gen.rs"]
+mod coverage_gen;
