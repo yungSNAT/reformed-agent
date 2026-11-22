@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-22T11:34:01.146544+00:00`
+Generated: `2026-11-22T14:29:25.034282+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`e0536c42ce1775ab1998a1d25d44e09e8aa688e2`)
+- Local ref: `HEAD` (`a853d11cada0d6c0555135fdfb77f15213bb5222`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1707 |
+| Commits ahead local (`local` ancestry only) | 1715 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1437 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1443 |
 | Files only in upstream tree | 24464 |
-| Files only in local tree | 1799 |
-| Shared files identical content | 560 |
-| Shared files different content | 1166 |
-| Total files changed (`local` vs `upstream`) | 27185 |
-| Insertions (`local` vs `upstream`) | 4612702 |
-| Deletions (`local` vs `upstream`) | 791478 |
+| Files only in local tree | 1776 |
+| Shared files identical content | 559 |
+| Shared files different content | 1167 |
+| Total files changed (`local` vs `upstream`) | 27163 |
+| Insertions (`local` vs `upstream`) | 4612754 |
+| Deletions (`local` vs `upstream`) | 794527 |
 
 ## Top 40 upstream-only buckets
 
@@ -85,7 +85,7 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | `plugins/model-providers` | 28 |
 | `optional-skills/mlops` | 24 |
 | `plugins/platforms` | 24 |
-| `optional-skills/creative` | 22 |
+| `optional-skills/creative` | 23 |
 | `plugins/web` | 19 |
 | `tests/gateway` | 18 |
 | `plugins/google_meet` | 17 |
@@ -120,7 +120,7 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | Bucket | Files |
 | --- | ---: |
 | `crates/hermes-cli` | 206 |
-| `skills/creative` | 142 |
+| `skills/creative` | 143 |
 | `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 121 |
 | `crates/hermes-gateway` | 114 |
@@ -140,7 +140,6 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | `crates/hermes-environments` | 19 |
 | `crates/hermes-eval` | 18 |
 | `crates/hermes-cron` | 17 |
-| `docs/releases` | 17 |
 | `crates/hermes-source-parity-tests` | 16 |
 | `skills/github` | 16 |
 | `crates/hermes-desktop-gateway` | 14 |
@@ -148,17 +147,18 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | `crates/hermes-mcp` | 12 |
 | `crates/hermes-skills` | 12 |
 | `tests/run_agent` | 12 |
+| `optional-skills/creative` | 11 |
 | `ui-tui/src` | 11 |
-| `docs/roadmaps` | 10 |
 | `tests/gateway` | 10 |
-| `docs/implementation` | 9 |
-| `optional-skills/creative` | 9 |
+| `.github/workflows` | 9 |
 | `skills/red-teaming` | 9 |
 | `skills/software-development` | 9 |
-| `.github/workflows` | 8 |
 | `tests/tools` | 8 |
 | `.github/assets` | 7 |
 | `crates/hermes-http` | 7 |
+| `tests/skills` | 7 |
+| `docs/implementation` | 6 |
+| `plugins/observability` | 6 |
 
 ## Workstream Routing
 
@@ -168,7 +168,7 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 | `WS6` | #10 | Tests and CI parity | 8396 | 353 | critical | XL |
 | `WS5` | #9 | UX parity | 1139 | 435 | critical | XL |
 | `WS3` | #7 | Tools and adapters parity | 767 | 134 | high | XL |
-| `WS4` | #8 | Skills parity | 564 | 230 | high | XL |
+| `WS4` | #8 | Skills parity | 564 | 231 | high | XL |
 | `WS2` | #6 | Core runtime parity | 413 | 0 | critical | XL |
 | `WS7` | #11 | Security/secrets/store/webhook parity | 0 | 0 | critical | S |
 
@@ -176,7 +176,7 @@ Generated: `2026-11-22T11:34:01.146544+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1437`
+- Local unique by patch-id: `1443`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 
