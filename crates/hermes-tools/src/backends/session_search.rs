@@ -480,6 +480,88 @@ impl SqliteSessionSearchBackend {
         }
     }
 
+    fn search_message_rows(
+        conn: &Connection,
+        query: &str,
+        fts_query: &str,
+        role_filter: Option<&str>,
+    ) -> Result<(Vec<SessionRowContext>, bool), ToolError> {
+        let hidden_placeholders = vec!["?"; HIDDEN_SESSION_SOURCES.len()].join(", ");
+        let roles = role_filter
+            .unwrap_or_default()
+            .split(',')
+            .map(str::trim)
+            .filter(|role| !role.is_empty())
+            .collect::<Vec<_>>();
+        let role_clause = if roles.is_empty() {
+            String::new()
+        } else {
+            let placeholders = vec!["?"; roles.len()].join(", ");
+            format!(" AND m.role IN ({placeholders})")
+        };
+
+        let read_rows = |source, predicate, order_by, needle: &str| {
+            let sql = format!(
+                "SELECT m.session_id, s.created_at, s.platform, s.parent_session_id,
+                        s.model_config, p.end_reason, p.ended_at
+                 FROM {source}
+                 LEFT JOIN sessions s ON s.id = m.session_id
+                 LEFT JOIN sessions p ON p.id = s.parent_session_id
+                 WHERE {predicate}
+                   AND m.content IS NOT NULL AND m.content != '' AND m.active = 1
+                   AND COALESCE(s.platform, '') NOT IN ({hidden_placeholders}){role_clause}
+                 ORDER BY {order_by} LIMIT 50"
+            );
+            let values = std::iter::once(needle)
+                .chain(HIDDEN_SESSION_SOURCES.iter().copied())
+                .chain(roles.iter().copied());
+            let mut stmt = conn.prepare(&sql)?;
+            let rows = stmt.query_map(rusqlite::params_from_iter(values), |row| {
+                let source = row
+                    .get::<_, Option<String>>(2)?
+                    .unwrap_or_else(|| "cli".into());
+                Ok(SessionRowContext {
+                    id: row.get(0)?,
+                    created_at: row.get(1)?,
+                    source: Some(source),
+                    parent_session_id: row.get(3)?,
+                    model_config: row.get(4)?,
+                    parent_end_reason: row.get(5)?,
+                    parent_ended_at: row.get(6)?,
+                    updated_at: None,
+                })
+            })?;
+            rows.collect::<rusqlite::Result<Vec<_>>>()
+        };
+
+        // Explicit bm25 keeps SQLite's extended error code, unlike FTS5's hidden rank sorter.
+        let ranked = read_rows(
+            "messages_fts JOIN messages m ON m.id = messages_fts.rowid",
+            "messages_fts MATCH ?1",
+            "bm25(messages_fts)",
+            fts_query,
+        );
+        match ranked {
+            Ok(rows) => Ok((rows, false)),
+            Err(rusqlite::Error::SqliteFailure(error, _))
+                if error.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB =>
+            {
+                let pattern = format!("%{}%", Self::escape_like(query));
+                read_rows(
+                    "messages m",
+                    "m.content LIKE ?1 ESCAPE '\\'",
+                    "m.id DESC",
+                    &pattern,
+                )
+                .map(|rows| (rows, true))
+            }
+            Err(error) => Err(error),
+        }
+        .map_err(|error| {
+            ToolError::ExecutionFailed(format!("Session search query failed: {error}"))
+        })
+    }
+
     fn search_sessions_by_id(
         conn: &Connection,
         query: &str,
@@ -1195,110 +1277,14 @@ impl SessionSearchBackend for SqliteSessionSearchBackend {
                 let fts_query = Self::sanitize_fts5_query(query);
                 if tasks.len() < limit && fts_available {
                     if let Some(fts_query) = fts_query {
-                        let hidden_placeholders = HIDDEN_SESSION_SOURCES
-                            .iter()
-                            .map(|_| "?".to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ");
-                        let mut sql = String::from(
-                            "SELECT m.session_id, s.created_at, s.platform, s.model,
-                                s.parent_session_id, s.model_config,
-                                p.end_reason, p.ended_at,
-                                bm25(messages_fts) AS rank
-                         FROM messages_fts
-                         JOIN messages m ON m.id = messages_fts.rowid
-                         LEFT JOIN sessions s ON s.id = m.session_id
-                         LEFT JOIN sessions p ON p.id = s.parent_session_id
-                         WHERE messages_fts MATCH ?1
-                           AND m.content IS NOT NULL
-                           AND m.content != ''
-                           AND m.active = 1
-                           AND COALESCE(s.platform, '') NOT IN (",
-                        );
-                        sql.push_str(&hidden_placeholders);
-                        sql.push(')');
+                        let (rows, degraded) =
+                            Self::search_message_rows(&conn, query, &fts_query, role_filter)?;
+                        search_degraded = degraded.then_some("fts5_corrupt");
 
-                        let mut role_values = Vec::new();
-                        if let Some(raw_roles) = role_filter {
-                            for role in raw_roles
-                                .split(',')
-                                .map(str::trim)
-                                .filter(|s| !s.is_empty())
-                            {
-                                role_values.push(role.to_string());
-                            }
-                            if !role_values.is_empty() {
-                                let placeholders = (0..role_values.len())
-                                    .map(|_| "?".to_string())
-                                    .collect::<Vec<_>>()
-                                    .join(", ");
-                                sql.push_str(&format!(" AND m.role IN ({})", placeholders));
-                            }
-                        }
-                        sql.push_str(" ORDER BY rank LIMIT 50");
-
-                        let mut stmt = conn.prepare(&sql).map_err(|e| {
-                            ToolError::ExecutionFailed(format!(
-                                "Failed to prepare session search query: {}",
-                                e
-                            ))
-                        })?;
-
-                        let mut values: Vec<rusqlite::types::Value> =
-                            vec![rusqlite::types::Value::Text(fts_query)];
-                        values.extend(
-                            HIDDEN_SESSION_SOURCES
-                                .iter()
-                                .map(|s| rusqlite::types::Value::Text((*s).to_string())),
-                        );
-                        values.extend(role_values.into_iter().map(rusqlite::types::Value::Text));
-                        let params = rusqlite::params_from_iter(values.iter());
-
-                        let rows = stmt
-                            .query_map(params, |row| {
-                                Ok((
-                                    row.get::<_, String>(0)?,
-                                    row.get::<_, Option<String>>(1)?,
-                                    row.get::<_, Option<String>>(2)?
-                                        .unwrap_or_else(|| "cli".to_string()),
-                                    row.get::<_, Option<String>>(3)?,
-                                    row.get::<_, Option<String>>(4)?,
-                                    row.get::<_, Option<String>>(5)?,
-                                    row.get::<_, Option<String>>(6)?,
-                                    row.get::<_, Option<String>>(7)?,
-                                ))
-                            })
-                            .map_err(|e| {
-                                ToolError::ExecutionFailed(format!(
-                                    "Session search query failed: {}",
-                                    e
-                                ))
-                            })?;
-
-                        for row in rows.flatten() {
+                        for row_context in rows {
                             if tasks.len() >= limit {
                                 break;
                             }
-                            let (
-                                raw_session_id,
-                                raw_started_at,
-                                raw_source,
-                                _raw_model,
-                                parent_session_id,
-                                model_config,
-                                parent_end_reason,
-                                parent_ended_at,
-                            ) = row;
-                            let row_context = SessionRowContext {
-                                id: raw_session_id,
-                                created_at: raw_started_at,
-                                parent_session_id,
-                                model_config,
-                                source: Some(raw_source),
-                                parent_end_reason,
-                                parent_ended_at,
-                                updated_at: None,
-                            };
                             let resolved_session_id =
                                 Self::visible_session_id_for_row(&conn, &row_context);
                             let logical_key =
