@@ -1,6 +1,6 @@
 # Hermes Rust Parity Rules
 
-移植与 parity 相关改动请遵循以下约定（与 `PARITY_PLAN.md` Week 0 一致）。
+移植与 parity 相关改动请遵循以下约定。
 
 ## 移植任务通用约定
 

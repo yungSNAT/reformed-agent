@@ -14,11 +14,7 @@ Protocol error (HeadlessExperimental.beginFrame):
 
 **Fix (permanent — preferred):** upgrade.
 
-```bash
-npx hyperframes upgrade -y
-# or
-npm install -g hyperframes@latest
-```
+Move the pin: set the new version in `scripts/package.json`, run `npm install --package-lock-only` in `scripts/`, then re-run `scripts/setup.sh`. Do not run `npm install -g hyperframes`: `setup.sh` links the pinned copy into npm's global bin folder, and a global install would clash with that link or replace the pinned version.
 
 `hyperframes >= 0.4.2` auto-detects whether the resolved browser supports `beginFrame` (checks for `chrome-headless-shell` in the binary path) and falls back to screenshot capture mode when it doesn't. Commit [`4c72ba4`](https://github.com/heygen-com/hyperframes/commit/4c72ba4a36ec2bd6733f7b9cb2a9e63f9fb234b9) (March 2026) shipped this auto-detect.
 

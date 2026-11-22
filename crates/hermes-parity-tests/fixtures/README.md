@@ -2,7 +2,7 @@
 
 ## Layout
 
-- **`registry.json`** — lists **active** golden modules only; larger roadmap items stay in `PARITY_PLAN.md` until fixtures exist.
+- **`registry.json`** — lists **active** golden modules only.
 - **`<module>/*.json`** — one file per focus area; each file has `schema_version`, `cases[]`.
 - **`pending/`** — excluded from `run_all_active_fixtures` (scaffolding / future work).
 
