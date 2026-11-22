@@ -354,6 +354,11 @@ def _ensure_sdk_installed() -> bool:
         return False
 
 
+def key_state(key: str) -> str:
+    """Say whether an API key is configured without showing any of it."""
+    return "set" if key else "not set"
+
+
 def cmd_setup(args) -> None:
     """Interactive Honcho setup wizard."""
     cfg = _read_config()
@@ -408,7 +413,7 @@ def cmd_setup(args) -> None:
         cfg.pop("baseUrl", None)  # cloud uses SDK default
 
         current_key = cfg.get("apiKey", "")
-        masked = f"...{current_key[-8:]}" if len(current_key) > 8 else ("set" if current_key else "not set")
+        masked = key_state(current_key)
         print(f"\n  Current API key: {masked}")
         new_key = _prompt("Honcho API key (leave blank to keep current)", secret=True)
         if new_key:
@@ -656,7 +661,7 @@ def cmd_status(args) -> None:
         return
 
     api_key = hcfg.api_key or ""
-    masked = f"...{api_key[-8:]}" if len(api_key) > 8 else ("set" if api_key else "not set")
+    masked = key_state(api_key)
 
     profile = _active_profile_name()
     profile_label = f" [{hcfg.host}]" if profile != "default" else ""
@@ -1118,8 +1123,7 @@ def cmd_migrate(args) -> None:
     print("Step 1  Create a Honcho account")
     print()
     if has_key:
-        masked = f"...{cfg['apiKey'][-8:]}" if len(cfg["apiKey"]) > 8 else "set"
-        print(f"  Honcho API key already configured: {masked}")
+        print("  Honcho API key already configured.")
         print("  Skip to Step 2.")
     else:
         print("  Honcho is a cloud memory service that gives Hermes persistent memory")

@@ -18,6 +18,7 @@ from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
+from urllib.parse import urlparse
 
 try:
     import yaml
@@ -619,6 +620,14 @@ def _redact_string(value: str) -> str:
     for pattern in _SECRET_VALUE_PATTERNS:
         value = pattern.sub(REDACTED_MIGRATION_VALUE, value)
     return value
+
+
+def url_host(url: str) -> str:
+    """Lower-case host of ``url``, which may omit its scheme; empty if none."""
+    try:
+        return (urlparse(url if "://" in url else "//" + url).hostname or "").lower()
+    except ValueError:
+        return ""
 
 
 def redact_migration_value(value: Any) -> Any:
@@ -1543,9 +1552,10 @@ class Migrator:
 
                 # Match by baseUrl first
                 if isinstance(base_url, str):
+                    host = url_host(base_url)
                     if "openrouter" in base_url.lower():
                         env_var = "OPENROUTER_API_KEY"
-                    elif "openai.com" in base_url.lower():
+                    elif host == "openai.com" or host.endswith(".openai.com"):
                         env_var = "OPENAI_API_KEY"
                     elif "anthropic" in base_url.lower():
                         env_var = "ANTHROPIC_API_KEY"
@@ -3130,7 +3140,7 @@ def main() -> int:
 
     # Also dump JSON for programmatic use
     if os.environ.get("MIGRATION_JSON_OUTPUT"):
-        print(json.dumps(report, indent=2, ensure_ascii=False))
+        print(json.dumps(redact_migration_value(report), indent=2, ensure_ascii=False))
 
     return 0 if s.get("error", 0) == 0 else 1
 
