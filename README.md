@@ -164,7 +164,8 @@ What Reformed has against [OpenClaw v2026.11.4](https://github.com/openclaw/open
 
 ## Status
 
-- **Base:** Hermes Agent Ultra [`v0.22.0`](./docs/releases/v0.22.0.md) at commit `c002f8c4`.
+- **Base:** Hermes Agent Ultra [`v0.22.0`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs/releases/v0.22.0.md) at commit `c002f8c4`.
+- **History:** Ultra's plans, roadmaps and release notes up to the fork stay in [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) at that commit: [`docs`](https://github.com/sheawinkler/hermes-agent-ultra/tree/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs) and [`PARITY_PLAN.md`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/PARITY_PLAN.md).
 - **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
 - **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
 - **Parity:** the [parity dashboard](./docs/parity/PARITY_DASHBOARD.md) reports the latest checked comparison against the [pinned upstream revision](./docs/parity/upstream-reference.txt). See the [slash-command divergences](./docs/parity/slash-command-divergence.json) for missing commands, the [intentional divergence rules](./docs/parity/intentional-divergence.json) for omitted files, the [shared-file backlog](./docs/parity/shared-diff-backlog.md) for deferred reviews and the [test coverage audit](./docs/parity/test-coverage-audit.md) for missing or outdated evidence. The [global parity proof](./docs/parity/global-parity-proof.md) records the release gate result and the checks that determine it.

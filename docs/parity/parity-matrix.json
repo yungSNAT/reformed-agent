@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-22T09:23:04.229786+00:00",
+  "generated_at_utc": "2026-11-22T11:43:24.271134+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "b5194634e72e0b2a18b9ff25e9995e17e7623434",
+    "local_sha": "fa378c38495e90c69ed2cae8ab665fbe1fbc5680",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1703,
+    "commits_ahead": 1706,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1434,
+    "local_patch_unique": 1437,
     "files_only_upstream": 24465,
-    "files_only_local": 1799,
+    "files_only_local": 1764,
     "files_shared_identical": 560,
     "files_shared_different": 1165,
-    "tree_files_changed": 27185,
+    "tree_files_changed": 27150,
     "tree_insertions": 4612709,
-    "tree_deletions": 791460
+    "tree_deletions": 788031
   },
   "top_upstream_only": [
     {
@@ -431,10 +431,6 @@
       "count": 17
     },
     {
-      "path": "docs/releases",
-      "count": 17
-    },
-    {
       "path": "crates/hermes-source-parity-tests",
       "count": 16
     },
@@ -467,16 +463,8 @@
       "count": 11
     },
     {
-      "path": "docs/roadmaps",
-      "count": 10
-    },
-    {
       "path": "tests/gateway",
       "count": 10
-    },
-    {
-      "path": "docs/implementation",
-      "count": 9
     },
     {
       "path": "optional-skills/creative",
@@ -505,6 +493,18 @@
     {
       "path": "crates/hermes-http",
       "count": 7
+    },
+    {
+      "path": "docs/implementation",
+      "count": 6
+    },
+    {
+      "path": "plugins/observability",
+      "count": 6
+    },
+    {
+      "path": "tests/skills",
+      "count": 6
     }
   ],
   "top_missing_from_local": [
@@ -755,10 +755,6 @@
       "count": 17
     },
     {
-      "path": "docs/releases",
-      "count": 17
-    },
-    {
       "path": "crates/hermes-source-parity-tests",
       "count": 16
     },
@@ -791,16 +787,8 @@
       "count": 11
     },
     {
-      "path": "docs/roadmaps",
-      "count": 10
-    },
-    {
       "path": "tests/gateway",
       "count": 10
-    },
-    {
-      "path": "docs/implementation",
-      "count": 9
     },
     {
       "path": "optional-skills/creative",
@@ -829,6 +817,18 @@
     {
       "path": "crates/hermes-http",
       "count": 7
+    },
+    {
+      "path": "docs/implementation",
+      "count": 6
+    },
+    {
+      "path": "plugins/observability",
+      "count": 6
+    },
+    {
+      "path": "tests/skills",
+      "count": 6
     }
   ],
   "workstream_matrix": [
@@ -838,7 +838,7 @@
       "name": "Compatibility and divergence policy",
       "upstream_only": 13186,
       "shared_different": 13,
-      "local_only": 370,
+      "local_only": 369,
       "risk": "critical",
       "effort": "XL"
     },
@@ -858,7 +858,7 @@
       "name": "UX parity",
       "upstream_only": 1139,
       "shared_different": 435,
-      "local_only": 224,
+      "local_only": 190,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1434,
+    "local_patch_unique": 1437,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
