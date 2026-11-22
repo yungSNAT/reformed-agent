@@ -126,6 +126,28 @@ async fn edit_text_clips_overflow_preview_instead_of_erroring() {
     assert!(clipped.ends_with("..."));
 }
 
+#[tokio::test]
+async fn request_errors_leave_the_bot_token_out() {
+    // Made up, as every secret in these tests.
+    let token = "made-up-bot-token-0451";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+        .mount(&server)
+        .await;
+    let mut adapter = test_adapter(test_config());
+
+    // An unreadable reply, then a refused connection.
+    for api_base in [server.uri(), "http://127.0.0.1:9".to_string()] {
+        adapter.api_base = format!("{api_base}/bot{token}");
+        let err = adapter
+            .edit_text("123", "456", "hello", None)
+            .await
+            .expect_err("the request fails");
+        assert!(!err.to_string().contains(token), "{err}");
+    }
+}
+
 #[test]
 fn split_message_prefers_newline() {
     let mut text = "a".repeat(4000);

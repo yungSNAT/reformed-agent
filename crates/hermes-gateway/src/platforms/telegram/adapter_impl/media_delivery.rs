@@ -237,7 +237,7 @@ impl TelegramAdapter {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("{} failed: {}", request.method, e)))?;
+            .map_err(|e| GatewayError::SendFailed(format!("{} failed: {}", request.method, e.without_url())))?;
 
         let status = resp.status();
         if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
@@ -250,7 +250,8 @@ impl TelegramAdapter {
         let result: TelegramResponse<SentMessage> = resp.json().await.map_err(|e| {
             GatewayError::SendFailed(format!(
                 "Failed to parse {} response: {}",
-                request.method, e
+                request.method,
+                e.without_url()
             ))
         })?;
 

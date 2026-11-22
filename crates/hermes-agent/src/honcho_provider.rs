@@ -65,6 +65,18 @@ impl HonchoProvider {
         }
     }
 
+    /// The API address for `segments` under the base URL, each segment
+    /// percent-encoded so an id cannot change the path or add a query.
+    fn api_url(&self, segments: &[&str]) -> Result<url::Url, AgentError> {
+        let mut url = url::Url::parse(&self.base_url)
+            .map_err(|e| AgentError::Config(format!("Honcho base URL: {e}")))?;
+        url.path_segments_mut()
+            .map_err(|()| AgentError::Config("Honcho base URL cannot take a path".into()))?
+            .pop_if_empty()
+            .extend(segments);
+        Ok(url)
+    }
+
     /// Sync a conversation turn to Honcho for user modeling.
     pub async fn sync_turn(
         &self,
@@ -77,10 +89,15 @@ impl HonchoProvider {
             return Ok(());
         }
 
-        let url = format!(
-            "{}/apps/{}/users/{}/sessions/{}/messages",
-            self.base_url, self.config.app_id, user_id, session_id
-        );
+        let url = self.api_url(&[
+            "apps",
+            &self.config.app_id,
+            "users",
+            user_id,
+            "sessions",
+            session_id,
+            "messages",
+        ])?;
 
         let body = serde_json::json!({
             "role": role,
@@ -89,7 +106,7 @@ impl HonchoProvider {
 
         let resp = self
             .client
-            .post(&url)
+            .post(url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .json(&body)
             .send()
@@ -110,14 +127,11 @@ impl HonchoProvider {
             return Ok(None);
         }
 
-        let url = format!(
-            "{}/apps/{}/users/{}/metamemories",
-            self.base_url, self.config.app_id, user_id
-        );
+        let url = self.api_url(&["apps", &self.config.app_id, "users", user_id, "metamemories"])?;
 
         let resp = self
             .client
-            .get(&url)
+            .get(url)
             .header("Authorization", format!("Bearer {}", self.config.api_key))
             .send()
             .await
