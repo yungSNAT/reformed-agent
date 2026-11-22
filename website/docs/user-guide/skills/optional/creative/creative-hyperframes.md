@@ -74,7 +74,7 @@ bash "$(dirname "$(find ~/.hermes/skills -path '*/hyperframes/SKILL.md' 2>/dev/n
 
 The script:
 1. Verifies Node.js >= 22 and FFmpeg are installed (prints fix instructions if not).
-2. Installs the `hyperframes` CLI globally (`npm install -g hyperframes@>=0.4.2`).
+2. Installs the `hyperframes` CLI at the version pinned in `scripts/package.json`, with `npm ci` checking every package against `scripts/package-lock.json`, and links it into npm's global bin folder.
 3. Pre-caches `chrome-headless-shell` via Puppeteer — **required** for best-quality rendering via Chrome's `HeadlessExperimental.beginFrame` capture path.
 4. Runs `npx hyperframes doctor` and reports the result.
 
