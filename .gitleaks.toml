@@ -109,6 +109,7 @@ paths = [
   '''^optional-skills/mlops/pytorch-lightning/references/hyperparameter-tuning\.md$''',
   '''^optional-skills/research/scrapling/SKILL\.md$''',
   '''^tests/agent/test_redact\.py$''',
+  '''^tests/test_shipped_script_hardening\.py$''',
   '''^tests/tools/test_mcp_tool\.py$''',
   '''^website/docs/user-guide/skills/optional/devops/devops-docker-management\.md$''',
   '''^website/docs/user-guide/skills/optional/research/research-scrapling\.md$''',
