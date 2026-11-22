@@ -21,7 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
 SKILL = ROOT / "optional-skills/research/gitnexus-explorer"
-SECRET = "outside the dist folder"
+OUTSIDE_TEXT = "outside the dist folder"
 
 
 def _free_port() -> int:
@@ -47,7 +47,7 @@ class ScriptProxyTests(unittest.TestCase):
         base = Path(tmp.name)
         outside = base / "outside"
         outside.mkdir()
-        (outside / "secret.txt").write_text(SECRET, encoding="utf-8")
+        (outside / "secret.txt").write_text(OUTSIDE_TEXT, encoding="utf-8")
         dist = base / "dist"
         dist.mkdir()
         (dist / "index.html").write_text("<p>index</p>", encoding="utf-8")
@@ -96,12 +96,12 @@ class ScriptProxyTests(unittest.TestCase):
             with self.subTest(path=path):
                 status, body = self._get(path)
                 self.assertEqual(status, 404, body)
-                self.assertNotIn(SECRET, body)
+                self.assertNotIn(OUTSIDE_TEXT, body)
 
     def test_refuses_dot_dot_paths(self) -> None:
         status, body = self._get("/../outside/secret.txt")
         self.assertEqual(status, 404, body)
-        self.assertNotIn(SECRET, body)
+        self.assertNotIn(OUTSIDE_TEXT, body)
 
 
 class SkillMdProxyTests(ScriptProxyTests):

@@ -85,6 +85,8 @@ jobs:
         run: python3 -m unittest tests/skills/test_skill_program_lookup.py
       - name: GitNexus proxy listens on loopback and serves only its dist folder
         run: python3 -m unittest tests/skills/test_gitnexus_proxy.py
+      - name: Skill and plugin script hardening
+        run: python3 -m unittest tests/test_shipped_script_hardening.py
       - name: Google Workspace credentials are written owner-only
         run: |
           python3 -m venv "${RUNNER_TEMP:?}/gws"

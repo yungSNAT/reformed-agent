@@ -5,6 +5,7 @@ Mounted at /api/plugins/hermes-achievements/ by Hermes dashboard.
 from __future__ import annotations
 
 import json
+import logging
 import math
 import re
 import threading
@@ -534,19 +535,18 @@ def metric_label(metric: str) -> str:
 def criteria_for(definition: Dict[str, Any]) -> str:
     if definition.get("secret") and definition.get("state") == "secret":
         return "Secret: exact requirement hidden until Hermes sees the first matching signal. Keep using Hermes across debugging, tools, memory, skills, plugins, and model workflows to reveal it."
-    secret_prefix = ""
     if "threshold_metric" in definition:
         tiers_list = sorted(definition.get("tiers", []), key=lambda t: t["threshold"])
         if not tiers_list:
-            return secret_prefix + "Requirement: use Hermes in the matching workflow."
+            return "Requirement: use Hermes in the matching workflow."
         metric = metric_label(definition["threshold_metric"])
         ladder = ", ".join(f"{t['name']} {t['threshold']}" for t in tiers_list)
-        return secret_prefix + f"Requirement: {metric}. Tier ladder: {ladder}."
+        return f"Requirement: {metric}. Tier ladder: {ladder}."
     requirements = definition.get("requirements") or []
     if requirements:
         parts = [f"{metric_label(r['metric'])} ≥ {int(r.get('gte', 1))}" for r in requirements]
-        return secret_prefix + "Requirement: " + "; ".join(parts) + "."
-    return secret_prefix + "Requirement: complete the matching Hermes behavior."
+        return "Requirement: " + "; ".join(parts) + "."
+    return "Requirement: complete the matching Hermes behavior."
 
 
 def display_achievement(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -587,7 +587,9 @@ def scan_sessions(
     try:
         from hermes_state import SessionDB
     except Exception as exc:
-        return {"sessions": [], "aggregate": {}, "error": f"Could not import SessionDB: {exc}", "scan_meta": {"mode": "failed", "sessions_total": 0, "sessions_rescanned": 0, "sessions_reused": 0}}
+        # The reason goes to the log, not to the dashboard response.
+        logging.getLogger(__name__).warning("Could not import SessionDB: %s", exc)
+        return {"sessions": [], "aggregate": {}, "error": "Could not import SessionDB", "scan_meta": {"mode": "failed", "sessions_total": 0, "sessions_rescanned": 0, "sessions_reused": 0}}
 
     checkpoint = load_checkpoint()
     previous_sessions = checkpoint.get("sessions") if isinstance(checkpoint.get("sessions"), dict) else {}
@@ -908,9 +910,10 @@ def _run_scan_and_update_cache(publish_partial_snapshots: bool = True) -> None:
             _SNAPSHOT_CACHE_AT = int(_SNAPSHOT_CACHE.get("generated_at") or int(time.time()))
             save_snapshot(_SNAPSHOT_CACHE)
             _SCAN_STATUS["state"] = "idle"
-        except Exception as exc:
+        except Exception:
+            logging.getLogger(__name__).exception("Achievements scan failed")
             _SCAN_STATUS["state"] = "failed"
-            _SCAN_STATUS["last_error"] = str(exc)
+            _SCAN_STATUS["last_error"] = "Scan failed; see the dashboard log"
         finally:
             _SCAN_STATUS["finished_at"] = int(time.time())
             _SCAN_STATUS["last_duration_ms"] = int((_SCAN_STATUS["finished_at"] - started) * 1000)
