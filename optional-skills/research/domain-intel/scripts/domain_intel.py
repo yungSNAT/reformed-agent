@@ -28,8 +28,9 @@ from datetime import datetime, timezone
 def tls_context(verify=True):
     """TLS client context that refuses protocols older than TLS 1.2.
 
-    With ``verify=False`` the certificate is still read but not checked, so an
-    expired or mismatched certificate can be reported rather than refused.
+    With ``verify=False`` the handshake completes without checking the
+    certificate, so the protocol and cipher can still be reported. Python then
+    returns no certificate fields, so subject, issuer and dates come back empty.
     """
     ctx = ssl.create_default_context()
     ctx.minimum_version = ssl.TLSVersion.TLSv1_2

@@ -21,13 +21,18 @@ from unittest import mock
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def _load(relative: str, stubs: dict[str, dict[str, object]] | None = None) -> types.ModuleType:
+def _stub_modules(stubs: dict[str, dict[str, object]] | None) -> dict[str, types.ModuleType]:
     modules = {}
     for name, attributes in (stubs or {}).items():
         module = types.ModuleType(name)
         for key, value in attributes.items():
             setattr(module, key, value)
         modules[name] = module
+    return modules
+
+
+def _load(relative: str, stubs: dict[str, dict[str, object]] | None = None) -> types.ModuleType:
+    modules = _stub_modules(stubs)
     path = ROOT / relative
     spec = importlib.util.spec_from_file_location(f"hardening_{path.stem}", path)
     module = importlib.util.module_from_spec(spec)
@@ -54,6 +59,20 @@ class DomainIntelTlsTests(unittest.TestCase):
         self.assertEqual(ctx.verify_mode, ssl.CERT_NONE)
         self.assertFalse(ctx.check_hostname)
 
+    def test_check_ssl_takes_both_contexts_from_the_helper(self) -> None:
+        wrapped = mock.MagicMock()
+        wrapped.__enter__.return_value.getpeercert.return_value = {}
+        wrapped.__enter__.return_value.cipher.return_value = ("TLS_AES_128_GCM_SHA256", "TLSv1.3", 128)
+        contexts = [mock.MagicMock(), mock.MagicMock()]
+        contexts[0].wrap_socket.side_effect = ssl.SSLCertVerificationError("expired")
+        contexts[1].wrap_socket.return_value = wrapped
+        with mock.patch.object(self.module, "tls_context", side_effect=contexts) as helper, mock.patch.object(
+            self.module.socket, "create_connection", return_value=mock.MagicMock()
+        ):
+            result = self.module.check_ssl("example.test")
+        self.assertEqual(helper.call_args_list, [mock.call(), mock.call(verify=False)])
+        self.assertIn("expired", result["verification_warning"])
+
 
 class OpenClawHostTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -66,6 +85,31 @@ class OpenClawHostTests(unittest.TestCase):
         self.assertEqual(url_host("https://openai.com.proxy.example/v1"), "openai.com.proxy.example")
         self.assertEqual(url_host("https://proxy.example/openai.com"), "proxy.example")
         self.assertEqual(url_host("http://[::1"), "")
+
+    def _provider_env_vars(self, base_url: str) -> list[str]:
+        import tempfile
+
+        added: list[str] = []
+        with tempfile.TemporaryDirectory() as source, tempfile.TemporaryDirectory() as target:
+            migrator = self.module.Migrator(
+                source_root=Path(source),
+                target_root=Path(target),
+                execute=False,
+                workspace_target=None,
+                overwrite=False,
+                migrate_secrets=True,
+                output_dir=None,
+            )
+            migrator.merge_env_values = lambda values, *_args, **_kwargs: added.extend(values)
+            migrator.migrate_provider_keys(
+                {"models": {"providers": {"custom": {"apiKey": "placeholder", "baseUrl": base_url}}}}
+            )
+        return added
+
+    def test_provider_key_mapping_reads_the_host(self) -> None:
+        self.assertEqual(self._provider_env_vars("https://api.openai.com/v1"), ["OPENAI_API_KEY"])
+        self.assertEqual(self._provider_env_vars("https://openai.com.proxy.example/v1"), [])
+        self.assertEqual(self._provider_env_vars("https://proxy.example/openai.com/v1"), [])
 
 
 class SpotifyIdTests(unittest.TestCase):
@@ -101,10 +145,23 @@ class AchievementsImportFailureTests(unittest.TestCase):
         self.assertEqual(result["scan_meta"]["mode"], "failed")
         self.assertIn("hermes_state", "\n".join(logs.output))
 
+    def test_scan_status_keeps_the_failure_text_in_the_log(self) -> None:
+        module = _load("plugins/hermes-achievements/dashboard/plugin_api.py")
+        failure = RuntimeError("cannot open /home/someone/.hermes/state.db")
+        with mock.patch.object(module, "compute_all", side_effect=failure), self.assertLogs(level="ERROR") as logs:
+            module._run_scan_and_update_cache(False)
+        status = module._scan_status_payload()
+        self.assertEqual(status["state"], "failed")
+        self.assertNotIn("state.db", str(status["last_error"]))
+        self.assertIn("state.db", "\n".join(logs.output))
+
+
+KEY = "hc-0123456789abcdef-tail"
+
 
 class HonchoKeyStateTests(unittest.TestCase):
-    def test_key_state_shows_no_part_of_the_key(self) -> None:
-        module = _load(
+    def setUp(self) -> None:
+        self.module = _load(
             "plugins/memory/honcho/cli.py",
             {
                 "hermes_constants": {"get_hermes_home": lambda: Path(".")},
@@ -120,8 +177,78 @@ class HonchoKeyStateTests(unittest.TestCase):
                 "hermes_cli.config": {"cfg_get": None},
             },
         )
-        self.assertEqual(module.key_state("hc-0123456789abcdef"), "set")
-        self.assertEqual(module.key_state(""), "not set")
+
+    def test_key_state_shows_no_part_of_the_key(self) -> None:
+        self.assertEqual(self.module.key_state(KEY), "set")
+        self.assertEqual(self.module.key_state(""), "not set")
+
+    def test_status_shows_no_part_of_the_key(self) -> None:
+        import contextlib
+        import io
+
+        config = mock.MagicMock(api_key=KEY, enabled=False, raw={}, host="hermes")
+        client = types.ModuleType("plugins.memory.honcho.client")
+        client.HonchoClientConfig = mock.MagicMock(**{"from_global_config.return_value": config})
+        client.get_honcho_client = None
+        out = io.StringIO()
+        with (
+            mock.patch.dict(sys.modules, {"honcho": types.ModuleType("honcho"), client.__name__: client}),
+            mock.patch.multiple(
+                self.module,
+                _read_config=lambda: {"apiKey": KEY},
+                _config_path=lambda: Path("honcho.json"),
+                _local_config_path=lambda: Path("honcho.json"),
+                _active_profile_name=lambda: "default",
+                _host_key=lambda: "hermes",
+            ),
+            contextlib.redirect_stdout(out),
+        ):
+            self.module.cmd_status(types.SimpleNamespace(all=False))
+        self.assertIn("API key:        set", out.getvalue())
+        self.assertNotIn(KEY[-4:], out.getvalue())
+        self.assertNotIn(KEY[:6], out.getvalue())
+
+
+class HindsightSetupTests(unittest.TestCase):
+    def test_key_prompt_shows_no_part_of_the_existing_key(self) -> None:
+        import contextlib
+        import io
+
+        class StopAtPrompt(Exception):
+            pass
+
+        class Stdin(io.StringIO):
+            def isatty(self) -> bool:
+                return False
+
+            def readline(self, *_args) -> str:
+                raise StopAtPrompt
+
+        stubs = {
+            "agent": {},
+            "agent.memory_provider": {"MemoryProvider": type("MemoryProvider", (), {})},
+            "hermes_constants": {"get_hermes_home": lambda: Path(".")},
+            "tools": {},
+            "tools.registry": {"tool_error": None},
+            "hermes_cli": {},
+            "hermes_cli.config": {"cfg_get": None, "save_config": None},
+            "hermes_cli.memory_setup": {"_curses_select": lambda *_args, **_kwargs: 0},
+        }
+        module = _load("plugins/memory/hindsight/__init__.py", stubs)
+        provider = object.__new__(module.HindsightMemoryProvider)
+        provider._config = {}
+        out = io.StringIO()
+        with (
+            mock.patch.dict(sys.modules, _stub_modules(stubs)),
+            mock.patch.dict("os.environ", {"HINDSIGHT_API_KEY": KEY}),
+            mock.patch("shutil.which", return_value=None),
+            mock.patch("sys.stdin", Stdin()),
+            contextlib.redirect_stdout(out),
+            self.assertRaises(StopAtPrompt),
+        ):
+            provider.post_setup(".", {})
+        self.assertIn("current: set", out.getvalue())
+        self.assertNotIn(KEY[-4:], out.getvalue())
 
 
 if __name__ == "__main__":

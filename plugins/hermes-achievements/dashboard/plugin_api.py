@@ -910,9 +910,10 @@ def _run_scan_and_update_cache(publish_partial_snapshots: bool = True) -> None:
             _SNAPSHOT_CACHE_AT = int(_SNAPSHOT_CACHE.get("generated_at") or int(time.time()))
             save_snapshot(_SNAPSHOT_CACHE)
             _SCAN_STATUS["state"] = "idle"
-        except Exception as exc:
+        except Exception:
+            logging.getLogger(__name__).exception("Achievements scan failed")
             _SCAN_STATUS["state"] = "failed"
-            _SCAN_STATUS["last_error"] = str(exc)
+            _SCAN_STATUS["last_error"] = "Scan failed; see the dashboard log"
         finally:
             _SCAN_STATUS["finished_at"] = int(time.time())
             _SCAN_STATUS["last_duration_ms"] = int((_SCAN_STATUS["finished_at"] - started) * 1000)

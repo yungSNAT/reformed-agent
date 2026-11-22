@@ -413,8 +413,8 @@ def cmd_setup(args) -> None:
         cfg.pop("baseUrl", None)  # cloud uses SDK default
 
         current_key = cfg.get("apiKey", "")
-        masked = key_state(current_key)
-        print(f"\n  Current API key: {masked}")
+        key_status = key_state(current_key)
+        print(f"\n  Current API key: {key_status}")
         new_key = _prompt("Honcho API key (leave blank to keep current)", secret=True)
         if new_key:
             cfg["apiKey"] = new_key
@@ -661,7 +661,7 @@ def cmd_status(args) -> None:
         return
 
     api_key = hcfg.api_key or ""
-    masked = key_state(api_key)
+    key_status = key_state(api_key)
 
     profile = _active_profile_name()
     profile_label = f" [{hcfg.host}]" if profile != "default" else ""
@@ -671,7 +671,7 @@ def cmd_status(args) -> None:
         print(f"  Profile:        {profile}")
     print(f"  Host:           {hcfg.host}")
     print(f"  Enabled:        {hcfg.enabled}")
-    print(f"  API key:        {masked}")
+    print(f"  API key:        {key_status}")
     print(f"  Workspace:      {hcfg.workspace_id}")
 
     # Config paths — show where config was read from and where writes go
