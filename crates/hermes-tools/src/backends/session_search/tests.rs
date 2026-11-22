@@ -407,6 +407,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn damaged_ranked_index_falls_back_to_active_messages_with_the_requested_role() {
+        let (tmp, backend) = backend_with_db();
+        let conn = db_conn(&tmp);
+        for id in ["fox-river", "assistant-session", "rewound-session"] {
+            insert_session(&conn, id, None, None, None, None, "2026-01-01T00:00:00Z");
+        }
+        insert_message(&conn, "fox-river", "user", "orphanword survivor");
+        let row_id = conn.last_insert_rowid();
+        insert_message(&conn, "assistant-session", "assistant", "orphanword reply");
+        insert_inactive_message(&conn, "rewound-session", "user", "orphanword rewind");
+        // Removing only one indexed token leaves the other posting without its docsize row.
+        conn.execute(
+            "INSERT INTO messages_fts(messages_fts, rowid, content) VALUES ('delete', ?1, 'survivor')",
+            [row_id],
+        )
+        .expect("damage the index without changing the message");
+
+        let output = backend
+            .search(Some("orphanword"), Some("user"), 5, None)
+            .await
+            .expect("search with a damaged full-text index");
+        assert_eq!(result_ids(&output), ["fox-river"], "{output}");
+        assert_eq!(parsed(&output)["search_degraded"], "fts5_corrupt");
+    }
+
+    #[tokio::test]
     async fn no_fts_backend_still_supports_session_id_lookup() {
         let backend = no_fts_backend_with_seeded_db();
 
