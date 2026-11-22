@@ -1602,6 +1602,13 @@
       "ticket": 25
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "tests/gateway/_plugin_adapter_loader.py",
+      "ticket": 3524,
+      "rationale": "Compared b51fbc73 with v0.23.2: only a comment changed."
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "tests/gateway/test_7100_transient_failure_transcript.py",
