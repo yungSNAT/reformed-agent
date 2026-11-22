@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+# A dated nightly, so a broken nightly cannot fail the job; move it deliberately.
+env:
+  NIGHTLY: nightly-2026-11-20
+
 jobs:
   fuzz:
     timeout-minutes: 60
@@ -22,14 +26,14 @@ jobs:
           persist-credentials: false
       - name: Install nightly and the pinned cargo-fuzz
         run: |
-          rustup toolchain install nightly --profile minimal
-          cargo +nightly install cargo-fuzz --locked --version 0.13.2
+          rustup toolchain install "$NIGHTLY" --profile minimal
+          cargo "+$NIGHTLY" install cargo-fuzz --locked --version 0.13.2
       - name: Fuzz for 5 minutes
         env:
           TARGET: ${{ matrix.target }}
         run: |
           mkdir -p "fuzz/corpus/$TARGET"
-          cargo +nightly fuzz run "$TARGET" "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" -- -max_total_time=300 -rss_limit_mb=4096
+          cargo "+$NIGHTLY" fuzz run "$TARGET" "fuzz/corpus/$TARGET" "fuzz/seeds/$TARGET" -- -max_total_time=300 -rss_limit_mb=4096
       - name: Keep the crashing input
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

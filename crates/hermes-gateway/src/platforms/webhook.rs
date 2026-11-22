@@ -520,7 +520,7 @@ async fn handle_webhook_request(
         buf.extend_from_slice(&chunk[..read]);
     }
 
-    let (method, path, body_bytes) = request_parts(&buf, header_end, content_len);
+    let (method, path, body_bytes) = request_parts(&buf, header_end, body_start, content_len);
     let (method, path) = (method.as_str(), path.as_str());
 
     if method == "POST" && path == config.path {
@@ -728,12 +728,18 @@ fn content_length(headers: &HashMap<String, String>, buf_len: usize, header_end:
 }
 
 /// The method, path and body of a request whose bytes have all been read into `buf`.
-fn request_parts(buf: &[u8], header_end: usize, content_len: usize) -> (String, String, &[u8]) {
+/// `body_start` is where the body began in the first read, before `buf` grew.
+fn request_parts(
+    buf: &[u8],
+    header_end: usize,
+    body_start: usize,
+    content_len: usize,
+) -> (String, String, &[u8]) {
     let request = String::from_utf8_lossy(&buf[..header_end]);
     let mut parts = request.lines().next().unwrap_or("").split_whitespace();
     let method = parts.next().unwrap_or("GET").to_string();
     let path = parts.next().unwrap_or("/").to_string();
-    let body_start = header_end.saturating_add(4).min(buf.len());
+    let body_start = body_start.min(buf.len());
     let body_end = buf.len().min(body_start.saturating_add(content_len));
     (method, path, &buf[body_start..body_end])
 }
@@ -949,7 +955,8 @@ pub fn fuzz_request(request: &[u8], template: &str) {
     if content_len > default_webhook_max_body_bytes() {
         return;
     }
-    let (_method, path, body) = request_parts(request, header_end, content_len);
+    let body_start = header_end.saturating_add(4).min(request.len());
+    let (_method, path, body) = request_parts(request, header_end, body_start, content_len);
     if let Some(route) = route_name_for_path(&path, &default_webhook_path()) {
         assert!(!route.is_empty() && !route.contains('/'), "{route:?}");
     }
@@ -976,6 +983,7 @@ pub fn fuzz_request(request: &[u8], template: &str) {
     ]);
     assert!(WebhookAdapter::validate_signature(&svix, body, SECRET));
     let _ = WebhookAdapter::validate_signature(&headers, body, SECRET);
+    // The template line doubles as a secret here, to reach the `whsec_` base64 decode.
     let _ = is_blank_secret(template);
 
     let _ = serde_json::from_slice::<WebhookPayload>(body);
@@ -1009,14 +1017,25 @@ mod tests {
         let header_end = find_header_end(buf).unwrap();
         let headers = parse_headers(&buf[..header_end]);
         assert_eq!(content_length(&headers, buf.len(), header_end), 99);
-        let (method, path, body) = request_parts(buf, header_end, usize::MAX);
+        let (method, path, body) = request_parts(buf, header_end, header_end + 4, usize::MAX);
         assert_eq!((method.as_str(), path.as_str()), ("POST", "/webhook"));
         assert_eq!(body, b"{\"a\":1}");
-        let (method, path, body) = request_parts(b"", 0, 5);
+        let (method, path, body) = request_parts(b"", 0, 4, 5);
         assert_eq!(
             (method.as_str(), path.as_str(), body),
             ("GET", "/", &b""[..])
         );
+    }
+
+    #[test]
+    fn request_parts_keeps_the_body_start_of_the_first_read() {
+        // The first read ended before the blank line, so the body starts where it ended.
+        let first = b"POST /webhook HTTP/1.1\r\nContent-Length: 3";
+        let header_end = find_header_end(first).unwrap_or(first.len());
+        let body_start = (header_end + 4).min(first.len());
+        let buf = [&first[..], b"abc"].concat();
+        let (_, _, body) = request_parts(&buf, header_end, body_start, 3);
+        assert_eq!(body, b"abc");
     }
 
     #[test]
