@@ -1179,15 +1179,15 @@ fn delete_session_if_empty_preserves_sessions_with_messages_title_or_children() 
     assert!(!sp.delete_session_if_empty("parent").unwrap());
 
     let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
-    for session_id in ["with-message", "titled", "parent", "child"] {
+    for kept in ["with-message", "titled", "parent", "child"] {
         let count: i64 = conn
             .query_row(
                 "SELECT COUNT(*) FROM sessions WHERE id = ?1",
-                rusqlite::params![session_id],
+                rusqlite::params![kept],
                 |row| row.get(0),
             )
             .unwrap();
-        assert_eq!(count, 1, "{session_id} should remain");
+        assert_eq!(count, 1, "{kept} should remain");
     }
 }
 
