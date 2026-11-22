@@ -458,7 +458,11 @@ fn post_openviking_text_turn(
     user_content: &str,
     assistant_content: &str,
 ) -> Result<(), String> {
-    let url = format!("{}/api/v1/sessions/{}/messages", st.endpoint, st.session_id);
+    let url = format!(
+        "{}/api/v1/sessions/{}/messages",
+        st.endpoint,
+        urlencoding::encode(&st.session_id)
+    );
     let user_status = st
         .client
         .post(&url)

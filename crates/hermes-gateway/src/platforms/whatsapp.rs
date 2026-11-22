@@ -139,7 +139,12 @@ impl WhatsAppAdapter {
             .as_deref()
             .unwrap_or(DEFAULT_WHATSAPP_API_BASE)
             .trim_end_matches('/');
-        format!("{}/{}/{}", base, phone_id, endpoint.trim_start_matches('/'))
+        format!(
+            "{}/{}/{}",
+            base,
+            urlencoding::encode(phone_id),
+            endpoint.trim_start_matches('/')
+        )
     }
 
     /// Convert common Markdown shapes to WhatsApp's lightweight formatting.

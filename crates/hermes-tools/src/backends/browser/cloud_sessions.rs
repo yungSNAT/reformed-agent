@@ -122,7 +122,11 @@ impl BrowserbaseBrowserBackend {
         session_id: &str,
     ) -> Result<bool, ToolError> {
         let request = client
-            .post(format!("{}/v1/sessions/{session_id}", config.base_url))
+            .post(format!(
+                "{}/v1/sessions/{}",
+                config.base_url,
+                urlencoding::encode(session_id)
+            ))
             .header("Content-Type", "application/json")
             .header("X-BB-API-Key", &config.api_key)
             .json(&json!({
@@ -293,7 +297,11 @@ impl BrowserUseBrowserBackend {
         session_id: &str,
     ) -> Result<bool, ToolError> {
         let mut request = client
-            .patch(format!("{}/browsers/{session_id}", config.base_url))
+            .patch(format!(
+                "{}/browsers/{}",
+                config.base_url,
+                urlencoding::encode(session_id)
+            ))
             .json(&json!({"action": "stop"}));
         for (name, value) in browser_use_headers(config, None) {
             request = request.header(name, value);
@@ -417,7 +425,11 @@ impl FirecrawlBrowserBackend {
         session_id: &str,
     ) -> Result<bool, ToolError> {
         let request = client
-            .delete(format!("{}/v2/browser/{session_id}", config.base_url))
+            .delete(format!(
+                "{}/v2/browser/{}",
+                config.base_url,
+                urlencoding::encode(session_id)
+            ))
             .header("Authorization", format!("Bearer {}", config.api_key));
         release_session_request(request, "Firecrawl browser").await
     }

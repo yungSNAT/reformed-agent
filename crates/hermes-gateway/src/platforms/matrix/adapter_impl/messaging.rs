@@ -244,7 +244,9 @@ impl MatrixAdapter {
     ) -> Result<(), GatewayError> {
         let url = format!(
             "{}/_matrix/client/v3/rooms/{}/typing/{}",
-            self.config.homeserver_url, room_id, self.config.user_id
+            self.config.homeserver_url,
+            urlencoding::encode(room_id),
+            urlencoding::encode(&self.config.user_id)
         );
 
         let body = if typing {
