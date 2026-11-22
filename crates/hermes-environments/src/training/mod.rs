@@ -1,11 +1,11 @@
-//! Training / benchmark loops (PARITY_PLAN Week 3).
+//! Training / benchmark loops.
 //!
 //! This module is a **skeleton**: wire up SWE-bench, TBLite, Terminal-Bench 2, and
 //! tool-call parsers incrementally. Prefer:
 //! - Rust for the env loop, trajectory recording, and Hermes tool dispatch
 //! - Optional `python3 -c ...` subprocess for HuggingFace `datasets` when needed
 //!
-//! Next steps (see root `PARITY_PLAN.md`):
+//! Next steps:
 //! - `HermesBaseEnv` impl with config compatible with Python `default.yaml`
 //! - `training/benchmarks/*` as submodules (tblite, terminalbench, yc_bench)
 //! - Parsers under `training/parsers/` mirroring `tool_call_parsers` in Python
