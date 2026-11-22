@@ -161,8 +161,7 @@ fn encrypt_token_cache(
 ) -> Result<TokenStoreEnvelope, AgentError> {
     let plaintext = serde_json::to_vec(cache).map_err(|e| AgentError::Config(e.to_string()))?;
     let cipher = Aes256Gcm::new_from_slice(key).map_err(|e| AgentError::Config(e.to_string()))?;
-    let mut nonce_bytes = [0u8; TOKEN_STORE_NONCE_BYTES];
-    rand::fill(&mut nonce_bytes[..]);
+    let nonce_bytes: [u8; TOKEN_STORE_NONCE_BYTES] = rand::random();
     let nonce = Nonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_ref())
