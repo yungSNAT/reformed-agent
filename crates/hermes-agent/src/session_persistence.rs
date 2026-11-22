@@ -139,6 +139,7 @@ pub struct SchemaRepairReport {
 }
 
 static SCHEMA_REPAIR_ATTEMPTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static FTS_TRIGGER_REPAIR_ATTEMPTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 impl SessionPersistence {
     fn model_config_has_non_null_marker(model_config: Option<&str>, key: &str) -> bool {
@@ -180,10 +181,18 @@ impl SessionPersistence {
     }
 
     fn claim_schema_repair_attempt(db_path: &Path) -> bool {
+        Self::claim_repair_attempt(&SCHEMA_REPAIR_ATTEMPTS, db_path)
+    }
+
+    /// True the first time this process claims `db_path` in `attempts`.
+    fn claim_repair_attempt(
+        attempts: &'static OnceLock<Mutex<HashSet<PathBuf>>>,
+        db_path: &Path,
+    ) -> bool {
         let key = db_path
             .canonicalize()
             .unwrap_or_else(|_| db_path.to_path_buf());
-        let attempts = SCHEMA_REPAIR_ATTEMPTS.get_or_init(|| Mutex::new(HashSet::new()));
+        let attempts = attempts.get_or_init(|| Mutex::new(HashSet::new()));
         let Ok(mut attempts) = attempts.lock() else {
             return false;
         };
@@ -274,9 +283,24 @@ impl SessionPersistence {
          WHERE type = 'trigger' AND name IN ('messages_ad', 'messages_au')
            AND sql LIKE '%DELETE FROM messages_fts%'";
 
+    /// Only an index that no longer matches `messages` (SQLITE_CORRUPT_VTAB) is rebuilt; other
+    /// corruption is damage to the file itself, which a rebuild would write into.
+    fn is_fts_index_mismatch(error: &rusqlite::Error) -> bool {
+        matches!(
+            error,
+            rusqlite::Error::SqliteFailure(e, _)
+                if e.extended_code == rusqlite::ffi::SQLITE_CORRUPT_VTAB
+        )
+    }
+
     /// Replaces stale delete and update triggers and, only if FTS5's own check finds the index
     /// no longer matches `messages`, rebuilds it: one transaction, so a failure changes nothing.
-    fn replace_stale_fts_triggers(conn: &rusqlite::Connection) -> Result<(), AgentError> {
+    /// One attempt per store per process, so a failing repair does not rerun the full check on
+    /// every open.
+    fn replace_stale_fts_triggers(
+        conn: &rusqlite::Connection,
+        db_path: &Path,
+    ) -> Result<(), AgentError> {
         let io = |step: &str, e: rusqlite::Error| {
             AgentError::Io(format!(
                 "Failed to {step} for the sessions FTS triggers: {e}"
@@ -286,7 +310,9 @@ impl SessionPersistence {
             conn.query_row(Self::STALE_FTS_TRIGGERS_SQL, [], |row| row.get::<_, i64>(0))
                 .map(|count| count > 0)
         };
-        if !stale(conn).map_err(|e| io("inspect the schema", e))? {
+        if !stale(conn).map_err(|e| io("inspect the schema", e))?
+            || !Self::claim_repair_attempt(&FTS_TRIGGER_REPAIR_ATTEMPTS, db_path)
+        {
             return Ok(());
         }
         let tx =
@@ -308,7 +334,7 @@ impl SessionPersistence {
             [],
         ) {
             Ok(_) => false,
-            Err(e) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseCorrupt) => {
+            Err(e) if Self::is_fts_index_mismatch(&e) => {
                 tx.execute(
                     "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')",
                     [],
@@ -341,7 +367,7 @@ impl SessionPersistence {
         )) {
             Ok(()) => {
                 // A store the triggers cannot repair stays usable; search falls back on damage.
-                if let Err(err) = Self::replace_stale_fts_triggers(conn) {
+                if let Err(err) = Self::replace_stale_fts_triggers(conn, db_path) {
                     tracing::warn!("{} ({})", err, db_path.display());
                 }
                 Ok(true)

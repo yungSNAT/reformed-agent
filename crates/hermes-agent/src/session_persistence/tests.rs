@@ -1957,31 +1957,51 @@ fn the_fts_trigger_repair_commits_once_and_a_refused_commit_changes_nothing() {
     use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::Arc;
 
-    let tmp = tempfile::tempdir().unwrap();
-    let sp = SessionPersistence::new(tmp.path());
-    store_damaged_by_old_fts_triggers(&sp);
-    let old_triggers = fts_delete_triggers(&open_db(&sp));
-
-    for refuse in [true, false] {
+    /// Commits made by one `ensure_fts_schema`; a hook returning true turns each into a rollback.
+    fn repair_commits(sp: &SessionPersistence, refuse: bool) -> usize {
         let commits = Arc::new(AtomicUsize::new(0));
-        let mut conn = open_db(&sp);
+        let mut conn = open_db(sp);
         let seen = Arc::clone(&commits);
-        // A hook returning true turns the commit into a rollback.
         conn.commit_hook(Some(move || {
             seen.fetch_add(1, Ordering::SeqCst);
             refuse
         }))
         .unwrap();
         SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
-        assert_eq!(commits.load(Ordering::SeqCst), 1, "one transaction");
-        drop(conn);
-
-        let conn = open_db(&sp);
-        if refuse {
-            assert!(fts_index_check(&conn).is_err(), "the index was changed");
-            assert_eq!(fts_delete_triggers(&conn), old_triggers);
-        } else {
-            fts_index_check(&conn).expect("the index is rebuilt");
-        }
+        commits.load(Ordering::SeqCst)
     }
+
+    let refused_dir = tempfile::tempdir().unwrap();
+    let refused = SessionPersistence::new(refused_dir.path());
+    store_damaged_by_old_fts_triggers(&refused);
+    let old_triggers = fts_delete_triggers(&open_db(&refused));
+    assert_eq!(repair_commits(&refused, true), 1, "one transaction");
+    // A failed repair is not retried in this process, so later opens skip the full check.
+    assert_eq!(repair_commits(&refused, false), 0);
+    let conn = open_db(&refused);
+    assert!(fts_index_check(&conn).is_err(), "the index was changed");
+    assert_eq!(fts_delete_triggers(&conn), old_triggers);
+
+    let repaired_dir = tempfile::tempdir().unwrap();
+    let repaired = SessionPersistence::new(repaired_dir.path());
+    store_damaged_by_old_fts_triggers(&repaired);
+    assert_eq!(repair_commits(&repaired, false), 1, "one transaction");
+    fts_index_check(&open_db(&repaired)).expect("the index is rebuilt");
+}
+
+#[test]
+fn only_an_index_that_no_longer_matches_its_messages_is_rebuilt() {
+    let failure = |extended_code| {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(extended_code), None)
+    };
+    assert!(SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_CORRUPT_VTAB
+    )));
+    // Damage to the database file itself, which a rebuild would write into.
+    assert!(!SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_CORRUPT
+    )));
+    assert!(!SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_BUSY
+    )));
 }
