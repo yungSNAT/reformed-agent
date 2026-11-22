@@ -504,10 +504,7 @@ async fn handle_webhook_request(
 
     let header_end = find_header_end(&buf).unwrap_or(buf.len());
     let headers = parse_headers(&buf[..header_end]);
-    let content_len = headers
-        .get("content-length")
-        .and_then(|v| v.parse::<usize>().ok())
-        .unwrap_or_else(|| buf.len().saturating_sub(header_end.saturating_add(4)));
+    let content_len = content_length(&headers, buf.len(), header_end);
     if content_len > config.max_body_bytes {
         write_json_response(&mut writer, 413, r#"{"error":"body too large"}"#).await?;
         return Ok(());
@@ -523,12 +520,8 @@ async fn handle_webhook_request(
         buf.extend_from_slice(&chunk[..read]);
     }
 
-    let request = String::from_utf8_lossy(&buf[..header_end]);
-    let first_line = request.lines().next().unwrap_or("");
-    let parts: Vec<&str> = first_line.split_whitespace().collect();
-    let method = parts.first().copied().unwrap_or("GET");
-    let path = parts.get(1).copied().unwrap_or("/");
-    let body_bytes = &buf[body_start..buf.len().min(body_start + content_len)];
+    let (method, path, body_bytes) = request_parts(&buf, header_end, content_len);
+    let (method, path) = (method.as_str(), path.as_str());
 
     if method == "POST" && path == config.path {
         if !WebhookAdapter::validate_signature(&headers, body_bytes, &config.secret) {
@@ -724,6 +717,25 @@ fn parse_headers(header_bytes: &[u8]) -> HashMap<String, String> {
             Some((name.trim().to_ascii_lowercase(), value.trim().to_string()))
         })
         .collect()
+}
+
+/// The body length a request declares, or else what follows its headers in `buf`.
+fn content_length(headers: &HashMap<String, String>, buf_len: usize, header_end: usize) -> usize {
+    headers
+        .get("content-length")
+        .and_then(|v| v.parse::<usize>().ok())
+        .unwrap_or_else(|| buf_len.saturating_sub(header_end.saturating_add(4)))
+}
+
+/// The method, path and body of a request whose bytes have all been read into `buf`.
+fn request_parts(buf: &[u8], header_end: usize, content_len: usize) -> (String, String, &[u8]) {
+    let request = String::from_utf8_lossy(&buf[..header_end]);
+    let mut parts = request.lines().next().unwrap_or("").split_whitespace();
+    let method = parts.next().unwrap_or("GET").to_string();
+    let path = parts.next().unwrap_or("/").to_string();
+    let body_start = header_end.saturating_add(4).min(buf.len());
+    let body_end = buf.len().min(body_start.saturating_add(content_len));
+    (method, path, &buf[body_start..body_end])
 }
 
 fn route_name_for_path<'a>(path: &'a str, base_path: &str) -> Option<&'a str> {
@@ -924,6 +936,60 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
+/// Runs untrusted request bytes through the steps a webhook request takes once read
+/// (header parsing, body bounds, routing, signature checks, payload parsing and prompt
+/// rendering), without a socket. For the fuzz target in `fuzz/`.
+#[cfg(feature = "fuzzing")]
+#[doc(hidden)]
+pub fn fuzz_request(request: &[u8], template: &str) {
+    const SECRET: &str = "fuzz-secret";
+    let header_end = find_header_end(request).unwrap_or(request.len());
+    let headers = parse_headers(&request[..header_end]);
+    let content_len = content_length(&headers, request.len(), header_end);
+    if content_len > default_webhook_max_body_bytes() {
+        return;
+    }
+    let (_method, path, body) = request_parts(request, header_end, content_len);
+    if let Some(route) = route_name_for_path(&path, &default_webhook_path()) {
+        assert!(!route.is_empty() && !route.contains('/'), "{route:?}");
+    }
+
+    // Whatever the body, a signature made with the secret passes, in both forms.
+    let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("HMAC takes any key");
+    mac.update(body);
+    let hex: String = mac
+        .finalize()
+        .into_bytes()
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect();
+    let hub = HashMap::from([("x-hub-signature-256".to_string(), format!("sha256={hex}"))]);
+    assert!(WebhookAdapter::validate_signature(&hub, body, SECRET));
+    let mut mac = Hmac::<Sha256>::new_from_slice(SECRET.as_bytes()).expect("HMAC takes any key");
+    mac.update(&[b"msg_1.1700000000.", body].concat());
+    let svix_signature = base64::engine::general_purpose::STANDARD.encode(mac.finalize().into_bytes());
+    let svix = HashMap::from([
+        ("svix-id".to_string(), "msg_1".to_string()),
+        ("svix-timestamp".to_string(), "1700000000".to_string()),
+        ("svix-signature".to_string(), format!("v1,{svix_signature}")),
+    ]);
+    assert!(WebhookAdapter::validate_signature(&svix, body, SECRET));
+    let _ = WebhookAdapter::validate_signature(&headers, body, SECRET);
+    let _ = is_blank_secret(template);
+
+    let _ = serde_json::from_slice::<WebhookPayload>(body);
+    let Ok(payload) = serde_json::from_slice::<serde_json::Value>(body) else {
+        return;
+    };
+    let event = event_type(&headers, &payload);
+    let _ = delivery_id(&headers, &WebhookRouteConfig::default());
+    let rendered = render_prompt(Some(template), &payload, &event, "route");
+    let template = template.trim();
+    if !template.is_empty() && !template.contains('{') {
+        assert_eq!(rendered, template);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -934,6 +1000,26 @@ mod tests {
         mac.update(body);
         let bytes = mac.finalize().into_bytes();
         bytes.iter().map(|b| format!("{b:02x}")).collect::<String>()
+    }
+
+    #[test]
+    fn request_parts_reads_the_request_line_and_bounds_the_body() {
+        let buf = b"POST /webhook HTTP/1.1\r\nContent-Length: 99\r\n\r\n{\"a\":1}";
+        let header_end = find_header_end(buf).unwrap();
+        let headers = parse_headers(&buf[..header_end]);
+        assert_eq!(content_length(&headers, buf.len(), header_end), 99);
+        let (method, path, body) = request_parts(buf, header_end, usize::MAX);
+        assert_eq!((method.as_str(), path.as_str()), ("POST", "/webhook"));
+        assert_eq!(body, b"{\"a\":1}");
+        let (method, path, body) = request_parts(b"", 0, 5);
+        assert_eq!((method.as_str(), path.as_str(), body), ("GET", "/", &b""[..]));
+    }
+
+    #[test]
+    fn content_length_defaults_to_the_bytes_after_the_headers() {
+        let buf = b"POST /webhook HTTP/1.1\r\nX: y\r\n\r\nabc";
+        let header_end = find_header_end(buf).unwrap();
+        assert_eq!(content_length(&parse_headers(&buf[..header_end]), buf.len(), header_end), 3);
     }
 
     #[test]
