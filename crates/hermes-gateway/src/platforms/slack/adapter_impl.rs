@@ -464,11 +464,10 @@ impl SlackAdapter {
 
     /// Fetch user profile information using `users.info`.
     pub async fn get_user_info(&self, user_id: &str) -> Result<SlackUser, GatewayError> {
-        let url = format!("{}/users.info?user={}", SLACK_API_BASE, user_id);
-
         let resp = self
             .client
-            .get(&url)
+            .get(format!("{SLACK_API_BASE}/users.info"))
+            .query(&[("user", user_id)])
             .header("Authorization", format!("Bearer {}", self.config.token))
             .send()
             .await

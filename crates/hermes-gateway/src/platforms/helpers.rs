@@ -405,9 +405,58 @@ pub fn media_category(ext: &str) -> &'static str {
     }
 }
 
+/// Asks WeCom for an access token. The API takes the corp secret in the query
+/// string, so a failure's error leaves the request URL out.
+#[cfg(any(feature = "wecom", feature = "wecom-callback"))]
+pub(crate) async fn wecom_access_token_reply(
+    client: &reqwest::Client,
+    api_base: &str,
+    corp_id: &str,
+    corp_secret: &str,
+) -> Result<serde_json::Value, reqwest::Error> {
+    client
+        .get(format!("{api_base}/gettoken"))
+        .query(&[("corpid", corp_id), ("corpsecret", corp_secret)])
+        .send()
+        .await
+        .map_err(reqwest::Error::without_url)?
+        .json()
+        .await
+        .map_err(reqwest::Error::without_url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(any(feature = "wecom", feature = "wecom-callback"))]
+    #[tokio::test]
+    async fn wecom_token_errors_leave_the_corp_secret_out() {
+        use wiremock::matchers::{method, path, query_param};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        // Made up, as every secret in these tests.
+        let corp_secret = "made-up-corp-secret-amber-0451";
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/gettoken"))
+            .and(query_param("corpid", "ww_test"))
+            .and(query_param("corpsecret", corp_secret))
+            .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = reqwest::Client::new();
+
+        // An unreadable reply, then a refused connection.
+        for api_base in [server.uri(), "http://127.0.0.1:9".to_string()] {
+            let err = wecom_access_token_reply(&client, &api_base, "ww_test", corp_secret)
+                .await
+                .expect_err("the request fails");
+            assert!(!err.to_string().contains(corp_secret), "{err}");
+            assert!(!format!("{err:?}").contains(corp_secret), "{err:?}");
+        }
+    }
 
     #[test]
     fn test_split_long_message_short() {

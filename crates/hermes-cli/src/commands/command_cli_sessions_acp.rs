@@ -1504,7 +1504,7 @@ async fn whatsapp_setup() -> Result<(), hermes_core::AgentError> {
     println!("\nVerifying token against WhatsApp Cloud API...");
     let url = format!(
         "https://graph.facebook.com/v21.0/{}/messages",
-        phone_number_id
+        urlencoding::encode(&phone_number_id)
     );
     let client = reqwest::Client::new();
     match client

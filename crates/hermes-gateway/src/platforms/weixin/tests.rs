@@ -33,7 +33,7 @@ mod weixin_crypto_tests {
 
     #[test]
     fn aes128_ecb_roundtrip_short_plaintext() {
-        let key = [7u8; 16];
+        let key: [u8; 16] = rand::random();
         let plain = b"hello-weixin-ilink";
         let ct = aes128_ecb_encrypt(plain, &key);
         assert_eq!(ct.len() % 16, 0);
@@ -43,7 +43,7 @@ mod weixin_crypto_tests {
 
     #[test]
     fn aes128_ecb_roundtrip_block_aligned_plaintext() {
-        let key: [u8; 16] = [7u8; 16];
+        let key: [u8; 16] = rand::random();
         let plain = [0xabu8; 32];
         let ct = aes128_ecb_encrypt(&plain, &key);
         let back = aes128_ecb_decrypt(&ct, &key).unwrap();
@@ -52,7 +52,7 @@ mod weixin_crypto_tests {
 
     #[test]
     fn aes128_ecb_decrypt_rejects_non_block_length() {
-        let key = [0u8; 16];
+        let key: [u8; 16] = rand::random();
         assert!(aes128_ecb_decrypt(&[1u8; 15], &key).is_err());
     }
 }

@@ -126,6 +126,37 @@ async fn edit_text_clips_overflow_preview_instead_of_erroring() {
     assert!(clipped.ends_with("..."));
 }
 
+#[tokio::test]
+async fn request_errors_leave_the_bot_token_out() {
+    // Made up, as every secret in these tests.
+    let token = "made-up-bot-token-0451";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("not json"))
+        .mount(&server)
+        .await;
+    let mut adapter = test_adapter(test_config());
+    let document = tempfile::NamedTempFile::new().unwrap();
+    std::fs::write(document.path(), b"report").unwrap();
+    let document = document.path().to_str().unwrap();
+
+    // An unreadable reply, then a refused connection, for JSON and multipart requests.
+    for api_base in [server.uri(), "http://127.0.0.1:9".to_string()] {
+        adapter.api_base = format!("{api_base}/bot{token}");
+        let edit = adapter
+            .edit_text("123", "456", "hello", None)
+            .await
+            .expect_err("the request fails");
+        let upload = adapter
+            .send_document("123", document, None)
+            .await
+            .expect_err("the upload fails");
+        for err in [edit, upload] {
+            assert!(!err.to_string().contains(token), "{err}");
+        }
+    }
+}
+
 #[test]
 fn split_message_prefers_newline() {
     let mut text = "a".repeat(4000);

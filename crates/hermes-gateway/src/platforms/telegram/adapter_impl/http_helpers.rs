@@ -51,7 +51,7 @@ impl TelegramAdapter {
                 request = request.timeout(timeout);
             }
             let resp = request.send().await.map_err(|e| {
-                GatewayError::ConnectionFailed(format!("Telegram API request failed: {}", e))
+                GatewayError::ConnectionFailed(format!("Telegram API request failed: {}", e.without_url()))
             })?;
 
             let status = resp.status();
@@ -93,7 +93,7 @@ impl TelegramAdapter {
             return resp.json::<TelegramResponse<T>>().await.map_err(|e| {
                 GatewayError::ConnectionFailed(format!(
                     "Failed to parse Telegram API response: {}",
-                    e
+                    e.without_url()
                 ))
             });
         }

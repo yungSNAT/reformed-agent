@@ -132,22 +132,14 @@ impl WeComAdapter {
             return Ok(token.clone());
         }
 
-        let url = format!(
-            "{}/gettoken?corpid={}&corpsecret={}",
-            WECOM_API_BASE, self.config.corp_id, self.config.secret
-        );
-
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Auth(format!("WeCom auth failed: {}", e)))?;
-
-        let result: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::Auth(format!("WeCom auth parse failed: {}", e)))?;
+        let result = super::helpers::wecom_access_token_reply(
+            &self.client,
+            WECOM_API_BASE,
+            &self.config.corp_id,
+            &self.config.secret,
+        )
+        .await
+        .map_err(|e| GatewayError::Auth(format!("WeCom auth failed: {e}")))?;
 
         let token = result
             .get("access_token")
@@ -190,7 +182,9 @@ impl WeComAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom send failed: {}", e)))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom send failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -280,7 +274,9 @@ impl PlatformAdapter for WeComAdapter {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom media upload failed: {e}")))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom media upload failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -289,10 +285,9 @@ impl PlatformAdapter for WeComAdapter {
             )));
         }
 
-        let result: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom upload parse failed: {e}")))?;
+        let result: serde_json::Value = resp.json().await.map_err(|e| {
+            GatewayError::SendFailed(format!("WeCom upload parse failed: {}", e.without_url()))
+        })?;
         let media_id = result
             .get("media_id")
             .and_then(|v| v.as_str())
@@ -380,7 +375,9 @@ impl PlatformAdapter for WeComAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom media send failed: {e}")))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom media send failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();

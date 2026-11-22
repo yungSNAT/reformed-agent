@@ -437,7 +437,8 @@ fn post_openviking_batch(st: &VikingState, batch_messages: &[Value]) -> Result<(
     }
     let url = format!(
         "{}/api/v1/sessions/{}/messages/batch",
-        st.endpoint, st.session_id
+        st.endpoint,
+        urlencoding::encode(&st.session_id)
     );
     let resp = st
         .client
@@ -458,7 +459,11 @@ fn post_openviking_text_turn(
     user_content: &str,
     assistant_content: &str,
 ) -> Result<(), String> {
-    let url = format!("{}/api/v1/sessions/{}/messages", st.endpoint, st.session_id);
+    let url = format!(
+        "{}/api/v1/sessions/{}/messages",
+        st.endpoint,
+        urlencoding::encode(&st.session_id)
+    );
     let user_status = st
         .client
         .post(&url)

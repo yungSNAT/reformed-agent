@@ -3494,8 +3494,8 @@
       "owner": "rust-runtime"
     },
     "758c40135f0f": {
-      "disposition": "ported",
-      "notes": "ported in local commit f4cb47a30 (blocking uv.lock check)"
+      "disposition": "superseded",
+      "notes": "Blocking uv.lock check was ported in local commit f4cb47a30, then removed on 22 Nov 2026: this Rust repo has no root pyproject.toml or uv.lock for it to check."
     },
     "75adf7d603b1": {
       "disposition": "superseded",

@@ -144,21 +144,19 @@ fn parse_aes_key(aes_key_b64: &str) -> Result<[u8; 16], GatewayError> {
     let decoded = base64::engine::general_purpose::STANDARD
         .decode(aes_key_b64.trim())
         .map_err(|e| GatewayError::Platform(format!("weixin aes_key base64: {e}")))?;
-    if decoded.len() == 16 {
-        let mut k = [0u8; 16];
-        k.copy_from_slice(&decoded);
-        return Ok(k);
+    if let Ok(key) = <[u8; 16]>::try_from(decoded.as_slice()) {
+        return Ok(key);
     }
     if decoded.len() == 32 {
         let text = String::from_utf8_lossy(&decoded);
         if text.chars().all(|c| c.is_ascii_hexdigit()) && text.len() == 32 {
-            let mut k = [0u8; 16];
-            for i in 0..16 {
-                let pair = &text[i * 2..i * 2 + 2];
-                k[i] = u8::from_str_radix(pair, 16)
-                    .map_err(|_| GatewayError::Platform("weixin: invalid hex in aes key".into()))?;
+            let bytes = (0..16)
+                .map(|i| u8::from_str_radix(&text[i * 2..i * 2 + 2], 16))
+                .collect::<Result<Vec<u8>, _>>()
+                .map_err(|_| GatewayError::Platform("weixin: invalid hex in aes key".into()))?;
+            if let Ok(key) = <[u8; 16]>::try_from(bytes.as_slice()) {
+                return Ok(key);
             }
-            return Ok(k);
         }
     }
     Err(GatewayError::Platform(format!(
@@ -1116,14 +1114,12 @@ impl WeChatAdapter {
             .await
             .map_err(|e| GatewayError::SendFailed(format!("weixin read file: {e}")))?;
         let (filekey, aes_key, aeskey_hex) = {
-            let mut filekey_bytes = [0u8; 16];
-            rand::fill(&mut filekey_bytes[..]);
+            let filekey_bytes: [u8; 16] = rand::random();
             let filekey: String = filekey_bytes
                 .iter()
                 .map(|byte| format!("{byte:02x}"))
                 .collect();
-            let mut aes_key = [0u8; 16];
-            rand::fill(&mut aes_key[..]);
+            let aes_key: [u8; 16] = rand::random();
             let aeskey_hex: String = aes_key.iter().map(|b| format!("{b:02x}")).collect();
             (filekey, aes_key, aeskey_hex)
         };

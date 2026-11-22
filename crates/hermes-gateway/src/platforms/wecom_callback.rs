@@ -337,19 +337,14 @@ impl WeComCallbackAdapter {
                 return Ok(token);
             }
         }
-        let url = format!(
-            "{WECOM_API_BASE}/gettoken?corpid={}&corpsecret={}",
-            app.corp_id, app.corp_secret
-        );
-        let resp = self
-            .client
-            .get(&url)
-            .send()
-            .await
-            .map_err(|e| GatewayError::Auth(format!("WeCom callback gettoken failed: {e}")))?;
-        let v: serde_json::Value = resp.json().await.map_err(|e| {
-            GatewayError::Auth(format!("WeCom callback gettoken parse failed: {e}"))
-        })?;
+        let v = super::helpers::wecom_access_token_reply(
+            &self.client,
+            WECOM_API_BASE,
+            &app.corp_id,
+            &app.corp_secret,
+        )
+        .await
+        .map_err(|e| GatewayError::Auth(format!("WeCom callback gettoken failed: {e}")))?;
         let token = v
             .get("access_token")
             .and_then(|x| x.as_str())
@@ -458,7 +453,9 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom callback send failed: {e}")))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom callback send failed: {}", e.without_url()))
+            })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(GatewayError::SendFailed(format!(
@@ -518,7 +515,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .send()
             .await
             .map_err(|e| {
-                GatewayError::SendFailed(format!("WeCom callback media upload failed: {e}"))
+                GatewayError::SendFailed(format!(
+                    "WeCom callback media upload failed: {}",
+                    e.without_url()
+                ))
             })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -527,7 +527,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             )));
         }
         let result: serde_json::Value = resp.json().await.map_err(|e| {
-            GatewayError::SendFailed(format!("WeCom callback upload parse failed: {e}"))
+            GatewayError::SendFailed(format!(
+                "WeCom callback upload parse failed: {}",
+                e.without_url()
+            ))
         })?;
         let media_id = result
             .get("media_id")
@@ -571,7 +574,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .send()
             .await
             .map_err(|e| {
-                GatewayError::SendFailed(format!("WeCom callback media send failed: {e}"))
+                GatewayError::SendFailed(format!(
+                    "WeCom callback media send failed: {}",
+                    e.without_url()
+                ))
             })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -835,15 +841,25 @@ mod tests {
     }
 
     #[test]
-    fn signature_is_stable() {
-        let sig = WeComCallbackAdapter::sha1_signature("t", "1", "2", "enc");
-        assert_eq!(sig, "97df0b59cbd11ad14d4dfbdafb8dbd7b6dafcfec");
+    fn signature_is_sha1_over_sorted_parts() {
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let sig = WeComCallbackAdapter::sha1_signature("t", "1", &nonce, "enc");
+        let mut parts = ["t", "1", nonce.as_str(), "enc"];
+        parts.sort_unstable();
+        let expected = format!("{:x}", Sha1::digest(parts.concat().as_bytes()));
+        assert_eq!(sig, expected);
+        assert_eq!(
+            sig,
+            WeComCallbackAdapter::sha1_signature("enc", "1", &nonce, "t"),
+            "argument order must not change the signature"
+        );
     }
 
     #[test]
     fn decrypt_rejects_bad_signature() {
         let app = app();
-        let err = WeComCallbackAdapter::decrypt_xml(&app, "bad", "1", "2", "Zm9vYmFy")
+        let nonce = uuid::Uuid::new_v4().simple().to_string();
+        let err = WeComCallbackAdapter::decrypt_xml(&app, "bad", "1", &nonce, "Zm9vYmFy")
             .expect_err("signature mismatch expected");
         assert!(format!("{err}").contains("signature mismatch"));
     }

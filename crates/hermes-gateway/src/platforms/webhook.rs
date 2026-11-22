@@ -1175,12 +1175,12 @@ mod tests {
                 validate(&global).unwrap();
             }
         }
-        for secret in lookalikes {
-            let signature = sign(secret, b"{}");
+        for lookalike in lookalikes {
+            let signature = sign(lookalike, b"{}");
             let headers = HashMap::from([("x-webhook-signature".to_string(), signature)]);
             assert!(
-                WebhookAdapter::validate_signature(&headers, b"{}", secret),
-                "{secret}"
+                WebhookAdapter::validate_signature(&headers, b"{}", lookalike),
+                "{lookalike}"
             );
         }
     }

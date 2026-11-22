@@ -634,17 +634,17 @@ mod tests {
         let result = migrate_into(&source, &home);
         let report = items(&result);
         let files = all_text(&home);
-        for secret in [
+        for planted in [
             "ghp_fixtureClaw01",
             "ghp_fixtureClaw02",
             "ghp_fixtureClaw03",
             "ghp_fixtureClaw04",
             "ghp_fixtureClaw05",
         ] {
-            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+            assert!(!files.contains(planted), "{planted} in the home:\n{files}");
             assert!(
-                !report.contains(secret),
-                "{secret} in the report:\n{report}"
+                !report.contains(planted),
+                "{planted} in the report:\n{report}"
             );
         }
         assert_eq!(
