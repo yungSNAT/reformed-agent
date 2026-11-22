@@ -79,7 +79,10 @@ impl HonchoProvider {
 
         let url = format!(
             "{}/apps/{}/users/{}/sessions/{}/messages",
-            self.base_url, self.config.app_id, user_id, session_id
+            self.base_url,
+            urlencoding::encode(&self.config.app_id),
+            urlencoding::encode(user_id),
+            urlencoding::encode(session_id)
         );
 
         let body = serde_json::json!({
@@ -112,7 +115,9 @@ impl HonchoProvider {
 
         let url = format!(
             "{}/apps/{}/users/{}/metamemories",
-            self.base_url, self.config.app_id, user_id
+            self.base_url,
+            urlencoding::encode(&self.config.app_id),
+            urlencoding::encode(user_id)
         );
 
         let resp = self
