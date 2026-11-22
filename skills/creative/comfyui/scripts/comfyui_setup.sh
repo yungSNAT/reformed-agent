@@ -31,8 +31,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARDWARE_CHECK="$SCRIPT_DIR/hardware_check.py"
 # comfy-cli is pinned rather than taken at its latest release, so every install
-# gets the version that was checked. The pip fallback also verifies the hash of
-# each package against comfy-cli-requirements.txt. To move the pin, regenerate
+# gets the version that was checked. Only the pip fallback also verifies the
+# hash of comfy-cli and every package it needs, against comfy-cli-requirements.txt;
+# pipx and uvx pin comfy-cli itself and resolve its dependencies fresh. To move the pin, regenerate
 # that file (its header gives the command) and change this version with it.
 COMFY_CLI_VERSION="1.28.0"
 COMFY_CLI_REQUIREMENTS="$SCRIPT_DIR/comfy-cli-requirements.txt"

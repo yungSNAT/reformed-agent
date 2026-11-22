@@ -221,6 +221,7 @@ class GhEnvTests(Sandbox):
             "-c", 'source "$1" >/dev/null; printf "USER=%s\\n" "$GH_USER"', "_", str(GH_ENV),
             env={"GITHUB_TOKEN": "test-token"},
         )
+        self.assertEqual(result.returncode, 0, result.stderr)
         self.assertIn("USER=octocat", result.stdout)
         self.assertEqual(self.calls("curl")[0][-1], "https://api.github.com/user")
 

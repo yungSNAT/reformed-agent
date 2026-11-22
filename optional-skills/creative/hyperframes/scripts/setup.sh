@@ -86,7 +86,7 @@ if ! npm ci --prefix "$HYPERFRAMES_PREFIX" --no-audit --no-fund >/dev/null 2>&1;
 fi
 hyperframes_bin="$HYPERFRAMES_PREFIX/node_modules/.bin/hyperframes"
 
-installed_version="$("$hyperframes_bin" --version 2>/dev/null | tail -1 | sed 's/^v//')"
+installed_version="$({ "$hyperframes_bin" --version 2>/dev/null || true; } | tail -1 | sed 's/^v//')"
 if [ "$installed_version" != "$HYPERFRAMES_VERSION" ]; then
   red "✗ Expected hyperframes ${HYPERFRAMES_VERSION} in ${HYPERFRAMES_PREFIX}, found '${installed_version}'."
   exit 1
@@ -96,8 +96,19 @@ fi
 # it, so `hyperframes` and `npx hyperframes` keep finding it.
 case "$(uname -s)" in
   MINGW*|MSYS*|CYGWIN*)
-    green "✓ hyperframes ${installed_version} installed in ${HYPERFRAMES_PREFIX}"
-    yellow "  Add ${HYPERFRAMES_PREFIX}/node_modules/.bin to PATH to run it as 'hyperframes'."
+    # npm's global bin folder on Windows is its prefix. Write a shell and a cmd
+    # launcher there that run the pinned copy, as `npm install -g` would.
+    global_bin="$(npm prefix -g)"
+    entry="$HYPERFRAMES_PREFIX/node_modules/hyperframes/bin/hyperframes.mjs"
+    if ! {
+      printf '#!/bin/sh\nexec node "%s" "$@"\n' "$entry" > "$global_bin/hyperframes" &&
+        printf '@node "%s" %%*\r\n' "$(cygpath -w "$entry")" > "$global_bin/hyperframes.cmd"
+    } 2>/dev/null; then
+      red "✗ Could not write the hyperframes launchers into ${global_bin}."
+      echo "   Add ${HYPERFRAMES_PREFIX}/node_modules/.bin to PATH instead."
+      exit 1
+    fi
+    green "✓ hyperframes ${installed_version} installed in ${HYPERFRAMES_PREFIX}, launchers in ${global_bin}"
     ;;
   *)
     global_bin="$(npm prefix -g)/bin"
