@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-22T09:23:04.229786+00:00`
+Generated: `2026-11-22T11:34:01.146544+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`b5194634e72e0b2a18b9ff25e9995e17e7623434`)
+- Local ref: `HEAD` (`e0536c42ce1775ab1998a1d25d44e09e8aa688e2`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-22T09:23:04.229786+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1703 |
+| Commits ahead local (`local` ancestry only) | 1707 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1434 |
-| Files only in upstream tree | 24465 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1437 |
+| Files only in upstream tree | 24464 |
 | Files only in local tree | 1799 |
 | Shared files identical content | 560 |
-| Shared files different content | 1165 |
+| Shared files different content | 1166 |
 | Total files changed (`local` vs `upstream`) | 27185 |
-| Insertions (`local` vs `upstream`) | 4612709 |
-| Deletions (`local` vs `upstream`) | 791460 |
+| Insertions (`local` vs `upstream`) | 4612702 |
+| Deletions (`local` vs `upstream`) | 791478 |
 
 ## Top 40 upstream-only buckets
 
@@ -164,7 +164,7 @@ Generated: `2026-11-22T09:23:04.229786+00:00`
 
 | Workstream | Issue | Name | Upstream-only | Shared-different | Risk | Effort |
 | --- | ---: | --- | ---: | ---: | --- | --- |
-| `WS8` | #12 | Compatibility and divergence policy | 13186 | 13 | critical | XL |
+| `WS8` | #12 | Compatibility and divergence policy | 13185 | 14 | critical | XL |
 | `WS6` | #10 | Tests and CI parity | 8396 | 353 | critical | XL |
 | `WS5` | #9 | UX parity | 1139 | 435 | critical | XL |
 | `WS3` | #7 | Tools and adapters parity | 767 | 134 | high | XL |
@@ -176,7 +176,7 @@ Generated: `2026-11-22T09:23:04.229786+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1434`
+- Local unique by patch-id: `1437`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 

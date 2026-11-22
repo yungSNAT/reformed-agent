@@ -121,6 +121,21 @@
       "workstream": "WS8"
     },
     {
+      "action": "No runtime implementation; keep rationale current.",
+      "classification": "policy_only",
+      "classification_path": "SECURITY.md",
+      "existing_coverage": "claimed_by_shared_diff_classification",
+      "local_blob": "7dff7ddd723acd9c5aead727e5b674d4bc2c8a15",
+      "necessity": "not_runtime_required",
+      "owner": "yungSNAT",
+      "path": "SECURITY.md",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_non_runtime",
+      "ticket": 25,
+      "upstream_blob": "44739937a35e31908babaa6e15b565ffcccc8d7c",
+      "workstream": "WS8"
+    },
+    {
       "action": "No vendoring; verify approved divergence remains current.",
       "classification": "intentional_divergence",
       "classification_path": "cli-config.yaml.example",
@@ -17542,10 +17557,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-22T09:23:35.598062+00:00",
+  "generated_at_utc": "2026-11-22T11:34:31.916642+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "b5194634e72e0b2a18b9ff25e9995e17e7623434",
+    "local_sha": "e0536c42ce1775ab1998a1d25d44e09e8aa688e2",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
@@ -17554,16 +17569,16 @@
       "branding_only": 1,
       "deferred": 22,
       "intentional_divergence": 836,
-      "policy_only": 306
+      "policy_only": 307
     },
     "by_rust_requirement": {
-      "not_required_for_runtime": 1143,
+      "not_required_for_runtime": 1144,
       "rust_equivalent_or_contract_test_required": 13,
       "rust_native_runtime_parity_required_if_needed": 9
     },
     "by_status": {
       "cleared_intentional_divergence": 836,
-      "cleared_non_runtime": 307,
+      "cleared_non_runtime": 308,
       "deferred_review": 22
     },
     "by_workstream": {
@@ -17571,13 +17586,13 @@
       "WS4": 230,
       "WS5": 435,
       "WS6": 353,
-      "WS8": 13
+      "WS8": 14
     },
     "cleared_intentional_divergence": 836,
-    "cleared_non_runtime": 307,
+    "cleared_non_runtime": 308,
     "deferred_review": 22,
     "pending_classification": 0,
     "pending_review": 0,
-    "total_shared_different": 1165
+    "total_shared_different": 1166
   }
 }

@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-22T09:23:04.229786+00:00",
+  "generated_at_utc": "2026-11-22T11:34:01.146544+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "b5194634e72e0b2a18b9ff25e9995e17e7623434",
+    "local_sha": "e0536c42ce1775ab1998a1d25d44e09e8aa688e2",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1703,
+    "commits_ahead": 1707,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1434,
-    "files_only_upstream": 24465,
+    "local_patch_unique": 1437,
+    "files_only_upstream": 24464,
     "files_only_local": 1799,
     "files_shared_identical": 560,
-    "files_shared_different": 1165,
+    "files_shared_different": 1166,
     "tree_files_changed": 27185,
-    "tree_insertions": 4612709,
-    "tree_deletions": 791460
+    "tree_insertions": 4612702,
+    "tree_deletions": 791478
   },
   "top_upstream_only": [
     {
@@ -836,8 +836,8 @@
       "workstream": "WS8",
       "issue": 12,
       "name": "Compatibility and divergence policy",
-      "upstream_only": 13186,
-      "shared_different": 13,
+      "upstream_only": 13185,
+      "shared_different": 14,
       "local_only": 370,
       "risk": "critical",
       "effort": "XL"
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1434,
+    "local_patch_unique": 1437,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"
