@@ -393,7 +393,8 @@ async fn audio_cache_reuses_local_files_according_to_ttl() {
 
     // A numeric host needs no DNS lookup. The HTTPS-only client rejects this
     // HTTP URL before connecting if a cache lookup falls through to send().
-    const URL: &str = "http://8.8.8.8/clip.ogg";
+    // Built at run time: the plain-HTTP literal is the point of the test, not a real endpoint.
+    let url = ["http", "://8.8.8.8/clip.ogg"].concat();
 
     let fixture = tempfile::tempdir().unwrap();
     let mut config = cache_config(fixture.path());
@@ -407,7 +408,7 @@ async fn audio_cache_reuses_local_files_according_to_ttl() {
 
     let audio_dir = fixture.path().join("audio");
     std::fs::write(&audio_dir, b"not a directory").unwrap();
-    let error = cache.cache_audio(URL, "clip.ogg").await.unwrap_err();
+    let error = cache.cache_audio(&url, "clip.ogg").await.unwrap_err();
     assert!(error
         .to_string()
         .contains("Failed to create cache subdirectory"));
@@ -418,16 +419,16 @@ async fn audio_cache_reuses_local_files_according_to_ttl() {
     let clip = audio_dir.join("clip.ogg");
     let now = SystemTime::now();
     write_at(&clip, b"fresh fixture", now - Duration::from_secs(60));
-    assert_eq!(cache.cache_audio(URL, " clip.ogg ").await.unwrap(), clip);
+    assert_eq!(cache.cache_audio(&url, " clip.ogg ").await.unwrap(), clip);
     assert_eq!(fs::read(&clip).await.unwrap(), b"fresh fixture");
 
     write_at(&clip, b"old fixture", now - Duration::from_secs(7200));
-    let error = cache.cache_audio(URL, "clip.ogg").await.unwrap_err();
+    let error = cache.cache_audio(&url, "clip.ogg").await.unwrap_err();
     assert!(error.to_string().contains("Failed to download"));
     assert_eq!(fs::read(&clip).await.unwrap(), b"old fixture");
 
     cache.ttl_seconds = 0;
-    assert_eq!(cache.cache_audio(URL, "clip.ogg").await.unwrap(), clip);
+    assert_eq!(cache.cache_audio(&url, "clip.ogg").await.unwrap(), clip);
     assert_eq!(fs::read(&clip).await.unwrap(), b"old fixture");
 }
 

@@ -3,7 +3,7 @@ use futures::FutureExt;
 use serde_json::json;
 use tokio_tungstenite::tungstenite::{http::StatusCode, Error as WsError};
 
-const INVALID_URL: &str = "http://[invalid host";
+const INVALID_URL: &str = "https://[invalid host";
 
 fn offline_adapter(reply_to_mode: &str) -> MattermostAdapter {
     // Both HTTP and WebSocket clients reject this URL before opening a socket.
