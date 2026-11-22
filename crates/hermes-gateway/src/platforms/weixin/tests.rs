@@ -52,7 +52,7 @@ mod weixin_crypto_tests {
 
     #[test]
     fn aes128_ecb_decrypt_rejects_non_block_length() {
-        let key = [0u8; 16];
+        let key: [u8; 16] = rand::random();
         assert!(aes128_ecb_decrypt(&[1u8; 15], &key).is_err());
     }
 }
