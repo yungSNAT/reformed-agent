@@ -58,7 +58,8 @@ jobs:
         working-directory: ${{ matrix.dir }}
         run: npm ci --dry-run --ignore-scripts --no-audit
       # Every advisory fails the job except those in ALLOWED (space-separated
-      # GHSA ids), each of which must have no fixed release to move to.
+      # GHSA ids), each of which must have no fixed release to move to and a
+      # dated comment here giving the reason and when to remove it.
       - name: npm audit
         working-directory: ${{ matrix.dir }}
         env:
