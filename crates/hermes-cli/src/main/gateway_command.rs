@@ -42,24 +42,33 @@ fn ensure_verdict(_timeout: std::time::Duration) -> (String, i32) {
     )
 }
 
-/// Ctrl+C, or on Unix the SIGTERM `hermes gateway stop` sends.
-async fn gateway_shutdown_signal() -> Result<(), AgentError> {
-    let ctrl_c = async {
-        tokio::signal::ctrl_c()
-            .await
-            .map_err(|e| AgentError::Io(format!("Failed to listen for Ctrl+C: {}", e)))
-    };
+/// Ctrl+C, or on Unix the SIGTERM `hermes gateway stop` sends. Listening starts on the call, not
+/// when the future is first polled, so a signal sent as soon as the run reports ready is not met
+/// by the default action, which ends the process before it shuts down.
+fn gateway_shutdown_signal() -> Result<impl std::future::Future<Output = ()>, AgentError> {
     #[cfg(unix)]
     {
-        let mut term = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())
-            .map_err(|e| AgentError::Io(format!("Failed to listen for SIGTERM: {}", e)))?;
-        tokio::select! {
-            result = ctrl_c => result,
-            _ = term.recv() => Ok(()),
-        }
+        use tokio::signal::unix::{signal, SignalKind};
+        let listen = |kind: SignalKind, name: &str| {
+            signal(kind).map_err(|e| AgentError::Io(format!("Failed to listen for {name}: {e}")))
+        };
+        let mut interrupt = listen(SignalKind::interrupt(), "Ctrl+C")?;
+        let mut term = listen(SignalKind::terminate(), "SIGTERM")?;
+        Ok(async move {
+            tokio::select! {
+                _ = interrupt.recv() => {}
+                _ = term.recv() => {}
+            }
+        })
     }
     #[cfg(not(unix))]
-    ctrl_c.await
+    {
+        let mut ctrl_c = tokio::signal::windows::ctrl_c()
+            .map_err(|e| AgentError::Io(format!("Failed to listen for Ctrl+C: {e}")))?;
+        Ok(async move {
+            ctrl_c.recv().await;
+        })
+    }
 }
 
 /// Handle `hermes gateway [action]`.
@@ -1016,9 +1025,16 @@ async fn run_gateway(
                         .await;
                 }
             });
+            let shutdown = gateway_shutdown_signal();
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
-            let stopping = gateway_shutdown_signal().await;
+            let stopping = match shutdown {
+                Ok(signal) => {
+                    signal.await;
+                    Ok(())
+                }
+                Err(err) => Err(err),
+            };
             // Withdraw local mode before the slower shutdown below, whilst keeping the home
             // claimed until exit: the pid file goes next, and ensure must not report ready an
             // owner that `gateway stop` can no longer find.

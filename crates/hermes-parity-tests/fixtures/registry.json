@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "description": "Golden JSON parity modules (all entries are active with fixtures under fixtures/). Roadmap items such as send_message / Tirith live in PARITY_PLAN.md until fixtures land.",
+  "description": "Golden JSON parity modules (all entries are active with fixtures under fixtures/).",
   "modules": [
     {
       "id": "anthropic_adapter",

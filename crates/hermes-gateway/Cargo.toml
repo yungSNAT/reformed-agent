@@ -28,6 +28,8 @@ homeassistant = []
 ntfy = []
 api-server = []
 webhook = []
+# Exposes `platforms::webhook::fuzz_request` to the fuzz target in `fuzz/`.
+fuzzing = ["webhook"]
 
 [dependencies]
 hermes-core = { workspace = true }

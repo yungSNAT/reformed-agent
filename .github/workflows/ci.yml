@@ -92,6 +92,8 @@ jobs:
           python3 -m venv "${RUNNER_TEMP:?}/gws"
           "${RUNNER_TEMP}/gws/bin/pip" install --quiet --disable-pip-version-check pytest==9.2.0
           "${RUNNER_TEMP}/gws/bin/python" -m pytest --noconftest -p no:cacheprovider -q tests/skills/test_google_workspace_setup_permissions.py
+      - name: Skill setup scripts install pinned, hash-checked packages
+        run: python3 -m unittest tests/skills/test_pinned_skill_installs.py
       # The cloud tests skip without COMFY_CLOUD_API_KEY.
       - name: ComfyUI skill tests
         run: |

@@ -50,7 +50,7 @@
       "classification": "policy_only",
       "classification_path": "AGENTS.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "209906d52a325beeca5f3ffcea3509d09576cb78",
+      "local_blob": "041ebc787a5b48bec32c1b29a8f10b25de1970fc",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "AGENTS.md",
@@ -110,7 +110,7 @@
       "classification": "intentional_divergence",
       "classification_path": "README.md",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "e8b66fd4e59007cb4825b71e292d1f4cdb420b51",
+      "local_blob": "56166f85dab644fd304cd57ea1bd9b507213ce5e",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "README.md",
@@ -17542,10 +17542,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-22T09:23:35.598062+00:00",
+  "generated_at_utc": "2026-11-22T11:44:01.184827+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "b5194634e72e0b2a18b9ff25e9995e17e7623434",
+    "local_sha": "fa378c38495e90c69ed2cae8ab665fbe1fbc5680",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
