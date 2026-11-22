@@ -1,20 +1,30 @@
 #!/usr/bin/env bash
 # HyperFrames setup for Hermes.
 #
-# Verifies Node >= 22 and FFmpeg, installs the `hyperframes` CLI globally,
-# pre-caches `chrome-headless-shell`, and runs `hyperframes doctor`.
+# Verifies Node >= 22 and FFmpeg, installs the `hyperframes` CLI with `npm ci`
+# from the package-lock.json beside this script, links it where a global npm
+# install would put it, pre-caches `chrome-headless-shell`, and runs
+# `hyperframes doctor`.
 #
-# Pins `hyperframes@>=0.4.2` so the OpenClaw/Chromium-147 fix from
-# https://github.com/heygen-com/hyperframes/issues/294 (commit 4c72ba4)
-# is always present — the engine auto-detects `HeadlessExperimental.beginFrame`
-# support and falls back to screenshot capture otherwise.
+# The CLI is pinned to the version in package.json rather than taken at its
+# latest release, and `npm ci` checks every package against the integrity hash
+# in package-lock.json. The pin must stay at 0.4.2 or later, which carries the
+# OpenClaw/Chromium-147 fix from
+# https://github.com/heygen-com/hyperframes/issues/294 (commit 4c72ba4): the
+# engine auto-detects `HeadlessExperimental.beginFrame` support and falls back
+# to screenshot capture otherwise. To move the pin, change the version in
+# package.json and run `npm install --package-lock-only` beside it.
+#
+# HYPERFRAMES_PREFIX sets the install folder (default
+# ${HERMES_HOME:-~/.hermes}/tools/hyperframes).
 #
 # Idempotent: safe to re-run.
 
 set -euo pipefail
 
 MIN_NODE_MAJOR=22
-MIN_HYPERFRAMES_VERSION="0.4.2"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+HYPERFRAMES_PREFIX="${HYPERFRAMES_PREFIX:-${HERMES_HOME:-$HOME/.hermes}/tools/hyperframes}"
 
 red()    { printf '\033[31m%s\033[0m\n' "$*"; }
 green()  { printf '\033[32m%s\033[0m\n' "$*"; }
@@ -62,41 +72,44 @@ if ! command -v npm >/dev/null 2>&1; then
   exit 1
 fi
 
-# --- 4. Install / upgrade hyperframes CLI -----------------------------------
+# --- 4. Install the pinned hyperframes CLI ----------------------------------
 
-bold "==> Installing hyperframes CLI (>= ${MIN_HYPERFRAMES_VERSION})"
+HYPERFRAMES_VERSION="$(node -p 'require(process.argv[1]).dependencies.hyperframes' "$SCRIPT_DIR/package.json")"
+bold "==> Installing hyperframes CLI ${HYPERFRAMES_VERSION}"
 
-current_hyperframes=""
-if command -v hyperframes >/dev/null 2>&1; then
-  current_hyperframes="$(hyperframes --version 2>/dev/null | tail -1 | sed 's/^v//')"
+mkdir -p "$HYPERFRAMES_PREFIX"
+cp "$SCRIPT_DIR/package.json" "$SCRIPT_DIR/package-lock.json" "$HYPERFRAMES_PREFIX/"
+if ! npm ci --prefix "$HYPERFRAMES_PREFIX" --no-audit --no-fund >/dev/null 2>&1; then
+  red "✗ npm ci failed in ${HYPERFRAMES_PREFIX}."
+  echo "   Re-run it to see why: npm ci --prefix \"${HYPERFRAMES_PREFIX}\""
+  exit 1
 fi
+hyperframes_bin="$HYPERFRAMES_PREFIX/node_modules/.bin/hyperframes"
 
-if [ -n "$current_hyperframes" ]; then
-  yellow "   Found hyperframes ${current_hyperframes}"
-fi
-
-# Always install/upgrade to >= MIN version.
-# Using 'latest' so we pick up any newer auto-detect/capture fixes.
-if ! npm install -g "hyperframes@latest" >/dev/null 2>&1; then
-  red "✗ npm install -g hyperframes@latest failed."
-  echo "   Try: sudo npm install -g hyperframes@latest"
-  echo "   Or use a user-scoped npm prefix: npm config set prefix ~/.npm-global && export PATH=\"\$HOME/.npm-global/bin:\$PATH\""
+installed_version="$("$hyperframes_bin" --version 2>/dev/null | tail -1 | sed 's/^v//')"
+if [ "$installed_version" != "$HYPERFRAMES_VERSION" ]; then
+  red "✗ Expected hyperframes ${HYPERFRAMES_VERSION} in ${HYPERFRAMES_PREFIX}, found '${installed_version}'."
   exit 1
 fi
 
-installed_version="$(hyperframes --version 2>/dev/null | tail -1 | sed 's/^v//')"
-green "✓ hyperframes ${installed_version} installed globally"
-
-# Sanity-check minimum version.
-version_ge() {
-  # version_ge A B  →  true if A >= B
-  [ "$(printf '%s\n%s\n' "$1" "$2" | sort -V | head -1)" = "$2" ]
-}
-if ! version_ge "$installed_version" "$MIN_HYPERFRAMES_VERSION"; then
-  red "✗ hyperframes ${installed_version} is below required minimum ${MIN_HYPERFRAMES_VERSION}."
-  echo "   Try 'npm install -g hyperframes@latest' or 'sudo npm install -g hyperframes@latest'."
-  exit 1
-fi
+# Link the CLI into npm's global bin folder, where `npm install -g` used to put
+# it, so `hyperframes` and `npx hyperframes` keep finding it.
+case "$(uname -s)" in
+  MINGW*|MSYS*|CYGWIN*)
+    green "✓ hyperframes ${installed_version} installed in ${HYPERFRAMES_PREFIX}"
+    yellow "  Add ${HYPERFRAMES_PREFIX}/node_modules/.bin to PATH to run it as 'hyperframes'."
+    ;;
+  *)
+    global_bin="$(npm prefix -g)/bin"
+    if ! { mkdir -p "$global_bin" && ln -sfn "$hyperframes_bin" "$global_bin/hyperframes"; } 2>/dev/null; then
+      red "✗ Could not link hyperframes into ${global_bin}."
+      echo "   Try: sudo ln -sfn \"$hyperframes_bin\" \"$global_bin/hyperframes\""
+      echo "   Or add ${HYPERFRAMES_PREFIX}/node_modules/.bin to PATH."
+      exit 1
+    fi
+    green "✓ hyperframes ${installed_version} installed in ${HYPERFRAMES_PREFIX} and linked into ${global_bin}"
+    ;;
+esac
 
 # --- 5. Pre-cache chrome-headless-shell --------------------------------------
 #
@@ -122,7 +135,7 @@ fi
 
 bold "==> Running hyperframes doctor"
 
-if hyperframes doctor; then
+if "$hyperframes_bin" doctor; then
   green "✓ HyperFrames is ready"
   echo
   echo "   Scaffold a project:   npx hyperframes init my-video"
