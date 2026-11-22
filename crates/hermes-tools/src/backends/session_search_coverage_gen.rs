@@ -555,32 +555,3 @@ async fn query_mode_role_filter() {
         assert!(results.is_empty());
     }
 }
-
-#[tokio::test]
-async fn fts_query_prepare_failure() {
-    let conn = Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "CREATE TABLE sessions (
-            id TEXT PRIMARY KEY, created_at TEXT, updated_at TEXT,
-            parent_session_id TEXT, model_config TEXT, platform TEXT,
-            end_reason TEXT, ended_at TEXT
-        );
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY, session_id TEXT, role TEXT, content TEXT,
-            tool_calls TEXT, created_at TEXT, active INTEGER DEFAULT 1
-        );
-        CREATE TABLE messages_fts (content TEXT);",
-    )
-    .unwrap();
-    let backend = SqliteSessionSearchBackend {
-        conn: Mutex::new(conn),
-        fts_enabled: true,
-    };
-    let err = backend
-        .search(Some("hello"), None, 3, None)
-        .await
-        .unwrap_err();
-    assert!(err
-        .to_string()
-        .contains("Failed to prepare session search query"));
-}

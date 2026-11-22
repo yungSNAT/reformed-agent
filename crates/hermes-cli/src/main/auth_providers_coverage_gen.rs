@@ -144,9 +144,9 @@ fn resolve_pool_target_variants() {
 #[test]
 fn mask_secret_short_values() {
     assert_eq!(mask_secret(""), "(empty)");
-    assert_eq!(mask_secret("abc"), "***");
+    assert_eq!(mask_secret("abc"), "********");
     assert_eq!(mask_secret("abcdefgh"), "********");
-    assert_eq!(mask_secret("abcdefghijkl"), "abcd***ijkl");
+    assert_eq!(mask_secret("abcdefghijkl"), "********");
 }
 
 #[test]

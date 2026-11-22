@@ -4,18 +4,33 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 
 const TS: &str = "1700000000";
-const NONCE: &str = "nonce123";
 const PATH: &str = "/wecom/callback";
 
 type Inbound = Arc<RwLock<Option<mpsc::Sender<IncomingMessage>>>>;
 type Seen = Arc<RwLock<HashMap<String, Instant>>>;
 
-fn key_bytes(seed: u8) -> [u8; 32] {
-    let mut k = [0u8; 32];
-    for (i, b) in k.iter_mut().enumerate() {
-        *b = seed.wrapping_add(i as u8);
+/// A nonce generated once per test process, so no cryptographic value is hard-coded.
+fn nonce() -> &'static str {
+    static NONCE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    NONCE.get_or_init(|| uuid::Uuid::new_v4().simple().to_string())
+}
+
+/// Formats as the per-process nonce, so format strings can name it inline.
+struct ProcessNonce;
+
+impl std::fmt::Display for ProcessNonce {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(nonce())
     }
-    k
+}
+
+const NONCE: ProcessNonce = ProcessNonce;
+
+/// A key per seed, salted once per test process: stable within a run, never hard-coded.
+fn key_bytes(seed: u8) -> [u8; 32] {
+    static SALT: std::sync::OnceLock<[u8; 16]> = std::sync::OnceLock::new();
+    let salt = SALT.get_or_init(|| uuid::Uuid::new_v4().into_bytes());
+    std::array::from_fn(|i| seed.wrapping_add(i as u8) ^ salt[i % 16])
 }
 
 fn encoding_key(key: &[u8]) -> String {
@@ -84,7 +99,7 @@ fn encrypt_xml(seed: u8, xml: &str, receive_id: &str) -> String {
 }
 
 fn sign(app: &WeComCallbackApp, enc: &str) -> String {
-    WeComCallbackAdapter::sha1_signature(&app.token, TS, NONCE, enc)
+    WeComCallbackAdapter::sha1_signature(&app.token, TS, nonce(), enc)
 }
 
 fn err_text<T>(r: Result<T, GatewayError>) -> String {
@@ -99,7 +114,7 @@ fn decrypt_err(app: &WeComCallbackApp, enc: &str) -> String {
         app,
         &sign(app, enc),
         TS,
-        NONCE,
+        nonce(),
         enc,
     ))
 }
@@ -259,7 +274,8 @@ fn decrypt_xml_roundtrip_succeeds() {
     let app = make_app("a", "ww_test", 3);
     let xml = "<xml><Content>hi</Content></xml>";
     let enc = encrypt_xml(3, xml, "ww_test");
-    let out = WeComCallbackAdapter::decrypt_xml(&app, &sign(&app, &enc), TS, NONCE, &enc).unwrap();
+    let out =
+        WeComCallbackAdapter::decrypt_xml(&app, &sign(&app, &enc), TS, nonce(), &enc).unwrap();
     assert_eq!(out, xml);
 }
 

@@ -337,11 +337,11 @@ fn restore_creates_directories_skips_links_and_counts_external_files() {
     );
     assert!(hermes.join("empty").is_dir());
     assert!(std::fs::symlink_metadata(hermes.join("conf/alias")).is_err());
-    let secret = home.join("provider/auth.json");
+    let provider_auth = home.join("provider/auth.json");
     for (path, body) in [
         (hermes.join("conf/config.toml"), b"settings".as_slice()),
         (hermes.join("legacy/notes.txt"), b"legacy".as_slice()),
-        (secret.clone(), b"{}".as_slice()),
+        (provider_auth.clone(), b"{}".as_slice()),
         (home.join("provider/readme.txt"), b"notes".as_slice()),
     ] {
         assert_eq!(std::fs::read(&path).unwrap().as_slice(), body, "{path:?}");
@@ -350,7 +350,7 @@ fn restore_creates_directories_skips_links_and_counts_external_files() {
     {
         use std::os::unix::fs::PermissionsExt;
 
-        let permissions = std::fs::metadata(secret).unwrap().permissions();
+        let permissions = std::fs::metadata(provider_auth).unwrap().permissions();
         assert_eq!(permissions.mode() & 0o777, 0o600);
     }
 }

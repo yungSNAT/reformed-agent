@@ -181,7 +181,7 @@ async fn download_and_decrypt_media_requires_source() {
 #[tokio::test]
 async fn download_and_decrypt_media_via_mock_cdn() {
     let server = MockServer::start().await;
-    let key = [7u8; 16];
+    let key: [u8; 16] = rand::random();
     let plaintext = b"hello weixin media";
     let ct = aes128_ecb_encrypt(plaintext, &key);
     Mock::given(method("GET"))
