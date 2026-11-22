@@ -29,7 +29,7 @@ future upstream commits cannot create new drift.
 | GPAR-01..04 scoped release proof | Closed | `docs/parity/gpar-01-04-proof.json` |
 | Global parity governance tickets #19-#28 | Release-gated by local artifacts | `docs/parity/global-parity-proof.json` |
 | ELITE-07..28 closure | Closed | `docs/parity/ELITE_07_20_CLOSURE_PROOF.md`, `docs/parity/ELITE_21_28_CLOSURE_PROOF.md` |
-| ALPHA-001..061 | Closed by GitHub issue state and local alpha plans | [Ultra's `docs/alpha/HERMES_ULTRA_ALPHA_61_PLAN.md`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs/alpha/HERMES_ULTRA_ALPHA_61_PLAN.md) |
+| ALPHA-001..061 | Closed by GitHub issue state and Ultra's alpha plans | [Ultra's `docs/alpha/HERMES_ULTRA_ALPHA_61_PLAN.md`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs/alpha/HERMES_ULTRA_ALPHA_61_PLAN.md) |
 | One-true-harness issue #702 | Closed and runtime-backed | `/harness`, `harness_cockpit`, dashboard OIDC, SOTA harness fixtures |
 
 ## Active Governance
