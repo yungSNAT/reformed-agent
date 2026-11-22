@@ -9,7 +9,7 @@
 //!
 //! ## Training / benchmarks (planned)
 //!
-//! See [`training`] for traits and notes aligned with `PARITY_PLAN.md` Week 3.
+//! See [`training`] for traits and notes.
 
 pub mod file_sync;
 pub mod local;

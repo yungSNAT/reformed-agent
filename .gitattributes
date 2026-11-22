@@ -17,3 +17,6 @@ scripts/git-hooks/* text eol=lf
 
 # YAML golden fixtures compare byte for byte.
 crates/hermes-config/tests/fixtures/yaml_backend/* text eol=lf
+
+# Fuzz seeds are raw HTTP requests; their CRLF line endings are part of the input.
+fuzz/seeds/** -text
