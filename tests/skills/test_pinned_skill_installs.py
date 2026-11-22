@@ -42,7 +42,7 @@ printf '\\n' >> "$RECORD_DIR/{name}.calls"
 
 
 def _comfy_version() -> str:
-    match = re.search(r'^COMFY_CLI_VERSION="([^"]+)"$', COMFY_SETUP.read_text(), re.M)
+    match = re.search(r'^COMFY_CLI_VERSION="([^"]+)"$', COMFY_SETUP.read_text(), re.MULTILINE)
     assert match, "COMFY_CLI_VERSION not found in comfyui_setup.sh"
     return match.group(1)
 
@@ -81,7 +81,7 @@ class Sandbox(unittest.TestCase):
         }
         # The scripts and arguments are this repository's own, not outside input.
         return subprocess.run(  # nosec B603
-            ["bash", *args], env=full_env, capture_output=True, text=True, timeout=60,
+            ["bash", *args], env=full_env, capture_output=True, text=True, timeout=60, check=False,
         )
 
     def calls(self, name: str) -> list[list[str]]:
