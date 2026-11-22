@@ -30,6 +30,13 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARDWARE_CHECK="$SCRIPT_DIR/hardware_check.py"
+# comfy-cli is pinned rather than taken at its latest release, so every install
+# gets the version that was checked. Only the pip fallback also verifies the
+# hash of comfy-cli and every package it needs, against comfy-cli-requirements.txt;
+# pipx and uvx pin comfy-cli itself and resolve its dependencies fresh. To move the pin, regenerate
+# that file (its header gives the command) and change this version with it.
+COMFY_CLI_VERSION="1.28.0"
+COMFY_CLI_REQUIREMENTS="$SCRIPT_DIR/comfy-cli-requirements.txt"
 LOG_FILE="/tmp/comfyui_setup.$$.log"
 PORT=8188
 WORKSPACE=""
@@ -155,10 +162,10 @@ if command -v comfy >/dev/null 2>&1; then
     log "comfy-cli already on PATH: $(comfy -v 2>/dev/null || echo 'unknown version')"
 elif command -v uvx >/dev/null 2>&1; then
     log "Using uvx (no install needed)"
-    COMFY_BIN="uvx --from comfy-cli comfy"
+    COMFY_BIN="uvx --from comfy-cli==$COMFY_CLI_VERSION comfy"
 elif command -v pipx >/dev/null 2>&1; then
-    log "Installing comfy-cli via pipx…"
-    pipx install comfy-cli >>"$LOG_FILE" 2>&1
+    log "Installing comfy-cli $COMFY_CLI_VERSION via pipx…"
+    pipx install "comfy-cli==$COMFY_CLI_VERSION" >>"$LOG_FILE" 2>&1
     COMFY_BIN="comfy"
     # pipx adds shims to ~/.local/bin which may need to be on PATH
     if ! command -v comfy >/dev/null 2>&1; then
@@ -170,10 +177,10 @@ elif command -v pipx >/dev/null 2>&1; then
 else
     log "Neither pipx nor uvx found. Falling back to pip install --user…"
     log "  (Recommend installing pipx: https://pipx.pypa.io)"
-    if ! pip install --user comfy-cli >>"$LOG_FILE" 2>&1; then
+    if ! pip install --user --require-hashes -r "$COMFY_CLI_REQUIREMENTS" >>"$LOG_FILE" 2>&1; then
         # macOS: PEP 668 externally-managed-environment may block --user
         log "pip install --user failed. Retrying with --break-system-packages…"
-        pip install --user --break-system-packages comfy-cli >>"$LOG_FILE" 2>&1 || {
+        pip install --user --break-system-packages --require-hashes -r "$COMFY_CLI_REQUIREMENTS" >>"$LOG_FILE" 2>&1 || {
             err "Could not install comfy-cli. Install pipx or uv first."
             exit 1
         }
@@ -231,11 +238,19 @@ if [ "$SKIP_LAUNCH" -eq 1 ]; then
     exit 0
 fi
 
+# Pretty-prints the server's /system_stats. The reply is read into a variable
+# first, so nothing fetched over the network is piped straight into Python.
+print_system_stats() {
+    local stats
+    stats="$(curl -fsS "http://127.0.0.1:$PORT/system_stats" 2>/dev/null)" || return 0
+    printf '%s\n' "$stats" | python3 -m json.tool 2>/dev/null || true
+}
+
 # --- Step 4: Detect already-running server ---
 if curl -fsS "http://127.0.0.1:$PORT/system_stats" >/dev/null 2>&1; then
     log "Server already running on port $PORT — skipping launch."
     log "Stop with \`$COMFY_BIN stop\` if you want a fresh start."
-    curl -fsS "http://127.0.0.1:$PORT/system_stats" | python3 -m json.tool 2>/dev/null || true
+    print_system_stats
     log "Done."
     exit 0
 fi
@@ -257,7 +272,7 @@ ELAPSED=0
 while [ $ELAPSED -lt $MAX_WAIT ]; do
     if curl -fsS "http://127.0.0.1:$PORT/system_stats" >/dev/null 2>&1; then
         log "Server is running!"
-        curl -fsS "http://127.0.0.1:$PORT/system_stats" | python3 -m json.tool 2>/dev/null || true
+        print_system_stats
         break
     fi
     sleep 2
