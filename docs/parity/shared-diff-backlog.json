@@ -5,7 +5,7 @@
       "classification": "policy_only",
       "classification_path": ".gitattributes",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "e0a0bcf382c72965304adab99c84a74bc8125e2c",
+      "local_blob": "120e3943f01a925c08321f9124086f667baef4f3",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": ".gitattributes",
@@ -440,7 +440,7 @@
       "classification": "intentional_divergence",
       "classification_path": "optional-skills/creative",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "0f6fd9bf51b34af3e441039f347f2a4351a63590",
+      "local_blob": "74d221d15bbc6630dff5f21cf4528cedc9d39fcc",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/creative/hyperframes/SKILL.md",
@@ -455,7 +455,7 @@
       "classification": "intentional_divergence",
       "classification_path": "optional-skills/creative",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "8f561310d8cbd5151062928212428f2524bc1307",
+      "local_blob": "3bcac977238e9d9d5ef8fffdf1c9a3455222208c",
       "necessity": "approved_divergence",
       "owner": "sheawinkler",
       "path": "optional-skills/creative/hyperframes/references/troubleshooting.md",
@@ -463,6 +463,21 @@
       "status": "cleared_intentional_divergence",
       "ticket": 25,
       "upstream_blob": "e74374c5d7285b2f9789875ed09ea69c4b4bbd31",
+      "workstream": "WS4"
+    },
+    {
+      "action": "No vendoring; verify approved divergence remains current.",
+      "classification": "intentional_divergence",
+      "classification_path": "optional-skills/creative",
+      "existing_coverage": "claimed_by_shared_diff_classification",
+      "local_blob": "a6e92b985ea75b5c07fc720e2d98dca8f57be480",
+      "necessity": "approved_divergence",
+      "owner": "sheawinkler",
+      "path": "optional-skills/creative/hyperframes/scripts/setup.sh",
+      "rust_requirement": "not_required_for_runtime",
+      "status": "cleared_intentional_divergence",
+      "ticket": 25,
+      "upstream_blob": "93b8b85a054bcbab1d77c75d328046899ae48b51",
       "workstream": "WS4"
     },
     {
@@ -16301,7 +16316,7 @@
       "classification": "policy_only",
       "classification_path": "website/docs",
       "existing_coverage": "claimed_by_shared_diff_classification",
-      "local_blob": "fc27d61d5798eb55e17e6ffc4d74b0e8f61e2705",
+      "local_blob": "337a7768116fd3231485a626a594630d5956c8f2",
       "necessity": "not_runtime_required",
       "owner": "sheawinkler",
       "path": "website/docs/user-guide/skills/optional/creative/creative-hyperframes.md",
@@ -17542,10 +17557,10 @@
       "workstream": "WS5"
     }
   ],
-  "generated_at_utc": "2026-11-22T11:44:01.184827+00:00",
+  "generated_at_utc": "2026-11-22T13:56:43.204160+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "fa378c38495e90c69ed2cae8ab665fbe1fbc5680",
+    "local_sha": "ba9213aaab39898949b61ea1c502e1d8f5398f28",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c"
   },
@@ -17553,31 +17568,31 @@
     "by_classification": {
       "branding_only": 1,
       "deferred": 22,
-      "intentional_divergence": 836,
+      "intentional_divergence": 837,
       "policy_only": 306
     },
     "by_rust_requirement": {
-      "not_required_for_runtime": 1143,
+      "not_required_for_runtime": 1144,
       "rust_equivalent_or_contract_test_required": 13,
       "rust_native_runtime_parity_required_if_needed": 9
     },
     "by_status": {
-      "cleared_intentional_divergence": 836,
+      "cleared_intentional_divergence": 837,
       "cleared_non_runtime": 307,
       "deferred_review": 22
     },
     "by_workstream": {
       "WS3": 134,
-      "WS4": 230,
+      "WS4": 231,
       "WS5": 435,
       "WS6": 353,
       "WS8": 13
     },
-    "cleared_intentional_divergence": 836,
+    "cleared_intentional_divergence": 837,
     "cleared_non_runtime": 307,
     "deferred_review": 22,
     "pending_classification": 0,
     "pending_review": 0,
-    "total_shared_different": 1165
+    "total_shared_different": 1166
   }
 }
