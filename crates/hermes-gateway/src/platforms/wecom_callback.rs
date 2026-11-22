@@ -844,7 +844,7 @@ mod tests {
         assert_eq!(sig, expected);
         assert_eq!(
             sig,
-            WeComCallbackAdapter::sha1_signature("enc", &nonce, "1", "t"),
+            WeComCallbackAdapter::sha1_signature("enc", "1", &nonce, "t"),
             "argument order must not change the signature"
         );
     }
