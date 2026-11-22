@@ -2033,21 +2033,33 @@ fn a_repair_blocked_by_another_writer_runs_once_the_lock_is_released() {
 }
 
 #[test]
-fn a_refused_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
+fn a_failed_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());
     store_damaged_by_old_fts_triggers(&sp);
-    let mut conn = open_db(&sp);
+    let conn = open_db(&sp);
     conn.execute_batch("DROP TRIGGER messages_au").unwrap();
     let before = fts_delete_triggers(&conn);
     assert_eq!(before.len(), 1);
-    // A hook returning true turns the commit into a rollback.
-    conn.commit_hook(Some(|| true)).unwrap();
 
-    assert!(SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).is_err());
+    // Refusing writes to the index makes the repair's integrity check fail.
+    let mut failing = open_db(&sp);
+    failing
+        .authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Insert { table_name } if table_name == "messages_fts" => {
+                Authorization::Deny
+            }
+            _ => Authorization::Allow,
+        }))
+        .unwrap();
+    let failed = SessionPersistence::ensure_fts_schema(&failing, &sp.db_path);
+    drop(failing);
 
-    conn.commit_hook(None::<fn() -> bool>).unwrap();
-    assert_eq!(fts_delete_triggers(&conn), before);
+    assert_eq!(fts_delete_triggers(&conn), before, "a trigger changed");
+    // A store missing a trigger is not usable as it is, so the failure is reported.
+    assert!(failed.is_err());
     // Without both triggers the store is not left alone: the next open repairs it.
     SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
     fts_index_check(&conn).expect("the index is rebuilt");
