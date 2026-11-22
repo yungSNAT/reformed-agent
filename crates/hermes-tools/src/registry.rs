@@ -337,7 +337,7 @@ impl ToolRegistry {
             return Self::tool_policy_error(name, &policy_decision);
         }
         maybe_log_audit(name, &policy_decision);
-        if let Some(refusal) = secret_argument_refusal(&effective_params) {
+        if let Some(refusal) = redacted_secret_refusal(&effective_params) {
             return refusal;
         }
 
@@ -414,7 +414,7 @@ impl ToolRegistry {
             return Self::tool_policy_error(name, &policy_decision);
         }
         maybe_log_audit(name, &policy_decision);
-        if let Some(refusal) = secret_argument_refusal(&effective_params) {
+        if let Some(refusal) = redacted_secret_refusal(&effective_params) {
             return refusal;
         }
 
@@ -710,7 +710,7 @@ impl Default for ToolRegistry {
 /// (`hermes_core::secret_values`), naming where the secret came from but not
 /// the value. A model that has seen a secret must not send it anywhere: a
 /// command, request or message the arguments describe could carry it out.
-fn secret_argument_refusal(params: &Value) -> Option<String> {
+fn redacted_secret_refusal(params: &Value) -> Option<String> {
     let source = hermes_core::secret_values::find_in_json(params)?;
     // A variable's name can hold its own value.
     let source = hermes_core::secret_values::mask(&source);
