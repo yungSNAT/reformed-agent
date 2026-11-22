@@ -93,9 +93,8 @@ class SpotifyIdTests(unittest.TestCase):
 class AchievementsImportFailureTests(unittest.TestCase):
     def test_response_names_the_failure_and_the_log_keeps_the_reason(self) -> None:
         module = _load("plugins/hermes-achievements/dashboard/plugin_api.py")
-        with mock.patch.dict(sys.modules, {"hermes_state": None}):
-            with self.assertLogs(level="WARNING") as logs:
-                result = module.scan_sessions()
+        with mock.patch.dict(sys.modules, {"hermes_state": None}), self.assertLogs(level="WARNING") as logs:
+            result = module.scan_sessions()
         self.assertEqual(result["error"], "Could not import SessionDB")
         self.assertEqual(result["scan_meta"]["mode"], "failed")
         self.assertIn("hermes_state", "\n".join(logs.output))
