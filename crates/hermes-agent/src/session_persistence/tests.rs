@@ -1836,9 +1836,10 @@ fn store_damaged_by_old_fts_triggers(sp: &SessionPersistence) {
         [],
     )
     .unwrap();
+    let damage = fts_index_check(&conn).expect_err("the old triggers damage the index");
     assert!(
-        fts_index_check(&conn).is_err(),
-        "the old triggers damage the index"
+        SessionPersistence::is_fts_index_mismatch(&damage),
+        "{damage}"
     );
 }
 
@@ -2004,4 +2005,51 @@ fn only_an_index_that_no_longer_matches_its_messages_is_rebuilt() {
     assert!(!SessionPersistence::is_fts_index_mismatch(&failure(
         rusqlite::ffi::SQLITE_BUSY
     )));
+}
+
+#[test]
+fn a_repair_blocked_by_another_writer_runs_once_the_lock_is_released() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let old_triggers = fts_delete_triggers(&open_db(&sp));
+    let writer = open_db(&sp);
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let conn = open_db(&sp);
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    assert_eq!(
+        fts_delete_triggers(&conn),
+        old_triggers,
+        "repaired under a lock"
+    );
+
+    writer.execute_batch("COMMIT").unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt once the lock is free");
+    assert!(fts_delete_triggers(&conn)
+        .iter()
+        .all(|sql| sql.contains("'delete'")));
+}
+
+#[test]
+fn a_refused_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let mut conn = open_db(&sp);
+    conn.execute_batch("DROP TRIGGER messages_au").unwrap();
+    let before = fts_delete_triggers(&conn);
+    assert_eq!(before.len(), 1);
+    // A hook returning true turns the commit into a rollback.
+    conn.commit_hook(Some(|| true)).unwrap();
+
+    assert!(SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).is_err());
+
+    conn.commit_hook(None::<fn() -> bool>).unwrap();
+    assert_eq!(fts_delete_triggers(&conn), before);
+    // Without both triggers the store is not left alone: the next open repairs it.
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt");
+    assert_eq!(fts_delete_triggers(&conn).len(), 2);
 }

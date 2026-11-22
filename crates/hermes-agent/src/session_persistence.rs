@@ -139,7 +139,7 @@ pub struct SchemaRepairReport {
 }
 
 static SCHEMA_REPAIR_ATTEMPTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
-static FTS_TRIGGER_REPAIR_ATTEMPTS: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
+static FTS_TRIGGER_REPAIR_FAILURES: OnceLock<Mutex<HashSet<PathBuf>>> = OnceLock::new();
 
 impl SessionPersistence {
     fn model_config_has_non_null_marker(model_config: Option<&str>, key: &str) -> bool {
@@ -184,19 +184,32 @@ impl SessionPersistence {
         Self::claim_repair_attempt(&SCHEMA_REPAIR_ATTEMPTS, db_path)
     }
 
+    fn repair_key(db_path: &Path) -> PathBuf {
+        db_path
+            .canonicalize()
+            .unwrap_or_else(|_| db_path.to_path_buf())
+    }
+
     /// True the first time this process claims `db_path` in `attempts`.
     fn claim_repair_attempt(
         attempts: &'static OnceLock<Mutex<HashSet<PathBuf>>>,
         db_path: &Path,
     ) -> bool {
-        let key = db_path
-            .canonicalize()
-            .unwrap_or_else(|_| db_path.to_path_buf());
         let attempts = attempts.get_or_init(|| Mutex::new(HashSet::new()));
         let Ok(mut attempts) = attempts.lock() else {
             return false;
         };
-        attempts.insert(key)
+        attempts.insert(Self::repair_key(db_path))
+    }
+
+    fn repair_failed_before(
+        attempts: &'static OnceLock<Mutex<HashSet<PathBuf>>>,
+        db_path: &Path,
+    ) -> bool {
+        attempts
+            .get()
+            .and_then(|attempts| attempts.lock().ok())
+            .is_some_and(|attempts| attempts.contains(&Self::repair_key(db_path)))
     }
 
     fn is_fts5_unavailable_message(message: &str) -> bool {
@@ -256,32 +269,41 @@ impl SessionPersistence {
         Ok(optimized)
     }
 
+    const FTS_INSERT_TRIGGER_SQL: &'static str =
+        "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content, session_id, role)
+            VALUES (new.id, new.content, new.session_id, new.role);
+        END;";
+
     /// The index keeps no copy of the text (`content='messages'`), so FTS5 can only remove a row's
     /// postings when told the values it indexed: the delete and update triggers pass the old row
     /// with the `'delete'` command. A plain `DELETE FROM messages_fts` looks the row up in
     /// `messages`, which by then no longer holds those values, and leaves the index damaged.
-    const FTS_TRIGGERS_SQL: &'static str =
-        "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-            INSERT INTO messages_fts(rowid, content, session_id, role)
-            VALUES (new.id, new.content, new.session_id, new.role);
-        END;
+    const FTS_DELETE_TRIGGERS_SQL: &'static str = "DROP TRIGGER IF EXISTS messages_ad;
+        DROP TRIGGER IF EXISTS messages_au;
 
-        CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+        CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
             INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
             VALUES ('delete', old.id, old.content, old.session_id, old.role);
         END;
 
-        CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+        CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
             INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
             VALUES ('delete', old.id, old.content, old.session_id, old.role);
             INSERT INTO messages_fts(rowid, content, session_id, role)
             VALUES (new.id, new.content, new.session_id, new.role);
         END;";
 
-    /// Delete or update triggers from before the `'delete'` command, which damaged the index.
-    const STALE_FTS_TRIGGERS_SQL: &'static str = "SELECT COUNT(*) FROM sqlite_master
-         WHERE type = 'trigger' AND name IN ('messages_ad', 'messages_au')
-           AND sql LIKE '%DELETE FROM messages_fts%'";
+    /// How many of the delete and update triggers exist, and how many use the `'delete'` command.
+    fn fts_delete_trigger_state(conn: &rusqlite::Connection) -> rusqlite::Result<(i64, i64)> {
+        conn.query_row(
+            "SELECT COUNT(*), COALESCE(SUM(sql NOT LIKE '%DELETE FROM messages_fts%'), 0)
+             FROM sqlite_master
+             WHERE type = 'trigger' AND name IN ('messages_ad', 'messages_au')",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+    }
 
     /// Only an index that no longer matches `messages` (SQLITE_CORRUPT_VTAB) is rebuilt; other
     /// corruption is damage to the file itself, which a rebuild would write into.
@@ -293,11 +315,12 @@ impl SessionPersistence {
         )
     }
 
-    /// Replaces stale delete and update triggers and, only if FTS5's own check finds the index
-    /// no longer matches `messages`, rebuilds it: one transaction, so a failure changes nothing.
-    /// One attempt per store per process, so a failing repair does not rerun the full check on
-    /// every open.
-    fn replace_stale_fts_triggers(
+    /// Installs the delete and update triggers, replacing any from before the `'delete'` command,
+    /// and rebuilds the index only if FTS5's own check finds it no longer matches `messages`: one
+    /// transaction, so a failure changes nothing. A repair that fails once it holds the write
+    /// lock is not retried in this process while both old triggers remain, so it does not rerun
+    /// the full check on every open; failing to get the lock is retried on the next open.
+    fn install_fts_delete_triggers(
         conn: &rusqlite::Connection,
         db_path: &Path,
     ) -> Result<(), AgentError> {
@@ -306,50 +329,61 @@ impl SessionPersistence {
                 "Failed to {step} for the sessions FTS triggers: {e}"
             ))
         };
-        let stale = |conn: &rusqlite::Connection| {
-            conn.query_row(Self::STALE_FTS_TRIGGERS_SQL, [], |row| row.get::<_, i64>(0))
-                .map(|count| count > 0)
-        };
-        if !stale(conn).map_err(|e| io("inspect the schema", e))?
-            || !Self::claim_repair_attempt(&FTS_TRIGGER_REPAIR_ATTEMPTS, db_path)
+        let (present, current) =
+            Self::fts_delete_trigger_state(conn).map_err(|e| io("inspect the schema", e))?;
+        if current == 2
+            || (present == 2 && Self::repair_failed_before(&FTS_TRIGGER_REPAIR_FAILURES, db_path))
         {
             return Ok(());
         }
         let tx =
             rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
                 .map_err(|e| io("begin a repair", e))?;
-        // Another process may have repaired the store since the check above.
-        if !stale(&tx).map_err(|e| io("inspect the schema", e))? {
+        // Another process may have installed them since the check above.
+        let (_, current) =
+            Self::fts_delete_trigger_state(&tx).map_err(|e| io("inspect the schema", e))?;
+        if current == 2 {
             return Ok(());
         }
-        tx.execute_batch(
-            "DROP TRIGGER IF EXISTS messages_ad;
-             DROP TRIGGER IF EXISTS messages_au;",
-        )
-        .map_err(|e| io("drop the stale triggers", e))?;
-        tx.execute_batch(Self::FTS_TRIGGERS_SQL)
-            .map_err(|e| io("create the triggers", e))?;
-        let rebuilt = match tx.execute(
-            "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
-            [],
-        ) {
-            Ok(_) => false,
-            Err(e) if Self::is_fts_index_mismatch(&e) => {
-                tx.execute(
-                    "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')",
+        let repaired = tx
+            .execute_batch(Self::FTS_DELETE_TRIGGERS_SQL)
+            .map_err(|e| io("create the triggers", e))
+            .and_then(|()| {
+                match tx.execute(
+                    "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
                     [],
-                )
-                .map_err(|e| io("rebuild the index", e))?;
-                true
+                ) {
+                    Ok(_) => Ok(false),
+                    Err(e) if Self::is_fts_index_mismatch(&e) => tx
+                        .execute(
+                            "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')",
+                            [],
+                        )
+                        .map(|_| true)
+                        .map_err(|e| io("rebuild the index", e)),
+                    Err(e) => Err(io("check the index", e)),
+                }
+            })
+            .and_then(|rebuilt| {
+                tx.commit()
+                    .map(|()| rebuilt)
+                    .map_err(|e| io("commit a repair", e))
+            });
+        match repaired {
+            Ok(rebuilt) => {
+                if present > 0 {
+                    tracing::info!(
+                        rebuilt,
+                        "replaced the sessions FTS delete and update triggers"
+                    );
+                }
+                Ok(())
             }
-            Err(e) => return Err(io("check the index", e)),
-        };
-        tx.commit().map_err(|e| io("commit a repair", e))?;
-        tracing::info!(
-            rebuilt,
-            "replaced the sessions FTS delete and update triggers"
-        );
-        Ok(())
+            Err(err) => {
+                Self::claim_repair_attempt(&FTS_TRIGGER_REPAIR_FAILURES, db_path);
+                Err(err)
+            }
+        }
     }
 
     fn ensure_fts_schema(conn: &rusqlite::Connection, db_path: &Path) -> Result<bool, AgentError> {
@@ -363,15 +397,17 @@ impl SessionPersistence {
             );
 
             {}",
-            Self::FTS_TRIGGERS_SQL
+            Self::FTS_INSERT_TRIGGER_SQL
         )) {
-            Ok(()) => {
-                // A store the triggers cannot repair stays usable; search falls back on damage.
-                if let Err(err) = Self::replace_stale_fts_triggers(conn, db_path) {
+            Ok(()) => match Self::install_fts_delete_triggers(conn, db_path) {
+                Ok(()) => Ok(true),
+                // A store that keeps both old triggers stays usable; search falls back on damage.
+                Err(err) if matches!(Self::fts_delete_trigger_state(conn), Ok((2, _))) => {
                     tracing::warn!("{} ({})", err, db_path.display());
+                    Ok(true)
                 }
-                Ok(true)
-            }
+                Err(err) => Err(err),
+            },
             Err(err) if Self::is_fts5_unavailable_error(&err) => {
                 tracing::warn!(
                     "SQLite FTS5 unavailable for {}; session persistence will continue without full-text indexing: {}",
