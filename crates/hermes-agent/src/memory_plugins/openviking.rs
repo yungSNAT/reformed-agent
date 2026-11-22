@@ -371,7 +371,11 @@ fn commit_openviking_session(st: &VikingState) -> bool {
         return false;
     }
     let h = viking_headers(st);
-    let url = format!("{}/api/v1/sessions/{}/commit", st.endpoint, st.session_id);
+    let url = format!(
+        "{}/api/v1/sessions/{}/commit",
+        st.endpoint,
+        urlencoding::encode(&st.session_id)
+    );
     match st.client.post(&url).headers(h).send() {
         Ok(resp) if resp.status().is_success() => true,
         Ok(resp) => {

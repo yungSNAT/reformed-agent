@@ -182,7 +182,9 @@ impl WeComAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom send failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom send failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -272,7 +274,9 @@ impl PlatformAdapter for WeComAdapter {
             .multipart(form)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom media upload failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom media upload failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -281,10 +285,9 @@ impl PlatformAdapter for WeComAdapter {
             )));
         }
 
-        let result: serde_json::Value = resp
-            .json()
-            .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom upload parse failed: {}", e.without_url())))?;
+        let result: serde_json::Value = resp.json().await.map_err(|e| {
+            GatewayError::SendFailed(format!("WeCom upload parse failed: {}", e.without_url()))
+        })?;
         let media_id = result
             .get("media_id")
             .and_then(|v| v.as_str())
@@ -372,7 +375,9 @@ impl PlatformAdapter for WeComAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom media send failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom media send failed: {}", e.without_url()))
+            })?;
 
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();

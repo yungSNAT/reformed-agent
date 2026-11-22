@@ -153,7 +153,8 @@ impl SignalAdapter {
     pub async fn receive_messages(&self) -> Result<Vec<serde_json::Value>, GatewayError> {
         let url = format!(
             "{}/v1/receive/{}",
-            self.config.api_url, self.config.phone_number
+            self.config.api_url,
+            urlencoding::encode(&self.config.phone_number)
         );
         let resp =
             self.client.get(&url).send().await.map_err(|e| {

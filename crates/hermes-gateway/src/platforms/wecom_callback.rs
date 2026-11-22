@@ -453,7 +453,9 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .json(&body)
             .send()
             .await
-            .map_err(|e| GatewayError::SendFailed(format!("WeCom callback send failed: {}", e.without_url())))?;
+            .map_err(|e| {
+                GatewayError::SendFailed(format!("WeCom callback send failed: {}", e.without_url()))
+            })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
             return Err(GatewayError::SendFailed(format!(
@@ -513,7 +515,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .send()
             .await
             .map_err(|e| {
-                GatewayError::SendFailed(format!("WeCom callback media upload failed: {}", e.without_url()))
+                GatewayError::SendFailed(format!(
+                    "WeCom callback media upload failed: {}",
+                    e.without_url()
+                ))
             })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();
@@ -522,7 +527,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             )));
         }
         let result: serde_json::Value = resp.json().await.map_err(|e| {
-            GatewayError::SendFailed(format!("WeCom callback upload parse failed: {}", e.without_url()))
+            GatewayError::SendFailed(format!(
+                "WeCom callback upload parse failed: {}",
+                e.without_url()
+            ))
         })?;
         let media_id = result
             .get("media_id")
@@ -566,7 +574,10 @@ impl PlatformAdapter for WeComCallbackAdapter {
             .send()
             .await
             .map_err(|e| {
-                GatewayError::SendFailed(format!("WeCom callback media send failed: {}", e.without_url()))
+                GatewayError::SendFailed(format!(
+                    "WeCom callback media send failed: {}",
+                    e.without_url()
+                ))
             })?;
         if !resp.status().is_success() {
             let text = resp.text().await.unwrap_or_default();

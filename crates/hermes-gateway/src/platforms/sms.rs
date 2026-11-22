@@ -53,7 +53,8 @@ impl SmsAdapter {
     pub async fn send_sms(&self, to: &str, body: &str) -> Result<(), GatewayError> {
         let url = format!(
             "{}/Accounts/{}/Messages.json",
-            TWILIO_API_BASE, self.config.account_sid
+            TWILIO_API_BASE,
+            urlencoding::encode(&self.config.account_sid)
         );
 
         let params = [
@@ -130,7 +131,8 @@ impl PlatformAdapter for SmsAdapter {
         // For URLs, we can use them directly via the MediaUrl parameter.
         let url = format!(
             "{}/Accounts/{}/Messages.json",
-            TWILIO_API_BASE, self.config.account_sid
+            TWILIO_API_BASE,
+            urlencoding::encode(&self.config.account_sid)
         );
 
         let body_text = caption.unwrap_or("");
