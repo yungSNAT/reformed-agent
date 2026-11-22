@@ -1394,23 +1394,6 @@ fn test_replacing_messages_clears_old_fts_rows_when_available() {
 }
 
 #[test]
-fn test_delete_fts_rows_ignores_missing_fts_table() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT,
-            created_at TEXT NOT NULL
-        );",
-    )
-    .unwrap();
-
-    SessionPersistence::delete_fts_rows_for_session(&conn, "no-fts").unwrap();
-}
-
-#[test]
 fn test_fts_unavailable_error_classifier_matches_missing_modules() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     let err = conn
@@ -1825,15 +1808,25 @@ fn fts_index_blocks(conn: &rusqlite::Connection) -> Vec<(i64, Vec<u8>)> {
 fn store_damaged_by_old_fts_triggers(sp: &SessionPersistence) {
     sp.persist_session(
         "kept",
-        &[Message::user("golf lemon"), Message::assistant("hotel lemon")],
+        &[
+            Message::user("golf lemon"),
+            Message::assistant("hotel lemon"),
+        ],
         None,
         None,
         None,
         None,
     )
     .unwrap();
-    sp.persist_session("dropped", &[Message::user("india lime")], None, None, None, None)
-        .unwrap();
+    sp.persist_session(
+        "dropped",
+        &[Message::user("india lime")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     let conn = open_db(sp);
     conn.execute_batch(OLD_FTS_TRIGGERS).unwrap();
     conn.execute("DELETE FROM messages WHERE session_id = 'dropped'", [])
@@ -1843,7 +1836,10 @@ fn store_damaged_by_old_fts_triggers(sp: &SessionPersistence) {
         [],
     )
     .unwrap();
-    assert!(fts_index_check(&conn).is_err(), "the old triggers damage the index");
+    assert!(
+        fts_index_check(&conn).is_err(),
+        "the old triggers damage the index"
+    );
 }
 
 #[test]
@@ -1868,18 +1864,35 @@ fn fts_index_matches_messages_after_rewind_restore_rewrite_prune_and_delete() {
     // Rewrites the live transcript and keeps the rewound rows.
     sp.persist_session(
         "kept",
-        &[Message::user("alpha kiwi"), Message::assistant("echo papaya")],
+        &[
+            Message::user("alpha kiwi"),
+            Message::assistant("echo papaya"),
+        ],
         None,
         None,
         None,
         None,
     )
     .unwrap();
-    sp.persist_session("deleted", &[Message::user("foxtrot quince")], None, None, None, None)
-        .unwrap();
+    sp.persist_session(
+        "deleted",
+        &[Message::user("foxtrot quince")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     assert!(sp.delete_session("deleted").unwrap());
-    sp.persist_session("pruned", &[Message::user("golf raisin")], None, None, None, None)
-        .unwrap();
+    sp.persist_session(
+        "pruned",
+        &[Message::user("golf raisin")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
     mark_session_old(&sp, "pruned", 40);
     assert_eq!(sp.prune_sessions(30).unwrap(), 1);
 

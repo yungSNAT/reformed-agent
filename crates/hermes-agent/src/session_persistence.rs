@@ -247,8 +247,87 @@ impl SessionPersistence {
         Ok(optimized)
     }
 
+    /// The index keeps no copy of the text (`content='messages'`), so FTS5 can only remove a row's
+    /// postings when told the values it indexed: the delete and update triggers pass the old row
+    /// with the `'delete'` command. A plain `DELETE FROM messages_fts` looks the row up in
+    /// `messages`, which by then no longer holds those values, and leaves the index damaged.
+    const FTS_TRIGGERS_SQL: &'static str =
+        "CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
+            INSERT INTO messages_fts(rowid, content, session_id, role)
+            VALUES (new.id, new.content, new.session_id, new.role);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
+            VALUES ('delete', old.id, old.content, old.session_id, old.role);
+        END;
+
+        CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
+            INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
+            VALUES ('delete', old.id, old.content, old.session_id, old.role);
+            INSERT INTO messages_fts(rowid, content, session_id, role)
+            VALUES (new.id, new.content, new.session_id, new.role);
+        END;";
+
+    /// Delete or update triggers from before the `'delete'` command, which damaged the index.
+    const STALE_FTS_TRIGGERS_SQL: &'static str = "SELECT COUNT(*) FROM sqlite_master
+         WHERE type = 'trigger' AND name IN ('messages_ad', 'messages_au')
+           AND sql LIKE '%DELETE FROM messages_fts%'";
+
+    /// Replaces stale delete and update triggers and, only if FTS5's own check finds the index
+    /// no longer matches `messages`, rebuilds it: one transaction, so a failure changes nothing.
+    fn replace_stale_fts_triggers(conn: &rusqlite::Connection) -> Result<(), AgentError> {
+        let io = |step: &str, e: rusqlite::Error| {
+            AgentError::Io(format!(
+                "Failed to {step} for the sessions FTS triggers: {e}"
+            ))
+        };
+        let stale = |conn: &rusqlite::Connection| {
+            conn.query_row(Self::STALE_FTS_TRIGGERS_SQL, [], |row| row.get::<_, i64>(0))
+                .map(|count| count > 0)
+        };
+        if !stale(conn).map_err(|e| io("inspect the schema", e))? {
+            return Ok(());
+        }
+        let tx =
+            rusqlite::Transaction::new_unchecked(conn, rusqlite::TransactionBehavior::Immediate)
+                .map_err(|e| io("begin a repair", e))?;
+        // Another process may have repaired the store since the check above.
+        if !stale(&tx).map_err(|e| io("inspect the schema", e))? {
+            return Ok(());
+        }
+        tx.execute_batch(
+            "DROP TRIGGER IF EXISTS messages_ad;
+             DROP TRIGGER IF EXISTS messages_au;",
+        )
+        .map_err(|e| io("drop the stale triggers", e))?;
+        tx.execute_batch(Self::FTS_TRIGGERS_SQL)
+            .map_err(|e| io("create the triggers", e))?;
+        let rebuilt = match tx.execute(
+            "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
+            [],
+        ) {
+            Ok(_) => false,
+            Err(e) if e.sqlite_error_code() == Some(rusqlite::ErrorCode::DatabaseCorrupt) => {
+                tx.execute(
+                    "INSERT INTO messages_fts(messages_fts) VALUES('rebuild')",
+                    [],
+                )
+                .map_err(|e| io("rebuild the index", e))?;
+                true
+            }
+            Err(e) => return Err(io("check the index", e)),
+        };
+        tx.commit().map_err(|e| io("commit a repair", e))?;
+        tracing::info!(
+            rebuilt,
+            "replaced the sessions FTS delete and update triggers"
+        );
+        Ok(())
+    }
+
     fn ensure_fts_schema(conn: &rusqlite::Connection, db_path: &Path) -> Result<bool, AgentError> {
-        match conn.execute_batch(
+        match conn.execute_batch(&format!(
             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
                 content,
                 session_id UNINDEXED,
@@ -257,22 +336,16 @@ impl SessionPersistence {
                 content_rowid='id'
             );
 
-            CREATE TRIGGER IF NOT EXISTS messages_ai AFTER INSERT ON messages BEGIN
-                INSERT INTO messages_fts(rowid, content, session_id, role)
-                VALUES (new.id, new.content, new.session_id, new.role);
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                DELETE FROM messages_fts WHERE rowid = old.id;
-            END;
-
-            CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                DELETE FROM messages_fts WHERE rowid = old.id;
-                INSERT INTO messages_fts(rowid, content, session_id, role)
-                VALUES (new.id, new.content, new.session_id, new.role);
-            END;",
-        ) {
-            Ok(()) => Ok(true),
+            {}",
+            Self::FTS_TRIGGERS_SQL
+        )) {
+            Ok(()) => {
+                // A store the triggers cannot repair stays usable; search falls back on damage.
+                if let Err(err) = Self::replace_stale_fts_triggers(conn) {
+                    tracing::warn!("{} ({})", err, db_path.display());
+                }
+                Ok(true)
+            }
             Err(err) if Self::is_fts5_unavailable_error(&err) => {
                 tracing::warn!(
                     "SQLite FTS5 unavailable for {}; session persistence will continue without full-text indexing: {}",
@@ -297,21 +370,6 @@ impl SessionPersistence {
         )
         .map(|_| ())
         .map_err(|e| AgentError::Io(format!("Failed to rebuild messages_fts: {e}")))
-    }
-
-    fn delete_fts_rows_for_session(
-        conn: &rusqlite::Connection,
-        session_id: &str,
-    ) -> Result<(), AgentError> {
-        if !Self::fts_table_exists(conn)? {
-            return Ok(());
-        }
-        conn.execute(
-            "DELETE FROM messages_fts WHERE session_id = ?1",
-            rusqlite::params![session_id],
-        )
-        .map(|_| ())
-        .map_err(|e| AgentError::Io(format!("Failed to delete messages_fts rows: {e}")))
     }
 
     fn ensure_text_column(
@@ -909,7 +967,6 @@ impl SessionPersistence {
             .unchecked_transaction()
             .map_err(|e| AgentError::Io(format!("Failed to open prune transaction: {e}")))?;
         for sid in &session_ids {
-            Self::delete_fts_rows_for_session(&tx, sid)?;
             tx.execute(
                 "DELETE FROM messages WHERE session_id = ?1",
                 rusqlite::params![sid],
@@ -951,7 +1008,6 @@ impl SessionPersistence {
                 .map_err(|e| AgentError::Io(format!("Failed to look up session: {e}")))?;
             // As upstream, a session the store does not hold changes nothing there.
             if deleted {
-                Self::delete_fts_rows_for_session(&tx, session_id)?;
                 for sql in [
                     "UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?1",
                     "DELETE FROM messages WHERE session_id = ?1",
