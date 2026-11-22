@@ -690,8 +690,7 @@ class HindsightMemoryProvider(MemoryProvider):
             print("\n  Get your API key at https://ui.hindsight.vectorize.io\n")
             existing_key = os.environ.get("HINDSIGHT_API_KEY", "")
             if existing_key:
-                masked = f"...{existing_key[-4:]}" if len(existing_key) > 4 else "set"
-                sys.stdout.write(f"  API key (current: {masked}, blank to keep): ")
+                sys.stdout.write("  API key (current: set, blank to keep): ")
                 sys.stdout.flush()
                 api_key = getpass.getpass(prompt="") if sys.stdin.isatty() else sys.stdin.readline().strip()
             else:

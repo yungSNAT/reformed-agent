@@ -25,6 +25,21 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timezone
 
 
+def tls_context(verify=True):
+    """TLS client context that refuses protocols older than TLS 1.2.
+
+    With ``verify=False`` the handshake completes without checking the
+    certificate, so the protocol and cipher can still be reported. Python then
+    returns no certificate fields, so subject, issuer and dates come back empty.
+    """
+    ctx = ssl.create_default_context()
+    ctx.minimum_version = ssl.TLSVersion.TLSv1_2
+    if not verify:
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
 # ─── Subdomain Discovery (crt.sh) ──────────────────────────────────────────
 
 def subdomains(domain, include_expired=False, limit=200):
@@ -83,15 +98,13 @@ def check_ssl(host, port=443, timeout=10):
 
     warning = None
     try:
-        ctx = ssl.create_default_context()
+        ctx = tls_context()
         with socket.create_connection((host, port), timeout=timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as s:
                 cert, cipher, proto = s.getpeercert(), s.cipher(), s.version()
     except ssl.SSLCertVerificationError as e:
         warning = str(e)
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx = tls_context(verify=False)
         with socket.create_connection((host, port), timeout=timeout) as sock:
             with ctx.wrap_socket(sock, server_hostname=host) as s:
                 cert, cipher, proto = s.getpeercert(), s.cipher(), s.version()
@@ -272,9 +285,7 @@ def check_available(domain):
     # SSL
     ssl_up = False
     try:
-        ctx = ssl.create_default_context()
-        ctx.check_hostname = False
-        ctx.verify_mode = ssl.CERT_NONE
+        ctx = tls_context(verify=False)
         with socket.create_connection((domain, 443), timeout=3) as s:
             with ctx.wrap_socket(s, server_hostname=domain):
                 ssl_up = True
