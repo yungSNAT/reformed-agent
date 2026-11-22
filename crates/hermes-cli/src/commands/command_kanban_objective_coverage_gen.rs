@@ -71,20 +71,7 @@ impl Drop for RestoreEnvironment {
 
 #[test]
 fn kanban_add_parses_flags_and_defaults() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::kanban_add_parses_flags_and_defaults");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("kanban_add_parses_flags_and_defaults") {
         return;
     }
 
@@ -132,20 +119,7 @@ fn kanban_add_parses_flags_and_defaults() {
 
 #[test]
 fn kanban_add_reports_invalid_and_missing_arguments() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::kanban_add_reports_invalid_and_missing_arguments");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("kanban_add_reports_invalid_and_missing_arguments") {
         return;
     }
 
@@ -175,20 +149,7 @@ fn kanban_add_reports_invalid_and_missing_arguments() {
 
 #[test]
 fn kanban_status_sorts_active_tasks_and_limits_display() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::kanban_status_sorts_active_tasks_and_limits_display");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("kanban_status_sorts_active_tasks_and_limits_display") {
         return;
     }
 
@@ -265,20 +226,7 @@ fn kanban_status_sorts_active_tasks_and_limits_display() {
 
 #[test]
 fn kanban_commands_select_boards_and_list_saved_attachments() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::kanban_commands_select_boards_and_list_saved_attachments");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("kanban_commands_select_boards_and_list_saved_attachments") {
         return;
     }
 
@@ -353,20 +301,7 @@ fn kanban_commands_select_boards_and_list_saved_attachments() {
 
 #[test]
 fn kanban_command_validation_leaves_the_board_unchanged() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::kanban_command_validation_leaves_the_board_unchanged");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("kanban_command_validation_leaves_the_board_unchanged") {
         return;
     }
 
@@ -445,20 +380,7 @@ fn kanban_command_validation_leaves_the_board_unchanged() {
 
 #[test]
 fn planner_modes_parse_aliases_and_emit_canonical_names() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::planner_modes_parse_aliases_and_emit_canonical_names");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("planner_modes_parse_aliases_and_emit_canonical_names") {
         return;
     }
 
@@ -488,20 +410,7 @@ fn planner_modes_parse_aliases_and_emit_canonical_names() {
 
 #[test]
 fn planner_infers_requirements_independently() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::planner_infers_requirements_independently");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("planner_infers_requirements_independently") {
         return;
     }
 
@@ -536,20 +445,7 @@ fn planner_infers_requirements_independently() {
 
 #[test]
 fn task_depth_profiles_apply_runtime_budgets() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::task_depth_profiles_apply_runtime_budgets");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("task_depth_profiles_apply_runtime_budgets") {
         return;
     }
 
@@ -617,20 +513,7 @@ fn task_depth_profiles_apply_runtime_budgets() {
 
 #[test]
 fn graph_candidate_walk_filters_subtrees_and_respects_limit() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::graph_candidate_walk_filters_subtrees_and_respects_limit");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("graph_candidate_walk_filters_subtrees_and_respects_limit") {
         return;
     }
 
@@ -678,20 +561,7 @@ fn graph_candidate_walk_filters_subtrees_and_respects_limit() {
 
 #[test]
 fn graph_import_extraction_and_node_sanitization() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::graph_import_extraction_and_node_sanitization");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("graph_import_extraction_and_node_sanitization") {
         return;
     }
 
@@ -725,20 +595,7 @@ fn graph_import_extraction_and_node_sanitization() {
 
 #[test]
 fn graph_settings_prefer_current_names_and_fall_back_to_legacy_names() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::graph_settings_prefer_current_names_and_fall_back_to_legacy_names");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("graph_settings_prefer_current_names_and_fall_back_to_legacy_names") {
         return;
     }
 
@@ -793,20 +650,7 @@ fn graph_settings_prefer_current_names_and_fall_back_to_legacy_names() {
 
 #[tokio::test]
 async fn graph_diagnostics_report_rejected_urls_without_network() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::graph_diagnostics_report_rejected_urls_without_network");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("graph_diagnostics_report_rejected_urls_without_network") {
         return;
     }
 
@@ -841,4 +685,27 @@ async fn graph_diagnostics_report_rejected_urls_without_network() {
         lines[3].starts_with("recall_telemetry: unreachable ("),
         "{lines:?}"
     );
+}
+
+/// Re-runs one test of this module alone in a child test process with the isolation marker set,
+/// because these tests change process-wide state. Returns true in the parent (which then returns)
+/// once the child passed, and false inside the child, which runs the test body.
+fn run_isolated(test: &str) -> bool {
+    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_some() {
+        return false;
+    }
+    let path = format!("{}::{test}", module_path!());
+    let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
+        .output()
+        .expect("run the isolated test");
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+        "isolated test {name} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
 }

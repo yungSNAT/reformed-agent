@@ -84,20 +84,7 @@ fn encoded_token(claims: &Value) -> String {
 
 #[test]
 fn fail_open_state_records_error_and_portal() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::fail_open_state_records_error_and_portal");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("fail_open_state_records_error_and_portal") {
         return;
     }
 
@@ -113,23 +100,7 @@ fn fail_open_state_records_error_and_portal() {
 
 #[test]
 fn from_response_maps_additional_error_codes() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::from_response_maps_additional_error_codes"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("from_response_maps_additional_error_codes") {
         return;
     }
 
@@ -178,20 +149,7 @@ fn from_response_maps_additional_error_codes() {
 
 #[test]
 fn auth_error_maps_to_login_hint() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::auth_error_maps_to_login_hint");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("auth_error_maps_to_login_hint") {
         return;
     }
 
@@ -202,20 +160,7 @@ fn auth_error_maps_to_login_hint() {
 
 #[test]
 fn from_state_rejects_blank_access_token() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::from_state_rejects_blank_access_token");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("from_state_rejects_blank_access_token") {
         return;
     }
 
@@ -231,20 +176,7 @@ fn from_state_rejects_blank_access_token() {
 
 #[test]
 fn client_exposes_portal_base_url() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::client_exposes_portal_base_url");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("client_exposes_portal_base_url") {
         return;
     }
 
@@ -254,20 +186,7 @@ fn client_exposes_portal_base_url() {
 
 #[tokio::test]
 async fn client_validates_inputs_before_requests() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::client_validates_inputs_before_requests");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("client_validates_inputs_before_requests") {
         return;
     }
 
@@ -295,20 +214,7 @@ async fn client_validates_inputs_before_requests() {
 
 #[tokio::test]
 async fn simple_actions_return_usage_text() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::simple_actions_return_usage_text");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("simple_actions_return_usage_text") {
         return;
     }
 
@@ -348,20 +254,7 @@ async fn simple_actions_return_usage_text() {
 
 #[test]
 fn announce_charge_key_succeeds() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::announce_charge_key_succeeds");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("announce_charge_key_succeeds") {
         return;
     }
 
@@ -370,23 +263,7 @@ fn announce_charge_key_succeeds() {
 
 #[tokio::test]
 async fn portal_and_unconfirmed_auto_reload_use_resolved_portal() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::portal_and_unconfirmed_auto_reload_use_resolved_portal"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("portal_and_unconfirmed_auto_reload_use_resolved_portal") {
         return;
     }
 
@@ -413,23 +290,7 @@ async fn portal_and_unconfirmed_auto_reload_use_resolved_portal() {
 
 #[tokio::test]
 async fn portal_base_from_fallback_url_uses_resolved_base_when_unusable() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::portal_base_from_fallback_url_uses_resolved_base_when_unusable"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("portal_base_from_fallback_url_uses_resolved_base_when_unusable") {
         return;
     }
 
@@ -451,23 +312,7 @@ async fn portal_base_from_fallback_url_uses_resolved_base_when_unusable() {
 
 #[tokio::test]
 async fn overview_renders_state_for_logged_in_member() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::overview_renders_state_for_logged_in_member"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("overview_renders_state_for_logged_in_member") {
         return;
     }
 
@@ -495,23 +340,7 @@ async fn overview_renders_state_for_logged_in_member() {
 
 #[tokio::test]
 async fn limit_falls_back_to_logged_out_on_auth_error() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::limit_falls_back_to_logged_out_on_auth_error"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("limit_falls_back_to_logged_out_on_auth_error") {
         return;
     }
 
@@ -538,20 +367,7 @@ async fn limit_falls_back_to_logged_out_on_auth_error() {
 
 #[tokio::test]
 async fn status_fails_open_on_server_error() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::status_fails_open_on_server_error");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("status_fails_open_on_server_error") {
         return;
     }
 
@@ -577,23 +393,7 @@ async fn status_fails_open_on_server_error() {
 
 #[tokio::test]
 async fn confirmed_charge_without_key_generates_uuid_key() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::confirmed_charge_without_key_generates_uuid_key"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("confirmed_charge_without_key_generates_uuid_key") {
         return;
     }
 
@@ -624,20 +424,7 @@ async fn confirmed_charge_without_key_generates_uuid_key() {
 
 #[tokio::test]
 async fn non_charge_redirects_are_followed() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::non_charge_redirects_are_followed");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("non_charge_redirects_are_followed") {
         return;
     }
 
@@ -669,20 +456,7 @@ async fn non_charge_redirects_are_followed() {
 
 #[test]
 fn charge_status_keeps_null_amount() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::charge_status_keeps_null_amount");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("charge_status_keeps_null_amount") {
         return;
     }
 
@@ -705,20 +479,7 @@ fn logged_in_state() -> BillingState {
 
 #[test]
 fn render_admin_with_terminal_billing_off() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::render_admin_with_terminal_billing_off");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("render_admin_with_terminal_billing_off") {
         return;
     }
 
@@ -749,20 +510,7 @@ fn render_admin_with_terminal_billing_off() {
 
 #[test]
 fn render_owner_who_can_charge_without_card() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::render_owner_who_can_charge_without_card");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("render_owner_who_can_charge_without_card") {
         return;
     }
 
@@ -777,20 +525,7 @@ fn render_owner_who_can_charge_without_card() {
 
 #[test]
 fn render_without_role_requires_admin() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::render_without_role_requires_admin");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("render_without_role_requires_admin") {
         return;
     }
 
@@ -802,20 +537,7 @@ fn render_without_role_requires_admin() {
 
 #[test]
 fn render_billing_limit_variants() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::render_billing_limit_variants");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("render_billing_limit_variants") {
         return;
     }
 
@@ -845,23 +567,7 @@ fn render_billing_limit_variants() {
 
 #[test]
 fn usage_bar_handles_missing_and_invalid_values() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::usage_bar_handles_missing_and_invalid_values"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("usage_bar_handles_missing_and_invalid_values") {
         return;
     }
 
@@ -877,23 +583,7 @@ fn usage_bar_handles_missing_and_invalid_values() {
 
 #[test]
 fn money_helpers_reject_invalid_input_and_format_negatives() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::money_helpers_reject_invalid_input_and_format_negatives"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("money_helpers_reject_invalid_input_and_format_negatives") {
         return;
     }
 
@@ -909,20 +599,7 @@ fn money_helpers_reject_invalid_input_and_format_negatives() {
 
 #[test]
 fn absolutize_portal_url_variants() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::absolutize_portal_url_variants");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("absolutize_portal_url_variants") {
         return;
     }
 
@@ -939,23 +616,7 @@ fn absolutize_portal_url_variants() {
 
 #[test]
 fn billing_scope_detection_handles_malformed_tokens_and_claims() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::billing_scope_detection_handles_malformed_tokens_and_claims"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("billing_scope_detection_handles_malformed_tokens_and_claims") {
         return;
     }
 
@@ -976,4 +637,29 @@ fn billing_scope_detection_handles_malformed_tokens_and_claims() {
         None,
         Some(&encoded_token(&json!({"scope": 5})))
     ));
+}
+
+/// Re-runs one test of this module alone in a child test process with the isolation marker set,
+/// because these tests change process-wide state. Returns true in the parent (which then returns)
+/// once the child passed, and false inside the child, which runs the test body.
+fn run_isolated(test: &str) -> bool {
+    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_some() {
+        return false;
+    }
+    let path = format!("{}::{test}", module_path!());
+    let name = path
+        .split_once("::")
+        .map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
+        .output()
+        .expect("run the isolated test");
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+        "isolated test {name} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
 }

@@ -62,20 +62,7 @@ fn skill_md(frontmatter_extra: &str) -> Bytes {
 
 #[test]
 fn install_skill_files_writes_files_and_replaces_existing() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::install_skill_files_writes_files_and_replaces_existing");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("install_skill_files_writes_files_and_replaces_existing") {
         return;
     }
 
@@ -104,20 +91,7 @@ fn install_skill_files_writes_files_and_replaces_existing() {
 
 #[test]
 fn install_skill_files_requires_skill_md() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::install_skill_files_requires_skill_md");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("install_skill_files_requires_skill_md") {
         return;
     }
 
@@ -134,20 +108,7 @@ fn install_skill_files_requires_skill_md() {
 
 #[test]
 fn install_skill_files_rejects_unsafe_paths() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::install_skill_files_rejects_unsafe_paths");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("install_skill_files_rejects_unsafe_paths") {
         return;
     }
 
@@ -164,20 +125,7 @@ fn install_skill_files_rejects_unsafe_paths() {
 
 #[test]
 fn auto_bootstrap_enabled_respects_env() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::auto_bootstrap_enabled_respects_env");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("auto_bootstrap_enabled_respects_env") {
         return;
     }
 
@@ -195,20 +143,7 @@ fn auto_bootstrap_enabled_respects_env() {
 
 #[test]
 fn bootstrap_force_confirmed_respects_env() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::bootstrap_force_confirmed_respects_env");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("bootstrap_force_confirmed_respects_env") {
         return;
     }
 
@@ -227,20 +162,7 @@ fn bootstrap_force_confirmed_respects_env() {
 
 #[test]
 fn collect_bootstrap_commands_handles_object_forms() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::collect_bootstrap_commands_handles_object_forms");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("collect_bootstrap_commands_handles_object_forms") {
         return;
     }
 
@@ -266,20 +188,7 @@ fn collect_bootstrap_commands_handles_object_forms() {
 
 #[test]
 fn collect_bootstrap_commands_ignores_other_values() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::collect_bootstrap_commands_ignores_other_values");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("collect_bootstrap_commands_ignores_other_values") {
         return;
     }
 
@@ -295,20 +204,7 @@ fn collect_bootstrap_commands_ignores_other_values() {
 
 #[test]
 fn parse_skill_bootstrap_plan_dedups_commands() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_skill_bootstrap_plan_dedups_commands");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_skill_bootstrap_plan_dedups_commands") {
         return;
     }
 
@@ -330,20 +226,7 @@ fn parse_skill_bootstrap_plan_dedups_commands() {
 
 #[test]
 fn parse_skill_bootstrap_plan_returns_none_without_commands() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_skill_bootstrap_plan_returns_none_without_commands");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_skill_bootstrap_plan_returns_none_without_commands") {
         return;
     }
 
@@ -357,20 +240,7 @@ fn parse_skill_bootstrap_plan_returns_none_without_commands() {
 
 #[test]
 fn parse_bootstrap_command_rejects_empty_and_long() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_bootstrap_command_rejects_empty_and_long");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_bootstrap_command_rejects_empty_and_long") {
         return;
     }
 
@@ -385,20 +255,7 @@ fn parse_bootstrap_command_rejects_empty_and_long() {
 
 #[test]
 fn parse_bootstrap_command_rejects_unparseable_and_empty_tokens() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_bootstrap_command_rejects_unparseable_and_empty_tokens");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_bootstrap_command_rejects_unparseable_and_empty_tokens") {
         return;
     }
 
@@ -412,20 +269,7 @@ fn parse_bootstrap_command_rejects_unparseable_and_empty_tokens() {
 #[cfg(unix)]
 #[test]
 fn parse_bootstrap_command_rejects_absolute_executable() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_bootstrap_command_rejects_absolute_executable");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_bootstrap_command_rejects_absolute_executable") {
         return;
     }
 
@@ -435,20 +279,7 @@ fn parse_bootstrap_command_rejects_absolute_executable() {
 
 #[test]
 fn parse_bootstrap_command_handles_python_script_and_allowlist() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::parse_bootstrap_command_handles_python_script_and_allowlist");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("parse_bootstrap_command_handles_python_script_and_allowlist") {
         return;
     }
 
@@ -480,20 +311,7 @@ fn sh_command(script: &str) -> ParsedBootstrapCommand {
 #[cfg(unix)]
 #[test]
 fn execute_bootstrap_command_success_and_failures() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::execute_bootstrap_command_success_and_failures");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("execute_bootstrap_command_success_and_failures") {
         return;
     }
 
@@ -536,20 +354,7 @@ fn execute_bootstrap_command_success_and_failures() {
 
 #[test]
 fn execute_bootstrap_command_missing_relative_executable() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::execute_bootstrap_command_missing_relative_executable");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("execute_bootstrap_command_missing_relative_executable") {
         return;
     }
 
@@ -566,20 +371,7 @@ fn execute_bootstrap_command_missing_relative_executable() {
 
 #[test]
 fn maybe_run_skill_bootstrap_skips_when_disabled() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::maybe_run_skill_bootstrap_skips_when_disabled");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("maybe_run_skill_bootstrap_skips_when_disabled") {
         return;
     }
 
@@ -594,20 +386,7 @@ fn maybe_run_skill_bootstrap_skips_when_disabled() {
 
 #[test]
 fn maybe_run_skill_bootstrap_errors_without_skill_md_when_enabled() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::maybe_run_skill_bootstrap_errors_without_skill_md_when_enabled");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("maybe_run_skill_bootstrap_errors_without_skill_md_when_enabled") {
         return;
     }
 
@@ -620,20 +399,7 @@ fn maybe_run_skill_bootstrap_errors_without_skill_md_when_enabled() {
 
 #[test]
 fn maybe_run_skill_bootstrap_no_plan_is_ok() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::maybe_run_skill_bootstrap_no_plan_is_ok");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("maybe_run_skill_bootstrap_no_plan_is_ok") {
         return;
     }
 
@@ -647,20 +413,7 @@ fn maybe_run_skill_bootstrap_no_plan_is_ok() {
 
 #[test]
 fn maybe_run_skill_bootstrap_only_blocked_commands() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::maybe_run_skill_bootstrap_only_blocked_commands");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("maybe_run_skill_bootstrap_only_blocked_commands") {
         return;
     }
 
@@ -678,20 +431,7 @@ fn maybe_run_skill_bootstrap_only_blocked_commands() {
 #[cfg(unix)]
 #[test]
 fn maybe_run_skill_bootstrap_runs_forced_script() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::maybe_run_skill_bootstrap_runs_forced_script");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("maybe_run_skill_bootstrap_runs_forced_script") {
         return;
     }
 
@@ -713,4 +453,27 @@ fn maybe_run_skill_bootstrap_runs_forced_script() {
             .trim(),
         "ran"
     );
+}
+
+/// Re-runs one test of this module alone in a child test process with the isolation marker set,
+/// because these tests change process-wide state. Returns true in the parent (which then returns)
+/// once the child passed, and false inside the child, which runs the test body.
+fn run_isolated(test: &str) -> bool {
+    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_some() {
+        return false;
+    }
+    let path = format!("{}::{test}", module_path!());
+    let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
+        .output()
+        .expect("run the isolated test");
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+        "isolated test {name} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
 }

@@ -97,20 +97,7 @@ fn sample_tokens(refresh: Option<&str>) -> QwenCliTokens {
 
 #[test]
 fn auth_path_uses_env_override_or_home_default() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::auth_path_uses_env_override_or_home_default");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("auth_path_uses_env_override_or_home_default") {
         return;
     }
 
@@ -131,20 +118,7 @@ fn auth_path_uses_env_override_or_home_default() {
 
 #[test]
 fn read_tokens_reports_missing_file() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::read_tokens_reports_missing_file");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("read_tokens_reports_missing_file") {
         return;
     }
 
@@ -158,20 +132,7 @@ fn read_tokens_reports_missing_file() {
 
 #[test]
 fn read_tokens_rejects_non_object_and_missing_access_token() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::read_tokens_rejects_non_object_and_missing_access_token");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("read_tokens_rejects_non_object_and_missing_access_token") {
         return;
     }
 
@@ -191,20 +152,7 @@ fn read_tokens_rejects_non_object_and_missing_access_token() {
 
 #[test]
 fn save_tokens_writes_file_that_reads_back() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::save_tokens_writes_file_that_reads_back");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("save_tokens_writes_file_that_reads_back") {
         return;
     }
 
@@ -236,20 +184,7 @@ fn save_tokens_writes_file_that_reads_back() {
 
 #[test]
 fn refresh_requires_refresh_token() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::refresh_requires_refresh_token");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("refresh_requires_refresh_token") {
         return;
     }
 
@@ -261,20 +196,7 @@ fn refresh_requires_refresh_token() {
 
 #[test]
 fn refresh_success_updates_and_persists_tokens() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::refresh_success_updates_and_persists_tokens");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("refresh_success_updates_and_persists_tokens") {
         return;
     }
 
@@ -322,20 +244,7 @@ fn refresh_success_updates_and_persists_tokens() {
 
 #[test]
 fn refresh_reports_server_and_payload_errors() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::refresh_reports_server_and_payload_errors");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("refresh_reports_server_and_payload_errors") {
         return;
     }
 
@@ -393,20 +302,7 @@ fn refresh_reports_server_and_payload_errors() {
 
 #[test]
 fn resolve_refreshes_expiring_tokens() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::resolve_refreshes_expiring_tokens");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("resolve_refreshes_expiring_tokens") {
         return;
     }
 
@@ -454,20 +350,7 @@ fn resolve_refreshes_expiring_tokens() {
 
 #[test]
 fn auth_status_reports_logged_in_and_errors() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::auth_status_reports_logged_in_and_errors");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("auth_status_reports_logged_in_and_errors") {
         return;
     }
 
@@ -492,4 +375,27 @@ fn auth_status_reports_logged_in_and_errors() {
     assert_eq!(ok.api_key.as_deref(), Some("abc"));
     assert_eq!(ok.expires_at_ms, Some(123));
     assert!(ok.error.is_none());
+}
+
+/// Re-runs one test of this module alone in a child test process with the isolation marker set,
+/// because these tests change process-wide state. Returns true in the parent (which then returns)
+/// once the child passed, and false inside the child, which runs the test body.
+fn run_isolated(test: &str) -> bool {
+    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_some() {
+        return false;
+    }
+    let path = format!("{}::{test}", module_path!());
+    let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
+        .output()
+        .expect("run the isolated test");
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+        "isolated test {name} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
 }

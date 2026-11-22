@@ -59,23 +59,7 @@ fn write_at(path: &Path, data: &[u8], modified: SystemTime) {
 
 #[test]
 fn environment_overrides_are_parsed_in_an_isolated_process() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::environment_overrides_are_parsed_in_an_isolated_process"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("environment_overrides_are_parsed_in_an_isolated_process") {
         return;
     }
 
@@ -133,23 +117,7 @@ fn environment_overrides_are_parsed_in_an_isolated_process() {
 
 #[test]
 fn path_helpers_expand_home_and_reject_empty_or_nul_input() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::path_helpers_expand_home_and_reject_empty_or_nul_input"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("path_helpers_expand_home_and_reject_empty_or_nul_input") {
         return;
     }
 
@@ -181,23 +149,7 @@ fn path_helpers_expand_home_and_reject_empty_or_nul_input() {
 #[cfg(target_os = "linux")]
 #[test]
 fn delivery_skips_unresolvable_relative_roots_when_cwd_is_gone() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::delivery_skips_unresolvable_relative_roots_when_cwd_is_gone"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("delivery_skips_unresolvable_relative_roots_when_cwd_is_gone") {
         return;
     }
 
@@ -237,23 +189,7 @@ fn delivery_skips_unresolvable_relative_roots_when_cwd_is_gone() {
 
 #[test]
 fn delivery_checks_file_type_recency_allow_roots_and_credentials() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::delivery_checks_file_type_recency_allow_roots_and_credentials"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("delivery_checks_file_type_recency_allow_roots_and_credentials") {
         return;
     }
 
@@ -309,23 +245,7 @@ fn delivery_checks_file_type_recency_allow_roots_and_credentials() {
 
 #[test]
 fn new_cache_reports_a_file_in_place_of_the_cache_directory() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::new_cache_reports_a_file_in_place_of_the_cache_directory"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("new_cache_reports_a_file_in_place_of_the_cache_directory") {
         return;
     }
 
@@ -344,23 +264,7 @@ fn new_cache_reports_a_file_in_place_of_the_cache_directory() {
 
 #[tokio::test]
 async fn media_bytes_use_default_image_hint_and_classify_video_and_documents() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::media_bytes_use_default_image_hint_and_classify_video_and_documents"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("media_bytes_use_default_image_hint_and_classify_video_and_documents") {
         return;
     }
 
@@ -420,23 +324,7 @@ async fn media_bytes_use_default_image_hint_and_classify_video_and_documents() {
 
 #[tokio::test]
 async fn byte_cache_counts_nested_files_and_allows_an_exact_fit() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::byte_cache_counts_nested_files_and_allows_an_exact_fit"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("byte_cache_counts_nested_files_and_allows_an_exact_fit") {
         return;
     }
 
@@ -467,23 +355,7 @@ async fn byte_cache_counts_nested_files_and_allows_an_exact_fit() {
 
 #[tokio::test]
 async fn byte_cache_distinguishes_directory_and_file_creation_errors() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::byte_cache_distinguishes_directory_and_file_creation_errors"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("byte_cache_distinguishes_directory_and_file_creation_errors") {
         return;
     }
 
@@ -515,23 +387,7 @@ async fn byte_cache_distinguishes_directory_and_file_creation_errors() {
 
 #[tokio::test]
 async fn audio_cache_reuses_local_files_according_to_ttl() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::audio_cache_reuses_local_files_according_to_ttl"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("audio_cache_reuses_local_files_according_to_ttl") {
         return;
     }
 
@@ -577,23 +433,7 @@ async fn audio_cache_reuses_local_files_according_to_ttl() {
 
 #[tokio::test]
 async fn cleanup_removes_only_expired_files_and_updates_the_recursive_size() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::cleanup_removes_only_expired_files_and_updates_the_recursive_size"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("cleanup_removes_only_expired_files_and_updates_the_recursive_size") {
         return;
     }
 
@@ -625,23 +465,7 @@ async fn cleanup_removes_only_expired_files_and_updates_the_recursive_size() {
 
 #[tokio::test]
 async fn cache_traversal_reports_a_root_replaced_by_a_regular_file() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::cache_traversal_reports_a_root_replaced_by_a_regular_file"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("cache_traversal_reports_a_root_replaced_by_a_regular_file") {
         return;
     }
 
@@ -662,20 +486,7 @@ async fn cache_traversal_reports_a_root_replaced_by_a_regular_file() {
 
 #[test]
 fn blank_file_names_are_rejected() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(module_path!(), "::blank_file_names_are_rejected");
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("blank_file_names_are_rejected") {
         return;
     }
 
@@ -688,23 +499,7 @@ fn blank_file_names_are_rejected() {
 #[cfg(unix)]
 #[test]
 fn safe_leaf_replaces_a_literal_backslash_on_unix() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::safe_leaf_replaces_a_literal_backslash_on_unix"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("safe_leaf_replaces_a_literal_backslash_on_unix") {
         return;
     }
 
@@ -716,23 +511,7 @@ fn safe_leaf_replaces_a_literal_backslash_on_unix() {
 
 #[test]
 fn mime_lookup_accepts_extensions_without_a_leading_dot() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::mime_lookup_accepts_extensions_without_a_leading_dot"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("mime_lookup_accepts_extensions_without_a_leading_dot") {
         return;
     }
 
@@ -743,23 +522,7 @@ fn mime_lookup_accepts_extensions_without_a_leading_dot() {
 
 #[test]
 fn image_detection_validates_signatures_and_requires_nonempty_unknown_types() {
-    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_none() {
-        let name = concat!(
-            module_path!(),
-            "::image_detection_validates_signatures_and_requires_nonempty_unknown_types"
-        );
-        let name = name.split_once("::").map_or(name, |(_, rest)| rest);
-        let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
-            .args([name, "--exact", "--test-threads=1", "--nocapture"])
-            .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
-            .output()
-            .expect("run the isolated test");
-        assert!(
-            out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
-            "isolated test {name} failed:\n{}\n{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
+    if run_isolated("image_detection_validates_signatures_and_requires_nonempty_unknown_types") {
         return;
     }
 
@@ -777,4 +540,29 @@ fn image_detection_validates_signatures_and_requires_nonempty_unknown_types() {
 
     assert!(looks_like_image(b"nonempty", "image/x-custom"));
     assert!(!looks_like_image(b"", "image/x-custom"));
+}
+
+/// Re-runs one test of this module alone in a child test process with the isolation marker set,
+/// because these tests change process-wide state. Returns true in the parent (which then returns)
+/// once the child passed, and false inside the child, which runs the test body.
+fn run_isolated(test: &str) -> bool {
+    if std::env::var_os("HERMES_COVERAGE_GEN_ISOLATED").is_some() {
+        return false;
+    }
+    let path = format!("{}::{test}", module_path!());
+    let name = path
+        .split_once("::")
+        .map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+        .args([name, "--exact", "--test-threads=1", "--nocapture"])
+        .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
+        .output()
+        .expect("run the isolated test");
+    assert!(
+        out.status.success() && String::from_utf8_lossy(&out.stdout).contains("1 passed"),
+        "isolated test {name} failed:\n{}\n{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    true
 }
