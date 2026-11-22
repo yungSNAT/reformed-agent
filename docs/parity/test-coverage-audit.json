@@ -46,7 +46,7 @@
       "kind": "nonzero_tree_drift",
       "message": "max_files_only_upstream remains nonzero in parity matrix",
       "metric": "max_files_only_upstream",
-      "value": 24117.0
+      "value": 24465.0
     }
   ],
   "audit_gate": {
@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-22T07:09:08.114922+00:00",
+  "generated_at_utc": "2026-11-22T06:41:17.059784+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",

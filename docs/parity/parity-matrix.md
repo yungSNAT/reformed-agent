@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-22T07:09:05.613016+00:00`
+Generated: `2026-11-22T06:41:13.166207+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`1157313bf0f3fe4684b6dde5d4d8d553a634c2f1`)
+- Local ref: `HEAD` (`ef1806f0cfa9c8249c27462fdfcb5343f12844de`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -17,13 +17,13 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
 | Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1434 |
-| Files only in upstream tree | 24117 |
-| Files only in local tree | 2076 |
-| Shared files identical content | 564 |
-| Shared files different content | 1509 |
-| Total files changed (`local` vs `upstream`) | 27431 |
-| Insertions (`local` vs `upstream`) | 4528881 |
-| Deletions (`local` vs `upstream`) | 957455 |
+| Files only in upstream tree | 24465 |
+| Files only in local tree | 1798 |
+| Shared files identical content | 560 |
+| Shared files different content | 1165 |
+| Total files changed (`local` vs `upstream`) | 27184 |
+| Insertions (`local` vs `upstream`) | 4612702 |
+| Deletions (`local` vs `upstream`) | 790989 |
 
 ## Top 40 upstream-only buckets
 
@@ -31,13 +31,13 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | --- | ---: |
 | `apps/desktop` | 4936 |
 | `contributors/emails` | 3064 |
-| `tests/gateway` | 1953 |
-| `tests/hermes_cli` | 1897 |
-| `tests/agent` | 1121 |
-| `tests/tools` | 827 |
+| `tests/gateway` | 2149 |
+| `tests/hermes_cli` | 1917 |
+| `tests/agent` | 1157 |
+| `tests/tools` | 908 |
 | `tests/tui_gateway` | 411 |
 | `ui-tui/src` | 315 |
-| `tests/e2e` | 281 |
+| `tests/e2e` | 282 |
 | `website/i18n` | 261 |
 | `web/src` | 249 |
 | `tests/hermes_state` | 236 |
@@ -45,8 +45,8 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `plugins/platforms` | 211 |
 | `website/docs` | 203 |
 | `tests/scripts` | 202 |
+| `tests/cron` | 195 |
 | `tests/plugins` | 188 |
-| `tests/cron` | 185 |
 | `tests/pm` | 160 |
 | `tests/acp_adapter` | 94 |
 | `evals/delegation_grouping` | 89 |
@@ -75,12 +75,11 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | Bucket | Files |
 | --- | ---: |
 | `website/docs` | 230 |
-| `tests/gateway` | 214 |
-| `tests/tools` | 176 |
-| `tests/hermes_cli` | 165 |
+| `tests/hermes_cli` | 147 |
 | `ui-tui/src` | 132 |
-| `tests/agent` | 80 |
+| `tests/tools` | 96 |
 | `skills/creative` | 69 |
+| `tests/agent` | 45 |
 | `ui-tui/packages` | 40 |
 | `optional-skills/research` | 31 |
 | `plugins/model-providers` | 28 |
@@ -88,9 +87,9 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `plugins/platforms` | 24 |
 | `optional-skills/creative` | 22 |
 | `plugins/web` | 19 |
+| `tests/gateway` | 18 |
 | `plugins/google_meet` | 17 |
 | `optional-skills/finance` | 12 |
-| `tests/cron` | 12 |
 | `tests/plugins` | 12 |
 | `optional-skills/productivity` | 9 |
 | `optional-skills/security` | 8 |
@@ -106,7 +105,6 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `optional-skills/devops` | 5 |
 | `plugins/hermes-achievements` | 5 |
 | `skills/software-development` | 5 |
-| `tests/providers` | 5 |
 | `tests/tui_gateway` | 5 |
 | `optional-skills/health` | 4 |
 | `optional-skills/mcp` | 4 |
@@ -114,6 +112,8 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `website/scripts` | 4 |
 | `optional-skills/autonomous-ai-agents` | 3 |
 | `optional-skills/web-development` | 3 |
+| `plugins/kanban` | 3 |
+| `plugins/video_gen` | 3 |
 
 ## Top 40 local-only buckets
 
@@ -124,23 +124,18 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 121 |
 | `crates/hermes-gateway` | 114 |
-| `tests/run_agent` | 88 |
 | `website/docs` | 86 |
 | `skills/productivity` | 61 |
 | `skills/research` | 60 |
 | `docs/parity` | 59 |
-| `tests/cli` | 56 |
 | `skills/mlops` | 45 |
 | `optional-skills/mlops` | 42 |
 | `crates/hermes-config` | 41 |
 | `crates/hermes-intelligence` | 39 |
 | `crates/hermes-parity-tools` | 39 |
-| `tests/tools` | 30 |
-| `tests/hermes_cli` | 28 |
 | `third_party/rustsec-patches` | 28 |
 | `crates/hermes-core` | 26 |
 | `plugins/memory` | 24 |
-| `tests/gateway` | 23 |
 | `crates/hermes-acp` | 22 |
 | `crates/hermes-environments` | 19 |
 | `crates/hermes-eval` | 18 |
@@ -152,20 +147,25 @@ Generated: `2026-11-22T07:09:05.613016+00:00`
 | `crates/hermes-parity-tests` | 14 |
 | `crates/hermes-mcp` | 12 |
 | `crates/hermes-skills` | 12 |
-| `tests/acp` | 11 |
-| `tests/stress` | 11 |
+| `tests/run_agent` | 12 |
 | `ui-tui/src` | 11 |
 | `docs/roadmaps` | 10 |
-| `tests/plugins` | 10 |
-| `.github/workflows` | 9 |
+| `tests/gateway` | 10 |
 | `docs/implementation` | 9 |
+| `optional-skills/creative` | 9 |
+| `skills/red-teaming` | 9 |
+| `skills/software-development` | 9 |
+| `.github/workflows` | 8 |
+| `tests/tools` | 8 |
+| `.github/assets` | 7 |
+| `crates/hermes-http` | 7 |
 
 ## Workstream Routing
 
 | Workstream | Issue | Name | Upstream-only | Shared-different | Risk | Effort |
 | --- | ---: | --- | ---: | ---: | --- | --- |
 | `WS8` | #12 | Compatibility and divergence policy | 13186 | 13 | critical | XL |
-| `WS6` | #10 | Tests and CI parity | 8048 | 697 | critical | XL |
+| `WS6` | #10 | Tests and CI parity | 8396 | 353 | critical | XL |
 | `WS5` | #9 | UX parity | 1139 | 435 | critical | XL |
 | `WS3` | #7 | Tools and adapters parity | 767 | 134 | high | XL |
 | `WS4` | #8 | Skills parity | 564 | 230 | high | XL |

@@ -57,17 +57,13 @@ jobs:
       - name: package-lock.json matches package.json
         working-directory: ${{ matrix.dir }}
         run: npm ci --dry-run --ignore-scripts --no-audit
-      # Every advisory fails the job except those in ALLOWED, each of which has
-      # no fixed release to move to. GHSA-fc5q-39xc-vjpf (picomatch ReDoS,
-      # high) covers every picomatch release to 4.0.7, the latest, with no fix
-      # listed (read 17 November 2026). ui-tui locks it through anymatch, fdir,
-      # readdirp, tinyglobby, vite and vitest; website through anymatch,
-      # jest-util, micromatch and readdirp.
-      # Remove it once a fixed picomatch is released and locked.
+      # Every advisory fails the job except those in ALLOWED (space-separated
+      # GHSA ids), each of which must have no fixed release to move to and a
+      # dated comment here giving the reason and when to remove it.
       - name: npm audit
         working-directory: ${{ matrix.dir }}
         env:
-          ALLOWED: GHSA-fc5q-39xc-vjpf
+          ALLOWED: ""
         run: |
           npm audit --package-lock-only --json > "$RUNNER_TEMP/npm-audit.json" || true
           # The quoted script is JavaScript: its ${...} are template literals.

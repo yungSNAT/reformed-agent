@@ -274,9 +274,9 @@ mod tests {
     async fn each_session_drives_a_vendor_session_and_page_of_its_own() {
         let mut gateway = gateway().await;
 
-        for session_key in ["telegram:alice", "telegram:alice", "telegram:bob"] {
-            let result = gateway.snapshot(session_key);
-            assert!(result.contains("snapshot"), "{session_key}: {result}");
+        for chat in ["telegram:alice", "telegram:alice", "telegram:bob"] {
+            let result = gateway.snapshot(chat);
+            assert!(result.contains("snapshot"), "{chat}: {result}");
         }
 
         assert_eq!(

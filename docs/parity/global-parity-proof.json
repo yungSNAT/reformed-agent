@@ -58,7 +58,7 @@
         "status": "pass"
       },
       {
-        "actual": 24117.0,
+        "actual": 24465.0,
         "limit": 2600,
         "metric": "max_files_only_upstream",
         "status": "fail"
@@ -260,7 +260,7 @@
       "unverified_cases": 0
     }
   },
-  "generated_at_utc": "2026-11-22T07:09:44.377295+00:00",
+  "generated_at_utc": "2026-11-22T06:42:04.856613+00:00",
   "gpar_completion": {
     "GPAR-01": true,
     "GPAR-02": true,
@@ -286,7 +286,7 @@
     "max_deep_problem_solving_unverified_cases": 0.0,
     "max_deferred_review_overdue": 0.0,
     "max_divergence_review_overdue": 0.0,
-    "max_files_only_upstream": 24117.0,
+    "max_files_only_upstream": 24465.0,
     "max_queue_pending_commits": 0.0,
     "max_shared_diff_deferred_rows": 22.0,
     "max_sota_harness_critical_gaps": 0.0,
