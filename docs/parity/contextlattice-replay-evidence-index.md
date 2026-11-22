@@ -1,10 +1,10 @@
 # ContextLattice Replay Evidence Index
 
-Generated: `2026-07-03T20:16:19.312670+00:00`
+Generated: `2026-11-21T04:53:33.486546+00:00`
 
 ## Gate State
 
-- Release gate: **PASS**
+- Release gate: **FAIL**
 - CI gate: **FAIL**
 - Test coverage gate: **PASS**
 - SOTA harness gate: **PASS**

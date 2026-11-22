@@ -256,6 +256,16 @@ async fn ensure_openai_oauth_credential(
     Ok(Some(credential))
 }
 
+fn auth_verify_error_detail(error: &AgentError) -> &'static str {
+    match error {
+        AgentError::Config(_) => "Check the provider's OAuth configuration.",
+        AgentError::Io(_) => "Could not access the provider's OAuth state or transport.",
+        AgentError::Timeout(_) => "OAuth verification timed out.",
+        AgentError::RateLimited { .. } => "OAuth verification was rate limited. Try again later.",
+        _ => "Check the provider's OAuth sign-in and try again.",
+    }
+}
+
 fn print_auth_verify_result(result: &AuthVerifyResult) {
     println!(
         "Auth verify: provider='{}', status={}, source={}, credential_present={}, oauth_state_present={}{}{}",
@@ -314,7 +324,7 @@ async fn verify_nous_runtime_credentials_live(
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()
-        .map_err(|err| format!("live_probe_failed: build client: {err}"))?;
+        .map_err(|_| "live_probe_failed: could not build the HTTP client".to_string())?;
     let model = std::env::var("HERMES_MODEL")
         .ok()
         .map(|value| value.trim().to_string())
@@ -337,28 +347,18 @@ async fn verify_nous_runtime_credentials_live(
         .json(&payload)
         .send()
         .await
-        .map_err(|err| format!("live_probe_failed: request failed: {err}"))?;
+        .map_err(|err| {
+            if err.is_timeout() {
+                "live_probe_failed: request timed out".to_string()
+            } else {
+                "live_probe_failed: request could not reach the provider".to_string()
+            }
+        })?;
     let status = response.status();
     if status.is_success() {
-        return Ok(());
-    }
-    let body = response.text().await.unwrap_or_default();
-    let detail = serde_json::from_str::<serde_json::Value>(&body)
-        .ok()
-        .and_then(|value| {
-            value
-                .get("message")
-                .or_else(|| value.get("error_description"))
-                .or_else(|| value.get("error"))
-                .and_then(|v| v.as_str())
-                .map(str::to_string)
-        })
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| body.trim().chars().take(240).collect::<String>());
-    if detail.is_empty() {
-        Err(format!("live_probe_failed: HTTP {status}"))
+        Ok(())
     } else {
-        Err(format!("live_probe_failed: HTTP {status}: {detail}"))
+        Err(format!("live_probe_failed: HTTP {status}"))
     }
 }
 
@@ -468,16 +468,16 @@ async fn verify_single_oauth_provider(
         .await
         {
             Ok(creds) => {
+                let expires_at = parse_rfc3339_utc(creds.expires_at.as_deref());
                 if let Err(detail) = verify_nous_runtime_credentials_live(&creds).await {
                     result.outcome = AuthVerifyOutcome::RefreshFailed;
                     result.source = creds.source;
-                    result.expires_at = creds.expires_at;
+                    result.expires_at = expires_at.map(hermes_core::time::rfc3339);
                     result.credential_present = true;
                     result.detail = Some(detail);
                     return Ok(result);
                 }
                 let source = creds.source.clone();
-                let expires_at = creds.expires_at.clone();
                 manager
                     .save_credential(OAuthCredential {
                         provider: "nous".to_string(),
@@ -485,7 +485,7 @@ async fn verify_single_oauth_provider(
                         refresh_token: creds.refresh_token,
                         token_type: creds.token_type,
                         scope: creds.scope,
-                        expires_at: parse_rfc3339_utc(creds.expires_at.as_deref()),
+                        expires_at,
                     })
                     .await?;
                 result.outcome = if source == "portal" {
@@ -494,7 +494,7 @@ async fn verify_single_oauth_provider(
                     AuthVerifyOutcome::Valid
                 };
                 result.source = source;
-                result.expires_at = expires_at;
+                result.expires_at = expires_at.map(hermes_core::time::rfc3339);
                 result.credential_present = true;
                 return Ok(result);
             }
@@ -517,17 +517,17 @@ async fn verify_single_oauth_provider(
                         )
                         .await
                         {
+                            let expires_at = parse_rfc3339_utc(creds.expires_at.as_deref());
                             if let Err(detail) = verify_nous_runtime_credentials_live(&creds).await
                             {
                                 let _ = clear_provider_auth_state("nous");
                                 result.outcome = AuthVerifyOutcome::RefreshFailed;
                                 result.source = "vault_invoke_jwt".to_string();
-                                result.expires_at = creds.expires_at;
+                                result.expires_at = expires_at.map(hermes_core::time::rfc3339);
                                 result.credential_present = true;
                                 result.detail = Some(detail);
                                 return Ok(result);
                             }
-                            let expires_at_text = creds.expires_at.clone();
                             manager
                                 .save_credential(OAuthCredential {
                                     provider: "nous".to_string(),
@@ -535,12 +535,12 @@ async fn verify_single_oauth_provider(
                                     refresh_token: creds.refresh_token.clone(),
                                     token_type: creds.token_type.clone(),
                                     scope: creds.scope.clone(),
-                                    expires_at: parse_rfc3339_utc(expires_at_text.as_deref()),
+                                    expires_at,
                                 })
                                 .await?;
                             result.outcome = AuthVerifyOutcome::ValidRefreshed;
                             result.source = "vault_invoke_jwt".to_string();
-                            result.expires_at = expires_at_text;
+                            result.expires_at = expires_at.map(hermes_core::time::rfc3339);
                             result.credential_present = true;
                             return Ok(result);
                         }
@@ -552,7 +552,7 @@ async fn verify_single_oauth_provider(
                 } else {
                     AuthVerifyOutcome::Missing
                 };
-                result.detail = Some(err.to_string());
+                result.detail = Some(auth_verify_error_detail(&err).to_string());
                 return Ok(result);
             }
         },
@@ -593,7 +593,7 @@ async fn verify_single_oauth_provider(
                 } else {
                     AuthVerifyOutcome::Missing
                 };
-                result.detail = Some(err.to_string());
+                result.detail = Some(auth_verify_error_detail(&err).to_string());
                 return Ok(result);
             }
         },
@@ -624,7 +624,7 @@ async fn verify_single_oauth_provider(
                 } else {
                     AuthVerifyOutcome::Missing
                 };
-                result.detail = Some(err.to_string());
+                result.detail = Some(auth_verify_error_detail(&err).to_string());
                 return Ok(result);
             }
         },
@@ -686,7 +686,7 @@ async fn verify_single_oauth_provider(
                     }
                     Err(err) => {
                         result.outcome = AuthVerifyOutcome::RefreshFailed;
-                        result.detail = Some(err.to_string());
+                        result.detail = Some(auth_verify_error_detail(&err).to_string());
                         return Ok(result);
                     }
                 }
@@ -708,8 +708,8 @@ async fn verify_single_oauth_provider(
                     AuthVerifyOutcome::Missing
                 };
             }
-            if let Some(err) = status.error {
-                result.detail = Some(err);
+            if status.error.is_some() {
+                result.detail = Some("Anthropic OAuth status could not be read.".to_string());
             }
             return Ok(result);
         }
@@ -732,13 +732,14 @@ async fn verify_single_oauth_provider(
                             manager.save_credential(refreshed.clone()).await?;
                             result.outcome = AuthVerifyOutcome::ValidRefreshed;
                             result.source = "token_store_refresh".to_string();
-                            result.expires_at = refreshed.expires_at.map(hermes_core::time::rfc3339);
+                            result.expires_at =
+                                refreshed.expires_at.map(hermes_core::time::rfc3339);
                             result.credential_present = true;
                             return Ok(result);
                         }
                         Err(err) => {
                             result.outcome = AuthVerifyOutcome::RefreshFailed;
-                            result.detail = Some(err.to_string());
+                            result.detail = Some(auth_verify_error_detail(&err).to_string());
                             return Ok(result);
                         }
                     }

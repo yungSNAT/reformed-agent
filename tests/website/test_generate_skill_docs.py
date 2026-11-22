@@ -13,7 +13,7 @@ Regression for issue #15305.
 from __future__ import annotations
 
 import importlib.util
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import pytest
 
@@ -114,3 +114,14 @@ def test_bundled_catalog_explains_missing_local_skills(gen_module):
     result = gen_module.build_catalog_md_bundled([])
     assert "respects local deletions and user edits" in result
     assert "hermes skills reset <name> --restore" in result
+
+
+def test_windows_skill_path_keeps_forward_slashes_in_links(gen_module):
+    source = PureWindowsPath("skills")
+    path = source / "category" / "group" / "example" / "SKILL.md"
+    meta = gen_module.derive_skill_meta(path, source, "bundled")
+
+    assert meta["rel_path"] == "category/group/example"
+    assert gen_module.rewrite_relative_links("[Notes](./notes.md)", meta).endswith(
+        "/skills/category/group/example/notes.md)"
+    )

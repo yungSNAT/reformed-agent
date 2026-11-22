@@ -15,7 +15,7 @@ remains the generated parity artifacts under `docs/parity/`.
 | Coverage critical gaps | `0` | `docs/parity/test-coverage-audit.json` |
 | SOTA harness critical gaps | `0` | `docs/parity/sota-harness-matrix.json` |
 | Released artifact smoke | scripted | `scripts/smoke-release-artifact.sh` |
-| Public readiness summary | scripted | `scripts/generate-release-readiness-summary.py` |
+| Public readiness summary | scripted | `cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary` |
 
 The tracked parity backlog is closed at this baseline. That means the current
 local governance artifacts have no pending tracked rows; it does not mean
@@ -36,13 +36,13 @@ future upstream commits cannot create new drift.
 
 | Area | Required state | Local gate |
 | --- | --- | --- |
-| Release readiness summary | PASS | `python3 scripts/generate-release-readiness-summary.py --repo-root . --check` |
+| Release readiness summary | PASS | `cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root . --check` |
 | Released binary smoke | PASS for current tag | `bash scripts/smoke-release-artifact.sh --version v0.21.3` |
-| Upstream missing queue | `pending = 0` before release | `python3 scripts/generate-upstream-patch-queue.py --max-commits 0` |
-| Global parity proof | Pass release gate locally | `python3 scripts/generate-global-parity-proof.py --check-release` |
-| SOTA harness coverage | All domains covered | `python3 scripts/generate-sota-harness-hardening.py --check` |
-| Behavioral similarity diff | Outcome similarity `1.0`, no regressions or unverified cases | `python3 scripts/generate-behavioral-similarity-diff.py --check` |
-| Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `python3 scripts/generate-deep-problem-solving-diff.py --check` |
+| Upstream missing queue | `pending = 0` before release | `cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --max-commits 0` |
+| Global parity proof | Pass release gate locally | `cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --check-release` |
+| SOTA harness coverage | All domains covered | `cargo run --locked -q -p hermes-parity-tools -- generate-sota-harness-hardening --check` |
+| Behavioral similarity diff | Outcome similarity `1.0`, no regressions or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-behavioral-similarity-diff --check` |
+| Deep problem-solving diff | Ratio `1.0`, no regressions, gaps, or unverified cases | `cargo run --locked -q -p hermes-parity-tools -- generate-deep-problem-solving-diff --check` |
 | Runtime placeholder discipline | Clean | `scripts/check-runtime-placeholders.sh` |
 | Rust workspace health | Build/test locally | `cargo build --workspace`, `cargo test --workspace` |
 | Cargo build surface | Track compile invalidation roots before crate splits | `scripts/audit-cargo-build-surface.sh` |

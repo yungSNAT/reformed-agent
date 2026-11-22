@@ -65,7 +65,17 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     --set)
-      SET_OVERRIDES+=("${2:?missing value for --set}")
+      pair="${2:?missing value for --set}"
+      if [[ "${pair}" != *=* ]]; then
+        echo "Invalid --set value. Expected KEY=VALUE." >&2
+        exit 2
+      fi
+      key="${pair%%=*}"
+      if [[ ! "${key}" =~ ^[a-zA-Z_][a-zA-Z0-9_]*$ ]]; then
+        echo "Invalid --set key. Expected a shell variable name." >&2
+        exit 2
+      fi
+      SET_OVERRIDES+=("${pair}")
       shift 2
       ;;
     --no-auto-secret)
@@ -124,13 +134,17 @@ set_env_value() {
   local file="$1"
   local key="$2"
   local value="$3"
+  local quoted=""
+  if [[ -n "${value}" ]]; then
+    printf -v quoted '%q' "${value}"
+  fi
   local tmp
   tmp="$(mktemp)"
-  awk -v k="${key}" -v v="${value}" '
+  WEBHOOK_SETTING_VALUE="${quoted}" awk -v k="${key}" '
     BEGIN { done=0 }
-    $0 ~ ("^" k "=") { print k "=" v; done=1; next }
+    $0 ~ ("^" k "=") { print k "=" ENVIRON["WEBHOOK_SETTING_VALUE"]; done=1; next }
     { print }
-    END { if (!done) print k "=" v }
+    END { if (!done) print k "=" ENVIRON["WEBHOOK_SETTING_VALUE"] }
   ' "${file}" > "${tmp}"
   mv "${tmp}" "${file}"
   chmod 600 "${file}" >/dev/null 2>&1 || true
@@ -299,16 +313,8 @@ if [[ "${#SET_OVERRIDES[@]}" -gt 0 ]]; then
   echo
   echo "Applying --set overrides..."
   for pair in "${SET_OVERRIDES[@]}"; do
-    if [[ "${pair}" != *=* ]]; then
-      echo "Invalid --set value '${pair}'. Expected KEY=VALUE." >&2
-      exit 2
-    fi
     key="${pair%%=*}"
     value="${pair#*=}"
-    if [[ -z "${key}" ]]; then
-      echo "Invalid --set key in '${pair}'." >&2
-      exit 2
-    fi
     set_env_value "${ENV_FILE}" "${key}" "${value}"
     echo "  set ${key}"
   done

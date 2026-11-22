@@ -86,9 +86,9 @@ run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
 run cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
 run cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
 run cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch --upstream-branch "${UPSTREAM_BRANCH}"
-run python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
-run python3 scripts/generate-global-parity-proof.py
-run python3 scripts/generate-release-readiness-summary.py --check
+run cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref HEAD --max-commits 0 --upstream-branch "${UPSTREAM_BRANCH}" --no-fetch
+run cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof
+run cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --check
 
 run cargo fmt --all --check
 run bash scripts/clippy-warning-gate.sh --check
@@ -106,9 +106,7 @@ run cargo test -p hermes-source-parity-tests --test global_parity_governance
 for script in \
   scripts/upstream_webhook_sync.py \
   scripts/publish_automation_summary.py \
-  scripts/run-golden-parity-harness.py \
-  scripts/generate-release-readiness-summary.py \
-  scripts/release_secret_scan.py; do
+  scripts/run-golden-parity-harness.py; do
   run python3 -m py_compile "${script}"
 done
 

@@ -6,6 +6,9 @@ on:
   pull_request:
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
   group: ci-${{ github.event_name }}-${{ github.event.pull_request.number || github.run_id }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -42,8 +45,8 @@ jobs:
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref HEAD --no-fetch --upstream-branch parity-reference
-          python3 scripts/generate-upstream-patch-queue.py --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
-          python3 scripts/generate-global-parity-proof.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref HEAD --max-commits 0 --upstream-branch parity-reference --no-fetch
+          cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof
       - name: Format check
         run: cargo fmt --all --check
       - name: Clippy Warning Gate
@@ -73,8 +76,6 @@ jobs:
           python3 -m py_compile scripts/upstream_webhook_sync.py
           python3 -m py_compile scripts/publish_automation_summary.py
           python3 -m py_compile scripts/run-golden-parity-harness.py
-          python3 -m py_compile scripts/generate-release-readiness-summary.py
-          python3 -m py_compile scripts/release_secret_scan.py
       - name: Python parity governance tests
         run: |
           python3 -m venv "${RUNNER_TEMP:?}/parity-governance"
@@ -280,6 +281,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Webhook launchd lifecycle
+        timeout-minutes: 3
+        env:
+          HERMES_TEST_LAUNCHD_LIFECYCLE: '1'
+        run: python3 -m unittest discover -s tests -p test_upstream_webhook_launchd.py -v
       - name: Write guard tests
         run: cargo test --locked -p hermes-tools --lib credential_guard
       - name: Native tests

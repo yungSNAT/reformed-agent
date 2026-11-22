@@ -62,7 +62,7 @@ PORTED = {
 NOTE_TESTS_CI = (
     "superseded: upstream Python tests/CI/toolset deltas are covered by Rust "
     "parity governance (`crates/hermes-parity-tests`, `.github/workflows/ci.yml`, "
-    "`scripts/generate-global-parity-proof.py`)."
+    "`generate-global-parity-proof` in `hermes-parity-tools`)."
 )
 
 NOTE_SKILLS = (

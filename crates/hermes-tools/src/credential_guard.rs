@@ -305,8 +305,8 @@ pub fn is_protected_file(path: &Path) -> bool {
 
 /// Check whether a file path is write-denied even if it is not a credential
 /// file by name. This covers sensitive system files, shell profiles, package
-/// manager credential files, and the active Hermes home's credential stores
-/// (`WRITE_DENY_HERMES_HOME_PREFIX`). The path is
+/// manager credentials, the active Hermes home's stores and the configured
+/// OAuth store. The path is
 /// judged where the local backend writes it (`local_write_path`).
 ///
 /// This guards the file tools only: the terminal tool (redirects, `cp`, `mv`,
@@ -360,6 +360,7 @@ fn judge_write(path: &Path, safe_root: Option<&Path>) -> bool {
         // account's home here instead of disabling the home rules.
         dirs::home_dir().as_deref(),
         Some(hermes_config::hermes_home().as_path()),
+        hermes_config::paths::auth_json_override().as_deref(),
         safe_root,
     )
 }
@@ -484,7 +485,7 @@ pub fn is_write_denied_with_roots_and_safe_root(
     safe_root: Option<&Path>,
 ) -> bool {
     match expand_home(path, home) {
-        Some(expanded) => is_expanded_write_denied(&expanded, home, hermes_home, safe_root),
+        Some(expanded) => is_expanded_write_denied(&expanded, home, hermes_home, None, safe_root),
         None => true,
     }
 }
@@ -495,6 +496,7 @@ fn is_expanded_write_denied(
     path: &Path,
     home: Option<&Path>,
     hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
     let Some(forms) = path_forms(path) else {
@@ -538,16 +540,12 @@ fn is_expanded_write_denied(
         }
     }
 
-    if let Some(hermes_home) = hermes_home {
-        // Each store, and each file in `auth/`, is a store where it links,
-        // too, even to a file not yet created. The known `auth/` names are
-        // checked as well, as a folder that can be entered but not listed
-        // hides its entries.
-        // shortcut: only `auth/`'s own entries are followed, not deeper ones.
+    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
+        // Include known stores even when the directory cannot be listed.
         let auth = hermes_home.join("auth");
-        let stores = WRITE_DENY_HERMES_HOME_PREFIX
+        WRITE_DENY_HERMES_HOME_PREFIX
             .iter()
-            .map(|store| hermes_home.join(store))
+            .map(move |store| hermes_home.join(store))
             .chain(
                 std::fs::read_dir(&auth)
                     .into_iter()
@@ -555,19 +553,24 @@ fn is_expanded_write_denied(
                     .flatten()
                     .map(|entry| entry.path()),
             )
-            .chain(AUTH_STORE_FILES.iter().map(|name| auth.join(name)))
-            .flat_map(|store| {
-                let target = hermes_config::resolve_symlink_target(&store);
-                let linked = (target != store).then_some(target);
-                std::iter::once(store).chain(linked)
-            });
-        let form_keys: Vec<PathBuf> = forms.iter().map(|form| store_key(form)).collect();
-        for store in stores {
-            for store_form in root_forms(&store) {
-                let store_form = store_key(&store_form);
-                if form_keys.iter().any(|form| form.starts_with(&store_form)) {
-                    return true;
-                }
+            .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
+    });
+    // Protect stores where they link, including a target that does not exist yet.
+    let stores = auth_override
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(profile_stores)
+        .flat_map(|store| {
+            let target = hermes_config::resolve_symlink_target(&store);
+            let linked = (target != store).then_some(target);
+            std::iter::once(store).chain(linked)
+        });
+    let form_keys = forms.each_ref().map(|form| store_key(form));
+    for store in stores {
+        for store_form in root_forms(&store) {
+            let store_form = store_key(&store_form);
+            if form_keys.iter().any(|form| form.starts_with(&store_form)) {
+                return true;
             }
         }
     }
@@ -1426,6 +1429,57 @@ mod tests {
             || is_write_denied(&hermes_config::hermes_home().join(".env")),
         );
         assert!(denied);
+    }
+
+    #[test]
+    fn write_deny_protects_the_configured_auth_store() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("profile");
+        let store = tmp.path().join("provider-state.json");
+        let configured = PathBuf::from(format!("  {}  ", store.display()));
+
+        with_env(
+            &[
+                ("HERMES_HOME", Some(&home)),
+                ("HERMES_AUTH_FILE", Some(&configured)),
+                ("HERMES_WRITE_SAFE_ROOT", Some(tmp.path())),
+            ],
+            || {
+                assert!(is_write_denied(&store));
+                assert!(is_link_target_write_denied(&store));
+                assert!(is_write_denied(&home.join("auth.json")));
+                assert!(!is_write_denied(
+                    &tmp.path().join("provider-state-notes.json")
+                ));
+                #[cfg(unix)]
+                {
+                    let target = Path::new("linked-provider-state.json");
+                    std::os::unix::fs::symlink(target, &store).expect("store symlink");
+                    assert!(is_write_denied(&tmp.path().join(target)));
+                }
+            },
+        );
+    }
+
+    #[test]
+    fn write_deny_resolves_relative_auth_override_from_the_process_directory() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let relative_store = Path::new("relative-provider-state.json");
+        let process_dir = std::env::current_dir().expect("process directory");
+        let store = process_dir.join(relative_store);
+
+        with_env(
+            &[
+                ("HERMES_AUTH_FILE", Some(relative_store)),
+                ("TERMINAL_CWD", Some(tmp.path())),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                assert!(is_write_denied(&store));
+                assert!(is_link_target_write_denied(&store));
+                assert!(!is_write_denied(relative_store));
+            },
+        );
     }
 
     #[test]

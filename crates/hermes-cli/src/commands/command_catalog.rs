@@ -293,7 +293,7 @@ pub const SLASH_COMMANDS: &[(&str, &str)] = &[
     ("/busy", "Busy/processing status compatibility surface"),
     (
         "/kanban",
-        "Task board controls (`status|boards|init|use|add|move|claim|block|done|archive-done|dispatch|sync`)",
+        "Task board controls (`status|boards|init|use|add|specify|move|claim|block|done|archive-done|dispatch|sync`)",
     ),
     ("/status", "Show session status (model, turns, token count)"),
     ("/agent", "Alias for /status"),

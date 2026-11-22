@@ -1,7 +1,19 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use crate::py;
+use crate::py::{self, Py};
+
+pub(crate) fn truth(value: &Py) -> bool {
+    match value {
+        Py::Null => false,
+        Py::Bool(value) => *value,
+        Py::Int(value) => *value != 0,
+        Py::Float(value) => *value != 0.0,
+        Py::Str(value) => !value.is_empty(),
+        Py::List(value) => !value.is_empty(),
+        Py::Dict(value) => !value.is_empty(),
+    }
+}
 
 pub(crate) fn resolve_argument(path: &Path) -> Result<PathBuf, String> {
     let path = if path.as_os_str().is_empty() {

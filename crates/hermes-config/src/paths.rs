@@ -246,6 +246,14 @@ pub fn auth_json_path() -> PathBuf {
     hermes_home().join("auth.json")
 }
 
+/// Override for the CLI's OAuth credential store, relative to the process
+/// directory when the configured path is relative.
+pub fn auth_json_override() -> Option<PathBuf> {
+    let configured = std::env::var("HERMES_AUTH_FILE").ok()?;
+    let path = configured.trim();
+    (!path.is_empty()).then(|| PathBuf::from(path))
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

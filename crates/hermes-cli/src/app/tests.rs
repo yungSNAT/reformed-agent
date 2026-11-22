@@ -746,6 +746,131 @@ mod tests {
         assert_eq!(app.agent.config.session_id.as_deref(), Some("test-session"));
     }
 
+    #[tokio::test]
+    async fn tui_charge_renders_the_key_before_submission() {
+        let _guard = test_env_lock::lock_async().await;
+        let _env = EnvSnapshot::capture(&[
+            "HERMES_HOME",
+            "HOME",
+            "HERMES_AUTH_FILE",
+            "HERMES_NOUS_OAUTH_FILE",
+            "HERMES_PORTAL_BASE_URL",
+            "NO_PROXY",
+        ]);
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let server = MockServer::start().await;
+        std::env::set_var("HERMES_HOME", tmp.path());
+        std::env::set_var("HOME", tmp.path());
+        std::env::set_var("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        std::env::set_var("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        std::env::set_var("HERMES_PORTAL_BASE_URL", server.uri());
+        std::env::set_var("NO_PROXY", "127.0.0.1");
+        let state = serde_json::from_value(serde_json::json!({
+            "portal_base_url": server.uri(),
+            "inference_base_url": server.uri(),
+            "client_id": "billing-fixture",
+            "token_type": "Bearer",
+            "access_token": "fixture-access",
+            "obtained_at": "2026-06-25T00:00:00Z",
+        }))
+        .expect("build fixture auth state");
+        assert!(
+            crate::auth::save_nous_auth_state(&state).is_ok(),
+            "save fixture auth state"
+        );
+        let mut app = build_minimal_test_app_with_state_root(tmp.path().to_path_buf());
+        for (line, expected) in [
+            (
+                r#"/billing charge 50 --confirm --idempotency-key="fixture key""#,
+                "Unknown or repeated charge option",
+            ),
+            (
+                r#"/billing charge 50 --confirm --idempotency-key="fixture-key""#,
+                "without whitespace, quotes or backslashes",
+            ),
+            (
+                "/billing charge 50 --confirm --idempotency-key=first --idempotency-key=second",
+                "Unknown or repeated charge option",
+            ),
+            (
+                "/billing charge 50 --yes --confirm",
+                "Unknown or repeated charge option",
+            ),
+        ] {
+            assert!(crate::billing::prepare_tui_charge_key(line).is_none());
+            assert!(
+                app.handle_input_with_charge_key(line, None)
+                    .await
+                    .is_err_and(|error| error.to_string().contains(expected)),
+                "ambiguous raw TUI charge input should be rejected"
+            );
+        }
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_some_and(|requests| requests.is_empty()),
+            "rejected TUI charge inputs must not send any requests"
+        );
+
+        let command = "/billing charge 50 --confirm";
+        let mut state = crate::tui::TuiState::default();
+        let theme = crate::skin_engine::resolve_theme("reformation");
+        let mut terminal = ratatui::Terminal::new(ratatui::backend::TestBackend::new(120, 30))
+            .expect("create test terminal");
+        let key = crate::tui::draw_slash_command_frame(&mut app, &mut state, command, |app, state| {
+            terminal
+                .draw(|frame| crate::tui::render(frame, app, state, &theme))
+                .expect("draw charge frame");
+            Ok(())
+        })
+        .expect("prepare charge frame")
+        .expect("generated billing key");
+        let screen: String = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect();
+        assert!(
+            screen.contains(&format!("Billing charge idempotency key: {key}"))
+                && server
+                    .received_requests()
+                    .await
+                    .is_some_and(|requests| requests.is_empty()),
+            "the first rendered frame should display the key before any billing request"
+        );
+
+        Mock::given(method("POST"))
+            .and(path("/api/billing/charge"))
+            .and(wiremock::matchers::header("idempotency-key", key.as_str()))
+            .respond_with(ResponseTemplate::new(202).set_body_json(serde_json::json!({
+                "chargeId": "fixture-charge"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        assert!(
+            app.handle_input_with_charge_key(command, Some(&key))
+                .await
+                .is_ok(),
+            "submit with the key already displayed"
+        );
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_some_and(|requests| requests.len() == 1),
+            "exactly one request should reach the fixture"
+        );
+        assert!(
+            app.input_history.last().is_some_and(|line| line == command)
+                && !app.input_history.iter().any(|line| line.contains(&key)),
+            "input history should keep the original command without the generated key"
+        );
+    }
+
     #[test]
     fn finalize_interrupted_tui_session_invokes_session_end_hook() {
         let _guard = env_test_lock();

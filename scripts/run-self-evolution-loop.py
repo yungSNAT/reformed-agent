@@ -226,7 +226,7 @@ def build_recommendations(
                 "Promote current state as next baseline",
                 "All enabled sections passed; safe to store this run as a quality baseline."
                 + objective_hint,
-                "python3 scripts/generate-global-parity-proof.py --repo-root .",
+                "cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof --repo-root .",
             )
         )
     return out

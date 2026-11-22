@@ -39,11 +39,11 @@ jobs:
           cargo run --locked -q -p hermes-parity-tools -- validate-intentional-divergence --upstream-ref "$UPSTREAM_SHA" --no-fetch --check --allow-warnings
           cargo run --locked -q -p hermes-parity-tools -- generate-adapter-matrix
           cargo run --locked -q -p hermes-parity-tools -- generate-shared-diff-backlog --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch
-          python3 scripts/generate-upstream-patch-queue.py --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch --max-commits 0
+          cargo run --locked -q -p hermes-parity-tools -- generate-upstream-patch-queue --local-ref "$LOCAL_SHA" --upstream-branch parity-audit --no-fetch --max-commits 0
           # The coverage audit consumes the refreshed intent, matrix, divergence and queue reports.
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit
           cargo run --locked -q -p hermes-parity-tools -- generate-test-coverage-audit --check
-          python3 scripts/generate-global-parity-proof.py
+          cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof
           # Gate the proof's local metrics; the 4 upstream drift metrics are only reported.
           # The coverage ratio counts deferred and not-rechecked rows as uncovered, so it is
           # reported too; max_test_coverage_unaccounted_rows fails on any row in neither group
@@ -51,7 +51,7 @@ jobs:
           jq -e '[.ci_gate.checks[] | select(.metric | IN("max_commits_behind", "max_upstream_patch_missing", "max_files_only_upstream", "max_queue_pending_commits", "min_test_coverage_tracked_behavior_ratio") | not) | select(.status == "fail" or .status == "missing")] == []' docs/parity/global-parity-proof.json > /dev/null
       - name: Generate public release readiness summary
         run: |
-          python3 scripts/generate-release-readiness-summary.py --repo-root .
+          cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root .
           cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"
           printf '\n[Upstream refresh plan](%s/%s/blob/%s/docs/upstream-sync.md#subsystem-refresh-for-v0232)\n' \
             "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"

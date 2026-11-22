@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-20T23:07:24.130180+00:00`
+Generated: `2026-11-21T20:27:01.867379+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`7234eea5abfcd2f7549a1fd2b045ed662920c1a5`)
+- Local ref: `HEAD` (`650cb196d23f3f5e5bb3f1468d12a0fca02b6768`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1666 |
+| Commits ahead local (`local` ancestry only) | 1694 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1397 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1425 |
 | Files only in upstream tree | 24117 |
-| Files only in local tree | 2048 |
-| Shared files identical content | 565 |
-| Shared files different content | 1508 |
-| Total files changed (`local` vs `upstream`) | 27402 |
-| Insertions (`local` vs `upstream`) | 4528861 |
-| Deletions (`local` vs `upstream`) | 950264 |
+| Files only in local tree | 2075 |
+| Shared files identical content | 564 |
+| Shared files different content | 1509 |
+| Total files changed (`local` vs `upstream`) | 27430 |
+| Insertions (`local` vs `upstream`) | 4528874 |
+| Deletions (`local` vs `upstream`) | 957075 |
 
 ## Top 40 upstream-only buckets
 
@@ -89,9 +89,9 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 | `optional-skills/creative` | 22 |
 | `plugins/web` | 19 |
 | `plugins/google_meet` | 17 |
+| `optional-skills/finance` | 12 |
 | `tests/cron` | 12 |
 | `tests/plugins` | 12 |
-| `optional-skills/finance` | 11 |
 | `optional-skills/productivity` | 9 |
 | `optional-skills/security` | 8 |
 | `plugins/teams_pipeline` | 8 |
@@ -119,10 +119,10 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 
 | Bucket | Files |
 | --- | ---: |
-| `crates/hermes-cli` | 199 |
+| `crates/hermes-cli` | 206 |
 | `skills/creative` | 142 |
 | `crates/hermes-tools` | 135 |
-| `crates/hermes-agent` | 119 |
+| `crates/hermes-agent` | 121 |
 | `crates/hermes-gateway` | 114 |
 | `tests/run_agent` | 88 |
 | `website/docs` | 86 |
@@ -134,15 +134,15 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 | `optional-skills/mlops` | 42 |
 | `crates/hermes-config` | 41 |
 | `crates/hermes-intelligence` | 39 |
+| `crates/hermes-parity-tools` | 39 |
 | `tests/tools` | 30 |
 | `tests/hermes_cli` | 28 |
 | `third_party/rustsec-patches` | 28 |
-| `crates/hermes-core` | 24 |
+| `crates/hermes-core` | 26 |
 | `plugins/memory` | 24 |
 | `tests/gateway` | 23 |
 | `crates/hermes-acp` | 22 |
-| `crates/hermes-parity-tools` | 19 |
-| `crates/hermes-environments` | 18 |
+| `crates/hermes-environments` | 19 |
 | `crates/hermes-eval` | 18 |
 | `crates/hermes-cron` | 17 |
 | `docs/releases` | 17 |
@@ -150,15 +150,15 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 | `skills/github` | 16 |
 | `crates/hermes-desktop-gateway` | 14 |
 | `crates/hermes-parity-tests` | 14 |
+| `crates/hermes-mcp` | 12 |
 | `crates/hermes-skills` | 12 |
 | `tests/acp` | 11 |
 | `tests/stress` | 11 |
 | `ui-tui/src` | 11 |
-| `crates/hermes-mcp` | 10 |
 | `docs/roadmaps` | 10 |
 | `tests/plugins` | 10 |
+| `.github/workflows` | 9 |
 | `docs/implementation` | 9 |
-| `optional-skills/creative` | 9 |
 
 ## Workstream Routing
 
@@ -168,7 +168,7 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 | `WS6` | #10 | Tests and CI parity | 8048 | 697 | critical | XL |
 | `WS5` | #9 | UX parity | 1139 | 435 | critical | XL |
 | `WS3` | #7 | Tools and adapters parity | 767 | 134 | high | XL |
-| `WS4` | #8 | Skills parity | 564 | 229 | high | XL |
+| `WS4` | #8 | Skills parity | 564 | 230 | high | XL |
 | `WS2` | #6 | Core runtime parity | 413 | 0 | critical | XL |
 | `WS7` | #11 | Security/secrets/store/webhook parity | 0 | 0 | critical | S |
 
@@ -176,7 +176,7 @@ Generated: `2026-11-20T23:07:24.130180+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1397`
+- Local unique by patch-id: `1425`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 

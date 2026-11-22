@@ -1,13 +1,12 @@
 import json
 import re
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-SCRIPT = REPO_ROOT / "scripts" / "generate-release-readiness-summary.py"
+SCRIPT = REPO_ROOT / "crates" / "hermes-parity-tools" / "src" / "release_readiness.rs"
 PARITY_AUDIT = REPO_ROOT / ".github" / "workflows" / "parity-audit.yml"
 RUN_REPO_CI = REPO_ROOT / "scripts" / "run-repo-ci.sh"
 
@@ -29,8 +28,8 @@ def test_release_readiness_summary_reports_backlog(tmp_path: Path, pending: int)
     out_md = tmp_path / "summary.md"
     result = subprocess.run(
         [
-            sys.executable,
-            str(SCRIPT),
+            "cargo", "run", "--locked", "-q", "-p", "hermes-parity-tools", "--",
+            "generate-release-readiness-summary",
             "--repo-root",
             str(tmp_path),
             "--output-json",
@@ -39,6 +38,7 @@ def test_release_readiness_summary_reports_backlog(tmp_path: Path, pending: int)
             str(out_md),
             "--check",
         ],
+        cwd=REPO_ROOT,
         text=True,
         capture_output=True,
         check=False,
@@ -74,20 +74,20 @@ def test_release_readiness_summary_uses_public_artifacts_only() -> None:
 
 def test_repo_ci_runs_readiness_summary_after_global_parity_proof() -> None:
     text = RUN_REPO_CI.read_text()
-    assert "python3 scripts/generate-global-parity-proof.py" in text
-    assert "python3 scripts/generate-release-readiness-summary.py --check" in text
-    assert text.index("python3 scripts/generate-global-parity-proof.py") < text.index(
-        "python3 scripts/generate-release-readiness-summary.py --check"
+    assert "cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof" in text
+    assert "cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --check" in text
+    assert text.index("cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof") < text.index(
+        "cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --check"
     )
 
 
 def test_parity_audit_reports_live_drift_without_gating_on_it() -> None:
     # The scheduled audit measures upstream's live main; PR CI gates on the pin.
     text = PARITY_AUDIT.read_text()
-    assert "python3 scripts/generate-global-parity-proof.py\n" in text
-    assert "python3 scripts/generate-release-readiness-summary.py --repo-root .\n" in text
-    assert text.index("python3 scripts/generate-global-parity-proof.py") < text.index(
-        "python3 scripts/generate-release-readiness-summary.py"
+    assert "cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof\n" in text
+    assert "cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary --repo-root .\n" in text
+    assert text.index("cargo run --locked -q -p hermes-parity-tools -- generate-global-parity-proof") < text.index(
+        "cargo run --locked -q -p hermes-parity-tools -- generate-release-readiness-summary"
     )
     assert 'cat .sync-reports/release-readiness-summary.md >> "$GITHUB_STEP_SUMMARY"' in text
     assert "--check-ci" not in text

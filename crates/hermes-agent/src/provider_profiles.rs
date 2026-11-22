@@ -766,7 +766,7 @@ const SOLAR_EFFORTS: &[&str] = &["low", "medium", "high"];
 /// Upstream `clamp_effort`: a supported or unrecognised level passes through; a
 /// recognised level the wire lacks becomes the nearest weaker supported level
 /// other than `none`, or the weakest one when nothing is weaker.
-fn clamp_effort(effort: &str, supported: &[&str]) -> String {
+pub(crate) fn clamp_effort(effort: &str, supported: &[&str]) -> String {
     let requested = effort.trim().to_ascii_lowercase();
     let Some(requested_idx) = EFFORT_LADDER.iter().position(|l| *l == requested) else {
         return requested;

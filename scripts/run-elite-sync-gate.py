@@ -53,7 +53,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--release-security-cmd",
-        default="python3 scripts/run-security-release-gate-v2.py --repo-root . --report .sync-reports/security-release-gate-v2.json",
+        default="cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root . --report .sync-reports/security-release-gate-v2.json",
         help="Release secret-scan gate command",
     )
     parser.add_argument(

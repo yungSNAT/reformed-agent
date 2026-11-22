@@ -147,6 +147,7 @@ fn terminal_verification_recording_enabled() -> bool {
 pub struct TerminalHandler {
     backend: Arc<dyn TerminalBackend>,
     approval: ApprovalManager,
+    session_workdir: Option<String>,
     task_cwds: Arc<Mutex<HashMap<String, String>>>,
     gateway_approval: Option<GatewayApprovalBinding>,
 }
@@ -156,6 +157,7 @@ impl TerminalHandler {
         Self {
             backend,
             approval: ApprovalManager::new(),
+            session_workdir: None,
             task_cwds: Arc::new(Mutex::new(HashMap::new())),
             gateway_approval: None,
         }
@@ -165,6 +167,12 @@ impl TerminalHandler {
     /// that user's approval, as [`crate::gateway_approval`] describes.
     pub fn with_gateway_approval(mut self, binding: GatewayApprovalBinding) -> Self {
         self.gateway_approval = Some(binding);
+        self
+    }
+
+    /// Use the caller's working directory when the tool call omits `workdir`.
+    pub fn with_session_workdir(mut self, workdir: String) -> Self {
+        self.session_workdir = Some(workdir);
         self
     }
 
@@ -271,10 +279,12 @@ impl ToolHandler for TerminalHandler {
         let task_workdir = explicit_workdir
             .is_none()
             .then(|| {
-                params
-                    .get("task_id")
-                    .and_then(|v| v.as_str())
-                    .and_then(|task_id| self.task_cwd(task_id))
+                self.session_workdir.clone().or_else(|| {
+                    params
+                        .get("task_id")
+                        .and_then(|v| v.as_str())
+                        .and_then(|task_id| self.task_cwd(task_id))
+                })
             })
             .flatten();
         let env_workdir = explicit_workdir
@@ -1135,6 +1145,45 @@ mod tests {
 
         let calls = calls.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(calls.as_slice(), [Some("/workspace/acp".to_string())]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn terminal_reports_the_fallback_for_a_deleted_session_directory() {
+        let _lock = TEST_ENV_LOCK.lock().unwrap();
+        let _yolo = EnvGuard::remove("HERMES_YOLO_MODE");
+        let _session = EnvGuard::remove("HERMES_SESSION_KEY");
+        let _sudo = EnvGuard::remove("SUDO_PASSWORD");
+        let backend = hermes_environments::LocalBackend::new_with_shell_init(
+            10,
+            32_768,
+            Vec::new(),
+            false,
+            Vec::new(),
+        );
+        let handler = TerminalHandler::new(Arc::new(backend));
+        let folder = tempfile::tempdir().unwrap();
+        let parent = folder.path().canonicalize().unwrap();
+        let deleted = parent.join("workspace").join("session");
+        std::fs::create_dir_all(&deleted).unwrap();
+        handler.set_task_cwd("session", deleted.to_str().unwrap());
+        std::fs::remove_dir(&deleted).unwrap();
+        std::fs::remove_dir(deleted.parent().unwrap()).unwrap();
+
+        let params = json!({"command": "pwd", "task_id": "session"});
+        let notice = block_on(handler.execute(params.clone()))
+            .unwrap_err()
+            .to_string();
+        assert!(notice.contains(deleted.to_str().unwrap()), "{notice}");
+        assert!(notice.contains(&format!("{parent:?}")), "{notice}");
+        assert!(notice.contains("Command did not run."), "{notice}");
+
+        let explicit_missing = json!({"command": "pwd", "workdir": deleted});
+        assert!(block_on(handler.execute(explicit_missing)).is_err());
+        let retry = json!({"command": "pwd", "task_id": "session", "workdir": parent});
+        let output = block_on(handler.execute(retry)).unwrap();
+        assert_eq!(output.trim(), parent.to_str().unwrap());
+        assert!(block_on(handler.execute(params)).is_err());
     }
 
     #[test]

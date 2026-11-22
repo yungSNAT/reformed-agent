@@ -255,6 +255,9 @@ pub(crate) fn session_mcp_server_configs(
         config.keepalive_interval = server.keepalive_interval;
         if url.is_some() {
             config.headers = server.headers.clone().into_iter().collect();
+            config.modern_http = server.modern_http;
+        } else {
+            config.stdio_mode = server.stdio_mode;
         }
 
         if let Some(record) = records.and_then(|records| records.get(name)) {
@@ -280,6 +283,9 @@ pub(crate) fn session_mcp_server_configs(
                 if url.is_none() {
                     config.command = Some(record_command.to_string());
                     config.args = record.args.clone();
+                    config.stdio_mode = config.stdio_mode.or(record.stdio_mode);
+                } else {
+                    config.modern_http = config.modern_http.or(record.modern_http);
                 }
                 config.env = record.env.clone().into_iter().collect();
             }

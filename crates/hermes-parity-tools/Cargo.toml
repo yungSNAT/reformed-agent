@@ -10,6 +10,7 @@ publish = false
 [dependencies]
 jiff = { workspace = true }
 clap = { workspace = true }
+fancy-regex = "0.11"
 regex = { workspace = true }
 hermes-py = { workspace = true }
 syn = { version = "2", features = ["full"] }

@@ -1,18 +1,18 @@
 # Harness Trend Ledger
 
-Generated: `2026-07-03T20:16:19.312613+00:00`
+Generated: `2026-11-21T04:53:33.486487+00:00`
 
 ## Latest
 
 | Metric | Value |
 | --- | ---: |
 | `queue_pending` | 0 |
-| `queue_total` | 8262 |
-| `tracked_behavior_coverage_ratio` | 1.0 |
-| `tracked_behavior_rows` | 470 |
-| `covered_behavior_rows` | 470 |
-| `rust_test_functions` | 7254 |
-| `coverage_manifest_entries` | 460 |
+| `queue_total` | 1 |
+| `tracked_behavior_coverage_ratio` | 0.0646 |
+| `tracked_behavior_rows` | 511 |
+| `covered_behavior_rows` | 33 |
+| `rust_test_functions` | 16421 |
+| `coverage_manifest_entries` | 501 |
 | `sota_domain_coverage_ratio` | 1.0 |
 | `sota_direct_rust_tests` | 12 |
 | `sota_workflow_replay_steps` | 9 |
@@ -28,3 +28,4 @@ Generated: `2026-07-03T20:16:19.312613+00:00`
 | `2026-06-21T01:32:19.157276+00:00` | `4ec5989190dc` | 0 | 1.0 | 1.0 |
 | `2026-06-24T00:21:39.243720+00:00` | `55d43effb9c0` | 0 | 1.0 | 1.0 |
 | `2026-07-03T20:16:19.311890+00:00` | `977d4afe0031` | 0 | 1.0 | 1.0 |
+| `2026-11-21T04:53:33.485280+00:00` | `54a8365f5559` | 0 | 0.0646 | 1.0 |

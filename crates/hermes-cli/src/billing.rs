@@ -162,12 +162,6 @@ impl BillingError {
             .get("error")
             .and_then(Value::as_str)
             .map(ToOwned::to_owned);
-        let message = payload
-            .get("message")
-            .and_then(Value::as_str)
-            .map(ToOwned::to_owned)
-            .or_else(|| error.clone())
-            .unwrap_or_else(|| format!("Billing request failed ({status})."));
         let portal_url = payload
             .get("portalUrl")
             .and_then(Value::as_str)
@@ -177,18 +171,55 @@ impl BillingError {
         } else if status == StatusCode::FORBIDDEN && error.as_deref() == Some("insufficient_scope")
         {
             BillingErrorKind::ScopeRequired
-        } else if status == StatusCode::TOO_MANY_REQUESTS
-            || status == StatusCode::SERVICE_UNAVAILABLE
+        } else if status == StatusCode::SERVICE_UNAVAILABLE
+            || (status == StatusCode::TOO_MANY_REQUESTS
+                && error.as_deref() != Some("upgrade_cap_exceeded"))
         {
             BillingErrorKind::RateLimited
         } else {
             BillingErrorKind::Http
         };
+        let message = match (&kind, error.as_deref()) {
+            (BillingErrorKind::RateLimited, Some("stripe_unavailable"))
+                if status == StatusCode::SERVICE_UNAVAILABLE =>
+            {
+                "The payment service is temporarily unavailable."
+            }
+            (BillingErrorKind::Auth, Some("session_revoked")) => {
+                "Your Nous Portal session was logged out."
+            }
+            (BillingErrorKind::Auth, _) => "Nous Portal authentication required.",
+            (BillingErrorKind::ScopeRequired, _) => "This action needs the billing:manage scope.",
+            (BillingErrorKind::RateLimited, _) if status == StatusCode::TOO_MANY_REQUESTS => {
+                "Nous Portal is rate limiting billing requests."
+            }
+            (BillingErrorKind::RateLimited, _) => "Nous Portal is temporarily unavailable.",
+            (_, Some("remote_spending_revoked")) if status == StatusCode::FORBIDDEN => {
+                "Remote spending was stopped for this terminal."
+            }
+            (_, Some("cli_billing_disabled" | "remote_spending_disabled")) => {
+                "Remote spending is disabled for this account."
+            }
+            (_, Some("role_required")) => "Your account role does not allow this billing action.",
+            (_, Some("no_payment_method")) => "Set up a payment method in Nous Portal.",
+            (_, Some("idempotency_conflict")) => {
+                "The idempotency key belongs to another request. Check the existing charge."
+            }
+            (_, Some("monthly_cap_exceeded")) => {
+                "This charge would exceed the monthly spending cap."
+            }
+            (_, Some("stripe_unavailable")) => "The payment service is temporarily unavailable.",
+            (_, Some("upgrade_cap_exceeded")) => {
+                "The daily limit for plan changes was reached. Try again tomorrow."
+            }
+            _ if status == StatusCode::FORBIDDEN => "Billing request denied.",
+            _ => "Billing request failed.",
+        };
         Self {
             kind,
             status: Some(status.as_u16()),
             error,
-            message,
+            message: message.to_string(),
             portal_url,
             retry_after,
             payload: Some(Box::new(payload)),
@@ -201,6 +232,18 @@ impl BillingError {
             status: None,
             error: Some("network_error".into()),
             message: error.into(),
+            portal_url: None,
+            retry_after: None,
+            payload: None,
+        }
+    }
+
+    fn invalid_response(status: StatusCode) -> Self {
+        Self {
+            kind: BillingErrorKind::Http,
+            status: Some(status.as_u16()),
+            error: Some("invalid_response".into()),
+            message: "Nous Portal returned an unreadable billing response.".into(),
             portal_url: None,
             retry_after: None,
             payload: None,
@@ -219,6 +262,74 @@ impl fmt::Display for BillingError {
 }
 
 impl std::error::Error for BillingError {}
+
+const CHARGE_PATH: &str = "/api/billing/charge";
+
+#[derive(Deserialize)]
+struct ChargeAcknowledgement {
+    #[serde(
+        default,
+        rename = "chargeId",
+        deserialize_with = "read_present_charge_id"
+    )]
+    camel_case_id: Option<String>,
+    #[serde(default, deserialize_with = "read_present_charge_id")]
+    charge_id: Option<String>,
+}
+
+fn read_present_charge_id<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    String::deserialize(deserializer).map(Some)
+}
+
+async fn read_charge_acknowledgement(
+    mut response: reqwest::Response,
+) -> Result<Value, BillingError> {
+    const MAX_ACKNOWLEDGEMENT_BYTES: usize = 64 * 1024;
+    const MAX_CHARGE_ID_BYTES: usize = 1024;
+    let status = response.status();
+    if status != StatusCode::ACCEPTED {
+        return Err(BillingError::invalid_response(status));
+    }
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response
+        .chunk()
+        .await
+        .map_err(|_| BillingError::invalid_response(status))?
+    {
+        if chunk.len() > MAX_ACKNOWLEDGEMENT_BYTES - bytes.len() {
+            return Err(BillingError::invalid_response(status));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let payload: Value =
+        serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+    if !payload.is_object() {
+        return Err(BillingError::invalid_response(status));
+    }
+    let acknowledgement: ChargeAcknowledgement =
+        serde_json::from_slice(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+    acknowledgement
+        .camel_case_id
+        .as_deref()
+        .or(acknowledgement.charge_id.as_deref())
+        .filter(|id| {
+            // The displayed ID must round-trip as one CLI argument and one URL path segment.
+            !matches!(*id, "" | "." | ".." | "--")
+                && id.len() <= MAX_CHARGE_ID_BYTES
+                && id.bytes().all(is_plain_billing_reference_byte)
+        })
+        .filter(|id| {
+            acknowledgement
+                .charge_id
+                .as_deref()
+                .is_none_or(|legacy| *id == legacy)
+        })
+        .ok_or_else(|| BillingError::invalid_response(status))?;
+    Ok(payload)
+}
 
 pub struct NousBillingClient {
     access_token: String,
@@ -242,6 +353,16 @@ impl NousBillingClient {
         let portal_base_url = resolve_portal_base_url(Some(state));
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs_f64(DEFAULT_TIMEOUT_SECONDS))
+            .redirect(reqwest::redirect::Policy::custom(|attempt| {
+                if attempt
+                    .previous()
+                    .first()
+                    .is_some_and(|url| url.path().ends_with(CHARGE_PATH))
+                {
+                    return attempt.stop();
+                }
+                reqwest::redirect::Policy::default().redirect(attempt)
+            }))
             .user_agent(format!("hermes-agent-ultra/{}", env!("CARGO_PKG_VERSION")))
             .build()
             .map_err(|e| BillingError::network(format!("build billing client: {e}")))?;
@@ -271,21 +392,43 @@ impl NousBillingClient {
         amount_usd: &str,
         idempotency_key: &str,
     ) -> Result<Value, BillingError> {
-        let key = idempotency_key.trim();
-        if key.is_empty() {
+        if idempotency_key.trim().is_empty() {
             return Err(BillingError::invalid_request(
                 "Idempotency-Key is required for a charge.",
                 "idempotency_key_required",
             ));
         }
+        if !idempotency_key
+            .bytes()
+            .all(|byte| byte.is_ascii_graphic() && !matches!(byte, b'\'' | b'"' | b'\\'))
+        {
+            return Err(BillingError::invalid_request(
+                "Idempotency-Key must use printable ASCII without whitespace, quotes or backslashes.",
+                "invalid_idempotency_key",
+            ));
+        }
         let amount = parse_amount_number(amount_usd).ok_or_else(|| {
             BillingError::invalid_request("A valid charge amount is required.", "invalid_amount")
         })?;
+        let base = reqwest::Url::parse(&self.portal_base_url);
+        if !base.is_ok_and(|url| {
+            matches!(url.scheme(), "http" | "https")
+                && url.has_host()
+                && url.username().is_empty()
+                && url.password().is_none()
+                && url.query().is_none()
+                && url.fragment().is_none()
+        }) {
+            return Err(BillingError::invalid_request(
+                "Nous Portal needs a valid base URL using HTTP or HTTPS without credentials, a query or a fragment before submitting a charge.",
+                "invalid_portal_base_url",
+            ));
+        }
         self.request(
             Method::POST,
-            "/api/billing/charge",
+            CHARGE_PATH,
             Some(json!({ "amountUsd": amount })),
-            Some(("Idempotency-Key", key.to_string())),
+            Some(("Idempotency-Key", idempotency_key.to_string())),
         )
         .await
     }
@@ -343,6 +486,7 @@ impl NousBillingClient {
         body: Option<Value>,
         extra_header: Option<(&str, String)>,
     ) -> Result<Value, BillingError> {
+        let updating = method == Method::PATCH;
         let url = format!("{}{}", self.portal_base_url.trim_end_matches('/'), path);
         let mut req = self
             .client
@@ -357,16 +501,36 @@ impl NousBillingClient {
                 .header(header::CONTENT_TYPE, "application/json")
                 .json(&body);
         }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| BillingError::network(format!("Could not reach Nous Portal: {e}")))?;
+        let resp = req.send().await.map_err(|error| {
+            let message = if error.is_timeout() {
+                "Nous Portal did not respond in time."
+            } else {
+                "Could not reach Nous Portal."
+            };
+            BillingError::network(message)
+        })?;
         let status = resp.status();
         let retry_after = resp
             .headers()
             .get(header::RETRY_AFTER)
             .and_then(|value| value.to_str().ok())
             .and_then(|value| value.trim().parse::<u64>().ok());
+        if path == CHARGE_PATH && status.is_success() {
+            return read_charge_acknowledgement(resp).await;
+        }
+        if updating && status.is_success() {
+            let bytes = resp
+                .bytes()
+                .await
+                .map_err(|_| BillingError::invalid_response(status))?;
+            let text =
+                std::str::from_utf8(&bytes).map_err(|_| BillingError::invalid_response(status))?;
+            return if text.trim().is_empty() {
+                Ok(json!({}))
+            } else {
+                serde_json::from_str(text).map_err(|_| BillingError::invalid_response(status))
+            };
+        }
         let text = resp.text().await.unwrap_or_default();
         let payload = if text.trim().is_empty() {
             json!({})
@@ -438,7 +602,7 @@ pub async fn handle_billing_slash_args(args: &[&str]) -> Result<String, AgentErr
 }
 
 fn billing_usage() -> &'static str {
-    "Usage:\n  hermes billing\n  hermes billing portal\n  hermes billing limit\n  hermes billing step-up\n  hermes billing charge <amount-usd> --confirm\n  hermes billing charge-status <charge-id>\n  hermes billing auto-reload <threshold-usd> <top-up-usd> --confirm"
+    "Usage:\n  hermes billing\n  hermes billing portal\n  hermes billing limit\n  hermes billing step-up\n  hermes billing charge <amount-usd> --confirm [--idempotency-key=<key>]\n  hermes billing charge-status <charge-id>\n  hermes billing auto-reload <threshold-usd> <top-up-usd> --confirm"
 }
 
 async fn run_billing_step_up() -> Result<String, AgentError> {
@@ -462,34 +626,109 @@ async fn run_billing_step_up() -> Result<String, AgentError> {
     })
 }
 
+fn parse_charge_options<'a>(
+    args: impl IntoIterator<Item = &'a str>,
+) -> Result<(bool, Option<&'a str>), AgentError> {
+    let mut confirmed = false;
+    let mut key = None;
+    for arg in args {
+        if !confirmed && matches!(arg, "--confirm" | "--yes") {
+            confirmed = true;
+        } else if let Some(supplied) = arg
+            .strip_prefix("--idempotency-key=")
+            .filter(|_| key.is_none())
+        {
+            key = Some(supplied);
+        } else {
+            return Err(AgentError::ToolExecution(
+                "Unknown or repeated charge option. Use --confirm and at most one --idempotency-key=<key>."
+                    .to_string(),
+            ));
+        }
+    }
+    Ok((confirmed, key))
+}
+
+pub(crate) fn prepare_tui_charge_key(input: &str) -> Option<String> {
+    let (command, args) = input.trim().split_once(' ')?;
+    if command != "/billing" {
+        return None;
+    }
+    let mut args = args.split_whitespace();
+    if args.next()? != "charge" || parse_amount_number(args.next()?).is_none() {
+        return None;
+    }
+    let (confirmed, key) = parse_charge_options(args).ok()?;
+    (confirmed && key.is_none()).then(|| Uuid::new_v4().to_string())
+}
+
+fn announce_charge_key(key: &str) -> Result<(), AgentError> {
+    use std::io::{self, Write};
+
+    let mut output = io::stderr().lock();
+    writeln!(output, "Billing charge idempotency key: {key}")
+        .and_then(|()| output.flush())
+        .map_err(|_| {
+            AgentError::ToolExecution(
+                "Could not display the idempotency key. Charge cancelled before submission."
+                    .to_string(),
+            )
+        })
+}
+
 async fn run_charge_command(args: &[String]) -> Result<String, AgentError> {
     let Some(amount) = args.get(1).map(String::as_str) else {
         return Ok("Usage: hermes billing charge <amount-usd> --confirm".to_string());
     };
-    if !args.iter().any(|arg| arg == "--confirm" || arg == "--yes") {
+    let (confirmed, supplied_key) = parse_charge_options(args[2..].iter().map(String::as_str))?;
+    if !confirmed {
         return Ok(format!(
             "Refusing to create a live billing charge without `--confirm`.\nManage on portal: {}",
             fallback_portal_url(&resolve_portal_base_url_from_store())
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let idempotency_key = args
-        .iter()
-        .find_map(|arg| arg.strip_prefix("--idempotency-key="))
-        .map(ToOwned::to_owned)
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let payload = client
-        .post_charge(amount, &idempotency_key)
-        .await
-        .map_err(billing_error_to_agent_error)?;
+    let idempotency_key = if let Some(key) = supplied_key {
+        key.to_string()
+    } else {
+        let key = Uuid::new_v4().to_string();
+        announce_charge_key(&key)?;
+        key
+    };
+    let payload = client.post_charge(amount, &idempotency_key).await.map_err(|error| {
+        let status = error.status;
+        let network = error.kind == BillingErrorKind::Network;
+        if network || status.is_some_and(|status| matches!(status, 200..=399 | 408 | 429 | 500..=599)) {
+            return AgentError::ToolExecution(format!(
+                "Billing charge submission could not be confirmed. {error} Check the charge in Nous Portal. Contact support if the outcome remains unclear. Any deliberate repeat requires the same key, amount and billing context. Idempotency key: {}",
+                render_billing_reference(&idempotency_key)
+            ));
+        }
+        billing_error_to_agent_error(error)
+    })?;
     let charge_id = payload
         .get("chargeId")
         .or_else(|| payload.get("charge_id"))
         .and_then(Value::as_str)
-        .unwrap_or("<missing>");
+        .ok_or_else(|| {
+        AgentError::ToolExecution("Billing charge submission could not be confirmed. Check the charge in Nous Portal before submitting again.".to_string())
+    })?;
+    let charge_id = render_billing_reference(charge_id);
+    let idempotency_key = render_billing_reference(&idempotency_key);
     Ok(format!(
         "Billing charge submitted\n  charge_id: {charge_id}\n  idempotency_key: {idempotency_key}\nPoll with: hermes billing charge-status {charge_id}"
     ))
+}
+
+fn is_plain_billing_reference_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'-' | b'_')
+}
+
+fn render_billing_reference(value: &str) -> String {
+    if value.bytes().all(is_plain_billing_reference_byte) {
+        return value.to_string();
+    }
+    format!("{value:?}")
 }
 
 async fn run_charge_status_command(args: &[String]) -> Result<String, AgentError> {
@@ -501,9 +740,49 @@ async fn run_charge_status_command(args: &[String]) -> Result<String, AgentError
         .get_charge_status(charge_id)
         .await
         .map_err(billing_error_to_agent_error)?;
+    render_charge_status(&payload)
+}
+
+fn render_charge_status(payload: &Value) -> Result<String, AgentError> {
+    let status = match payload.get("status").and_then(Value::as_str) {
+        Some(status @ ("pending" | "settled" | "failed")) => status,
+        _ => {
+            return Err(AgentError::ToolExecution(
+                "Charge status could not be verified. Check the existing charge before resubmitting."
+                    .to_string(),
+            ));
+        }
+    };
+    let mut display = json!({ "status": status });
+    if let Some(amount) = payload.get("amountUsd") {
+        if amount.is_null() {
+            display["amountUsd"] = Value::Null;
+        } else if let Some(decimal) =
+            parse_money_value(amount).filter(|value| !value.starts_with('-'))
+        {
+            display["amountUsd"] = if amount.is_string() {
+                Value::String(decimal)
+            } else {
+                amount.clone()
+            };
+        }
+    }
+    if let Some(settled_at) = payload.get("settledAt").filter(|field| {
+        field.is_null()
+            || field.as_str().is_some_and(|value| {
+                !value.contains('[') && value.parse::<jiff::Timestamp>().is_ok()
+            })
+    }) {
+        display["settledAt"] = settled_at.clone();
+    }
+    if let Some(reason @ ("authentication_required" | "payment_method_expired" | "card_declined")) =
+        payload.get("reason").and_then(Value::as_str)
+    {
+        display["reason"] = json!(reason);
+    }
     Ok(format!(
         "Billing charge status\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
+        serde_json::to_string_pretty(&display).unwrap_or_else(|_| display.to_string())
     ))
 }
 
@@ -520,14 +799,21 @@ async fn run_auto_reload_command(args: &[String]) -> Result<String, AgentError> 
         ));
     }
     let client = NousBillingClient::from_auth_store().map_err(billing_error_to_agent_error)?;
-    let payload = client
+    client
         .patch_auto_reload(true, threshold, top_up)
         .await
-        .map_err(billing_error_to_agent_error)?;
-    Ok(format!(
-        "Billing auto-reload updated\n{}",
-        serde_json::to_string_pretty(&payload).unwrap_or_else(|_| payload.to_string())
-    ))
+        .map_err(|error| {
+            if error.kind == BillingErrorKind::Network
+                || error.status.is_some_and(|status| (200..300).contains(&status))
+            {
+                AgentError::ToolExecution(format!(
+                    "Auto-reload update could not be confirmed. {error} Check the current setting before repeating the request."
+                ))
+            } else {
+                billing_error_to_agent_error(error)
+            }
+        })?;
+    Ok("Billing auto-reload updated\n{\"ok\":true}".to_string())
 }
 
 fn billing_error_to_agent_error(err: BillingError) -> AgentError {
@@ -1074,9 +1360,567 @@ mod tests {
         assert!(nous_token_has_billing_scope(None, Some(&token)));
     }
 
+    #[test]
+    fn charge_status_displays_only_documented_settlement_fields() {
+        let output = render_charge_status(&json!({
+            "status": "settled",
+            "amountUsd": "50.00",
+            "settledAt": "2026-11-21T00:00:00Z",
+            "processorDetail": "unrelated-provider-detail-fixture"
+        }))
+        .expect("verified settlement");
+        let result: Value = serde_json::from_str(
+            output
+                .strip_prefix("Billing charge status\n")
+                .expect("status heading"),
+        )
+        .expect("charge status JSON");
+        assert_eq!(
+            result,
+            json!({
+                "status": "settled",
+                "amountUsd": "50.00",
+                "settledAt": "2026-11-21T00:00:00Z"
+            })
+        );
+    }
+
+    #[test]
+    fn charge_status_preserves_known_states_and_valid_optional_values() {
+        for (payload, expected) in [
+            (json!({"status": "pending"}), json!({"status": "pending"})),
+            (
+                json!({
+                    "status": "settled",
+                    "amountUsd": 50.125,
+                    "settledAt": "2026-11-21T11:00:00.500+11:00"
+                }),
+                json!({
+                    "status": "settled",
+                    "amountUsd": 50.125,
+                    "settledAt": "2026-11-21T11:00:00.500+11:00"
+                }),
+            ),
+            (
+                json!({"status": "failed", "reason": "authentication_required", "settledAt": null}),
+                json!({"status": "failed", "reason": "authentication_required", "settledAt": null}),
+            ),
+            (
+                json!({"status": "failed", "reason": "provider-only-detail"}),
+                json!({"status": "failed"}),
+            ),
+        ] {
+            let output = render_charge_status(&payload).expect("verified charge status");
+            let rendered: Value =
+                serde_json::from_str(output.strip_prefix("Billing charge status\n").unwrap())
+                    .expect("charge status JSON");
+            assert_eq!(rendered, expected);
+        }
+    }
+
+    #[test]
+    fn charge_status_preserves_verified_fields_when_other_details_are_invalid() {
+        for (payload, expected) in [
+            (
+                json!({"status": "failed", "amountUsd": {"detail": "provider-only-detail"}, "reason": "card_declined"}),
+                json!({"status": "failed", "reason": "card_declined"}),
+            ),
+            (
+                json!({"status": "settled", "amountUsd": "-20.00", "settledAt": "2026-11-21T19:00:00Z"}),
+                json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z"}),
+            ),
+            (
+                json!({"status": "settled", "amountUsd": " 50.00 ", "settledAt": "2026-11-31T19:00:00Z"}),
+                json!({"status": "settled", "amountUsd": "50.00"}),
+            ),
+            (
+                json!({"status": "settled", "settledAt": "2026-11-21T19:00:00Z[provider-only-detail]"}),
+                json!({"status": "settled"}),
+            ),
+        ] {
+            let output = render_charge_status(&payload).expect("verified charge status");
+            let rendered: Value =
+                serde_json::from_str(output.strip_prefix("Billing charge status\n").unwrap())
+                    .expect("charge status JSON");
+            assert_eq!(rendered, expected);
+        }
+    }
+
+    #[test]
+    fn charge_status_reports_an_unknown_state_without_provider_details() {
+        for payload in [
+            json!(null),
+            json!({"status": "provider-only-detail"}),
+            json!({"status": false}),
+        ] {
+            let err = render_charge_status(&payload).unwrap_err().to_string();
+            assert!(err.contains("Charge status could not be verified."));
+            assert!(err.contains("Check the existing charge before resubmitting."));
+            assert!(!err.contains("provider-only-detail"));
+        }
+    }
+
+    #[tokio::test]
+    async fn cli_and_slash_reject_charge_status_without_exposing_payload() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "status": "provider-only-detail"
+            })))
+            .expect(2)
+            .mount(&server)
+            .await;
+
+        let cli = handle_billing_args(&["charge-status".into(), "fixture".into()]).await;
+        let slash = handle_billing_slash_args(&["charge-status", "fixture"]).await;
+        for outcome in [cli, slash] {
+            let err = outcome.unwrap_err().to_string();
+            assert!(err.contains("Charge status could not be verified."));
+            assert!(!err.contains("provider-only-detail"));
+        }
+    }
+
+    #[test]
+    fn tui_prepares_a_key_only_for_an_explicitly_confirmed_charge() {
+        let key = prepare_tui_charge_key("/billing charge 50 --confirm").expect("recovery key");
+        assert!(
+            Uuid::parse_str(&key).is_ok(),
+            "the recovery key must be a UUID"
+        );
+        for other in [
+            "/billing charge 50",
+            "/billing charge 50 --yes --idempotency-key=caller-key",
+            "/billing charge invalid --yes",
+            "/billing auto-reload 20 50 --yes",
+            "/other charge 50 --confirm",
+        ] {
+            assert!(prepare_tui_charge_key(other).is_none());
+        }
+    }
+
+    #[test]
+    fn charge_reference_rendering_keeps_plain_ids_and_escapes_terminal_controls() {
+        assert_eq!(
+            render_billing_reference("fixture-charge.1"),
+            "fixture-charge.1"
+        );
+        assert!(
+            render_billing_reference("example\x1b[0m\nnext") == r#""example\u{1b}[0m\nnext""#,
+            "an opaque identifier must be readable without embedding terminal controls"
+        );
+    }
+
+    #[tokio::test]
+    async fn charge_submission_requires_a_single_verified_acknowledgement() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+
+        let mut bounded_body = r#"{"chargeId":"fixture-charge"}"#.to_string();
+        bounded_body.extend(std::iter::repeat_n(' ', 64 * 1024 - bounded_body.len()));
+        let oversized_body = format!("{bounded_body} ");
+        let oversized_id = json!({ "chargeId": "x".repeat(1025) }).to_string();
+        for (index, (status, body, accepted)) in [
+            (202u16, r#"{"chargeId":"fixture-charge"}"#, true),
+            (202, r#"{"charge_id":"fixture-charge"}"#, true),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":"fixture-charge"}"#,
+                true,
+            ),
+            (202, r#"{"detail":"provider-only-acknowledgement"}"#, false),
+            (202, r#"{"chargeId":" "}"#, false),
+            (202, r#"{"chargeId":42}"#, false),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","chargeId":"fixture-charge"}"#,
+                false,
+            ),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":"other"}"#,
+                false,
+            ),
+            (
+                202,
+                r#"{"chargeId":null,"charge_id":"fixture-charge"}"#,
+                false,
+            ),
+            (
+                202,
+                r#"{"chargeId":"fixture-charge","charge_id":null}"#,
+                false,
+            ),
+            (202, "{", false),
+            (202, r#"["fixture-charge","fixture-charge"]"#, false),
+            (202, r#"{"chargeId":"."}"#, false),
+            (202, r#"{"chargeId":".."}"#, false),
+            (202, r#"{"chargeId":"--"}"#, false),
+            (202, r#"{"chargeId":"before\u0000after"}"#, false),
+            (202, r#"{"chargeId":"before\u001bafter"}"#, false),
+            (202, r#"{"chargeId":"two parts"}"#, false),
+            (202, r#"{"chargeId":"two/segments"}"#, false),
+            (202, r#"{"chargeId":"two%2Fsegments"}"#, false),
+            (202, r#"{"chargeId":"before?after#fragment"}"#, false),
+            (202, bounded_body.as_str(), true),
+            (202, oversized_body.as_str(), false),
+            (202, oversized_id.as_str(), false),
+            (200, r#"{"chargeId":"fixture-charge"}"#, false),
+            (408, r#"{"message":"provider-only-acknowledgement"}"#, false),
+            (429, r#"{"message":"provider-only-acknowledgement"}"#, false),
+            (503, r#"{"message":"provider-only-acknowledgement"}"#, false),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let key = format!("fixture-Key_{index}:step");
+            Mock::given(method("POST"))
+                .and(path("/api/billing/charge"))
+                .and(header("idempotency-key", key.as_str()))
+                .and(header("authorization", "Bearer access"))
+                .and(body_json(json!({"amountUsd": 50.0})))
+                .respond_with(
+                    ResponseTemplate::new(status).set_body_raw(body.as_bytes(), "application/json"),
+                )
+                .expect(1)
+                .mount(&server)
+                .await;
+
+            let key_arg = format!("--idempotency-key={key}");
+            let result = if index % 2 == 0 {
+                handle_billing_args(&["charge".into(), "50".into(), "--confirm".into(), key_arg])
+                    .await
+            } else {
+                handle_billing_slash_args(&["charge", "50", "--confirm", &key_arg]).await
+            };
+            if accepted {
+                assert!(
+                    result.is_ok_and(|output| {
+                        output.contains("charge_id: fixture-charge")
+                            && output.contains("hermes billing charge-status fixture-charge")
+                    }),
+                    "the documented acknowledgement should retain its charge identifier"
+                );
+            } else {
+                assert!(
+                    result.is_err_and(|error| {
+                        let output = error.to_string();
+                        output.contains("could not be confirmed")
+                            && output.contains("Nous Portal")
+                            && output.contains(&key)
+                            && !output.contains("provider-only-acknowledgement")
+                    }),
+                    "a non-conforming acknowledgement should report an uncertain outcome"
+                );
+            }
+        }
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/fixture-charge"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "status": "pending" })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let status = handle_billing_args(&["charge-status".into(), "fixture-charge".into()]).await;
+        assert!(
+            status.is_ok_and(|output| output.contains("pending")),
+            "the accepted reference should work directly with charge status"
+        );
+    }
+
+    #[tokio::test]
+    async fn charge_submission_keeps_the_original_destination_and_key() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
+        let other = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+        Mock::given(path(CHARGE_PATH))
+            .respond_with(
+                ResponseTemplate::new(202).set_body_json(json!({ "chargeId": "fixture-charge" })),
+            )
+            .expect(0)
+            .mount(&other)
+            .await;
+        Mock::given(method("POST"))
+            .and(path(CHARGE_PATH))
+            .and(header("idempotency-key", "fixture-key"))
+            .respond_with(
+                ResponseTemplate::new(307)
+                    .insert_header("Location", format!("{}{CHARGE_PATH}", other.uri())),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let result = handle_billing_slash_args(&[
+            "charge",
+            "50",
+            "--confirm",
+            "--idempotency-key=fixture-key",
+        ])
+        .await;
+        assert!(
+            result.is_err_and(|error| {
+                let output = error.to_string();
+                output.contains("could not be confirmed") && output.contains("fixture-key")
+            }),
+            "a changed destination should leave the outcome uncertain with the original key"
+        );
+
+        for component in ["?attempt=1", "#example"] {
+            let _invalid_portal = EnvVarGuard::set(
+                "HERMES_PORTAL_BASE_URL",
+                format!("{}{component}", server.uri()),
+            );
+            let result = handle_billing_slash_args(&[
+                "charge",
+                "50",
+                "--confirm",
+                "--idempotency-key=fixture-key",
+            ])
+            .await;
+            assert!(
+                result.is_err_and(|error| error.to_string().contains("valid base URL")),
+                "an invalid charge destination should fail before submission"
+            );
+        }
+        for key in [
+            " fixture-key",
+            "fixture-key ",
+            "fixture-\tkey",
+            "fixture-\u{00e9}",
+        ] {
+            let key_arg = format!("--idempotency-key={key}");
+            for result in [
+                handle_billing_args(&[
+                    "charge".into(),
+                    "50".into(),
+                    "--confirm".into(),
+                    key_arg.clone(),
+                ])
+                .await,
+                handle_billing_slash_args(&["charge", "50", "--confirm", &key_arg]).await,
+            ] {
+                assert!(
+                    result.is_err_and(|error| error.to_string().contains("printable ASCII")),
+                    "an unsupported supplied key should fail without being normalised"
+                );
+            }
+        }
+        assert!(
+            server
+                .received_requests()
+                .await
+                .is_some_and(|requests| requests.len() == 1),
+            "only the original charge request should reach the Portal"
+        );
+    }
+
+    #[tokio::test]
+    async fn charge_submission_disconnect_after_delivery_preserves_recovery_key() {
+        use tokio::io::{AsyncBufReadExt, AsyncReadExt, BufReader};
+        use tokio::net::TcpListener;
+
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let listener = TcpListener::bind("127.0.0.1:0").await.expect("listen");
+        let portal = format!("http://{}", listener.local_addr().expect("local address"));
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", &portal);
+        save_nous_auth_state(&sample_state("access".into(), portal)).expect("save state");
+
+        let receive = tokio::spawn(tokio::time::timeout(Duration::from_secs(5), async move {
+            let (stream, _) = listener.accept().await.expect("accept charge request");
+            let mut request = BufReader::new(stream);
+            let mut line = String::new();
+            request.read_line(&mut line).await.expect("request line");
+            assert_eq!(line, "POST /api/billing/charge HTTP/1.1\r\n");
+            let mut original_key = false;
+            loop {
+                line.clear();
+                assert!(request.read_line(&mut line).await.expect("request header") > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some((_, value)) = line
+                    .split_once(':')
+                    .filter(|(name, _)| name.eq_ignore_ascii_case("idempotency-key"))
+                {
+                    original_key = value.trim() == "fixture-Recovery_09";
+                }
+            }
+            const EXPECTED_BODY: &[u8] = br#"{"amountUsd":50.0}"#;
+            let mut body = [0; EXPECTED_BODY.len()];
+            request.read_exact(&mut body).await.expect("charge body");
+            assert_eq!(&body, EXPECTED_BODY);
+            assert!(
+                original_key,
+                "the delivered request should use the original key"
+            );
+            // Drop the connection after receipt, before the server sends an acknowledgement.
+        }));
+
+        let result = handle_billing_args(&[
+            "charge".into(),
+            "50".into(),
+            "--confirm".into(),
+            "--idempotency-key=fixture-Recovery_09".into(),
+        ])
+        .await;
+        assert!(
+            receive.await.is_ok_and(|received| received.is_ok()),
+            "the loopback server should receive the complete charge request"
+        );
+        assert!(
+            result.is_err_and(|error| {
+                let message = error.to_string();
+                message.contains("could not be confirmed")
+                    && message.contains("Could not reach Nous Portal")
+                    && message.contains("Idempotency key: fixture-Recovery_09")
+                    && !message.contains("Billing charge submitted")
+            }),
+            "a disconnected submission should report an uncertain outcome with the original key"
+        );
+    }
+
+    #[tokio::test]
+    async fn auto_reload_acknowledges_a_confirmed_update_without_provider_details() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _hermes_home = EnvVarGuard::set("HERMES_HOME", tmp.path());
+        let _home = EnvVarGuard::set("HOME", tmp.path());
+        let _auth_file = EnvVarGuard::set("HERMES_AUTH_FILE", tmp.path().join("auth.json"));
+        let _nous_oauth =
+            EnvVarGuard::set("HERMES_NOUS_OAUTH_FILE", tmp.path().join("nous_oauth.json"));
+        let server = MockServer::start().await;
+        save_nous_auth_state(&sample_state("access".into(), server.uri())).expect("save state");
+
+        for (threshold, response) in [
+            (
+                20.0,
+                ResponseTemplate::new(200)
+                    .set_body_json(json!({"processorDetail": "provider-only-update-fixture"})),
+            ),
+            (25.0, ResponseTemplate::new(204)),
+            (26.0, ResponseTemplate::new(200).set_body_string(" \n\t")),
+        ] {
+            Mock::given(method("PATCH"))
+                .and(path("/api/billing/auto-top-up"))
+                .and(header("authorization", "Bearer access"))
+                .and(body_json(json!({
+                    "enabled": true, "threshold": threshold, "topUpAmount": 50.0,
+                })))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+        }
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 30.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_string("provider-only-invalid-fixture"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 35.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(429)
+                    .insert_header("Retry-After", "8")
+                    .set_body_json(json!({"error": "rate_limited"})),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("PATCH"))
+            .and(path("/api/billing/auto-top-up"))
+            .and(body_json(json!({
+                "enabled": true, "threshold": 31.0, "topUpAmount": 50.0,
+            })))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_raw(b"{\"unknown\":\"\xff\"}".to_vec(), "application/json"),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let cli = handle_billing_args(&[
+            "auto-reload".into(),
+            "20".into(),
+            "50".into(),
+            "--confirm".into(),
+        ])
+        .await;
+        let empty = handle_billing_slash_args(&["auto-reload", "25", "50", "--confirm"]).await;
+        let whitespace = handle_billing_slash_args(&["auto-reload", "26", "50", "--confirm"]).await;
+        let malformed = handle_billing_slash_args(&["auto-reload", "30", "50", "--confirm"]).await;
+        let invalid_utf8 =
+            handle_billing_slash_args(&["auto-reload", "31", "50", "--confirm"]).await;
+        let rate_limited =
+            handle_billing_slash_args(&["auto-reload", "35", "50", "--confirm"]).await;
+
+        for output in [cli, empty, whitespace] {
+            let output = output.expect("confirmed auto-reload update");
+            let fields: Value = serde_json::from_str(
+                output
+                    .strip_prefix("Billing auto-reload updated\n")
+                    .unwrap(),
+            )
+            .expect("confirmation JSON");
+            assert_eq!(fields, json!({"ok": true}));
+        }
+        for outcome in [malformed, invalid_utf8] {
+            let error = outcome.unwrap_err().to_string();
+            assert!(error.contains("Auto-reload update could not be confirmed."));
+            assert!(error.contains("Check the current setting before repeating the request."));
+            assert!(!error.contains("provider-only-invalid-fixture"));
+        }
+        let error = rate_limited.unwrap_err().to_string();
+        assert!(error.contains("Retry after 8s."));
+    }
+
     #[tokio::test]
     async fn client_maps_state_and_charge_contracts() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         Mock::given(method("GET"))
             .and(path("/api/billing/state"))
             .and(header("authorization", "Bearer access"))
@@ -1109,8 +1953,47 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn client_maps_typed_error_envelopes() {
+    async fn charge_status_timeout_reports_the_cause_without_the_request_url() {
+        let _guard = test_env_lock::lock_async().await;
         let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
+        Mock::given(method("GET"))
+            .and(path("/api/billing/charge/private-charge-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(1)))
+            .mount(&server)
+            .await;
+        let mut client =
+            NousBillingClient::from_state(&sample_state("access".into(), server.uri()))
+                .expect("client");
+        client.client = reqwest::Client::builder()
+            .no_proxy()
+            .timeout(Duration::from_millis(75))
+            .build()
+            .expect("HTTP client");
+
+        let error = client
+            .get_charge_status("private-charge-fixture")
+            .await
+            .unwrap_err();
+        assert_eq!(error.kind, BillingErrorKind::Network);
+        let rendered = billing_error_to_agent_error(error).to_string();
+        assert!(
+            !rendered.contains(&server.uri()),
+            "The timeout diagnosis included its request destination."
+        );
+        assert!(
+            !rendered.contains("private-charge-fixture"),
+            "The timeout diagnosis included its charge reference."
+        );
+        assert!(rendered.contains("Nous Portal did not respond in time."));
+    }
+
+    #[tokio::test]
+    async fn client_maps_typed_error_envelopes() {
+        let _guard = test_env_lock::lock_async().await;
+        let _no_proxy = EnvVarGuard::set("NO_PROXY", "127.0.0.1");
+        let server = MockServer::start().await;
+        let _portal = EnvVarGuard::set("HERMES_PORTAL_BASE_URL", server.uri());
         Mock::given(method("POST"))
             .and(path("/api/billing/charge"))
             .respond_with(ResponseTemplate::new(403).set_body_json(json!({
@@ -1128,6 +2011,86 @@ mod tests {
         assert_eq!(
             err.portal_url.as_deref(),
             Some(expected_portal_url.as_str())
+        );
+        assert!(
+            billing_error_to_agent_error(err).to_string()
+                == "Authentication failed: This action needs the billing:manage scope. (403) Run `hermes billing step-up` to request billing:manage.",
+            "the scope error must retain step-up guidance"
+        );
+    }
+
+    #[test]
+    fn billing_http_errors_use_fixed_diagnostics() {
+        let portal = "https://portal.example";
+        let unknown = BillingError::from_response(
+            StatusCode::BAD_REQUEST,
+            json!({"error": "custom_error_code", "message": "Example account detail"}),
+            None,
+            portal,
+        );
+        assert!(
+            unknown.to_string() == "Billing request failed. (400)",
+            "an unrecognised billing response must have a fixed diagnostic"
+        );
+
+        let revoked = BillingError::from_response(
+            StatusCode::UNAUTHORIZED,
+            json!({"error": "session_revoked", "message": "Example session detail"}),
+            None,
+            portal,
+        );
+        assert_eq!(revoked.kind, BillingErrorKind::Auth);
+        assert!(
+            revoked.to_string() == "Your Nous Portal session was logged out. (401)",
+            "a revoked session must get the logged-out diagnostic"
+        );
+
+        let conflict = BillingError::from_response(
+            StatusCode::CONFLICT,
+            json!({"error": "idempotency_conflict", "message": "Example request detail"}),
+            None,
+            portal,
+        );
+        assert!(
+            conflict.to_string()
+                == "The idempotency key belongs to another request. Check the existing charge. (409)",
+            "a conflict must direct to the existing charge"
+        );
+
+        let limited = BillingError::from_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"message": "Example rate limit detail"}),
+            Some(2),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(limited).to_string()
+                == "Authentication failed: Nous Portal is rate limiting billing requests. (429) Retry after 2s.",
+            "a rate-limit error must retain the retry delay"
+        );
+
+        let unavailable = BillingError::from_response(
+            StatusCode::SERVICE_UNAVAILABLE,
+            json!({"error": "stripe_unavailable"}),
+            Some(75),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(unavailable).to_string()
+                == "Authentication failed: The payment service is temporarily unavailable. (503) Retry after 75s.",
+            "a payment outage must retain its cause and delay"
+        );
+
+        let daily_cap = BillingError::from_response(
+            StatusCode::TOO_MANY_REQUESTS,
+            json!({"error": "upgrade_cap_exceeded"}),
+            Some(2),
+            portal,
+        );
+        assert!(
+            billing_error_to_agent_error(daily_cap).to_string()
+                == "Authentication failed: The daily limit for plan changes was reached. Try again tomorrow. (429)",
+            "a daily cap must direct to the next day"
         );
     }
 

@@ -6,15 +6,25 @@
 mod adapter_matrix;
 mod coverage_audit;
 mod coverage_tests;
+mod dashboard;
+mod decimal_limit;
+mod deep_problem_solving;
 mod divergence;
 mod fork_carry;
 mod git;
+mod global_proof;
+mod gpar_closure;
+mod harness_hardening;
 mod parity_matrix;
+mod release_readiness;
+mod release_secret_scan;
 mod report_io;
+mod security_release_gate;
 mod shared_diff_backlog;
 mod slash_gate;
 mod surface_gate;
 mod test_intent_mapping;
+mod upstream_queue;
 mod workstream_status;
 
 use clap::{Parser, Subcommand};
@@ -70,6 +80,45 @@ enum Command {
     WorkstreamStatus(workstream_status::WorkstreamStatusArgs),
     /// Verify the required fork behaviour contracts by executing their exact Rust tests.
     CheckForkCarry(fork_carry::ForkCarryArgs),
+    /// Generate the upstream missing patch queue.
+    #[command(
+        name = "generate-upstream-patch-queue",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    UpstreamQueue(upstream_queue::UpstreamQueueArgs),
+    /// Evaluate CI and release parity proof thresholds.
+    #[command(
+        name = "generate-global-parity-proof",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    GlobalProof(global_proof::GlobalProofArgs),
+    /// Summarise public parity evidence for a release decision.
+    #[command(
+        name = "generate-release-readiness-summary",
+        args_override_self = true,
+        infer_long_args = true
+    )]
+    ReleaseReadiness(release_readiness::ReadinessArgs),
+    /// Scan tracked release source and redact all findings.
+    #[command(name = "release_secret_scan")]
+    ReleaseSecretScan(release_secret_scan::ScanArgs),
+    #[command(name = "run-security-release-gate-v2")]
+    SecurityReleaseGate(security_release_gate::SecurityReleaseGateArgs),
+    #[command(name = "generate-gpar-01-04-proof")]
+    GparClosure(gpar_closure::ClosureArgs),
+    #[command(name = "generate-deep-problem-solving-diff", args_override_self = true)]
+    DeepProblemSolving(deep_problem_solving::DeepProblemSolvingArgs),
+    #[command(
+        name = "generate-behavioral-similarity-diff",
+        args_override_self = true
+    )]
+    BehavioralSimilarity(deep_problem_solving::BehavioralSimilarityArgs),
+    #[command(name = "generate-parity-dashboard", args_override_self = true)]
+    Dashboard(dashboard::DashboardArgs),
+    #[command(name = "generate-sota-harness-hardening", args_override_self = true)]
+    HarnessHardening(harness_hardening::HarnessHardeningArgs),
 }
 
 fn main() {
@@ -85,6 +134,16 @@ fn main() {
         Command::SharedDiffBacklog(args) => shared_diff_backlog::run(args),
         Command::WorkstreamStatus(args) => workstream_status::run(args),
         Command::CheckForkCarry(args) => fork_carry::run(args),
+        Command::UpstreamQueue(args) => upstream_queue::run(args),
+        Command::GlobalProof(args) => global_proof::run(args),
+        Command::ReleaseReadiness(args) => release_readiness::run(args),
+        Command::ReleaseSecretScan(args) => release_secret_scan::run(args),
+        Command::SecurityReleaseGate(args) => security_release_gate::run(args),
+        Command::GparClosure(args) => gpar_closure::run(args),
+        Command::DeepProblemSolving(args) => deep_problem_solving::run(args),
+        Command::BehavioralSimilarity(args) => deep_problem_solving::run_behavioral(args),
+        Command::Dashboard(args) => dashboard::run(args),
+        Command::HarnessHardening(args) => harness_hardening::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

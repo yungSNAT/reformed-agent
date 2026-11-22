@@ -11,6 +11,7 @@ on:
   pull_request:
     paths:
       - .github/workflows/release.yml
+      - crates/hermes-parity-tools/**
       - scripts/install.sh
       - scripts/smoke-release-artifact.sh
       - scripts/generate-homebrew-formula.sh
@@ -91,7 +92,7 @@ jobs:
           echo "$RUNNER_TEMP/betterleaks" >> "$GITHUB_PATH"
       - name: Secret scan (tracked files)
         run: |
-          python3 scripts/release_secret_scan.py \
+          cargo run --locked -q -p hermes-parity-tools -- release_secret_scan \
             --repo-root . \
             --report .sync-reports/release-secret-scan.json
       - name: Betterleaks (tracked files)

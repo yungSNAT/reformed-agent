@@ -58,6 +58,10 @@ async fn run_billing(args: Vec<String>) -> Result<(), AgentError> {
     Ok(())
 }
 
+fn google_gemini_pool_add_message(entry: &AuthPoolEntry) -> String {
+    format!("Added Google Gemini OAuth credential (id={}).", entry.id)
+}
+
 // Takes the parsed `auth` subcommand fields one by one, like the other
 // command handlers; bundling them into a struct would be a redesign.
 #[allow(clippy::too_many_arguments)]
@@ -356,10 +360,7 @@ async fn run_auth(
                         };
                         entries.push(entry.clone());
                         save_auth_pool_store(&pool_path, &pool_store)?;
-                        println!(
-                            "Added Google Gemini OAuth credential (label='{}', id={}).",
-                            entry.label, entry.id
-                        );
+                        println!("{}", google_gemini_pool_add_message(&entry));
                         println!("Google auth file: {}", creds.auth_file.display());
                         println!("Saved OAuth state: {}", auth_path.display());
                         return Ok(());

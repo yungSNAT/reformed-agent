@@ -413,13 +413,18 @@ fn build_main_runtime_candidate(
             }
             Arc::new(provider)
         }
-        "copilot" | "copilot-acp" => Arc::new(
-            CopilotProvider::new(
+        "copilot" | "copilot-acp" => {
+            let provider = CopilotProvider::new(
                 base_url.unwrap_or_else(|| "https://api.githubcopilot.com".to_string()),
                 api_key,
             )
-            .with_model(model),
-        ),
+            .with_model(model);
+            Arc::new(if label == "copilot" {
+                provider.with_model_catalog()
+            } else {
+                provider
+            })
+        }
         _ => {
             let url = base_url.or_else(|| default_base_url(label).map(str::to_string))?;
             Arc::new(direct_key_provider(label, url, api_key, model))

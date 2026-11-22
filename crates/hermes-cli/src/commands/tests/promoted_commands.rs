@@ -95,6 +95,9 @@
         let executor = CliAcpPromptExecutor {
             config: Arc::new(GatewayConfig::default()),
             tool_registry: Arc::new(hermes_tools::ToolRegistry::new()),
+            terminal_backend: crate::terminal_backend::build_terminal_backend(
+                &GatewayConfig::default(),
+            ),
             interrupts,
             event_sink: Arc::new(hermes_acp::EventSink::default()),
             session_manager: Arc::new(hermes_acp::SessionManager::new()),
@@ -233,6 +236,60 @@
         assert!(out.contains("Added: mcp_srv_ping"));
     }
 
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread")]
+    async fn acp_local_terminal_uses_the_prompt_sessions_working_directory() {
+        let first = tempfile::tempdir().unwrap();
+        let second = tempfile::tempdir().unwrap();
+        let first_path = first.path().canonicalize().unwrap();
+        let second_path = second.path().canonicalize().unwrap();
+        let config = GatewayConfig::default();
+        let backend = crate::terminal_backend::build_terminal_backend(&config);
+        let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
+        let skill_store = Arc::new(hermes_skills::FileSkillStore::new(first_path.join("skills")));
+        let skills = Arc::new(hermes_skills::SkillManager::new(skill_store));
+        hermes_tools::register_builtin_tools(&tool_registry, Arc::clone(&backend), skills);
+        let executor = CliAcpPromptExecutor {
+            config: Arc::new(config),
+            tool_registry,
+            terminal_backend: backend,
+            interrupts: Arc::new(Mutex::new(HashMap::new())),
+            event_sink: Arc::new(hermes_acp::EventSink::default()),
+            session_manager: Arc::new(hermes_acp::SessionManager::new()),
+        };
+        let first_session = hermes_acp::SessionState::new(
+            "session-1".into(),
+            first_path.to_str().unwrap().to_owned(),
+        );
+        let second_session = hermes_acp::SessionState::new(
+            "session-2".into(),
+            second_path.to_str().unwrap().to_owned(),
+        );
+        let first_tools = executor.tools_for_prompt(&first_session);
+        let second_tools = executor.tools_for_prompt(&second_session);
+        let first_call = &first_tools.get("terminal").unwrap().handler;
+        let second_call = &second_tools.get("terminal").unwrap().handler;
+
+        let decode = |output: String| serde_json::from_str::<serde_json::Value>(&output).unwrap();
+        let first_output = decode(
+            first_call(serde_json::json!({"command": "pwd", "task_id": "session-2"})).unwrap(),
+        );
+        assert_eq!(first_output["result"], first_path.to_str().unwrap());
+        let second_output = decode(second_call(serde_json::json!({"command": "pwd"})).unwrap());
+        assert_eq!(second_output["result"], second_path.to_str().unwrap());
+        let explicit = decode(
+            first_call(serde_json::json!({"command": "pwd", "workdir": second_path})).unwrap(),
+        );
+        assert_eq!(explicit["result"], second_path.to_str().unwrap());
+
+        first.close().unwrap();
+        let missing = decode(first_call(serde_json::json!({"command": "pwd"})).unwrap());
+        assert!(missing["error"]
+            .as_str()
+            .unwrap()
+            .contains("Command did not run."));
+    }
+
     #[test]
     fn acp_prompt_executor_respects_mcp_toolset_gate() {
         let mut config = GatewayConfig::default();
@@ -241,6 +298,7 @@
             .insert("cli".to_string(), vec!["file".to_string()]);
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
         let executor = CliAcpPromptExecutor {
+            terminal_backend: crate::terminal_backend::build_terminal_backend(&config),
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),
@@ -307,6 +365,7 @@
             .insert("cli".to_string(), vec!["srv".to_string()]);
         let tool_registry = Arc::new(hermes_tools::ToolRegistry::new());
         let executor = CliAcpPromptExecutor {
+            terminal_backend: crate::terminal_backend::build_terminal_backend(&config),
             config: Arc::new(config),
             tool_registry: Arc::clone(&tool_registry),
             interrupts: Arc::new(Mutex::new(HashMap::new())),

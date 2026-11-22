@@ -20,13 +20,7 @@ use sha2::{Digest, Sha256};
 include!("auth/types.rs");
 
 fn auth_json_path() -> PathBuf {
-    if let Ok(path) = std::env::var("HERMES_AUTH_FILE") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            return PathBuf::from(trimmed);
-        }
-    }
-    hermes_config::paths::auth_json_path()
+    hermes_config::paths::auth_json_override().unwrap_or_else(hermes_config::paths::auth_json_path)
 }
 
 fn load_auth_store(path: &Path) -> Result<AuthStore, AgentError> {
@@ -215,14 +209,7 @@ fn openai_oauth_discovery_paths(extra_env_vars: &[&str]) -> Vec<PathBuf> {
 }
 
 fn hermes_auth_store_discovery_paths() -> Vec<PathBuf> {
-    let mut candidates: Vec<PathBuf> = Vec::new();
-    if let Ok(path) = std::env::var("HERMES_AUTH_FILE") {
-        let trimmed = path.trim();
-        if !trimmed.is_empty() {
-            candidates.push(PathBuf::from(trimmed));
-        }
-    }
-    candidates.push(auth_json_path());
+    let mut candidates = vec![auth_json_path()];
     if let Some(home) = dirs::home_dir() {
         candidates.push(home.join(".hermes").join("auth.json"));
         candidates.push(home.join(".hermes-agent-ultra").join("auth.json"));

@@ -76,15 +76,24 @@ pub(crate) fn build_provider_http_client(request_timeout: Option<Duration>) -> C
     http_client_with_idle_timeout(request_timeout, STREAM_IDLE_TIMEOUT)
 }
 
-fn http_client_with_idle_timeout(request_timeout: Option<Duration>, idle: Duration) -> Client {
+fn provider_http_client_builder(
+    request_timeout: Option<Duration>,
+    idle: Duration,
+) -> reqwest::ClientBuilder {
     let mut builder = Client::builder().read_timeout(idle);
     if let Some(timeout) = request_timeout {
         builder = builder.timeout(timeout);
     }
-    builder.build().unwrap_or_else(|err| {
-        tracing::warn!("failed to build provider HTTP client: {}", err);
-        Client::new()
-    })
+    builder
+}
+
+fn http_client_with_idle_timeout(request_timeout: Option<Duration>, idle: Duration) -> Client {
+    provider_http_client_builder(request_timeout, idle)
+        .build()
+        .unwrap_or_else(|err| {
+            tracing::warn!("failed to build provider HTTP client: {}", err);
+            Client::new()
+        })
 }
 
 pub fn codex_cloudflare_headers(access_token: Option<&str>) -> Vec<(String, String)> {

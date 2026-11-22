@@ -63,8 +63,8 @@ audit reports live upstream drift separately from the checks against this pin.
 - `scripts/run-elite-sync-gate.py`
   - Runs red-team + adapter chaos + zero-copy hot-path + differential parity + eval trend + security gate v2 + performance autopilot as one gate
   - Emits JSON diagnostics under `.sync-reports/elite-sync-gate-<timestamp>.json`
-- `scripts/run-security-release-gate-v2.py`
-  - Runs release-time secret scan, SBOM generation (`cargo metadata`), provenance signature tests, and redaction regression tests
+- `cargo run --locked -q -p hermes-parity-tools -- run-security-release-gate-v2 --repo-root .`
+  - Runs the release scan, SBOM inventory (`cargo metadata`), provenance signature, redaction and ACP multimodal tests
   - Emits JSON diagnostics under `.sync-reports/security-release-gate-v2-<timestamp>.json`
 - `scripts/run-performance-autopilot.py`
   - Runs hot-path + eval trend checks and emits deterministic tuning recommendations (`json` + `markdown`)
@@ -103,7 +103,7 @@ audit reports live upstream drift separately from the checks against this pin.
   - Compares chaos reports and fails on attempts/fallback/outcome regressions
 - `scripts/generate-readme-sync-status.py`
   - Regenerates README “Live Upstream Sync Status” block from latest `.sync-reports/upstream-sync-*.txt`
-- `scripts/generate-parity-dashboard.py`
+- `hermes-parity-tools generate-parity-dashboard`
   - Builds `docs/parity/PARITY_DASHBOARD.md` from parity JSON artifacts
 
 ## One-shot Manual Sync
@@ -119,7 +119,7 @@ python3 scripts/run-zero-copy-hotpath-bench.py --repo-root .
 python3 scripts/run-elite-sync-gate.py --repo-root .
 cargo run --locked -q -p hermes-parity-tools -- run-upstream-surface-coverage-gate --repo-root . --upstream-ref upstream/main --local-mode worktree
 python3 scripts/run-self-evolution-loop.py --repo-root . --json
-python3 scripts/generate-parity-dashboard.py --repo-root .
+cargo run --locked -q -p hermes-parity-tools -- generate-parity-dashboard --repo-root .
 python3 scripts/generate-readme-sync-status.py --repo-root .
 bash scripts/sync-upstream.sh --elite-gate
 bash scripts/sync-upstream.sh --elite-gate --elite-rollback-cmd "git reset --hard origin/main"

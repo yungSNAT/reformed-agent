@@ -9,11 +9,11 @@
       "reason": "release queue must stay fully triaged"
     },
     {
-      "actual": 1.0,
+      "actual": 0.0646,
       "id": "tracked_behavior_coverage_ratio",
       "limit": 1.0,
       "operator": ">=",
-      "pass": true,
+      "pass": false,
       "reason": "all tracked behavior rows must remain covered"
     },
     {
@@ -25,15 +25,15 @@
       "reason": "all SOTA harness domains must remain represented"
     },
     {
-      "actual": 7254,
+      "actual": 16421,
       "id": "rust_test_functions",
       "limit": 8000,
       "operator": "<=",
-      "pass": true,
+      "pass": false,
       "reason": "cross-version review required before the post-parity Rust test surface grows another large tranche"
     },
     {
-      "actual": 460,
+      "actual": 501,
       "id": "coverage_manifest_entries",
       "limit": 600,
       "operator": "<=",
@@ -66,23 +66,26 @@
     }
   ],
   "gate": {
-    "failures": [],
-    "pass": true
+    "failures": [
+      "tracked_behavior_coverage_ratio",
+      "rust_test_functions"
+    ],
+    "pass": false
   },
-  "generated_at_utc": "2026-07-03T20:16:19.312706+00:00",
+  "generated_at_utc": "2026-11-21T04:53:33.486694+00:00",
   "purpose": "Cross-version review budget for SOTA harness and coverage growth.",
   "schema_version": 1,
   "snapshot": {
     "ci_gate_pass": false,
-    "coverage_manifest_entries": 460,
-    "covered_behavior_rows": 470,
-    "local_head": "977d4afe0031323843f69812f0ffc3b06aee2eaf+worktree",
+    "coverage_manifest_entries": 501,
+    "covered_behavior_rows": 33,
+    "local_head": "54a8365f555902d98d6ef98557384acec22b44ae+worktree",
     "missing_rust_test_refs": 0,
     "queue_pending": 0,
-    "queue_total": 8262,
-    "recorded_at_utc": "2026-07-03T20:16:19.311890+00:00",
-    "release_gate_pass": true,
-    "rust_test_functions": 7254,
+    "queue_total": 1,
+    "recorded_at_utc": "2026-11-21T04:53:33.485280+00:00",
+    "release_gate_pass": false,
+    "rust_test_functions": 16421,
     "sota_critical_gaps": 0,
     "sota_direct_rust_tests": 12,
     "sota_domain_coverage_ratio": 1.0,
@@ -90,9 +93,9 @@
     "sota_missing_rust_test_refs": 0,
     "sota_protocol_cases": 7,
     "sota_workflow_replay_steps": 9,
-    "tracked_behavior_coverage_ratio": 1.0,
-    "tracked_behavior_rows": 470,
-    "upstream_head": "048270fa069ff6aa41c01b403ac1eeab34b29628"
+    "tracked_behavior_coverage_ratio": 0.0646,
+    "tracked_behavior_rows": 511,
+    "upstream_head": ""
   },
   "source_artifacts": {
     "global_parity_proof": "docs/parity/global-parity-proof.json",
