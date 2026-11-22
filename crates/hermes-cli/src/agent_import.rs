@@ -1574,13 +1574,13 @@ enabled = false
         assert!(!applied.failed, "{:#?}", applied.lines);
         let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
         let files = all_text(&home);
-        for secret in [
+        for planted in [
             "ghp_fixtureAgents01",
             "ghp_fixtureMemory02",
             "ghp_fixtureSkill03",
         ] {
-            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
-            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+            assert!(!text.contains(planted), "{planted} in the report:\n{text}");
+            assert!(!files.contains(planted), "{planted} in the home:\n{files}");
         }
         assert_eq!(
             std::fs::read_to_string(home.join("memories/MEMORY.md")).unwrap(),
@@ -1773,7 +1773,7 @@ enabled = false
             }}"#,
         )
         .unwrap();
-        let secrets = [
+        let planted_values = [
             "plain-arg-1",
             "plain-arg-2",
             "ghp_fixtureArg03",
@@ -1789,9 +1789,9 @@ enabled = false
         assert!(!applied.failed, "{:#?}", applied.lines);
         let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
         let files = all_text(&home);
-        for secret in secrets {
-            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
-            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+        for planted in planted_values {
+            assert!(!text.contains(planted), "{planted} in the report:\n{text}");
+            assert!(!files.contains(planted), "{planted} in the home:\n{files}");
         }
         for expected in [
             "skipped      MCP server flag: an argument looks like a credential",
@@ -2294,7 +2294,7 @@ env_http_headers = { ghp_fixtureKey09 = "REGION", X-Team = "ghp_fixtureKey11" }
         assert!(!applied.failed, "{:#?}", applied.lines);
         let text = format!("{}\n{}", plan.lines.join("\n"), applied.lines.join("\n"));
         let files = all_text(&home);
-        for secret in [
+        for planted in [
             "ghp_fixtureKey05",
             "ghp_fixtureKey06",
             "ghp_fixtureKey07",
@@ -2303,8 +2303,8 @@ env_http_headers = { ghp_fixtureKey09 = "REGION", X-Team = "ghp_fixtureKey11" }
             "ghp_fixtureKey10",
             "ghp_fixtureKey11",
         ] {
-            assert!(!text.contains(secret), "{secret} in the report:\n{text}");
-            assert!(!files.contains(secret), "{secret} in the home:\n{files}");
+            assert!(!text.contains(planted), "{planted} in the report:\n{text}");
+            assert!(!files.contains(planted), "{planted} in the home:\n{files}");
         }
         for expected in [
             "skipped      a skill: its folder name looks like a credential; add it yourself",
