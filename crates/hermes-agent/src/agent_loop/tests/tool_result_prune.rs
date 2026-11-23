@@ -1,10 +1,10 @@
 #[derive(Default)]
-struct RecordingProvider {
+struct PromptRecorder {
     seen: Mutex<Vec<Vec<Message>>>,
 }
 
 #[async_trait::async_trait]
-impl LlmProvider for RecordingProvider {
+impl LlmProvider for PromptRecorder {
     async fn chat_completion(
         &self,
         messages: &[Message],
@@ -62,7 +62,7 @@ fn pruneable_history(size: usize) -> Vec<Message> {
     out
 }
 
-fn prune_agent(session_id: &str) -> (AgentLoop, Arc<RecordingProvider>, tempfile::TempDir) {
+fn prune_agent(session_id: &str) -> (AgentLoop, Arc<PromptRecorder>, tempfile::TempDir) {
     let mut registry = ToolRegistry::new();
     registry.register(
         "read_file",
@@ -77,12 +77,12 @@ fn prune_agent(session_id: &str) -> (AgentLoop, Arc<RecordingProvider>, tempfile
         ..AgentConfig::default()
     };
     let home = isolate_route_learning_home(&mut config);
-    let provider = Arc::new(RecordingProvider::default());
+    let provider = Arc::new(PromptRecorder::default());
     let agent = AgentLoop::new(config, Arc::new(registry), provider.clone());
     (agent, provider, home)
 }
 
-fn old_result_sent(provider: &RecordingProvider) -> String {
+fn old_result_sent(provider: &PromptRecorder) -> String {
     let seen = provider.seen.lock().expect("seen lock");
     seen[0]
         .iter()
