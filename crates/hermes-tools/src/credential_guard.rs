@@ -834,6 +834,7 @@ mod tests {
         let hermes_home = tmp.path().join("hermes");
         // Read as tokens by claw migrate, import-agent and auth discovery.
         for rel in [
+            ".claude/.credentials.json",
             ".codex/auth.json",
             ".pi/agent/auth.json",
             ".hermes/auth.json",
