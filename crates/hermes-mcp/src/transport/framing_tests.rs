@@ -69,6 +69,8 @@ async fn newline_framing_skips_blank_lines() {
         .write_all(b"\n\r\n \t\n{\"id\":1}\n\n{\"id\":2}\n")
         .await
         .unwrap();
+    // Closed, so a regression ends the read instead of waiting for more.
+    drop(writer);
     for id in [1, 2] {
         let message = read_stdio_line(&mut reader, &mut pending, 64)
             .await
@@ -85,6 +87,8 @@ async fn a_header_under_newline_framing_names_legacy_framed() {
         .write_all(b"Content-Length: 8\r\n\r\n{\"id\":1}")
         .await
         .unwrap();
+    // Closed, so a regression ends the read instead of waiting for more.
+    drop(writer);
     let error = read_stdio_line(&mut reader, &mut Vec::new(), 64)
         .await
         .unwrap_err()
@@ -97,6 +101,8 @@ async fn a_json_line_under_header_framing_names_the_mode() {
     let (mut writer, reader) = duplex(256);
     let mut reader = BufReader::new(reader);
     writer.write_all(b"{\"id\":1}\n").await.unwrap();
+    // Closed, so a regression ends the read instead of waiting for more.
+    drop(writer);
     let error = read_content_length_message(&mut reader, 64)
         .await
         .unwrap_err()
@@ -145,6 +151,8 @@ async fn header_framing_accepts_a_lower_case_header_name() {
         .write_all(b"content-length: 8\r\n\r\n{\"id\":1}")
         .await
         .unwrap();
+    // Closed, so a regression ends the read instead of waiting for more.
+    drop(writer);
     let message = read_content_length_message(&mut reader, 64).await.unwrap();
     assert_eq!(message["id"], 1);
 }
