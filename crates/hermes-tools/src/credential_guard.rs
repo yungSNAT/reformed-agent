@@ -357,27 +357,6 @@ pub fn is_link_target_write_denied(path: &Path) -> bool {
     judge_write(path, None)
 }
 
-/// Whether deleting `path` would remove a path `denied` refuses: `path`
-/// itself or anything below it. Links are judged as links and not walked
-/// into, so a regular file that a store links to is found where it lies.
-pub fn holds_denied_path(path: &Path, denied: &dyn Fn(&Path) -> bool) -> bool {
-    if denied(path) {
-        return true;
-    }
-    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
-        && std::fs::read_dir(path).is_ok_and(|entries| {
-            entries
-                .flatten()
-                .any(|entry| holds_denied_path(&entry.path(), denied))
-        })
-}
-
-/// `holds_denied_path` with `is_link_target_write_denied`: for a tool that
-/// deletes a file or folder a model can reach.
-pub fn holds_write_denied_path(path: &Path) -> bool {
-    holds_denied_path(path, &is_link_target_write_denied)
-}
-
 /// `path` as an absolute path where the local backend writes it
 /// (`resolve_path` in hermes-environments): `~` is the `HOME` or
 /// `USERPROFILE` value as set, another relative path sits under a non-empty

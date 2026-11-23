@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::credential_guard::CredentialGuard;
+use crate::credential_guard::{CredentialGuard, ProtectedPaths};
 use crate::tools::file::{content_looks_like_internal_read_status, file_edit_lock};
 
 const MAX_RESOURCE_CHARS: usize = 200_000;
@@ -721,7 +721,7 @@ fn uri_to_local_path(uri: &str, state: &UltraFeatureState) -> Option<PathBuf> {
     }
     if let Some(spec) = uri.strip_prefix("agent://") {
         let (id, rel) = split_once_or_all(spec, '/');
-        return Some(clean_join(&state.agents_dir().join(safe_id(id)), rel));
+        return subagent_file(state, id, rel).ok();
     }
     (!uri.contains("://")).then(|| clean_path(PathBuf::from(uri)))
 }
@@ -887,8 +887,7 @@ fn read_memory_resource(query: &str) -> Result<String, ToolError> {
 
 fn read_agent_resource(spec: &str, state: &UltraFeatureState) -> Result<String, ToolError> {
     let (id, rel) = split_once_or_all(spec, '/');
-    fs::read_to_string(clean_join(&state.agents_dir().join(safe_id(id)), rel))
-        .map_err(io_err("read agent resource"))
+    fs::read_to_string(subagent_file(state, id, rel)?).map_err(io_err("read agent resource"))
 }
 
 fn read_conflict_resource(spec: &str) -> Result<String, ToolError> {
@@ -1922,7 +1921,7 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or("manifest.json");
-            tokio::fs::read_to_string(clean_join(&state.agents_dir().join(id), rel))
+            tokio::fs::read_to_string(subagent_file(state, &id, rel)?)
                 .await
                 .map_err(io_err("read subagent artifact"))
         }
@@ -1930,13 +1929,8 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             let id = safe_id(required_str(&params, "id")?);
             let rel = required_str(&params, "path")?;
             let content = params.get("content").and_then(Value::as_str).unwrap_or("");
-            let base = state.agents_dir().join(&id);
-            let path = clean_join(&base, rel);
-            if !path.starts_with(&base) {
-                return Err(ToolError::InvalidParams(
-                    "subagent path escaped workspace".into(),
-                ));
-            }
+            let path = subagent_file(state, &id, rel)?;
+            CredentialGuard::new().check_write_access(&path, content)?;
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
@@ -1984,13 +1978,42 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
 /// A file or folder these tools delete may hold a file a credential store
 /// links to; refuse rather than delete the store's target.
 fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
-    if crate::credential_guard::holds_write_denied_path(path) {
-        return Err(ToolError::ExecutionFailed(format!(
-            "{} holds a credential file or a file a credential store links to; not deleted",
-            path.display()
-        )));
+    match ProtectedPaths::current().removed_by(path) {
+        Some(found) => Err(ToolError::ExecutionFailed(format!(
+            "not deleting {}: it holds {}, a credential file or a file a credential store links to",
+            path.display(),
+            found.display()
+        ))),
+        None => Ok(()),
     }
-    Ok(())
+}
+
+/// `rel` inside subagent `id`'s workspace, refused when it leaves the
+/// workspace by `..` or by a link, so a link checked out into a worktree
+/// cannot reach a file outside it.
+fn subagent_file(state: &UltraFeatureState, id: &str, rel: &str) -> Result<PathBuf, ToolError> {
+    let base = state.agents_dir().join(safe_id(id));
+    let path = clean_join(&base, rel);
+    let escaped = || ToolError::InvalidParams("subagent path escaped workspace".into());
+    if !path.starts_with(&base) {
+        return Err(escaped());
+    }
+    // The nearest part of the path that exists, resolved through its links,
+    // must still be in the resolved workspace; what is missing is created as
+    // plain folders.
+    let real_base = fs::canonicalize(&base).unwrap_or_else(|_| base.clone());
+    let existing = path
+        .ancestors()
+        .find(|ancestor| ancestor.symlink_metadata().is_ok())
+        .unwrap_or(&base);
+    if existing != base && base.starts_with(existing) {
+        // The workspace itself does not exist yet.
+        return Ok(path);
+    }
+    match fs::canonicalize(existing) {
+        Ok(real) if real.starts_with(&real_base) => Ok(path),
+        _ => Err(escaped()),
+    }
 }
 
 fn write_subagent_manifest(manifest: &SubagentManifest) -> Result<(), ToolError> {

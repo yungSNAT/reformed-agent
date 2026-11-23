@@ -17,6 +17,8 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
+use crate::credential_guard::ProtectedPaths;
+
 const STATE_DIR_NAME: &str = "disk-cleanup";
 const TRACKED_FILE_NAME: &str = "tracked.json";
 const LOG_FILE_NAME: &str = "cleanup.log";
@@ -352,6 +354,7 @@ impl DiskCleanup {
         let mut freed = 0u64;
         let mut new_tracked = Vec::new();
         let mut errors = Vec::new();
+        let protected = self.protected_paths();
 
         for item in tracked {
             let path = Path::new(&item.path);
@@ -382,7 +385,7 @@ impl DiskCleanup {
                 || (item.category == "cron-output" && age_days > 14);
 
             if should_delete {
-                match self.remove_unguarded(path) {
+                match self.remove_unguarded(path, &protected) {
                     Ok(()) => {
                         freed = freed.saturating_add(item.size);
                         deleted += 1;
@@ -466,30 +469,38 @@ impl DiskCleanup {
             )
     }
 
+    /// The paths cleanup keeps: those the file tools protect, and the stores
+    /// of this cleaner's Hermes home.
+    fn protected_paths(&self) -> ProtectedPaths {
+        ProtectedPaths::current().and_hermes_home(&self.hermes_home)
+    }
+
     /// The Hermes home itself, a credential path, or a folder holding one.
     fn holds_credential_path(&self, path: &Path) -> bool {
         self.is_home(path)
-            || crate::credential_guard::holds_denied_path(path, &|path| {
-                self.is_credential_path(path)
-            })
+            || self.is_credential_path(path)
+            || self.protected_paths().removed_by(path).is_some()
     }
 
     fn is_home(&self, path: &Path) -> bool {
         comparable_path(path) == comparable_path(&self.hermes_home)
     }
 
-    /// Deletes `path`, leaving any credential path inside it (and the
+    /// Deletes `path`, leaving any protected path inside it (and the
     /// folders that hold one) in place, so a store that appears after
-    /// tracking survives.
-    fn remove_unguarded(&self, path: &Path) -> io::Result<()> {
-        if self.is_credential_path(path) {
+    /// tracking survives. Only folders that hold one are walked.
+    fn remove_unguarded(&self, path: &Path, protected: &ProtectedPaths) -> io::Result<()> {
+        if protected.contains(path) {
             return Ok(());
         }
         if !fs::symlink_metadata(path)?.is_dir() {
             return fs::remove_file(path);
         }
+        if protected.removed_by(path).is_none() {
+            return fs::remove_dir_all(path);
+        }
         for entry in fs::read_dir(path)? {
-            self.remove_unguarded(&entry?.path())?;
+            self.remove_unguarded(&entry?.path(), protected)?;
         }
         match fs::remove_dir(path) {
             Err(_) if fs::read_dir(path).is_ok_and(|mut rest| rest.next().is_some()) => Ok(()),
@@ -1132,19 +1143,44 @@ mod tests {
     }
 
     #[test]
-    fn quick_keeps_a_credential_path_that_appears_in_a_tracked_folder() {
+    fn quick_keeps_a_credential_path_in_a_tracked_folder() {
         let tmp = TempDir::new().unwrap();
         let cleaner = cleaner(&tmp);
         let hindsight = cleaner.hermes_home().join("hindsight");
         fs::create_dir_all(&hindsight).unwrap();
         fs::write(hindsight.join("data.json"), "x").unwrap();
-        assert!(cleaner.track(&hindsight, "test").unwrap());
         fs::write(hindsight.join("config.json"), "{}").unwrap();
+        // `track` refuses the folder, but the tracked list is a writable file.
+        cleaner
+            .save_tracked(&[stale_item(&hindsight, "test", 1)])
+            .unwrap();
 
         cleaner.quick();
 
         assert!(hindsight.join("config.json").exists());
         assert!(!hindsight.join("data.json").exists());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn quick_keeps_a_file_a_store_links_to_after_tracking() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let scratch = cleaner.hermes_home().join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(scratch.join("out.txt"), "x").unwrap();
+        fs::write(scratch.join("kept.json"), "{}").unwrap();
+        assert!(cleaner.track(&scratch, "test").unwrap());
+        std::os::unix::fs::symlink(
+            scratch.join("kept.json"),
+            cleaner.hermes_home().join("mem0.json"),
+        )
+        .unwrap();
+
+        cleaner.quick();
+
+        assert!(scratch.join("kept.json").exists());
+        assert!(!scratch.join("out.txt").exists());
     }
 
     #[test]

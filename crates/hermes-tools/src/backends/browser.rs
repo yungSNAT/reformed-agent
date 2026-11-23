@@ -618,6 +618,7 @@ async fn prune_old_screenshots(dir: &Path) {
             return;
         }
     };
+    let protected = crate::credential_guard::ProtectedPaths::current();
     loop {
         let entry = match entries.next_entry().await {
             Ok(Some(entry)) => entry,
@@ -633,11 +634,11 @@ async fn prune_old_screenshots(dir: &Path) {
             continue;
         }
         let path = entry.path();
-        if crate::credential_guard::holds_write_denied_path(&path) {
-            continue;
-        }
         let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
-            Ok(modified) if modified < cutoff => tokio::fs::remove_file(&path).await,
+            // A credential store may link to the file; keep it then.
+            Ok(modified) if modified < cutoff && !protected.contains(&path) => {
+                tokio::fs::remove_file(&path).await
+            }
             Ok(_) => continue,
             Err(e) => Err(e),
         };
