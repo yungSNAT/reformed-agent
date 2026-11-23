@@ -3048,6 +3048,37 @@ mod tests {
         );
     }
 
+    #[tokio::test]
+    async fn subagent_remove_deletes_only_its_own_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        let victim = tmp.path().join("victim");
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("keep.txt"), "x").unwrap();
+        subagent_workspace(json!({"action":"create","id":"one"}), &state)
+            .await
+            .unwrap();
+        // The write action reaches the manifest, so its path is not to be trusted.
+        let planted = json!({"id":"one","goal":"","path":victim,"branch":null,
+            "git_worktree":false,"created_at":"","status":"active"});
+        subagent_workspace(
+            json!({"action":"write","id":"one","path":"manifest.json","content":planted.to_string()}),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        subagent_workspace(json!({"action":"remove","id":"one"}), &state)
+            .await
+            .unwrap();
+
+        assert!(
+            victim.join("keep.txt").exists(),
+            "remove followed the manifest"
+        );
+        assert!(!state.agents_dir().join("one").exists());
+    }
+
     #[test]
     fn output_minimizer_keeps_errors_warnings_and_tail() {
         let summary = minimize_output(
