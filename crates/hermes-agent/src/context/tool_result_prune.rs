@@ -82,13 +82,15 @@ fn is_real_archive_dir(dir: &Path) -> bool {
     let Some(home) = dir.parent().and_then(Path::parent) else {
         return false;
     };
+    if !dir.ends_with(PRUNED_SUBDIR) {
+        return false;
+    }
+    let (Ok(real), Ok(home)) = (fs::canonicalize(dir), fs::canonicalize(home)) else {
+        return false;
+    };
     // One component at a time: a canonical Windows path (`\\?\`) takes no `/`.
-    let expected = |home: PathBuf| PRUNED_SUBDIR.split('/').fold(home, |p, part| p.join(part));
-    dir.ends_with(PRUNED_SUBDIR)
-        && matches!(
-            (fs::canonicalize(dir), fs::canonicalize(home)),
-            (Ok(real), Ok(home)) if real == expected(home)
-        )
+    let expected = PRUNED_SUBDIR.split('/').fold(home, |p, part| p.join(part));
+    real == expected
 }
 
 /// True when `read_file` reads this machine's files: no other terminal
