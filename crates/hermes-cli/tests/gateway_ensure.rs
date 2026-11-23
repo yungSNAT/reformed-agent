@@ -260,6 +260,8 @@ fn a_signalled_run_withdraws_local_mode_before_it_shuts_down() {
 
 /// `gateway stop` sends SIGTERM as soon as the pid file names the owner, before the owner has
 /// reported ready: the owner must already be listening then, or it dies leaving its socket.
+/// The window is short, so without listeners this fails only intermittently (often under load):
+/// a green run is not proof.
 #[test]
 fn a_run_signalled_once_its_pid_file_appears_still_shuts_down() {
     let (_dir, home) = private_root();
@@ -282,7 +284,14 @@ fn a_run_signalled_once_its_pid_file_appears_still_shuts_down() {
         .status()
         .unwrap();
     assert!(signalled.success());
-    let status = run.wait().unwrap();
+    let deadline = Instant::now() + Duration::from_secs(30);
+    let status = loop {
+        if let Some(status) = run.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "the run ignored the signal");
+        std::thread::sleep(Duration::from_millis(50));
+    };
     assert!(status.success(), "the run ended on the signal: {status:?}");
     assert!(!home.join("gateway.sock").exists(), "the socket was left");
     assert!(!home.join("gateway_state.json").exists());
