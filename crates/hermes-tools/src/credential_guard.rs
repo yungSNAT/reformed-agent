@@ -839,8 +839,47 @@ mod tests {
                 "{rel} is writable"
             );
         }
+        // Other files in those folders, and the same names outside the home.
+        for path in [
+            home.join(".codex/config.toml"),
+            home.join(".pi/agent/settings.json"),
+            home.join(".hermes-agent-ultra/config.yaml"),
+            home.join(".qwen/settings.json"),
+            tmp.path().join("project/.codex/auth.json"),
+            tmp.path().join("project/.qwen/oauth_creds.json"),
+        ] {
+            assert!(
+                !is_write_denied_with_roots(&path, Some(&home), Some(&hermes_home)),
+                "{} is refused",
+                path.display()
+            );
+        }
+        // A case-insensitive file system opens AUTH.JSON as auth.json.
+        assert!(is_write_denied_with_roots(
+            &home.join(".codex/AUTH.JSON"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_linked_import_credential_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::os::unix::fs::symlink(&vault, home.join(".codex")).unwrap();
+        let hermes_home = tmp.path().join("hermes");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("auth.json"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
         assert!(!is_write_denied_with_roots(
-            &home.join(".codex/config.toml"),
+            &vault.join("config.toml"),
             Some(&home),
             Some(&hermes_home)
         ));
