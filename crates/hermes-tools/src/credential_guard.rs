@@ -872,6 +872,26 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn write_deny_refuses_an_import_credential_source_but_not_what_is_below_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("hermes");
+        // Not a token file: a folder that happens to have the name.
+        std::fs::create_dir_all(home.join(".codex/auth.json")).unwrap();
+
+        assert!(is_write_denied_with_roots(
+            &home.join(".codex/auth.json"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &home.join(".codex/auth.json/notes.txt"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
     #[cfg(unix)]
     #[test]
     fn write_deny_follows_a_linked_import_credential_folder() {
