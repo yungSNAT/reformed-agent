@@ -1,6 +1,6 @@
 //! OpenViking memory provider — REST context database.
 //!
-//! Mirrors upstream's Python `plugins/memory/openviking/__init__.py` (HTTP subset).
+//! Mirrors Python `plugins/memory/openviking/__init__.py` (HTTP subset).
 
 use std::collections::{HashMap, HashSet};
 use std::io::{Read, Write};

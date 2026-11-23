@@ -1,6 +1,6 @@
 //! RetainDB memory provider — cloud long-term memory API.
 //!
-//! Mirrors upstream's Python `plugins/memory/retaindb/__init__.py` (core memory + ingest).
+//! Mirrors Python `plugins/memory/retaindb/__init__.py` (core memory + ingest).
 
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
