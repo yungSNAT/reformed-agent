@@ -82,8 +82,11 @@ const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".npmrc",
     ".pypirc",
     ".pgpass",
-    // Credential sources that claw migrate, import-agent and auth discovery
-    // read as tokens.
+];
+/// Home files that claw migrate, import-agent and auth discovery read as
+/// tokens. Matched as stores are: by any case or stream spelling, and where
+/// the file or a folder above it links.
+const HOME_TOKEN_SOURCES: &[&str] = &[
     ".codex/auth.json",
     ".pi/agent/auth.json",
     ".hermes/auth.json",
@@ -569,6 +572,11 @@ fn is_expanded_write_denied(
         .map(Path::to_path_buf)
         .into_iter()
         .chain(profile_stores)
+        .chain(home.into_iter().flat_map(|home| {
+            HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| home.join(source))
+        }))
         .flat_map(|store| {
             let target = hermes_config::resolve_symlink_target(&store);
             let linked = (target != store).then_some(target);
