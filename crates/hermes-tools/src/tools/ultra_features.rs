@@ -1949,12 +1949,14 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
         }
         "remove" => {
             let id = safe_id(required_str(&params, "id")?);
-            let manifest =
-                read_subagent_manifest_path(&state.agents_dir().join(&id).join("manifest.json"))?;
+            // The workspace is always `agents/<id>`; the manifest's own path is
+            // not trusted, as the write action can rewrite it.
+            let workspace = state.agents_dir().join(&id);
+            let manifest = read_subagent_manifest_path(&workspace.join("manifest.json"))?;
             if manifest.git_worktree {
                 let status = tokio::process::Command::new("git")
                     .args(["worktree", "remove", "--force"])
-                    .arg(&manifest.path)
+                    .arg(&workspace)
                     .status()
                     .await
                     .map_err(|e| {
@@ -1965,8 +1967,8 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                         "git worktree remove exited with {status}"
                     )));
                 }
-            } else if manifest.path.exists() {
-                tokio::fs::remove_dir_all(&manifest.path)
+            } else if workspace.exists() {
+                tokio::fs::remove_dir_all(&workspace)
                     .await
                     .map_err(io_err("remove subagent workspace"))?;
             }
