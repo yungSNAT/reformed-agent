@@ -345,6 +345,30 @@ impl AgentLoop {
         self
     }
 
+    /// Hand the model this session's sub-agent results that an earlier turn
+    /// never received (it crashed, restarted or failed first).
+    fn add_recovered_sub_agent_results(&self, ctx: &mut ContextManager) {
+        let Some(note) = self
+            .sub_agent_orchestrator
+            .as_ref()
+            .and_then(|o| o.recover_undelivered())
+        else {
+            return;
+        };
+        self.emit_status(
+            "lifecycle",
+            "Recovered sub-agent results from an earlier turn that did not finish",
+        );
+        ctx.add_message(Message::system(note));
+    }
+
+    /// A run that ended normally received its sub-agents' results.
+    fn note_sub_agent_results_delivered(&self, result: &Result<AgentResult, AgentError>) {
+        if let (Ok(_), Some(orchestrator)) = (result, self.sub_agent_orchestrator.as_ref()) {
+            orchestrator.mark_delivered();
+        }
+    }
+
     /// Attach the primary runtime credential pool (API key rotation).
     pub fn with_primary_credential_pool(mut self, pool: Arc<CredentialPool>) -> Self {
         self.primary_credential_pool = Some(pool);

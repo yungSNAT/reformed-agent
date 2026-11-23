@@ -57,7 +57,9 @@ impl AgentLoop {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
-        Self::complete_memory_flush(self.run_inner(messages, tools)).await
+        let result = Self::complete_memory_flush(self.run_inner(messages, tools)).await;
+        self.note_sub_agent_results_delivered(&result);
+        result
     }
 
     async fn run_inner(
@@ -175,6 +177,8 @@ impl AgentLoop {
                 }
             }
         }
+
+        self.add_recovered_sub_agent_results(&mut ctx);
 
         // Memory prefetch for first user message
         let first_user = ctx

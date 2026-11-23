@@ -12,7 +12,11 @@ impl AgentLoop {
     ) -> Result<AgentResult, AgentError> {
         match on_chunk {
             Some(on_chunk) => {
-                Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk)).await
+                let result =
+                    Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk))
+                        .await;
+                self.note_sub_agent_results_delivered(&result);
+                result
             }
             None => self.run(messages, tools).await,
         }
@@ -200,6 +204,8 @@ impl AgentLoop {
                 }
             }
         }
+
+        self.add_recovered_sub_agent_results(&mut ctx);
 
         // Memory prefetch
         let first_user = ctx

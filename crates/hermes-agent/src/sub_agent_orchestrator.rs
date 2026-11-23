@@ -232,6 +232,7 @@ impl SubAgentOrchestrator {
             if let Some(callback) = callback {
                 let summary = format_background_delegation_notification(&output);
                 callback(&summary);
+                recovery::mark_one_delivered(&worker.cfg.hermes_home, &worker_sub_agent_id);
             }
         });
 
@@ -294,6 +295,7 @@ impl SubAgentOrchestrator {
                 }
                 lineage.ended_at = Some(Timestamp::now());
                 let final_text = extract_final_assistant_text(&result.messages);
+                lineage.result = Some(final_text.clone());
                 self.persist_lineage(&lineage).await;
 
                 json!({
