@@ -3266,6 +3266,42 @@ mod tests {
         });
     }
 
+    #[test]
+    fn subagent_write_keeps_its_workspace_under_a_safe_root_and_for_token_like_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let profile = tmp.path().join("profile");
+        let project = tmp.path().join("project");
+        fs::create_dir_all(&profile).unwrap();
+        fs::create_dir_all(&project).unwrap();
+        let state = UltraFeatureState::new(profile.join("ultra_features"));
+        let code = "token = os.environ[\"SERVICE_TOKEN_NAME\"]\n";
+        with_env(
+            &[
+                ("HERMES_HOME", Some(&profile)),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+                // A safe root confines the file tools, not the workspace.
+                ("HERMES_WRITE_SAFE_ROOT", Some(&project)),
+            ],
+            || {
+                tokio::runtime::Runtime::new().unwrap().block_on(async {
+                    subagent_workspace(json!({"action":"create","id":"x"}), &state)
+                        .await
+                        .unwrap();
+                    let written = subagent_workspace(
+                        json!({"action":"write","id":"x","path":"src/app.py","content":code}),
+                        &state,
+                    )
+                    .await;
+                    assert!(written.is_ok(), "{written:?}");
+                })
+            },
+        );
+        assert_eq!(
+            fs::read_to_string(state.agents_dir().join("x/src/app.py")).unwrap(),
+            code
+        );
+    }
+
     #[cfg(unix)]
     #[test]
     fn subagent_remove_keeps_a_store_the_workspace_only_links_to() {
