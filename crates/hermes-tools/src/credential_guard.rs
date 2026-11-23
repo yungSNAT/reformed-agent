@@ -886,6 +886,73 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_covers_the_memory_plugin_configs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+        // Each holds a memory provider's API key (Honcho's also OAuth tokens)
+        // and the endpoint the plugin sends it and the memory traffic to.
+        for path in [
+            home.join(".honcho/config.json"),
+            home.join(".hermes/honcho.json"),
+            home.join(".hindsight/config.json"),
+            hermes_home.join("honcho.json"),
+            hermes_home.join("hindsight/config.json"),
+            hermes_home.join("openviking.json"),
+            hermes_home.join("mem0.json"),
+            // A case-insensitive file system opens these as the configs.
+            home.join(".Honcho/CONFIG.json"),
+            hermes_home.join("Mem0.JSON"),
+            hermes_home.join("HindSight/config.json"),
+        ] {
+            assert!(denied(&path), "{} is writable", path.display());
+        }
+        // Their neighbours, and the same names outside both homes.
+        for path in [
+            home.join(".honcho/notes.json"),
+            home.join(".hermes/config.yaml"),
+            home.join(".hindsight/banks.json"),
+            hermes_home.join("honcho.json.bak"),
+            hermes_home.join("hindsight/data.json"),
+            hermes_home.join("openviking.yaml"),
+            hermes_home.join("memory.json"),
+            tmp.path().join("project/honcho.json"),
+            tmp.path().join("project/.honcho/config.json"),
+            tmp.path().join("project/mem0.json"),
+        ] {
+            assert!(!denied(&path), "{} is refused", path.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_linked_memory_plugin_config_folders() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let vault = tmp.path().join("vault");
+        let banks = tmp.path().join("banks");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&banks).unwrap();
+        std::os::unix::fs::symlink(&vault, home.join(".honcho")).unwrap();
+        std::os::unix::fs::symlink(&banks, hermes_home.join("hindsight")).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("m0"), hermes_home.join("mem0.json")).unwrap();
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+
+        assert!(denied(&vault.join("config.json")));
+        assert!(denied(&banks.join("config.json")));
+        assert!(denied(&tmp.path().join("m0")));
+        assert!(!denied(&vault.join("notes.json")));
+        assert!(!denied(&banks.join("data.json")));
+        assert!(!denied(&tmp.path().join("m1")));
+    }
+
+    #[test]
     fn write_deny_refuses_an_import_credential_source_but_not_what_is_below_it() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
