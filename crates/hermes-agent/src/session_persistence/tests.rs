@@ -2042,11 +2042,14 @@ fn a_repair_whose_commit_waits_on_a_reader_runs_once_the_reader_finishes() {
     let reader = open_db(&sp);
     reader.execute_batch("BEGIN").unwrap();
     reader
-        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get::<_, i64>(0))
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| {
+            row.get::<_, i64>(0)
+        })
         .unwrap();
 
     let conn = open_db(&sp);
-    conn.busy_timeout(std::time::Duration::from_millis(50)).unwrap();
+    conn.busy_timeout(std::time::Duration::from_millis(50))
+        .unwrap();
     SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
     assert_eq!(
         fts_delete_triggers(&conn),
