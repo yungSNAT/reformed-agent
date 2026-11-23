@@ -142,21 +142,64 @@ pub use hermes_core::{
     ToolResult, ToolSchema, UsageStats,
 };
 
+/// The Hermes home the file tools' write rule protects and `hermes memory
+/// setup` writes, so the plugins read their configs from the same place.
 fn default_memory_home() -> String {
-    std::env::var("HERMES_HOME")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("HERMES_AGENT_ULTRA_HOME")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
+    hermes_config::hermes_home().to_string_lossy().into_owned()
+}
+
+/// Memory data and plugin configs the plugins keep in the memory home.
+const MEMORY_HOME_FILES: &[&str] = &[
+    "memory_store.db",
+    "retaindb_queue.db",
+    "honcho.json",
+    "hindsight/config.json",
+    "openviking.json",
+    "mem0.json",
+    "supermemory.json",
+    "contextlattice.json",
+    "byterover.json",
+    "byterover",
+];
+
+/// With `HOME` unset the plugins used to read `.hermes-agent-ultra` in the
+/// working folder. A notice when that folder holds their data or configs and
+/// is not the memory home, so the data is moved rather than lost from view.
+fn stranded_memory_notice(cwd: &std::path::Path, home: &std::path::Path) -> Option<String> {
+    let local = cwd.join(".hermes-agent-ultra");
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+    };
+    if !local.is_dir() || same(&local, home) {
+        return None;
+    }
+    MEMORY_HOME_FILES
+        .iter()
+        .any(|name| local.join(name).exists())
+        .then(|| {
+            format!(
+                "Memory data or plugin configs in {} are no longer read; the memory home is {}. If they are yours, move them there, or set HERMES_HOME={} to keep using that folder; if this folder came with a repository you cloned, leave it.",
+                local.display(),
+                home.display(),
+                local.display()
+            )
         })
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|home| format!("{home}/.hermes-agent-ultra"))
-        })
-        .unwrap_or_else(|| ".hermes-agent-ultra".to_string())
+}
+
+/// Logs the stranded memory notice the first time it applies; true when it did.
+fn warn_stranded_memory_once(
+    warned: &std::sync::atomic::AtomicBool,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+) -> bool {
+    let Some(notice) = stranded_memory_notice(cwd, home) else {
+        return false;
+    };
+    if warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    tracing::warn!("{notice}");
+    true
 }
 
 /// Attach discovered external memory providers to an `AgentLoop`.
@@ -172,6 +215,12 @@ pub fn attach_discovered_memory(mut agent: AgentLoop) -> AgentLoop {
         .session_id
         .clone()
         .unwrap_or_else(|| "session-default".to_string());
+    if agent.config.hermes_home.is_none() {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if let Ok(cwd) = std::env::current_dir() {
+            warn_stranded_memory_once(&WARNED, &cwd, &hermes_config::hermes_home());
+        }
+    }
     let hermes_home = agent
         .config
         .hermes_home
@@ -185,4 +234,83 @@ pub fn attach_discovered_memory(mut agent: AgentLoop) -> AgentLoop {
         agent = agent.with_memory(manager);
     }
     agent
+}
+
+#[cfg(test)]
+mod stranded_memory_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn a_working_folder_holding_memory_data_is_named_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        std::fs::create_dir_all(cwd.join(".hermes-agent-ultra")).unwrap();
+        std::fs::write(cwd.join(".hermes-agent-ultra/memory_store.db"), "").unwrap();
+        let notice = stranded_memory_notice(&cwd, &home).expect("notice");
+        assert!(notice.contains(&cwd.join(".hermes-agent-ultra").display().to_string()));
+        assert!(notice.contains(&home.display().to_string()));
+        assert!(notice.contains("If they are yours, move them there"));
+        assert!(notice.contains(&format!(
+            "HERMES_HOME={}",
+            cwd.join(".hermes-agent-ultra").display()
+        )));
+        assert!(notice.contains("came with a repository you cloned, leave it"));
+
+        let warned = AtomicBool::new(false);
+        assert!(warn_stranded_memory_once(&warned, &cwd, &home));
+        assert!(!warn_stranded_memory_once(&warned, &cwd, &home));
+    }
+
+    #[test]
+    fn byterover_settings_or_data_alone_are_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        let settings = tmp.path().join("settings");
+        std::fs::create_dir_all(settings.join(".hermes-agent-ultra")).unwrap();
+        std::fs::write(settings.join(".hermes-agent-ultra/byterover.json"), "{}").unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(data.join(".hermes-agent-ultra/byterover")).unwrap();
+        for cwd in [settings, data] {
+            let local = cwd.join(".hermes-agent-ultra").display().to_string();
+            let notice = stranded_memory_notice(&cwd, &home).expect("notice");
+            assert!(notice.contains(&local), "{notice}");
+        }
+    }
+
+    #[test]
+    fn no_notice_without_stranded_data_or_when_the_folder_is_the_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        let local = cwd.join(".hermes-agent-ultra");
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        assert_eq!(stranded_memory_notice(&cwd, &home), None, "no folder");
+
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("notes.txt"), "").unwrap();
+        assert_eq!(
+            stranded_memory_notice(&cwd, &home),
+            None,
+            "nothing stranded"
+        );
+
+        std::fs::write(local.join("mem0.json"), "{}").unwrap();
+        assert!(
+            stranded_memory_notice(&cwd, &home).is_some(),
+            "a plugin config"
+        );
+        assert_eq!(
+            stranded_memory_notice(&cwd, &local),
+            None,
+            "the home itself"
+        );
+
+        let warned = AtomicBool::new(false);
+        assert!(!warn_stranded_memory_once(&warned, &cwd, &local));
+        assert!(
+            warn_stranded_memory_once(&warned, &cwd, &home),
+            "flag kept for a real notice"
+        );
+    }
 }
