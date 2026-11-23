@@ -16,25 +16,18 @@ const FIXTURE_REPLY: &str = "hello, friend";
 /// The fixture's `ping` tool as registered from the `fixture` server.
 const SESSION_TOOL: &str = "mcp_fixture_ping";
 
-/// Read one message in the stdio client's `Content-Length` framing.
+/// Read one message as the stdio client frames it by default: one JSON
+/// message per line.
 fn read_message(reader: &mut impl BufRead) -> Option<Value> {
-    let mut length = None;
     loop {
         let mut line = String::new();
         if reader.read_line(&mut line).ok()? == 0 {
             return None;
         }
-        let line = line.trim();
-        if line.is_empty() {
-            break;
-        }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            length = value.trim().parse().ok();
+        if !line.trim().is_empty() {
+            return serde_json::from_str(&line).ok();
         }
     }
-    let mut body = vec![0; length?];
-    reader.read_exact(&mut body).ok()?;
-    serde_json::from_slice(&body).ok()
 }
 
 /// Serve one `ping` tool over stdio, answering each request in turn. One
@@ -71,7 +64,7 @@ fn serve_fixture(marker: &str) {
             _ => reply["error"] = json!({"code": -32601, "message": "method not found"}),
         }
         let body = reply.to_string();
-        write!(writer, "Content-Length: {}\r\n\r\n{body}", body.len()).expect("write reply");
+        writeln!(writer, "{body}").expect("write reply");
         writer.flush().expect("flush reply");
     }
 }
