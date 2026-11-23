@@ -24,7 +24,7 @@ pub mod tool_guard;
 pub use config::{
     default_auxiliary_task_configs, normalize_service_tier, AgentLoopBehaviorConfig,
     ApprovalConfig, AuxiliaryTaskConfig, CheapModelRouteConfig, DelegationConfig, DisplayConfig,
-    GatewayConfig, LlmProviderConfig, McpServerEntry, ModelSwitchConfig, PlatformDisplayConfig,
+    GatewayConfig, LlmProviderConfig, McpServerEntry, McpToolMode, ModelSwitchConfig, PlatformDisplayConfig,
     ProfileConfig, ProxyConfig, QuickCommandConfig, SecurityConfig, SessionsMaintenanceConfig,
     SkillsSettings, SmartModelRoutingConfig, StaleAuxiliaryAssignment, TerminalBackendType,
     TerminalConfig, TerminalHomeMode, ToolGuardConfig, ToolOutputConfig, ToolsSettings,

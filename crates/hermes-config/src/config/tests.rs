@@ -585,4 +585,13 @@ terminal:
         assert_eq!(back.http_proxy, Some("http://proxy:8080".to_string()));
         assert_eq!(back.socks_proxy, None);
     }
+
+    #[test]
+    fn mcp_tool_mode_defaults_to_direct_and_reads_gateway() {
+        assert_eq!(GatewayConfig::default().mcp_tool_mode, McpToolMode::Direct);
+        let cfg: GatewayConfig =
+            serde_yaml::from_str("mcp_tool_mode: gateway\n").expect("mode should deserialize");
+        assert_eq!(cfg.mcp_tool_mode, McpToolMode::Gateway);
+        assert!(serde_yaml::from_str::<GatewayConfig>("mcp_tool_mode: lazy\n").is_err());
+    }
 }

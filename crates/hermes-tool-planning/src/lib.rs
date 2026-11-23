@@ -288,6 +288,14 @@ pub fn resolve_platform_tool_schemas(
     filtered
 }
 
+pub fn platform_mcp_tool_names(
+    _config: &GatewayConfig,
+    _platform: &str,
+    _registry: &Arc<ToolRegistry>,
+) -> HashSet<String> {
+    HashSet::new()
+}
+
 /// Compact tool-definition summary for hooks/transcript metadata.
 pub fn tool_definition_summary(defs: &[ToolSchema]) -> Vec<serde_json::Value> {
     defs.iter()
@@ -299,6 +307,9 @@ pub fn tool_definition_summary(defs: &[ToolSchema]) -> Vec<serde_json::Value> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod mcp_gateway_tests;
 
 #[cfg(test)]
 mod tests {
