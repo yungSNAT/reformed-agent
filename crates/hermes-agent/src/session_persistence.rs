@@ -317,9 +317,9 @@ impl SessionPersistence {
 
     /// Installs the delete and update triggers, replacing any from before the `'delete'` command,
     /// and rebuilds the index only if FTS5's own check finds it no longer matches `messages`: one
-    /// transaction, so a failure changes nothing. A repair that fails once it holds the write
-    /// lock is not retried in this process while both old triggers remain, so it does not rerun
-    /// the full check on every open; failing to get the lock is retried on the next open.
+    /// transaction, so a failure changes nothing. A repair that fails for a reason other than
+    /// another connection's lock is not retried in this process while both old triggers remain,
+    /// so it does not rerun the full check on every open; a lock wait is retried on the next open.
     fn install_fts_delete_triggers(
         conn: &rusqlite::Connection,
         db_path: &Path,
@@ -347,7 +347,7 @@ impl SessionPersistence {
         }
         let repaired = tx
             .execute_batch(Self::FTS_DELETE_TRIGGERS_SQL)
-            .map_err(|e| io("create the triggers", e))
+            .map_err(|e| ("create the triggers", e))
             .and_then(|()| {
                 match tx.execute(
                     "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
@@ -360,14 +360,14 @@ impl SessionPersistence {
                             [],
                         )
                         .map(|_| true)
-                        .map_err(|e| io("rebuild the index", e)),
-                    Err(e) => Err(io("check the index", e)),
+                        .map_err(|e| ("rebuild the index", e)),
+                    Err(e) => Err(("check the index", e)),
                 }
             })
             .and_then(|rebuilt| {
                 tx.commit()
                     .map(|()| rebuilt)
-                    .map_err(|e| io("commit a repair", e))
+                    .map_err(|e| ("commit a repair", e))
             });
         match repaired {
             Ok(rebuilt) => {
@@ -379,9 +379,16 @@ impl SessionPersistence {
                 }
                 Ok(())
             }
-            Err(err) => {
-                Self::claim_repair_attempt(&FTS_TRIGGER_REPAIR_FAILURES, db_path);
-                Err(err)
+            Err((step, e)) => {
+                // Waiting on another connection, such as a reader holding off the commit, is
+                // retried on the next open, like failing to begin.
+                if !matches!(
+                    e.sqlite_error_code(),
+                    Some(rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked)
+                ) {
+                    Self::claim_repair_attempt(&FTS_TRIGGER_REPAIR_FAILURES, db_path);
+                }
+                Err(io(step, e))
             }
         }
     }
