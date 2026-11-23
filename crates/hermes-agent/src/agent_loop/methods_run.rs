@@ -178,8 +178,6 @@ impl AgentLoop {
             }
         }
 
-        self.add_recovered_sub_agent_results(&mut ctx);
-
         // Memory prefetch for first user message
         let first_user = ctx
             .get_messages()
@@ -191,6 +189,8 @@ impl AgentLoop {
         if !mem_ctx_raw.is_empty() {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
+        // After the prefetch, so recovered results stay out of its query.
+        self.add_recovered_sub_agent_results(&mut ctx);
 
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);

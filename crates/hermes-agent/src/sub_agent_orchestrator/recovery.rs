@@ -57,6 +57,12 @@ pub(super) fn write_lineage(hermes_home: &Path, lineage: &SubAgentLineage) {
         tracing::debug!(error = %e, "sub-agent lineage dir create failed");
         return;
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let owner_only = std::fs::Permissions::from_mode(0o700);
+        let _ = std::fs::set_permissions(lineage_dir(hermes_home), owner_only);
+    }
     let body = match serde_json::to_vec_pretty(lineage) {
         Ok(body) => body,
         Err(e) => {
@@ -118,6 +124,28 @@ fn interrupted(record: &SubAgentLineage, limit: Duration, now: Timestamp) -> boo
         && elapsed.unsigned_abs() > limit.saturating_add(INTERRUPTED_GRACE)
 }
 
+/// `text` with every opening or closing recovery tag, in any case, turned
+/// into `&lt;...`, so a child's answer cannot end the block early.
+fn defang(text: &str) -> String {
+    const TAGS: [&str; 2] = [
+        "<recovered-sub-agent-results",
+        "</recovered-sub-agent-results",
+    ];
+    // ASCII lowering keeps every byte offset.
+    let lower = text.to_ascii_lowercase();
+    let mut out = String::with_capacity(text.len());
+    let mut copied = 0;
+    for (at, _) in lower.match_indices('<') {
+        if TAGS.iter().any(|tag| lower[at..].starts_with(tag)) {
+            out.push_str(&text[copied..at]);
+            out.push_str("&lt;");
+            copied = at + 1;
+        }
+    }
+    out.push_str(&text[copied..]);
+    out
+}
+
 /// The block listing this session's undelivered results, and the ids it
 /// lists; `None` when there are none.
 pub(super) fn recover(
@@ -156,8 +184,10 @@ pub(super) fn recover(
             (None, None) => "no result recorded".to_string(),
         };
         lines.push(format!(
-            "- [{status}] {} ({}): {outcome}",
-            record.task, record.sub_agent_id
+            "- [{status}] {} ({}): {}",
+            defang(&record.task),
+            record.sub_agent_id,
+            defang(&outcome)
         ));
         ids.push(record.sub_agent_id);
     }
