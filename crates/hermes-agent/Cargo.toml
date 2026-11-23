@@ -41,6 +41,8 @@ jsonwebtoken = { workspace = true }
 zip = { version = "9", default-features = false, features = ["deflate"] }
 
 [dev-dependencies]
+# Commit hooks let tests refuse a commit.
+rusqlite = { workspace = true, features = ["hooks"] }
 tempfile = "3"
 tokio = { workspace = true, features = ["test-util"] }
 tracing-subscriber = { workspace = true }

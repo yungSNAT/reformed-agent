@@ -1394,23 +1394,6 @@ fn test_replacing_messages_clears_old_fts_rows_when_available() {
 }
 
 #[test]
-fn test_delete_fts_rows_ignores_missing_fts_table() {
-    let conn = rusqlite::Connection::open_in_memory().unwrap();
-    conn.execute_batch(
-        "CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT,
-            created_at TEXT NOT NULL
-        );",
-    )
-    .unwrap();
-
-    SessionPersistence::delete_fts_rows_for_session(&conn, "no-fts").unwrap();
-}
-
-#[test]
 fn test_fts_unavailable_error_classifier_matches_missing_modules() {
     let conn = rusqlite::Connection::open_in_memory().unwrap();
     let err = conn
@@ -1761,4 +1744,357 @@ fn import_sessions_writes_nothing_when_the_import_fails() {
         )
         .unwrap();
     assert_eq!(rows, 0);
+}
+
+/// The delete and update triggers this crate created before they used FTS5's 'delete' command.
+const OLD_FTS_TRIGGERS: &str = "DROP TRIGGER messages_ad;
+    DROP TRIGGER messages_au;
+    CREATE TRIGGER messages_ad AFTER DELETE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+    END;
+    CREATE TRIGGER messages_au AFTER UPDATE ON messages BEGIN
+        DELETE FROM messages_fts WHERE rowid = old.id;
+        INSERT INTO messages_fts(rowid, content, session_id, role)
+        VALUES (new.id, new.content, new.session_id, new.role);
+    END;";
+
+fn open_db(sp: &SessionPersistence) -> rusqlite::Connection {
+    let conn = rusqlite::Connection::open(&sp.db_path).unwrap();
+    assert!(SessionPersistence::fts_table_exists(&conn).unwrap());
+    conn
+}
+
+/// FTS5's own check of the index against `messages`.
+fn fts_index_check(conn: &rusqlite::Connection) -> rusqlite::Result<usize> {
+    conn.execute(
+        "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
+        [],
+    )
+}
+
+fn fts_hits(conn: &rusqlite::Connection, word: &str) -> i64 {
+    conn.query_row(
+        "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?1",
+        params![word],
+        |row| row.get(0),
+    )
+    .unwrap()
+}
+
+fn fts_delete_triggers(conn: &rusqlite::Connection) -> Vec<String> {
+    let mut stmt = conn
+        .prepare(
+            "SELECT sql FROM sqlite_master
+             WHERE type = 'trigger' AND name IN ('messages_ad', 'messages_au') ORDER BY name",
+        )
+        .unwrap();
+    stmt.query_map([], |row| row.get(0))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+fn fts_index_blocks(conn: &rusqlite::Connection) -> Vec<(i64, Vec<u8>)> {
+    let mut stmt = conn
+        .prepare("SELECT id, block FROM messages_fts_data ORDER BY id")
+        .unwrap();
+    stmt.query_map([], |row| Ok((row.get(0)?, row.get(1)?)))
+        .unwrap()
+        .collect::<Result<_, _>>()
+        .unwrap()
+}
+
+/// A store indexed under the old triggers, whose deleted and edited messages left it damaged.
+fn store_damaged_by_old_fts_triggers(sp: &SessionPersistence) {
+    sp.persist_session(
+        "kept",
+        &[
+            Message::user("golf lemon"),
+            Message::assistant("hotel lemon"),
+        ],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    sp.persist_session(
+        "dropped",
+        &[Message::user("india lime")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    let conn = open_db(sp);
+    conn.execute_batch(OLD_FTS_TRIGGERS).unwrap();
+    conn.execute("DELETE FROM messages WHERE session_id = 'dropped'", [])
+        .unwrap();
+    conn.execute(
+        "UPDATE messages SET content = 'juliet melon' WHERE content = 'golf lemon'",
+        [],
+    )
+    .unwrap();
+    let damage = fts_index_check(&conn).expect_err("the old triggers damage the index");
+    assert!(
+        SessionPersistence::is_fts_index_mismatch(&damage),
+        "{damage}"
+    );
+}
+
+#[test]
+fn fts_index_matches_messages_after_rewind_restore_rewrite_prune_and_delete() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let turns = [
+        Message::user("alpha kiwi"),
+        Message::assistant("bravo kiwi"),
+        Message::user("charlie mango"),
+        Message::assistant("delta mango"),
+    ];
+    sp.persist_session("kept", &turns, None, None, None, None)
+        .unwrap();
+    let rewound = sp
+        .rewind_active_user_turns("kept", 1)
+        .unwrap()
+        .expect("a turn to rewind");
+    sp.restore_rewound_since("kept", rewound.target_message_id)
+        .unwrap();
+    sp.rewind_active_user_turns("kept", 1).unwrap();
+    // Rewrites the live transcript and keeps the rewound rows.
+    sp.persist_session(
+        "kept",
+        &[
+            Message::user("alpha kiwi"),
+            Message::assistant("echo papaya"),
+        ],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    sp.persist_session(
+        "deleted",
+        &[Message::user("foxtrot quince")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    assert!(sp.delete_session("deleted").unwrap());
+    sp.persist_session(
+        "pruned",
+        &[Message::user("golf raisin")],
+        None,
+        None,
+        None,
+        None,
+    )
+    .unwrap();
+    mark_session_old(&sp, "pruned", 40);
+    assert_eq!(sp.prune_sessions(30).unwrap(), 1);
+
+    let conn = open_db(&sp);
+    fts_index_check(&conn).expect("the index matches messages");
+    assert_eq!(fts_hits(&conn, "quince"), 0);
+    assert_eq!(fts_hits(&conn, "raisin"), 0);
+    assert_eq!(fts_hits(&conn, "papaya"), 1);
+    assert_eq!(fts_hits(&conn, "mango"), 2, "rewound rows stay indexed");
+}
+
+#[test]
+fn opening_a_store_replaces_the_old_fts_triggers_and_rebuilds_the_index_they_damaged() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+
+    sp.ensure_db().unwrap();
+
+    let conn = open_db(&sp);
+    fts_index_check(&conn).expect("the index is rebuilt");
+    assert!(fts_delete_triggers(&conn)
+        .iter()
+        .all(|sql| sql.contains("'delete'")));
+    assert_eq!(fts_hits(&conn, "lime"), 0);
+    assert_eq!(fts_hits(&conn, "golf"), 0);
+    assert_eq!(fts_hits(&conn, "melon"), 1);
+    assert_eq!(fts_hits(&conn, "lemon"), 1);
+    // The new triggers keep it sound.
+    conn.execute("DELETE FROM messages WHERE content = 'juliet melon'", [])
+        .unwrap();
+    fts_index_check(&conn).expect("the index matches messages after a delete");
+}
+
+#[test]
+fn a_sound_fts_index_keeps_its_data_when_its_old_triggers_are_replaced() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    // Separate writes give the index several segments, which a rebuild would merge.
+    for (id, text) in [("one", "kilo"), ("two", "lima"), ("three", "mike")] {
+        sp.persist_session(id, &[Message::user(text)], None, None, None, None)
+            .unwrap();
+    }
+    let conn = open_db(&sp);
+    conn.execute_batch(OLD_FTS_TRIGGERS).unwrap();
+    fts_index_check(&conn).expect("inserts alone keep the index sound");
+    let blocks = fts_index_blocks(&conn);
+
+    sp.ensure_db().unwrap();
+
+    assert_eq!(fts_index_blocks(&conn), blocks, "the index was rewritten");
+    let triggers = fts_delete_triggers(&conn);
+    assert!(triggers.iter().all(|sql| sql.contains("'delete'")));
+    // A current store is left as it is.
+    sp.ensure_db().unwrap();
+    assert_eq!(fts_index_blocks(&conn), blocks);
+    assert_eq!(fts_delete_triggers(&conn), triggers);
+}
+
+#[test]
+fn the_fts_trigger_repair_commits_once_and_a_refused_commit_changes_nothing() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::Arc;
+
+    /// Commits made by one `ensure_fts_schema`; a hook returning true turns each into a rollback.
+    fn repair_commits(sp: &SessionPersistence, refuse: bool) -> usize {
+        let commits = Arc::new(AtomicUsize::new(0));
+        let mut conn = open_db(sp);
+        let seen = Arc::clone(&commits);
+        conn.commit_hook(Some(move || {
+            seen.fetch_add(1, Ordering::SeqCst);
+            refuse
+        }))
+        .unwrap();
+        SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+        commits.load(Ordering::SeqCst)
+    }
+
+    let refused_dir = tempfile::tempdir().unwrap();
+    let refused = SessionPersistence::new(refused_dir.path());
+    store_damaged_by_old_fts_triggers(&refused);
+    let old_triggers = fts_delete_triggers(&open_db(&refused));
+    assert_eq!(repair_commits(&refused, true), 1, "one transaction");
+    // A failed repair is not retried in this process, so later opens skip the full check.
+    assert_eq!(repair_commits(&refused, false), 0);
+    let conn = open_db(&refused);
+    assert!(fts_index_check(&conn).is_err(), "the index was changed");
+    assert_eq!(fts_delete_triggers(&conn), old_triggers);
+
+    let repaired_dir = tempfile::tempdir().unwrap();
+    let repaired = SessionPersistence::new(repaired_dir.path());
+    store_damaged_by_old_fts_triggers(&repaired);
+    assert_eq!(repair_commits(&repaired, false), 1, "one transaction");
+    fts_index_check(&open_db(&repaired)).expect("the index is rebuilt");
+}
+
+#[test]
+fn only_an_index_that_no_longer_matches_its_messages_is_rebuilt() {
+    let failure = |extended_code| {
+        rusqlite::Error::SqliteFailure(rusqlite::ffi::Error::new(extended_code), None)
+    };
+    assert!(SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_CORRUPT_VTAB
+    )));
+    // Damage to the database file itself, which a rebuild would write into.
+    assert!(!SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_CORRUPT
+    )));
+    assert!(!SessionPersistence::is_fts_index_mismatch(&failure(
+        rusqlite::ffi::SQLITE_BUSY
+    )));
+}
+
+#[test]
+fn a_repair_blocked_by_another_writer_runs_once_the_lock_is_released() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let old_triggers = fts_delete_triggers(&open_db(&sp));
+    let writer = open_db(&sp);
+    writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+
+    let conn = open_db(&sp);
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    assert_eq!(
+        fts_delete_triggers(&conn),
+        old_triggers,
+        "repaired under a lock"
+    );
+
+    writer.execute_batch("COMMIT").unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt once the lock is free");
+    assert!(fts_delete_triggers(&conn)
+        .iter()
+        .all(|sql| sql.contains("'delete'")));
+}
+
+#[test]
+fn a_repair_whose_commit_waits_on_a_reader_runs_once_the_reader_finishes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let old_triggers = fts_delete_triggers(&open_db(&sp));
+    // A read transaction's SHARED lock, which the repair's COMMIT has to wait out.
+    let reader = open_db(&sp);
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| {
+            row.get::<_, i64>(0)
+        })
+        .unwrap();
+
+    let conn = open_db(&sp);
+    conn.busy_timeout(std::time::Duration::from_millis(50))
+        .unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    assert_eq!(
+        fts_delete_triggers(&conn),
+        old_triggers,
+        "committed under a reader"
+    );
+
+    reader.execute_batch("COMMIT").unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt once the reader has finished");
+    assert!(fts_delete_triggers(&conn)
+        .iter()
+        .all(|sql| sql.contains("'delete'")));
+}
+
+#[test]
+fn a_failed_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
+    use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
+
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let conn = open_db(&sp);
+    conn.execute_batch("DROP TRIGGER messages_au").unwrap();
+    let before = fts_delete_triggers(&conn);
+    assert_eq!(before.len(), 1);
+
+    // Refusing writes to the index makes the repair's integrity check fail.
+    let mut failing = open_db(&sp);
+    failing
+        .authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
+            AuthAction::Insert {
+                table_name: "messages_fts",
+            } => Authorization::Deny,
+            _ => Authorization::Allow,
+        }))
+        .unwrap();
+    let failed = SessionPersistence::ensure_fts_schema(&failing, &sp.db_path);
+    drop(failing);
+
+    assert_eq!(fts_delete_triggers(&conn), before, "a trigger changed");
+    // A store missing a trigger is not usable as it is, so the failure is reported.
+    assert!(failed.is_err());
+    // Without both triggers the store is not left alone: the next open repairs it.
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt");
+    assert_eq!(fts_delete_triggers(&conn).len(), 2);
 }
