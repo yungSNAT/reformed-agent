@@ -176,7 +176,7 @@ fn stranded_memory_notice(cwd: &std::path::Path, home: &std::path::Path) -> Opti
         .any(|name| local.join(name).exists())
         .then(|| {
             format!(
-                "Memory data or plugin configs in {} are no longer read; the memory home is {}. Move them there, or set HERMES_HOME={} to keep using that folder.",
+                "Memory data or plugin configs in {} are no longer read; the memory home is {}. If they are yours, move them there, or set HERMES_HOME={} to keep using that folder; if this folder came with a repository you cloned, leave it.",
                 local.display(),
                 home.display(),
                 local.display()
@@ -249,7 +249,12 @@ mod stranded_memory_tests {
         let notice = stranded_memory_notice(&cwd, &home).expect("notice");
         assert!(notice.contains(&cwd.join(".hermes-agent-ultra").display().to_string()));
         assert!(notice.contains(&home.display().to_string()));
-        assert!(notice.contains("HERMES_HOME"));
+        assert!(notice.contains("If they are yours, move them there"));
+        assert!(notice.contains(&format!(
+            "HERMES_HOME={}",
+            cwd.join(".hermes-agent-ultra").display()
+        )));
+        assert!(notice.contains("came with a repository you cloned, leave it"));
 
         let warned = AtomicBool::new(false);
         assert!(warn_stranded_memory_once(&warned, &cwd, &home));
