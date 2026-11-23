@@ -53,8 +53,13 @@ fn bridge_tool_schemas(
         + 'static,
 ) -> AgentToolRegistry {
     let mut agent_registry = AgentToolRegistry::new();
+    // In gateway mode MCP server tools are reached only through the gateway,
+    // which holds each call to the session's MCP scope.
+    let gateway = hermes_tools::mcp_gateway::is_mcp_gateway_registered(tools);
     for schema in tools.get_definitions() {
-        if excluded.iter().any(|name| schema.name == *name) {
+        if excluded.iter().any(|name| schema.name == *name)
+            || (gateway && hermes_tools::mcp_gateway::is_mcp_server_tool(tools, &schema.name))
+        {
             continue;
         }
         let name = schema.name.clone();

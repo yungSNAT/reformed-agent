@@ -317,6 +317,23 @@ pub async fn connect_configured_mcp_servers(
     if servers.is_empty() {
         return;
     }
+    if config.mcp_tool_mode == hermes_config::McpToolMode::Gateway {
+        // Before connecting, so the tool list is the same whichever servers
+        // connect in time.
+        let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
+        let scope_config = config.clone();
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            tool_registry,
+            &names,
+            Arc::new(move |registry: &ToolRegistry| {
+                hermes_tool_planning::platform_mcp_tool_names(
+                    &scope_config,
+                    "cli",
+                    &Arc::new(registry.clone()),
+                )
+            }),
+        );
+    }
     let mut manager = McpManager::new(Arc::clone(tool_registry));
     let discovery = manager.connect_all_parallel(servers);
     if tokio::time::timeout(MCP_STARTUP_TIMEOUT, discovery)
@@ -915,7 +932,9 @@ mod tests {
         let home = TempDir::new().expect("home");
         std::fs::write(
             home.path().join("config.yaml"),
-            format!("mcp_tool_mode: gateway\nmcp_servers:\n  - name: composio\n    url: \"{url}\"\n"),
+            format!(
+                "mcp_tool_mode: gateway\nmcp_servers:\n  - name: composio\n    url: \"{url}\"\n"
+            ),
         )
         .expect("write config");
         let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")))
@@ -931,7 +950,10 @@ mod tests {
         assert_eq!(names, ["mcp"]);
         let agent_tools = crate::app::bridge_tool_registry(&registry);
         assert!(
-            !agent_tools.names().iter().any(|name| name.contains("composio")),
+            !agent_tools
+                .names()
+                .iter()
+                .any(|name| name.contains("composio")),
             "{:?}",
             agent_tools.names()
         );
@@ -971,7 +993,10 @@ mod tests {
         connect_configured_mcp_servers(&config, home.path(), &registry).await;
         assert!(registry.get_tool("mcp").is_none());
         let agent_tools = crate::app::bridge_tool_registry(&registry);
-        assert!(agent_tools.names().iter().any(|name| name.contains("composio")));
+        assert!(agent_tools
+            .names()
+            .iter()
+            .any(|name| name.contains("composio")));
     }
 
     /// A command that loads config.yaml to change it and saves it writes the

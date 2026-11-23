@@ -75,7 +75,10 @@ fn gateway_replaces_every_mcp_tool_with_one_tool() {
     let names = schema_names(&cfg, &registry(&cfg, true));
     assert!(names.contains(&MCP_GATEWAY_TOOL.to_string()), "{names:?}");
     assert!(names.contains(&"terminal".to_string()));
-    assert!(!names.iter().any(|name| name.starts_with("mcp_")), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("mcp_")),
+        "{names:?}"
+    );
 }
 
 #[test]
@@ -155,5 +158,8 @@ fn unresolved_toolsets_fall_back_without_mcp_server_tools() {
         .insert("cli".to_string(), vec!["no_such_toolset".to_string()]);
     let names = schema_names(&cfg, &registry(&cfg, true));
     assert!(names.contains(&"terminal".to_string()), "{names:?}");
-    assert!(!names.iter().any(|name| name.starts_with("mcp_")), "{names:?}");
+    assert!(
+        !names.iter().any(|name| name.starts_with("mcp_")),
+        "{names:?}"
+    );
 }

@@ -56,9 +56,24 @@ fn register(
 fn gateway_registry() -> ToolRegistry {
     let registry = ToolRegistry::new();
     register(&registry, "terminal", "terminal", "Run a shell command");
-    register(&registry, "mcp_github_search_issues", "mcp-github", "Search GitHub issues");
-    register(&registry, "mcp_github_create_issue", "mcp-github", "Create a GitHub issue");
-    register(&registry, "mcp_docs_search", "mcp-docs", "Search the documentation");
+    register(
+        &registry,
+        "mcp_github_search_issues",
+        "mcp-github",
+        "Search GitHub issues",
+    );
+    register(
+        &registry,
+        "mcp_github_create_issue",
+        "mcp-github",
+        "Create a GitHub issue",
+    );
+    register(
+        &registry,
+        "mcp_docs_search",
+        "mcp-docs",
+        "Search the documentation",
+    );
     register(&registry, "mcp_docs_delete", "mcp-docs", "Delete a page");
     register_mcp_gateway(
         &registry,
@@ -85,7 +100,9 @@ async fn gateway(registry: &ToolRegistry, params: Value) -> Value {
 fn registers_one_gateway_tool_naming_the_servers() {
     let registry = gateway_registry();
     assert!(is_mcp_gateway_registered(&registry));
-    let tool = registry.get_tool(MCP_GATEWAY_TOOL).expect("gateway registered");
+    let tool = registry
+        .get_tool(MCP_GATEWAY_TOOL)
+        .expect("gateway registered");
     assert_eq!(tool.toolset, MCP_GATEWAY_TOOLSET);
     let schema = registry
         .get_definitions()
@@ -111,14 +128,21 @@ fn gateway_is_not_an_mcp_server_tool_and_absent_by_default() {
 #[tokio::test]
 async fn search_ranks_matching_tools_and_returns_their_schemas() {
     let registry = gateway_registry();
-    let found = gateway(&registry, json!({"action": "search", "query": "github issue"})).await;
+    let found = gateway(
+        &registry,
+        json!({"action": "search", "query": "github issue"}),
+    )
+    .await;
     let names: Vec<&str> = found["tools"]
         .as_array()
         .expect("tools array")
         .iter()
         .map(|tool| tool["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, ["mcp_github_create_issue", "mcp_github_search_issues"]);
+    assert_eq!(
+        names,
+        ["mcp_github_create_issue", "mcp_github_search_issues"]
+    );
     assert_eq!(found["total"], 2);
     assert_eq!(found["tools"][0]["parameters"]["type"], "object");
 }
@@ -127,9 +151,14 @@ async fn search_ranks_matching_tools_and_returns_their_schemas() {
 async fn search_without_a_query_lists_the_scope_only() {
     let registry = gateway_registry();
     let found = gateway(&registry, json!({"action": "search", "limit": 2})).await;
-    assert_eq!(found["total"], 3, "built-in tools and out-of-scope tools are not listed");
+    assert_eq!(
+        found["total"], 3,
+        "built-in tools and out-of-scope tools are not listed"
+    );
     assert_eq!(found["tools"].as_array().unwrap().len(), 2);
-    let all = gateway(&registry, json!({"action": "search"})).await.to_string();
+    let all = gateway(&registry, json!({"action": "search"}))
+        .await
+        .to_string();
     assert!(!all.contains("terminal"));
     assert!(!all.contains("mcp_docs_delete"));
     assert!(!all.contains("\"name\":\"mcp\""));
@@ -180,14 +209,22 @@ async fn call_keeps_the_inner_tools_policy() {
     registry.set_policy(
         ToolPolicyEngine::new(ToolPolicyMode::Enforce).with_denylist(&["mcp_docs_search"]),
     );
-    let out = gateway(&registry, json!({"action": "call", "tool": "mcp_docs_search"})).await;
+    let out = gateway(
+        &registry,
+        json!({"action": "call", "tool": "mcp_docs_search"}),
+    )
+    .await;
     assert_eq!(out["policy"]["tool"], "mcp_docs_search", "{out}");
 }
 
 #[tokio::test]
 async fn bad_actions_and_missing_names_are_errors() {
     let registry = gateway_registry();
-    for params in [json!({}), json!({"action": "list"}), json!({"action": "call"})] {
+    for params in [
+        json!({}),
+        json!({"action": "list"}),
+        json!({"action": "call"}),
+    ] {
         let out = gateway(&registry, params.clone()).await;
         assert!(out["error"].is_string(), "{params}: {out}");
     }
