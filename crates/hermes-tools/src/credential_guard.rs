@@ -108,6 +108,8 @@ const HERMES_HOME_TOKEN_SOURCES: &[&str] = &[
     "hindsight/config.json",
     "openviking.json",
     "mem0.json",
+    "supermemory.json",
+    "contextlattice.json",
 ];
 const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".ssh",

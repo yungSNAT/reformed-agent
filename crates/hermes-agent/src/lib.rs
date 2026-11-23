@@ -142,21 +142,10 @@ pub use hermes_core::{
     ToolResult, ToolSchema, UsageStats,
 };
 
+/// The Hermes home the file tools' write rule protects and `hermes memory
+/// setup` writes, so the plugins read their configs from the same place.
 fn default_memory_home() -> String {
-    std::env::var("HERMES_HOME")
-        .ok()
-        .filter(|v| !v.trim().is_empty())
-        .or_else(|| {
-            std::env::var("HERMES_AGENT_ULTRA_HOME")
-                .ok()
-                .filter(|v| !v.trim().is_empty())
-        })
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|home| format!("{home}/.hermes-agent-ultra"))
-        })
-        .unwrap_or_else(|| ".hermes-agent-ultra".to_string())
+    hermes_config::hermes_home().to_string_lossy().into_owned()
 }
 
 /// Attach discovered external memory providers to an `AgentLoop`.

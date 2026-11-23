@@ -275,6 +275,10 @@ impl DiskCleanup {
             self.audit_log(&format!("REJECT: {} (outside HERMES_HOME)", path.display()));
             return Ok(false);
         }
+        if self.is_credential_path(&path) {
+            self.audit_log(&format!("REJECT: {} (credential path)", path.display()));
+            return Ok(false);
+        }
 
         let size = fs::metadata(&path)
             .map(|m| if m.is_file() { m.len() } else { 0 })
@@ -367,6 +371,12 @@ impl DiskCleanup {
                 self.audit_log(&format!("SKIP protected cron path: {}", path.display()));
                 continue;
             }
+            // The tracked list is a file a model can write, so judge each
+            // entry again before deleting it.
+            if !self.is_safe_path(path) || self.is_credential_path(path) {
+                self.audit_log(&format!("SKIP unsafe entry: {}", path.display()));
+                continue;
+            }
             let should_delete = item.category == "test"
                 || (item.category == "temp" && age_days > 7)
                 || (item.category == "cron-output" && age_days > 14);
@@ -444,6 +454,16 @@ impl DiskCleanup {
             top10: existing,
             total_tracked: tracked.len(),
         }
+    }
+
+    /// A path the file tools may not write, which cleanup may not delete.
+    fn is_credential_path(&self, path: &Path) -> bool {
+        crate::credential_guard::is_link_target_write_denied(path)
+            || crate::credential_guard::is_write_denied_with_roots(
+                path,
+                Some(&hermes_config::user_home_dir()),
+                Some(&self.hermes_home),
+            )
     }
 
     fn is_protected_cron_path(&self, path: &Path) -> bool {
