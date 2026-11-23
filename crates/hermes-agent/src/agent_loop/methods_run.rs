@@ -57,7 +57,9 @@ impl AgentLoop {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
-        Self::complete_memory_flush(self.run_inner(messages, tools)).await
+        let result = Self::complete_memory_flush(self.run_inner(messages, tools)).await;
+        self.note_prompt_cache_use();
+        result
     }
 
     async fn run_inner(
@@ -188,6 +190,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
 
+        self.prune_tool_results_on_cold_cache(&mut ctx);
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);
         }
