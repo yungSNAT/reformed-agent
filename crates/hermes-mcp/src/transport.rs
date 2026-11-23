@@ -2914,3 +2914,6 @@ mod tests {
         stub.abort();
     }
 }
+
+#[cfg(test)]
+mod framing_tests;
