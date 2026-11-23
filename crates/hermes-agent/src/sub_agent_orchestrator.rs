@@ -966,14 +966,10 @@ mod tests {
             .unwrap()
             .starts_with("subagent-"));
         // Lineage file should exist under $HERMES_HOME/subagents/<id>.json
-        let dir = tmp.path().join("subagents");
-        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
-        let entry = entries.next_entry().await.unwrap().unwrap();
-        assert!(entry
-            .path()
-            .extension()
-            .map(|s| s == "json")
-            .unwrap_or(false));
+        // (beside the `pending` folder of undelivered results).
+        let id = parsed["sub_agent_id"].as_str().unwrap();
+        let record = tmp.path().join("subagents").join(format!("{id}.json"));
+        assert!(record.is_file(), "{}", record.display());
     }
 
     #[tokio::test]
