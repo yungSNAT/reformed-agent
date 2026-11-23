@@ -8,6 +8,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: parity-audit-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   audit:
     runs-on: ubuntu-latest
