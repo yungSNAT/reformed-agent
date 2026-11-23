@@ -432,6 +432,28 @@ mod tests {
         assert_eq!(parsed(&output)["search_degraded"], "fts5_corrupt");
     }
 
+    #[test]
+    fn deleted_and_edited_messages_keep_the_index_matching_them() {
+        let (tmp, _backend) = backend_with_db();
+        let conn = db_conn(&tmp);
+        insert_session(&conn, "edited", None, None, None, None, "2026-01-01T00:00:00Z");
+        insert_message(&conn, "edited", "user", "kilo nectarine");
+        insert_message(&conn, "edited", "user", "lima olive");
+        conn.execute(
+            "UPDATE messages SET content = 'mike peach' WHERE content = 'kilo nectarine'",
+            [],
+        )
+        .expect("edit a message");
+        conn.execute("DELETE FROM messages WHERE content = 'lima olive'", [])
+            .expect("delete a message");
+
+        conn.execute(
+            "INSERT INTO messages_fts(messages_fts, rank) VALUES('integrity-check', 1)",
+            [],
+        )
+        .expect("the index matches messages");
+    }
+
     #[tokio::test]
     async fn no_fts_backend_still_supports_session_id_lookup() {
         let backend = no_fts_backend_with_seeded_db();
