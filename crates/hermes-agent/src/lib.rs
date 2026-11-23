@@ -148,6 +148,58 @@ fn default_memory_home() -> String {
     hermes_config::hermes_home().to_string_lossy().into_owned()
 }
 
+/// Memory data and plugin configs the plugins keep in the memory home.
+const MEMORY_HOME_FILES: &[&str] = &[
+    "memory_store.db",
+    "retaindb_queue.db",
+    "honcho.json",
+    "hindsight/config.json",
+    "openviking.json",
+    "mem0.json",
+    "supermemory.json",
+    "contextlattice.json",
+];
+
+/// With `HOME` unset the plugins used to read `.hermes-agent-ultra` in the
+/// working folder. A notice when that folder holds their data or configs and
+/// is not the memory home, so the data is moved rather than lost from view.
+fn stranded_memory_notice(cwd: &std::path::Path, home: &std::path::Path) -> Option<String> {
+    let local = cwd.join(".hermes-agent-ultra");
+    let same = |a: &std::path::Path, b: &std::path::Path| {
+        a == b || matches!((a.canonicalize(), b.canonicalize()), (Ok(a), Ok(b)) if a == b)
+    };
+    if !local.is_dir() || same(&local, home) {
+        return None;
+    }
+    MEMORY_HOME_FILES
+        .iter()
+        .any(|name| local.join(name).exists())
+        .then(|| {
+            format!(
+                "Memory data or plugin configs in {} are no longer read; the memory home is {}. Move them there, or set HERMES_HOME={} to keep using that folder.",
+                local.display(),
+                home.display(),
+                local.display()
+            )
+        })
+}
+
+/// Logs the stranded memory notice the first time it applies; true when it did.
+fn warn_stranded_memory_once(
+    warned: &std::sync::atomic::AtomicBool,
+    cwd: &std::path::Path,
+    home: &std::path::Path,
+) -> bool {
+    let Some(notice) = stranded_memory_notice(cwd, home) else {
+        return false;
+    };
+    if warned.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        return false;
+    }
+    tracing::warn!("{notice}");
+    true
+}
+
 /// Attach discovered external memory providers to an `AgentLoop`.
 ///
 /// This keeps ContextLattice-first and multi-provider memory behavior enabled
@@ -161,6 +213,12 @@ pub fn attach_discovered_memory(mut agent: AgentLoop) -> AgentLoop {
         .session_id
         .clone()
         .unwrap_or_else(|| "session-default".to_string());
+    if agent.config.hermes_home.is_none() {
+        static WARNED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if let Ok(cwd) = std::env::current_dir() {
+            warn_stranded_memory_once(&WARNED, &cwd, &hermes_config::hermes_home());
+        }
+    }
     let hermes_home = agent
         .config
         .hermes_home

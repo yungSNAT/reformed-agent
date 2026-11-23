@@ -275,7 +275,7 @@ impl DiskCleanup {
             self.audit_log(&format!("REJECT: {} (outside HERMES_HOME)", path.display()));
             return Ok(false);
         }
-        if self.is_credential_path(&path) {
+        if self.holds_credential_path(&path) {
             self.audit_log(&format!("REJECT: {} (credential path)", path.display()));
             return Ok(false);
         }
@@ -382,7 +382,7 @@ impl DiskCleanup {
                 || (item.category == "cron-output" && age_days > 14);
 
             if should_delete {
-                match remove_path(path) {
+                match self.remove_unguarded(path) {
                     Ok(()) => {
                         freed = freed.saturating_add(item.size);
                         deleted += 1;
@@ -461,9 +461,44 @@ impl DiskCleanup {
         crate::credential_guard::is_link_target_write_denied(path)
             || crate::credential_guard::is_write_denied_with_roots(
                 path,
-                Some(&hermes_config::user_home_dir()),
+                dirs::home_dir().as_deref(),
                 Some(&self.hermes_home),
             )
+    }
+
+    /// The Hermes home itself, a credential path, or a folder holding one.
+    fn holds_credential_path(&self, path: &Path) -> bool {
+        if comparable_path(path) == comparable_path(&self.hermes_home)
+            || self.is_credential_path(path)
+        {
+            return true;
+        }
+        let is_dir = fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
+        is_dir
+            && fs::read_dir(path).is_ok_and(|entries| {
+                entries
+                    .flatten()
+                    .any(|entry| self.holds_credential_path(&entry.path()))
+            })
+    }
+
+    /// Deletes `path`, leaving any credential path inside it (and the
+    /// folders that hold one) in place, so a store that appears after
+    /// tracking survives.
+    fn remove_unguarded(&self, path: &Path) -> io::Result<()> {
+        if self.is_credential_path(path) {
+            return Ok(());
+        }
+        if !fs::symlink_metadata(path)?.is_dir() {
+            return fs::remove_file(path);
+        }
+        for entry in fs::read_dir(path)? {
+            self.remove_unguarded(&entry?.path())?;
+        }
+        match fs::remove_dir(path) {
+            Err(_) if fs::read_dir(path).is_ok_and(|mut rest| rest.next().is_some()) => Ok(()),
+            result => result,
+        }
     }
 
     fn is_protected_cron_path(&self, path: &Path) -> bool {
@@ -954,15 +989,6 @@ fn is_tmp_hermes_path(path: &Path) -> bool {
 
 fn age_days(timestamp: &str, now: Timestamp) -> Option<i64> {
     hermes_core::time::parse_rfc3339(timestamp).map(|dt| now.duration_since(dt).as_secs() / 86_400)
-}
-
-fn remove_path(path: &Path) -> io::Result<()> {
-    let metadata = fs::symlink_metadata(path)?;
-    if metadata.is_dir() {
-        fs::remove_dir_all(path)
-    } else {
-        fs::remove_file(path)
-    }
 }
 
 fn collect_pruned_dirs_postorder(home: &Path, current: &Path, dirs: &mut Vec<PathBuf>) {
