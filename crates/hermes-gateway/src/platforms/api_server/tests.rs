@@ -455,7 +455,11 @@ fn skill_discovery_reads_nested_skill_dirs() {
 #[test]
 fn skill_discovery_skips_hidden_dirs() {
     let tmp = tempfile::tempdir().expect("tempdir");
-    for dir in [".archive/old-skill", ".copying-1/new-skill", "creative/.hidden"] {
+    for dir in [
+        ".archive/old-skill",
+        ".copying-1/new-skill",
+        "creative/.hidden",
+    ] {
         let skill_dir = tmp.path().join(dir);
         std::fs::create_dir_all(&skill_dir).expect("create skill dir");
         std::fs::write(skill_dir.join("SKILL.md"), "# Hidden\n\nNot listed.\n").expect("write");
