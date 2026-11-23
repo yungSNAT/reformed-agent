@@ -192,11 +192,46 @@ fn compaction_archives_old_tool_results_before_it_summarises() {
     assert_eq!(messages.len(), pruneable_history(0).len(), "nothing was summarised");
     let stub = messages[2].content.as_deref().expect("stub");
     assert!(tool_result_prune::archive_pointer(stub).is_some(), "{stub}");
-    let kept = ctx.compressed_transcripts();
+    assert!(ctx.compressed_transcripts().is_empty(), "nothing was compressed");
+    let kept = ctx.take_compressed_transcripts();
     assert_eq!(kept.len(), 1, "the replaced result is kept");
     assert_eq!(kept[0].len(), 2, "only the call and its original result");
     assert_eq!(kept[0][0].tool_calls.as_ref().map(Vec::len), Some(1));
     assert_eq!(kept[0][1].content.as_deref(), Some("L".repeat(85_000).as_str()));
+}
+
+#[test]
+fn a_cold_prune_keeps_the_persisted_user_message_override() {
+    let _env = env_test_lock();
+    let saved: Vec<_> = ["TERMINAL_ENV", "TERMINAL_BACKEND"]
+        .map(|key| (key, std::env::var_os(key)))
+        .into();
+    for (key, _) in &saved {
+        std::env::remove_var(key);
+    }
+    let (mut agent, provider, _home) = prune_agent("prune-override-session");
+    agent.config.persist_user_message = Some("as typed".into());
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(6 * 60))
+        .expect("instant");
+    tool_result_prune::record_cache_touch_at("prune-override-session", past);
+
+    let result = block_on(agent.run(pruneable_history(70_000), None));
+    for (key, value) in saved {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+    let result = result.expect("run");
+
+    assert!(tool_result_prune::archive_pointer(&old_result_sent(&provider)).is_some());
+    let last_user = result
+        .messages
+        .iter()
+        .rfind(|m| m.role == MessageRole::User)
+        .and_then(|m| m.content.as_deref());
+    assert_eq!(last_user, Some("as typed"));
 }
 
 #[test]
