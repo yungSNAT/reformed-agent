@@ -2048,9 +2048,9 @@ fn a_failed_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
     let mut failing = open_db(&sp);
     failing
         .authorizer(Some(|ctx: AuthContext<'_>| match ctx.action {
-            AuthAction::Insert { table_name } if table_name == "messages_fts" => {
-                Authorization::Deny
-            }
+            AuthAction::Insert {
+                table_name: "messages_fts",
+            } => Authorization::Deny,
             _ => Authorization::Allow,
         }))
         .unwrap();
