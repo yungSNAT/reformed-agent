@@ -483,6 +483,9 @@ impl ToolHandler for SkillManageHandler {
                 let name = params.get("name")
                     .and_then(|v| v.as_str())
                     .ok_or_else(|| ToolError::InvalidParams("Missing 'name' parameter".into()))?;
+                // The tool sees only the name, so judge the whole skills
+                // folder the provider deletes under.
+                super::ultra_features::refuse_guarded_delete(&hermes_config::skills_dir())?;
 
                 self.provider.delete_skill(name)
                     .await

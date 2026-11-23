@@ -104,7 +104,7 @@ const HOME_TOKEN_SOURCES: &[&str] = &[
 /// writes `<name>.env` here with the LLM key and base URL its local daemon
 /// starts with. Matched as stores are.
 const HOME_TOKEN_FOLDERS: &[&str] = &[".hindsight/profiles"];
-/// Memory plugin configs under the active Hermes home, matched as
+/// Memory plugin configs under each profile's Hermes home, matched as
 /// `HOME_TOKEN_SOURCES` are. The plugins and `hermes memory setup` write them
 /// without the file tools.
 const HERMES_HOME_TOKEN_SOURCES: &[&str] = &[
@@ -160,7 +160,7 @@ fn store_key(path: &Path) -> PathBuf {
         .collect()
 }
 
-/// Credential stores under the active Hermes home, each denied with
+/// Credential stores under each profile's Hermes home, each denied with
 /// everything below it: provider keys (`.env`); the Nous OAuth token
 /// (`auth.json`); the token store, credential pool, provenance key and Gemini
 /// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
@@ -522,16 +522,43 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 }
 
-/// The credential stores and token sources under these roots, each with
-/// `true` for a token source (one file) or `false` for a store (denied with
-/// everything below it), and each one's link target as well, including a
-/// target that does not exist yet.
+/// `hermes_home` and every other profile home `--profile` can select: the
+/// root home (the grandparent when `hermes_home` is itself a profile's
+/// folder) and each folder in `<root>/profiles/`.
+fn profile_homes(hermes_home: &Path) -> Vec<PathBuf> {
+    let root = match hermes_home.parent() {
+        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+            parent.parent().unwrap_or(parent)
+        }
+        _ => hermes_home,
+    };
+    let profiles = std::fs::read_dir(root.join("profiles"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_dir());
+    let mut homes = vec![hermes_home.to_path_buf()];
+    for other in std::iter::once(root.to_path_buf()).chain(profiles) {
+        if !homes.contains(&other) {
+            homes.push(other);
+        }
+    }
+    homes
+}
+
+/// The credential stores and token sources under these roots, and under
+/// every other profile home beside `hermes_home`, each with `true` for a
+/// token source (one file) or `false` for a store (denied with everything
+/// below it), and each one's link target as well, including a target that
+/// does not exist yet.
 fn credential_stores(
     home: Option<&Path>,
     hermes_home: Option<&Path>,
     auth_override: Option<&Path>,
 ) -> Vec<(PathBuf, bool)> {
-    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
+    let hermes_homes: Vec<PathBuf> = hermes_home.map(profile_homes).unwrap_or_default();
+    let profile_stores = hermes_homes.iter().flat_map(|hermes_home| {
         // Include known stores even when the directory cannot be listed.
         let auth = hermes_home.join("auth");
         WRITE_DENY_HERMES_HOME_PREFIX
@@ -570,7 +597,7 @@ fn credential_stores(
                 .iter()
                 .map(move |source| home.join(source))
         })
-        .chain(hermes_home.into_iter().flat_map(|hermes_home| {
+        .chain(hermes_homes.iter().flat_map(|hermes_home| {
             HERMES_HOME_TOKEN_SOURCES
                 .iter()
                 .map(move |source| hermes_home.join(source))
