@@ -79,6 +79,8 @@ impl SqliteSessionSearchBackend {
         })
     }
 
+    /// The triggers match hermes-agent's session store, which also replaces the older delete and
+    /// update triggers that damaged the index; search only reads, so it leaves that repair there.
     fn ensure_fts_schema(conn: &Connection, db_path: &str) -> Result<bool, ToolError> {
         match conn.execute_batch(
             "CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
@@ -93,10 +95,12 @@ impl SqliteSessionSearchBackend {
                 VALUES (new.id, new.content, new.session_id, new.role);
             END;
             CREATE TRIGGER IF NOT EXISTS messages_ad AFTER DELETE ON messages BEGIN
-                DELETE FROM messages_fts WHERE rowid = old.id;
+                INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
+                VALUES ('delete', old.id, old.content, old.session_id, old.role);
             END;
             CREATE TRIGGER IF NOT EXISTS messages_au AFTER UPDATE ON messages BEGIN
-                DELETE FROM messages_fts WHERE rowid = old.id;
+                INSERT INTO messages_fts(messages_fts, rowid, content, session_id, role)
+                VALUES ('delete', old.id, old.content, old.session_id, old.role);
                 INSERT INTO messages_fts(rowid, content, session_id, role)
                 VALUES (new.id, new.content, new.session_id, new.role);
             END;",
