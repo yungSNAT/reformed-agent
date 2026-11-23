@@ -635,8 +635,14 @@ async fn prune_old_screenshots(dir: &Path) {
         }
         let path = entry.path();
         let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
-            // A credential store may link to the file; keep it then.
-            Ok(modified) if modified < cutoff && !protected.contains(&path) => {
+            Ok(modified) if modified < cutoff => {
+                if protected.contains(&path) {
+                    tracing::debug!(
+                        "keeping old screenshot {}: a credential store links to it",
+                        path.display()
+                    );
+                    continue;
+                }
                 tokio::fs::remove_file(&path).await
             }
             Ok(_) => continue,

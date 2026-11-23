@@ -1930,7 +1930,14 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             let rel = required_str(&params, "path")?;
             let content = params.get("content").and_then(Value::as_str).unwrap_or("");
             let path = subagent_file(state, &id, rel)?;
-            CredentialGuard::new().check_write_access(&path, content)?;
+            // The write rule without the file tools' safe root: the
+            // workspace lies outside any project the safe root names.
+            if crate::credential_guard::is_link_target_write_denied(&path) {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Access denied: '{}' is a protected credential file",
+                    path.display()
+                )));
+            }
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent)
                     .await
