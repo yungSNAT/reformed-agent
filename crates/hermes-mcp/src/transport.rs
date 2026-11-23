@@ -756,11 +756,28 @@ async fn read_stdio_line(
 /// (e.g. `hermes mcp serve`).
 pub struct ServerStdioTransport {
     started: bool,
+    // `get_mut` reaches each through `&mut self`, so the locks never block;
+    // they only make the transport `Sync` over a `Send` stream.
+    input: std::sync::Mutex<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
+    output: std::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
 }
 
 impl ServerStdioTransport {
     pub fn new() -> Self {
-        Self { started: false }
+        Self::with_io(tokio::io::stdin(), tokio::io::stdout())
+    }
+
+    /// A server transport over the given streams in place of the process's
+    /// own stdin and stdout.
+    pub(crate) fn with_io(
+        input: impl tokio::io::AsyncRead + Send + Unpin + 'static,
+        output: impl tokio::io::AsyncWrite + Send + Unpin + 'static,
+    ) -> Self {
+        Self {
+            started: false,
+            input: std::sync::Mutex::new(Box::new(input)),
+            output: std::sync::Mutex::new(Box::new(output)),
+        }
     }
 }
 
@@ -789,7 +806,10 @@ impl McpTransport for ServerStdioTransport {
         enforce_message_size(body.len(), max_message_bytes)?;
         let header = format!("Content-Length: {}\r\n\r\n", body.len());
 
-        let mut stdout = tokio::io::stdout();
+        let stdout = self
+            .output
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         stdout
             .write_all(header.as_bytes())
             .await
@@ -806,7 +826,10 @@ impl McpTransport for ServerStdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        let stdin = tokio::io::stdin();
+        let stdin = self
+            .input
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         let mut reader = tokio::io::BufReader::new(stdin);
 
         let mut content_length: usize = 0;
