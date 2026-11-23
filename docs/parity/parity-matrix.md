@@ -1,10 +1,10 @@
 # Parity Matrix
 
-Generated: `2026-11-22T14:29:25.034282+00:00`
+Generated: `2026-11-23T12:37:56.022141+00:00`
 
 ## Scope
 
-- Local ref: `HEAD` (`a853d11cada0d6c0555135fdfb77f15213bb5222`)
+- Local ref: `HEAD` (`aff366282dbe812cac50d18d6b02630e414786ba`)
 - Upstream ref: `upstream/parity-reference` (`ae2a81ccc00e9b7c06301523e5bb09608397149c`)
 - Merge base: `none (history divergence)`
 
@@ -13,17 +13,17 @@ Generated: `2026-11-22T14:29:25.034282+00:00`
 | Metric | Value |
 | --- | ---: |
 | Commits behind local (`upstream` ancestry only) | 1 |
-| Commits ahead local (`local` ancestry only) | 1715 |
+| Commits ahead local (`local` ancestry only) | 1723 |
 | Upstream commits missing by patch-id (`git cherry local upstream`, `+`) | 1 |
 | Upstream commits represented by patch-id (`git cherry local upstream`, `-`) | 0 |
-| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1443 |
+| Local commits unique by patch-id (`git cherry upstream local`, `+`) | 1452 |
 | Files only in upstream tree | 24464 |
-| Files only in local tree | 1776 |
+| Files only in local tree | 1760 |
 | Shared files identical content | 559 |
 | Shared files different content | 1167 |
-| Total files changed (`local` vs `upstream`) | 27163 |
+| Total files changed (`local` vs `upstream`) | 27147 |
 | Insertions (`local` vs `upstream`) | 4612754 |
-| Deletions (`local` vs `upstream`) | 794527 |
+| Deletions (`local` vs `upstream`) | 791166 |
 
 ## Top 40 upstream-only buckets
 
@@ -119,7 +119,7 @@ Generated: `2026-11-22T14:29:25.034282+00:00`
 
 | Bucket | Files |
 | --- | ---: |
-| `crates/hermes-cli` | 206 |
+| `crates/hermes-cli` | 200 |
 | `skills/creative` | 143 |
 | `crates/hermes-tools` | 135 |
 | `crates/hermes-agent` | 121 |
@@ -146,8 +146,8 @@ Generated: `2026-11-22T14:29:25.034282+00:00`
 | `crates/hermes-parity-tests` | 14 |
 | `crates/hermes-mcp` | 12 |
 | `crates/hermes-skills` | 12 |
-| `tests/run_agent` | 12 |
 | `optional-skills/creative` | 11 |
+| `tests/run_agent` | 11 |
 | `ui-tui/src` | 11 |
 | `tests/gateway` | 10 |
 | `.github/workflows` | 9 |
@@ -176,7 +176,7 @@ Generated: `2026-11-22T14:29:25.034282+00:00`
 
 - Upstream missing by patch-id: `1`
 - Upstream represented by patch-id: `0`
-- Local unique by patch-id: `1443`
+- Local unique by patch-id: `1452`
 - Intentional divergence tracked items: `23` (covered files: `2806`)
 - Merge base is absent; patch-id mapping is used as primary commit equivalence signal.
 

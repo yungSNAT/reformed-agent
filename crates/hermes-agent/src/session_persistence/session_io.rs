@@ -548,7 +548,6 @@ impl SessionPersistence {
         messages: &[Message],
     ) -> Result<(), AgentError> {
         // Replace the live transcript while preserving inactive rewind audit rows.
-        Self::delete_fts_rows_for_session(conn, session_id)?;
         conn.execute(
             "DELETE FROM messages WHERE session_id = ?1 AND active = 1",
             rusqlite::params![session_id],
