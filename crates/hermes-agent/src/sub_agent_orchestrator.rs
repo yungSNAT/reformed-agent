@@ -552,11 +552,15 @@ impl SubAgentOrchestrator {
     }
 
     /// Start of a parent run: a block listing this session's sub-agent
-    /// results that no finished parent run received, or `None`. See
-    /// [`recovery`].
-    pub fn recover_undelivered(&self) -> Option<String> {
+    /// results that no finished parent run received, or `None`. With
+    /// `can_deliver` false (the run cannot hand them over) nothing is listed
+    /// and they wait for a later run. See [`recovery`].
+    pub fn recover_undelivered(&self, can_deliver: bool) -> Option<String> {
         if let Ok(mut handed) = self.handed.lock() {
             handed.clear();
+        }
+        if !can_deliver {
+            return None;
         }
         let session = self.cfg.parent_session_id.as_deref()?;
         let (note, ids) = recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)?;

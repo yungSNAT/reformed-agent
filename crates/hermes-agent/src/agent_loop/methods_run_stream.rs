@@ -217,7 +217,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
         // After the prefetch, so recovered results stay out of its query.
-        self.add_recovered_sub_agent_results(&mut ctx);
+        self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas);
 
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);

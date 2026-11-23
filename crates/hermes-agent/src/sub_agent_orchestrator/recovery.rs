@@ -6,8 +6,8 @@
 //! pending records. A parent run that ends normally marks delivered exactly
 //! the records it handed to the model: its foreground children and those in
 //! its recovery note. When a run fails or the process stops first, the next
-//! run of the session hands the remaining results to the model as the result
-//! of a `recovered_sub_agent_results` tool call. A record still `started`
+//! run of the session that offers `delegate_task` hands the remaining results
+//! to the model as the result of a `delegate_task` call. A record still `started`
 //! past its time limit is reported as interrupted.
 //!
 //! Delivery is at least once, never exactly once: 2 processes resuming one

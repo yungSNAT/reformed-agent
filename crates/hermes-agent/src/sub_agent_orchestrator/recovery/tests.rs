@@ -4,7 +4,9 @@ use crate::sub_agent_orchestrator::{
     forget_session_results, SubAgentOrchestrator, SubAgentRequest,
 };
 use futures::stream::{BoxStream, StreamExt};
-use hermes_core::{AgentError, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema};
+use hermes_core::{
+    AgentError, JsonSchema, LlmProvider, LlmResponse, Message, StreamChunk, ToolSchema,
+};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 
@@ -82,6 +84,15 @@ fn note(lines: &[&str]) -> String {
 }
 
 fn parent(session: &str, home: &Path, provider: Arc<Recording>) -> AgentLoop {
+    parent_offering(session, home, provider, true)
+}
+
+fn parent_offering(
+    session: &str,
+    home: &Path,
+    provider: Arc<Recording>,
+    offer_delegate: bool,
+) -> AgentLoop {
     let mut config = AgentConfig {
         session_id: Some(session.into()),
         skip_memory: true,
@@ -91,7 +102,15 @@ fn parent(session: &str, home: &Path, provider: Arc<Recording>) -> AgentLoop {
         ..AgentConfig::default()
     };
     config.retry.max_retries = 0;
-    let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider);
+    let mut registry = ToolRegistry::new();
+    if offer_delegate {
+        registry.register(
+            "delegate_task",
+            ToolSchema::new("delegate_task", "Delegate", JsonSchema::new("object")),
+            Arc::new(|_args| Ok("unused".to_string())),
+        );
+    }
+    let agent = AgentLoop::new(config, Arc::new(registry), provider);
     let orch = Arc::new(SubAgentOrchestrator::from_parent(
         &agent,
         home.to_path_buf(),
@@ -286,7 +305,7 @@ async fn results_stay_pending_through_failed_runs_and_go_after_a_finished_one() 
         .tool_calls
         .as_ref()
         .expect("a recovery tool call");
-    assert_eq!(calls[0].function.name, "recovered_sub_agent_results");
+    assert_eq!(calls[0].function.name, "delegate_task");
     let result = &sent[n - 1];
     assert_eq!(result.role, hermes_core::MessageRole::Tool);
     assert_eq!(result.tool_call_id.as_deref(), Some(calls[0].id.as_str()));
@@ -304,6 +323,21 @@ async fn results_stay_pending_through_failed_runs_and_go_after_a_finished_one() 
     );
     let lost = read(home.path(), "lost");
     assert_eq!((lost.delivered, lost.result), (Some(true), None));
+}
+
+#[tokio::test]
+async fn a_turn_without_the_delegate_tool_leaves_results_pending() {
+    let home = tempfile::tempdir().unwrap();
+    write_lineage(home.path(), &record("held", "s", SubAgentStatus::Completed));
+    let provider = Arc::new(Recording::default());
+    let agent = parent_offering("s", home.path(), provider.clone(), false);
+
+    agent.run(vec![Message::user("hi")], None).await.unwrap();
+
+    assert_eq!(notes_in(&provider.seen.lock().unwrap()[0]), 0);
+    let held = read(home.path(), "held");
+    assert_eq!(held.delivered, Some(false));
+    assert_eq!(held.result.as_deref(), Some("answer held"));
 }
 
 #[tokio::test]

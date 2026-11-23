@@ -1,5 +1,5 @@
-/// Name of the tool call that carries recovered sub-agent results.
-const RECOVERED_RESULTS_TOOL: &str = "recovered_sub_agent_results";
+/// The tool whose late result carries recovered sub-agent results.
+const RECOVERED_RESULTS_TOOL: &str = "delegate_task";
 
 impl AgentLoop {
     /// Populate [`AgentConfig::stored_system_prompt`] from SQLite (`sessions.system_prompt`) for session continuation.
@@ -351,12 +351,19 @@ impl AgentLoop {
     /// Hand the model this session's sub-agent results that an earlier turn
     /// never received (it crashed, restarted or failed first). Delivery is at
     /// least once: a process that stops after the model saw them but before
-    /// the run ends hands them over again next time.
-    fn add_recovered_sub_agent_results(&self, ctx: &mut ContextManager) {
+    /// the run ends hands them over again next time. They arrive as a result
+    /// of `delegate_task`, so only on a turn that offers that tool; otherwise
+    /// they wait for a later turn.
+    fn add_recovered_sub_agent_results(
+        &self,
+        ctx: &mut ContextManager,
+        tool_schemas: &[ToolSchema],
+    ) {
+        let offered = tool_schemas.iter().any(|t| t.name == RECOVERED_RESULTS_TOOL);
         let Some(note) = self
             .sub_agent_orchestrator
             .as_ref()
-            .and_then(|o| o.recover_undelivered())
+            .and_then(|o| o.recover_undelivered(offered))
         else {
             return;
         };
@@ -371,7 +378,7 @@ impl AgentLoop {
             id: id.clone(),
             function: hermes_core::FunctionCall {
                 name: RECOVERED_RESULTS_TOOL.to_string(),
-                arguments: "{}".to_string(),
+                arguments: r#"{"task":"results of earlier sub-agents"}"#.to_string(),
             },
             extra_content: None,
         };
