@@ -373,7 +373,7 @@ impl DiskCleanup {
             }
             // The tracked list is a file a model can write, so judge each
             // entry again before deleting it.
-            if !self.is_safe_path(path) || self.is_credential_path(path) {
+            if !self.is_safe_path(path) || self.is_home(path) || self.is_credential_path(path) {
                 self.audit_log(&format!("SKIP unsafe entry: {}", path.display()));
                 continue;
             }

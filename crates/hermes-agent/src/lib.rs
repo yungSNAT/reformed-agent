@@ -158,6 +158,8 @@ const MEMORY_HOME_FILES: &[&str] = &[
     "mem0.json",
     "supermemory.json",
     "contextlattice.json",
+    "byterover.json",
+    "byterover",
 ];
 
 /// With `HOME` unset the plugins used to read `.hermes-agent-ultra` in the

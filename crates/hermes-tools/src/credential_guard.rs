@@ -1022,7 +1022,10 @@ mod tests {
         )
         .unwrap();
         assert!(holds_denied_path(&workspace, &denied));
-        assert!(holds_denied_path(&workspace.join("nested/kept.json"), &denied));
+        assert!(holds_denied_path(
+            &workspace.join("nested/kept.json"),
+            &denied
+        ));
 
         // A link inside the folder is judged as a link, not walked into.
         let other = tmp.path().join("other");

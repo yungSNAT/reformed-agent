@@ -1953,6 +1953,7 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             // not trusted, as the write action can rewrite it.
             let workspace = state.agents_dir().join(&id);
             let manifest = read_subagent_manifest_path(&workspace.join("manifest.json"))?;
+            refuse_guarded_delete(&workspace)?;
             if manifest.git_worktree {
                 let status = tokio::process::Command::new("git")
                     .args(["worktree", "remove", "--force"])
@@ -1980,7 +1981,6 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
     }
 }
 
-#[allow(dead_code)]
 /// A file or folder these tools delete may hold a file a credential store
 /// links to; refuse rather than delete the store's target.
 fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
@@ -2029,6 +2029,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
         .join(format!("{}.json", safe_id(session)));
     match action {
         "reset" => {
+            refuse_guarded_delete(&path)?;
             let _ = tokio::fs::remove_file(path).await;
             Ok(json!({"reset":true,"session":session}).to_string())
         }
@@ -2399,6 +2400,7 @@ fn scan_agent_configs(root: &Path, max_chars: usize) -> Vec<InheritFinding> {
 
 async fn ultra_feature_benchmark(state: &UltraFeatureState) -> Result<String, ToolError> {
     let bench_dir = state.root.join("benchmark-smoke");
+    refuse_guarded_delete(&bench_dir)?;
     let _ = tokio::fs::remove_dir_all(&bench_dir).await;
     tokio::fs::create_dir_all(&bench_dir)
         .await

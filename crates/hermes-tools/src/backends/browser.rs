@@ -633,6 +633,9 @@ async fn prune_old_screenshots(dir: &Path) {
             continue;
         }
         let path = entry.path();
+        if crate::credential_guard::holds_write_denied_path(&path) {
+            continue;
+        }
         let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
             Ok(modified) if modified < cutoff => tokio::fs::remove_file(&path).await,
             Ok(_) => continue,
