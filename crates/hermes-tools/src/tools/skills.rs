@@ -279,7 +279,10 @@ fn find_skill_dir_by_name(root: &Path, name: &str) -> Option<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                // Hidden folders hold archived skills and half-copied imports, as in the skill store.
+                if !entry.file_name().to_string_lossy().starts_with('.') {
+                    stack.push(path);
+                }
                 continue;
             }
             if path.file_name() != Some(OsStr::new("SKILL.md")) {
