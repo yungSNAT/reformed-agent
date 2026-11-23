@@ -36,6 +36,8 @@ use crate::code_index::CodeIndex;
 use crate::credential_pool::CredentialPool;
 use crate::interrupt::InterruptController;
 
+mod recovery;
+
 /// Boxed `Send` future type alias used to short-circuit async-recursion
 /// between parent and child [`AgentLoop::execute_tool_calls`] futures.
 type BoxSendFuture<T> = Pin<Box<dyn Future<Output = T> + Send>>;
@@ -90,6 +92,14 @@ pub struct SubAgentLineage {
     pub estimated_cost_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The child's final answer, kept so a parent turn that never finished
+    /// can still use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// Whether a parent turn received this result; `None` on records written
+    /// before results were kept, which recovery leaves alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<bool>,
 }
 
 /// Terminal state vocabulary for sub-agent lineage records.
@@ -101,6 +111,8 @@ pub enum SubAgentStatus {
     Failed,
     Cancelled,
     Timeout,
+    /// The process running it stopped before it finished.
+    Interrupted,
 }
 
 /// Parameters forwarded by the `delegate_task` tool invocation.
@@ -213,7 +225,10 @@ impl SubAgentOrchestrator {
         let worker = self.clone();
         let worker_sub_agent_id = sub_agent_id.clone();
         tokio::spawn(async move {
-            let output = worker.execute_inner(req, worker_sub_agent_id).await;
+            let output = worker
+                .clone()
+                .execute_inner(req, worker_sub_agent_id.clone())
+                .await;
             if let Some(callback) = callback {
                 let summary = format_background_delegation_notification(&output);
                 callback(&summary);
@@ -258,6 +273,8 @@ impl SubAgentOrchestrator {
             completion_tokens: None,
             estimated_cost_usd: None,
             error: None,
+            result: None,
+            delivered: Some(false),
         };
 
         // Best-effort lineage persistence — failures must never break delegation.
@@ -276,9 +293,9 @@ impl SubAgentOrchestrator {
                     lineage.estimated_cost_usd = usage.estimated_cost;
                 }
                 lineage.ended_at = Some(Timestamp::now());
+                let final_text = extract_final_assistant_text(&result.messages);
                 self.persist_lineage(&lineage).await;
 
-                let final_text = extract_final_assistant_text(&result.messages);
                 json!({
                     "sub_agent_id": sub_agent_id,
                     "status": "completed",
@@ -514,21 +531,23 @@ impl SubAgentOrchestrator {
     }
 
     async fn persist_lineage(&self, lineage: &SubAgentLineage) {
-        let dir = self.cfg.hermes_home.join("subagents");
-        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            tracing::debug!(error = %e, "sub-agent lineage dir create failed");
-            return;
-        }
-        let path = dir.join(format!("{}.json", lineage.sub_agent_id));
-        let body = match serde_json::to_string_pretty(lineage) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!(error = %e, "sub-agent lineage serialize failed");
-                return;
-            }
-        };
-        if let Err(e) = tokio::fs::write(&path, body).await {
-            tracing::debug!(error = %e, path = %path.display(), "sub-agent lineage write failed");
+        let home = self.cfg.hermes_home.clone();
+        let lineage = lineage.clone();
+        let _ = tokio::task::spawn_blocking(move || recovery::write_lineage(&home, &lineage)).await;
+    }
+
+    /// A note listing this session's sub-agent results that no finished
+    /// parent turn received, or `None`. See [`recovery`].
+    pub fn recover_undelivered(&self) -> Option<String> {
+        let session = self.cfg.parent_session_id.as_deref()?;
+        recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)
+    }
+
+    /// Record that a parent turn ended normally with this session's finished
+    /// sub-agent results.
+    pub fn mark_delivered(&self) {
+        if let Some(session) = self.cfg.parent_session_id.as_deref() {
+            recovery::mark_delivered(&self.cfg.hermes_home, session);
         }
     }
 }
