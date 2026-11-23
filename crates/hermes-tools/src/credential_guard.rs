@@ -524,7 +524,8 @@ pub fn is_write_denied_with_roots_and_safe_root(
 
 /// `hermes_home` and every other profile home `--profile` can select: the
 /// root home (the grandparent when `hermes_home` is itself a profile's
-/// folder) and each folder in `<root>/profiles/`.
+/// folder) and each folder in `<root>/profiles/`. As `--profile default`
+/// resolves it, any parent of a folder named `profiles` counts as the root.
 fn profile_homes(hermes_home: &Path) -> Vec<PathBuf> {
     let root = match hermes_home.parent() {
         Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
