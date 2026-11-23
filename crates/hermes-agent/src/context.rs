@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use hermes_core::{BudgetConfig, Message, MessageRole};
 
+pub mod tool_result_prune;
+
 /// Number of recent messages to preserve during compression.
 const DEFAULT_RECENT_MESSAGES: usize = 4;
 const MEMORY_ENTRY_DELIMITER: &str = "\n§\n";
@@ -159,6 +161,7 @@ impl ContextCompressor {
         const MAX_SUMMARY_CHARS: usize = 2048;
         const MAX_ITEMS_PER_SECTION: usize = 5;
         const MAX_ITEM_CHARS: usize = 180;
+        const MAX_ARCHIVES_LISTED: usize = 20;
 
         let mut goals: Vec<String> = Vec::new();
         let mut assistant_updates: Vec<String> = Vec::new();
@@ -230,6 +233,24 @@ impl ContextCompressor {
         let mut out = lines.join("\n");
         if out.chars().count() > MAX_SUMMARY_CHARS {
             out = out.chars().take(MAX_SUMMARY_CHARS).collect::<String>() + "...";
+        }
+        // Results a prune archived stay reachable: list their files, newest kept.
+        let archives: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .filter_map(|m| {
+                m.content
+                    .as_deref()
+                    .and_then(tool_result_prune::archive_pointer)
+            })
+            .collect();
+        if !archives.is_empty() {
+            out.push('\n');
+            out.push_str(tool_result_prune::ARCHIVE_LIST_HEADING);
+            for path in &archives[archives.len().saturating_sub(MAX_ARCHIVES_LISTED)..] {
+                out.push_str("\n- ");
+                out.push_str(path);
+            }
         }
         out
     }
@@ -430,6 +451,30 @@ impl ContextManager {
             let replaced = std::mem::replace(&mut self.messages, compressed);
             self.compressed_transcripts.push(replaced);
         }
+    }
+
+    /// Archive and shorten old tool results after the protected head, leaving
+    /// the turn from the newest user message on whole; see
+    /// [`tool_result_prune::prune_tool_results`].
+    pub fn prune_tool_results(
+        &mut self,
+        archive_dir: &Path,
+        session_id: &str,
+        min_reclaim_chars: usize,
+    ) -> tool_result_prune::PruneOutcome {
+        let head = self.protected_head.min(self.messages.len());
+        let history = &mut self.messages[head..];
+        let turn_start = history
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+            .unwrap_or(history.len());
+        tool_result_prune::prune_tool_results(
+            history,
+            turn_start,
+            archive_dir,
+            session_id,
+            min_reclaim_chars,
+        )
     }
 
     /// The history as it stood before each compression, oldest first.
