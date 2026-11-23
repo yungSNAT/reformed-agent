@@ -1197,6 +1197,47 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_covers_every_profile_home_beside_the_active_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let work = root.join("profiles/work");
+        let play = root.join("profiles/play");
+        for dir in [&home, &work, &play] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(root.join("profiles/default.yaml"), "").unwrap();
+
+        for active in [&root, &work] {
+            let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(active));
+            for profile in [&root, &work, &play] {
+                for store in [
+                    ".env",
+                    "auth.json",
+                    "auth/tokens.json",
+                    "mem0.json",
+                    "honcho.json",
+                ] {
+                    let path = profile.join(store);
+                    assert!(
+                        denied(&path),
+                        "{} writable from {}",
+                        path.display(),
+                        active.display()
+                    );
+                }
+                assert!(!denied(&profile.join("notes.txt")));
+            }
+            assert!(!denied(&root.join("profiles/default.yaml")));
+
+            let protected = ProtectedPaths::with_roots(Some(&home), Some(active));
+            assert!(protected.removed_by(&root.join("profiles")).is_some());
+            assert!(protected.contains(&play.join(".env")));
+            assert_eq!(protected.removed_by(&play.join("cache")), None);
+        }
+    }
+
+    #[test]
     fn write_deny_refuses_an_import_credential_source_but_not_what_is_below_it() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");

@@ -852,4 +852,34 @@ mod tests {
             .unwrap();
         assert!(result.contains("created"));
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn skill_delete_refuses_while_a_store_links_into_the_skills_folder() {
+        let tmp = tempdir().unwrap();
+        let profile = tmp.path().join("profile");
+        let kept = profile.join("skills/notes/kept.json");
+        fs::create_dir_all(kept.parent().unwrap()).unwrap();
+        fs::write(&kept, "{}").unwrap();
+        let delete = |name: &str| {
+            let handler = SkillManageHandler::new(Arc::new(MockSkillProvider));
+            let params = json!({"action": "delete", "name": name});
+            tokio::runtime::Runtime::new()
+                .unwrap()
+                .block_on(handler.execute(params))
+        };
+        crate::test_env::with_env(
+            &[
+                ("HERMES_HOME", Some(&profile)),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+            ],
+            || {
+                assert!(delete("other").is_ok(), "no store links in");
+                std::os::unix::fs::symlink(&kept, profile.join("mem0.json")).unwrap();
+                let refused = delete("other");
+                assert!(refused.is_err(), "{refused:?}");
+            },
+        );
+        assert!(kept.exists());
+    }
 }
