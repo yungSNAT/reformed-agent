@@ -104,11 +104,15 @@ impl ProcessTree {
         self.signal(libc::SIGTERM)?;
         // SIGCONT only wakes stopped members; SIGTERM, whose failure is
         // returned above, is the stop. ESRCH: the group ended on SIGTERM.
-        // EPERM: no member could be woken, which macOS answers whilst every
-        // member is exiting; the exit check in `signal` can miss a member
-        // part-way through exit, so the woken-nobody answer is not an error.
+        // EPERM (macOS): no member could be woken, which macOS answers whilst
+        // every member is exiting; the exit check in `signal` can miss a
+        // member part-way through exit, so the woken-nobody answer is not an
+        // error.
         match self.signal(libc::SIGCONT) {
-            Err(err) if matches!(err.raw_os_error(), Some(libc::ESRCH | libc::EPERM)) => Ok(()),
+            Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+            Err(err) if cfg!(target_os = "macos") && err.raw_os_error() == Some(libc::EPERM) => {
+                Ok(())
+            }
             result => result,
         }
     }
