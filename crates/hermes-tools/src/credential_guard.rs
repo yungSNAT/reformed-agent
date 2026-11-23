@@ -569,25 +569,38 @@ fn is_expanded_write_denied(
             .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
     });
     // Protect stores where they link, including a target that does not exist yet.
+    let with_link = |store: PathBuf| {
+        let target = hermes_config::resolve_symlink_target(&store);
+        let linked = (target != store).then_some(target);
+        std::iter::once(store).chain(linked)
+    };
+    // A store is denied with everything below it; a token source is one file.
     let stores = auth_override
         .map(Path::to_path_buf)
         .into_iter()
         .chain(profile_stores)
-        .chain(home.into_iter().flat_map(|home| {
+        .flat_map(with_link)
+        .map(|store| (store, false));
+    let sources = home
+        .into_iter()
+        .flat_map(|home| {
             HOME_TOKEN_SOURCES
                 .iter()
                 .map(move |source| home.join(source))
-        }))
-        .flat_map(|store| {
-            let target = hermes_config::resolve_symlink_target(&store);
-            let linked = (target != store).then_some(target);
-            std::iter::once(store).chain(linked)
-        });
+        })
+        .flat_map(with_link)
+        .map(|source| (source, true));
     let form_keys = forms.each_ref().map(|form| store_key(form));
-    for store in stores {
+    for (store, exact) in stores.chain(sources) {
         for store_form in root_forms(&store) {
             let store_form = store_key(&store_form);
-            if form_keys.iter().any(|form| form.starts_with(&store_form)) {
+            if form_keys.iter().any(|form| {
+                if exact {
+                    *form == store_form
+                } else {
+                    form.starts_with(&store_form)
+                }
+            }) {
                 return true;
             }
         }
@@ -887,6 +900,30 @@ mod tests {
         ));
         assert!(!is_write_denied_with_roots(
             &home.join(".codex/auth.json/notes.txt"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_an_import_credential_source_linked_to_a_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(home.join(".qwen")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("creds"), home.join(".qwen/oauth_creds.json"))
+            .unwrap();
+        let hermes_home = tmp.path().join("hermes");
+
+        assert!(is_write_denied_with_roots(
+            &elsewhere.join("creds"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &elsewhere.join("notes.txt"),
             Some(&home),
             Some(&hermes_home)
         ));
