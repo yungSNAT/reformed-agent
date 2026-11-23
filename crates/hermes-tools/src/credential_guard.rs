@@ -82,8 +82,12 @@ const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".npmrc",
     ".pypirc",
     ".pgpass",
-    // Credential sources that claw migrate and import-agent read as tokens.
+    // Credential sources that claw migrate, import-agent and auth discovery
+    // read as tokens.
     ".codex/auth.json",
+    ".pi/agent/auth.json",
+    ".hermes/auth.json",
+    ".hermes-agent-ultra/auth.json",
     ".hermes/.anthropic_oauth.json",
     ".hermes/.nous_oauth.json",
     ".qwen/oauth_creds.json",
