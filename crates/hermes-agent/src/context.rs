@@ -465,8 +465,9 @@ impl ContextManager {
 
     /// Archive and shorten old tool results after the protected head, leaving
     /// the messages from the newest user message on whole; see
-    /// [`tool_result_prune::prune_tool_results`]. The history as it stood
-    /// before is kept with the compressed transcripts, as after a compression.
+    /// [`tool_result_prune::prune_tool_results`]. The originals it replaced,
+    /// with the assistant messages that called them, are kept with the
+    /// compressed transcripts, so the session store still holds them.
     pub fn prune_tool_results(
         &mut self,
         session_id: &str,
@@ -490,7 +491,26 @@ impl ContextManager {
             min_reclaim_chars,
         );
         if outcome.pruned > 0 {
-            self.compressed_transcripts.push(before);
+            let replaced: HashSet<&str> = before
+                .iter()
+                .zip(&self.messages)
+                .filter(|(old, new)| old.content != new.content)
+                .filter_map(|(old, _)| old.tool_call_id.as_deref())
+                .collect();
+            let originals = before
+                .iter()
+                .filter(|m| {
+                    m.tool_call_id
+                        .as_deref()
+                        .is_some_and(|id| replaced.contains(id))
+                        || m.tool_calls
+                            .iter()
+                            .flatten()
+                            .any(|c| replaced.contains(c.id.as_str()))
+                })
+                .cloned()
+                .collect();
+            self.compressed_transcripts.push(originals);
         }
         outcome
     }

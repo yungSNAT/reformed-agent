@@ -126,11 +126,12 @@ fn stub_arguments(arguments: &str) -> String {
 }
 
 /// Start of every archive name of `session_id`: its readable part plus a hash
-/// of the whole id, so 2 sessions never share a prefix.
+/// of the whole id. The readable part never holds a `.`, so no session's
+/// prefix starts another's.
 fn session_prefix(session_id: &str) -> String {
     let digest = Sha256::digest(session_id.as_bytes());
     let short: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
-    format!("{}-{short}_", safe_name_part(session_id))
+    format!("{}.{short}_", safe_name_part(session_id))
 }
 
 /// Delete the archives of `session_id` in `dir`. Returns how many went.

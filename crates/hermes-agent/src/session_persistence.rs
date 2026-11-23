@@ -1046,6 +1046,12 @@ impl SessionPersistence {
         }
         tx.commit()
             .map_err(|e| AgentError::Io(format!("Failed to commit prune transaction: {e}")))?;
+        if let Some(home) = self.sessions_dir.parent() {
+            let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
+            for sid in &session_ids {
+                crate::context::tool_result_prune::remove_session_archives(&archives, sid);
+            }
+        }
         Ok(session_ids.len() as u64)
     }
 

@@ -1085,13 +1085,11 @@ fn delete_session_removes_rows_search_entries_and_transcript() {
     assert!(sp.delete_session("../gone").is_err());
 }
 
-#[test]
-fn delete_session_removes_the_sessions_tool_result_archives() {
+/// Archives one tool result for each session; returns the archive folder.
+fn archive_a_result_for(home: &Path, sessions: &[&str]) -> PathBuf {
     use crate::context::tool_result_prune::{prune_tool_results, PRUNED_SUBDIR};
-    let tmp = tempfile::tempdir().unwrap();
-    let sp = SessionPersistence::new(tmp.path());
-    let archives = tmp.path().join(PRUNED_SUBDIR);
-    for session in ["gone", "kept"] {
+    let archives = home.join(PRUNED_SUBDIR);
+    for session in sessions {
         let mut history = vec![
             Message::user("show"),
             Message::tool_result("c1", "x".repeat(9_000)),
@@ -1103,15 +1101,45 @@ fn delete_session_removes_the_sessions_tool_result_archives() {
             1
         );
     }
+    archives
+}
+
+fn archive_names(archives: &Path) -> Vec<String> {
+    std::fs::read_dir(archives)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect()
+}
+
+#[test]
+fn delete_session_removes_the_sessions_tool_result_archives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let archives = archive_a_result_for(tmp.path(), &["gone", "kept"]);
 
     sp.delete_session("gone").unwrap();
 
-    let left: Vec<String> = std::fs::read_dir(&archives)
-        .unwrap()
-        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-        .collect();
+    let left = archive_names(&archives);
     assert_eq!(left.len(), 1);
-    assert!(left[0].starts_with("kept-"), "{left:?}");
+    assert!(left[0].starts_with("kept."), "{left:?}");
+}
+
+#[test]
+fn pruning_old_sessions_removes_their_tool_result_archives() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    for session in ["old", "recent"] {
+        sp.persist_session(session, &[Message::user("hi")], None, None, None, None)
+            .unwrap();
+    }
+    let archives = archive_a_result_for(tmp.path(), &["old", "recent"]);
+    mark_session_old(&sp, "old", 40);
+
+    assert_eq!(sp.prune_sessions(30).unwrap(), 1);
+
+    let left = archive_names(&archives);
+    assert_eq!(left.len(), 1);
+    assert!(left[0].starts_with("recent."), "{left:?}");
 }
 
 #[test]

@@ -101,15 +101,28 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
 
 #[test]
 fn a_turn_after_the_prompt_cache_expired_archives_old_tool_results() {
-    // Reads TERMINAL_ENV, which another test sets.
+    // Needs the local terminal backend; other tests set these variables.
     let _env = env_test_lock();
+    let saved: Vec<_> = ["TERMINAL_ENV", "TERMINAL_BACKEND"]
+        .map(|key| (key, std::env::var_os(key)))
+        .into();
+    for (key, _) in &saved {
+        std::env::remove_var(key);
+    }
     let (agent, provider, home) = prune_agent("prune-cold-session");
     let six_minutes_ago = Instant::now()
         .checked_sub(Duration::from_secs(6 * 60))
         .expect("instant");
     tool_result_prune::record_cache_touch_at("prune-cold-session", six_minutes_ago);
 
-    let result = block_on(agent.run(pruneable_history(70_000), None)).expect("run");
+    let result = block_on(agent.run(pruneable_history(70_000), None));
+    for (key, value) in saved {
+        match value {
+            Some(value) => std::env::set_var(key, value),
+            None => std::env::remove_var(key),
+        }
+    }
+    let result = result.expect("run");
 
     let sent = old_result_sent(&provider);
     assert!(sent.starts_with("[terminal] command=cat big.log (70000 chars result)"));
@@ -180,8 +193,26 @@ fn compaction_archives_old_tool_results_before_it_summarises() {
     let stub = messages[2].content.as_deref().expect("stub");
     assert!(tool_result_prune::archive_pointer(stub).is_some(), "{stub}");
     let kept = ctx.compressed_transcripts();
-    assert_eq!(kept.len(), 1, "the history before the prune is kept");
-    assert_eq!(kept[0][2].content.as_deref(), Some("L".repeat(85_000).as_str()));
+    assert_eq!(kept.len(), 1, "the replaced result is kept");
+    assert_eq!(kept[0].len(), 2, "only the call and its original result");
+    assert_eq!(kept[0][0].tool_calls.as_ref().map(Vec::len), Some(1));
+    assert_eq!(kept[0][1].content.as_deref(), Some("L".repeat(85_000).as_str()));
+}
+
+#[test]
+fn compaction_without_a_session_id_summarises_instead_of_archiving() {
+    let (mut agent, _provider, home) = prune_agent("unused");
+    agent.config.session_id = None;
+    let mut ctx = ContextManager::new(100_000);
+    ctx.set_tool_result_archive(home.path().join(tool_result_prune::PRUNED_SUBDIR));
+    for msg in pruneable_history(85_000) {
+        ctx.add_message(msg);
+    }
+
+    agent.auto_compress_if_over_threshold(&mut ctx);
+
+    assert!(ctx.get_messages().len() < pruneable_history(0).len(), "it summarised");
+    assert!(!home.path().join(tool_result_prune::PRUNED_SUBDIR).exists());
 }
 
 #[test]

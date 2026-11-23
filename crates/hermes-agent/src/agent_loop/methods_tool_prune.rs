@@ -43,7 +43,10 @@ impl AgentLoop {
     /// Returns true when that alone left the history well under the budget
     /// (70%), so no summary is needed.
     fn prune_before_compression(&self, ctx: &mut ContextManager) -> bool {
-        let session = self.config.session_id.as_deref().unwrap_or("session");
+        // Archives are named for their session, so delete_session can find them.
+        let Some(session) = self.config.session_id.as_deref().filter(|s| !s.is_empty()) else {
+            return false;
+        };
         let pruned = ctx.prune_tool_results(session, 0);
         if pruned.pruned == 0 {
             return false;
