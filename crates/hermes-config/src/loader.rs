@@ -96,10 +96,12 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
     let tmp_path = atomic_temp_path(path)?;
+    let mut created = false;
     let mut written = false;
 
     let result = (|| -> Result<(), ConfigError> {
         let mut file = create_temp_file(&tmp_path, path).map_err(io_to_config_error)?;
+        created = true;
         #[cfg(unix)]
         if let Ok(existing) = std::fs::metadata(path) {
             use std::os::unix::fs::PermissionsExt;
@@ -127,7 +129,10 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
             tmp_path.display()
         ))),
         Err(err) => {
-            let _ = std::fs::remove_file(&tmp_path);
+            // A temp path this call did not create belongs to another writer.
+            if created {
+                let _ = std::fs::remove_file(&tmp_path);
+            }
             Err(err)
         }
         Ok(()) => Ok(()),
