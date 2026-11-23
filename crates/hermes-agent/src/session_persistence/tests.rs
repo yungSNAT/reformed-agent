@@ -1086,6 +1086,35 @@ fn delete_session_removes_rows_search_entries_and_transcript() {
 }
 
 #[test]
+fn delete_session_removes_the_sessions_tool_result_archives() {
+    use crate::context::tool_result_prune::{prune_tool_results, PRUNED_SUBDIR};
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    let archives = tmp.path().join(PRUNED_SUBDIR);
+    for session in ["gone", "kept"] {
+        let mut history = vec![
+            Message::user("show"),
+            Message::tool_result("c1", "x".repeat(9_000)),
+        ];
+        history.extend((0..20).map(|i| Message::assistant(format!("a{i}"))));
+        let len = history.len();
+        assert_eq!(
+            prune_tool_results(&mut history, len, &archives, session, 0).pruned,
+            1
+        );
+    }
+
+    sp.delete_session("gone").unwrap();
+
+    let left: Vec<String> = std::fs::read_dir(&archives)
+        .unwrap()
+        .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+        .collect();
+    assert_eq!(left.len(), 1);
+    assert!(left[0].starts_with("kept-"), "{left:?}");
+}
+
+#[test]
 fn delete_session_changes_nothing_when_the_store_lacks_the_session() {
     let tmp = tempfile::tempdir().unwrap();
     let sp = SessionPersistence::new(tmp.path());

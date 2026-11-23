@@ -301,6 +301,8 @@ pub struct ContextManager {
     protected_head: usize,
     /// Where the prefill sits in the protected head.
     prefill: Option<Range<usize>>,
+    /// Where pruned tool results are archived; `None` turns pruning off.
+    archive_dir: Option<PathBuf>,
 }
 
 impl ContextManager {
@@ -313,6 +315,7 @@ impl ContextManager {
             compressed_transcripts: Vec::new(),
             protected_head: 0,
             prefill: None,
+            archive_dir: None,
         }
     }
 
@@ -330,6 +333,7 @@ impl ContextManager {
             compressed_transcripts: Vec::new(),
             protected_head: 0,
             prefill: None,
+            archive_dir: None,
         }
     }
 
@@ -453,28 +457,42 @@ impl ContextManager {
         }
     }
 
+    /// Archive pruned tool results in `dir`, which the agent's `read_file`
+    /// can open. Until this is set, [`Self::prune_tool_results`] does nothing.
+    pub fn set_tool_result_archive(&mut self, dir: PathBuf) {
+        self.archive_dir = Some(dir);
+    }
+
     /// Archive and shorten old tool results after the protected head, leaving
-    /// the turn from the newest user message on whole; see
-    /// [`tool_result_prune::prune_tool_results`].
+    /// the messages from the newest user message on whole; see
+    /// [`tool_result_prune::prune_tool_results`]. The history as it stood
+    /// before is kept with the compressed transcripts, as after a compression.
     pub fn prune_tool_results(
         &mut self,
-        archive_dir: &Path,
         session_id: &str,
         min_reclaim_chars: usize,
     ) -> tool_result_prune::PruneOutcome {
+        let Some(dir) = self.archive_dir.clone() else {
+            return tool_result_prune::PruneOutcome::default();
+        };
+        let before = self.messages.clone();
         let head = self.protected_head.min(self.messages.len());
         let history = &mut self.messages[head..];
         let turn_start = history
             .iter()
             .rposition(|m| m.role == MessageRole::User)
             .unwrap_or(history.len());
-        tool_result_prune::prune_tool_results(
+        let outcome = tool_result_prune::prune_tool_results(
             history,
             turn_start,
-            archive_dir,
+            &dir,
             session_id,
             min_reclaim_chars,
-        )
+        );
+        if outcome.pruned > 0 {
+            self.compressed_transcripts.push(before);
+        }
+        outcome
     }
 
     /// The history as it stood before each compression, oldest first.

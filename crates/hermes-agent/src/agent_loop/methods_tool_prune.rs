@@ -1,18 +1,23 @@
 impl AgentLoop {
-    /// Where pruned tool results are archived: only when the agent has
-    /// `read_file` to open them again.
-    fn tool_result_archive_dir(&self) -> Option<PathBuf> {
-        self.tool_registry.get("read_file")?;
-        Some(
+    /// Run start: let `ctx` archive pruned tool results when this turn offers
+    /// `read_file` and it reads this machine's files. Then, once this
+    /// session's prompt cache has expired (rewriting old messages breaks no
+    /// cached prefix), archive and shorten old tool results before the first
+    /// request.
+    fn prune_tool_results_on_cold_cache(
+        &self,
+        ctx: &mut ContextManager,
+        tool_schemas: &[ToolSchema],
+    ) {
+        if !tool_schemas.iter().any(|t| t.name == "read_file")
+            || !tool_result_prune::file_tools_read_this_machine()
+        {
+            return;
+        }
+        ctx.set_tool_result_archive(
             crate::context::resolve_hermes_home(self.config.hermes_home.as_deref())
                 .join(tool_result_prune::PRUNED_SUBDIR),
-        )
-    }
-
-    /// Turn start: once this session's prompt cache has expired, rewriting old
-    /// messages breaks no cached prefix, so archive and shorten old tool
-    /// results before the first request.
-    fn prune_tool_results_on_cold_cache(&self, ctx: &mut ContextManager) {
+        );
         let Some(session_id) = self.config.session_id.as_deref().filter(|s| !s.is_empty())
         else {
             return;
@@ -21,11 +26,8 @@ impl AgentLoop {
         if !tool_result_prune::cache_expired(session_id, ttl) {
             return;
         }
-        let Some(dir) = self.tool_result_archive_dir() else {
-            return;
-        };
         let pruned =
-            ctx.prune_tool_results(&dir, session_id, tool_result_prune::COLD_MIN_RECLAIM_CHARS);
+            ctx.prune_tool_results(session_id, tool_result_prune::COLD_MIN_RECLAIM_CHARS);
         if pruned.pruned > 0 {
             self.emit_status(
                 "lifecycle",
@@ -37,10 +39,22 @@ impl AgentLoop {
         }
     }
 
-    /// Start this session's prompt-cache clock again: a run just sent requests.
-    fn note_prompt_cache_use(&self) {
-        if let Some(session_id) = self.config.session_id.as_deref() {
-            tool_result_prune::record_cache_touch(session_id);
+    /// Before compressing: archive old tool results, which loses nothing.
+    /// Returns true when that alone left the history well under the budget
+    /// (70%), so no summary is needed.
+    fn prune_before_compression(&self, ctx: &mut ContextManager) -> bool {
+        let session = self.config.session_id.as_deref().unwrap_or("session");
+        let pruned = ctx.prune_tool_results(session, 0);
+        if pruned.pruned == 0 {
+            return false;
         }
+        self.emit_status(
+            "lifecycle",
+            &format!(
+                "Archived {} old tool results ({} chars) before compressing",
+                pruned.pruned, pruned.reclaimed_chars
+            ),
+        );
+        ctx.total_chars() <= ctx.max_context_chars() / 10 * 7
     }
 }

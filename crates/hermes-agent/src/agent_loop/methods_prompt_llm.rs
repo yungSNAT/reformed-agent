@@ -285,7 +285,7 @@ impl AgentLoop {
         let total_chars = ctx.total_chars();
         let max_c = ctx.max_context_chars().max(1);
         let threshold = (max_c as f64 * 0.8) as usize;
-        if total_chars <= threshold {
+        if total_chars <= threshold || self.prune_before_compression(ctx) {
             return;
         }
         let message = format!(
@@ -294,23 +294,6 @@ impl AgentLoop {
         );
         tracing::info!("{message}");
         self.emit_status("lifecycle", &message);
-        // Archiving old tool results loses nothing; summarising does.
-        if let Some(dir) = self.tool_result_archive_dir() {
-            let session = self.config.session_id.as_deref().unwrap_or("session");
-            let pruned = ctx.prune_tool_results(&dir, session, 0);
-            if pruned.pruned > 0 {
-                self.emit_status(
-                    "lifecycle",
-                    &format!(
-                        "Archived {} old tool results ({} chars) before compressing",
-                        pruned.pruned, pruned.reclaimed_chars
-                    ),
-                );
-                if ctx.total_chars() <= threshold {
-                    return;
-                }
-            }
-        }
         if let Some(note) = self.memory_pre_compress_note(ctx.get_messages()) {
             ctx.add_message(Message::system(note));
         }

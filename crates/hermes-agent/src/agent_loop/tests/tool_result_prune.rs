@@ -101,6 +101,8 @@ fn block_on<T>(future: impl std::future::Future<Output = T>) -> T {
 
 #[test]
 fn a_turn_after_the_prompt_cache_expired_archives_old_tool_results() {
+    // Reads TERMINAL_ENV, which another test sets.
+    let _env = env_test_lock();
     let (agent, provider, home) = prune_agent("prune-cold-session");
     let six_minutes_ago = Instant::now()
         .checked_sub(Duration::from_secs(6 * 60))
@@ -164,8 +166,9 @@ fn a_run_starts_the_prompt_cache_clock_again() {
 
 #[test]
 fn compaction_archives_old_tool_results_before_it_summarises() {
-    let (agent, _provider, _home) = prune_agent("prune-compact-session");
+    let (agent, _provider, home) = prune_agent("prune-compact-session");
     let mut ctx = ContextManager::new(100_000);
+    ctx.set_tool_result_archive(home.path().join(tool_result_prune::PRUNED_SUBDIR));
     for msg in pruneable_history(85_000) {
         ctx.add_message(msg);
     }
@@ -173,26 +176,17 @@ fn compaction_archives_old_tool_results_before_it_summarises() {
     agent.auto_compress_if_over_threshold(&mut ctx);
 
     let messages = ctx.get_messages();
-    assert!(ctx.compressed_transcripts().is_empty(), "nothing was summarised");
-    assert_eq!(messages.len(), pruneable_history(0).len());
+    assert_eq!(messages.len(), pruneable_history(0).len(), "nothing was summarised");
     let stub = messages[2].content.as_deref().expect("stub");
     assert!(tool_result_prune::archive_pointer(stub).is_some(), "{stub}");
+    let kept = ctx.compressed_transcripts();
+    assert_eq!(kept.len(), 1, "the history before the prune is kept");
+    assert_eq!(kept[0][2].content.as_deref(), Some("L".repeat(85_000).as_str()));
 }
 
 #[test]
-fn without_read_file_nothing_is_archived() {
-    let mut config = AgentConfig {
-        skip_memory: true,
-        skip_context_files: true,
-        session_id: Some("prune-no-reader".into()),
-        ..AgentConfig::default()
-    };
-    let home = isolate_route_learning_home(&mut config);
-    let agent = AgentLoop::new(
-        config,
-        Arc::new(ToolRegistry::new()),
-        Arc::new(RecordingProvider::default()),
-    );
+fn compaction_without_an_archive_summarises() {
+    let (agent, _provider, home) = prune_agent("prune-no-archive");
     let mut ctx = ContextManager::new(100_000);
     for msg in pruneable_history(85_000) {
         ctx.add_message(msg);
@@ -200,6 +194,100 @@ fn without_read_file_nothing_is_archived() {
 
     agent.auto_compress_if_over_threshold(&mut ctx);
 
-    assert_eq!(ctx.compressed_transcripts().len(), 1, "it summarised instead");
+    assert!(ctx.get_messages().len() < pruneable_history(0).len(), "it summarised");
     assert!(!home.path().join("cache").exists());
+}
+
+#[test]
+fn a_turn_that_does_not_offer_read_file_archives_nothing() {
+    let (agent, provider, home) = prune_agent("prune-no-reader-offered");
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(6 * 60))
+        .expect("instant");
+    tool_result_prune::record_cache_touch_at("prune-no-reader-offered", past);
+    let other = ToolSchema::new("web_search", "Search", JsonSchema::new("object"));
+
+    block_on(agent.run(pruneable_history(70_000), Some(vec![other]))).expect("run");
+
+    assert_eq!(old_result_sent(&provider), "L".repeat(70_000));
+    assert!(!home.path().join("cache").exists());
+}
+
+#[test]
+fn a_remote_terminal_backend_archives_nothing() {
+    let _env = env_test_lock();
+    let saved = std::env::var_os("TERMINAL_ENV");
+    std::env::set_var("TERMINAL_ENV", "docker");
+    let (agent, provider, home) = prune_agent("prune-docker-session");
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(6 * 60))
+        .expect("instant");
+    tool_result_prune::record_cache_touch_at("prune-docker-session", past);
+
+    let result = block_on(agent.run(pruneable_history(70_000), None));
+    match saved {
+        Some(value) => std::env::set_var("TERMINAL_ENV", value),
+        None => std::env::remove_var("TERMINAL_ENV"),
+    }
+
+    result.expect("run");
+    assert_eq!(old_result_sent(&provider), "L".repeat(70_000));
+    assert!(!home.path().join("cache").exists());
+}
+
+struct HangingProvider;
+
+#[async_trait::async_trait]
+impl LlmProvider for HangingProvider {
+    async fn chat_completion(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> Result<hermes_core::LlmResponse, AgentError> {
+        futures::future::pending().await
+    }
+
+    fn chat_completion_stream(
+        &self,
+        _messages: &[Message],
+        _tools: &[ToolSchema],
+        _max_tokens: Option<u32>,
+        _temperature: Option<f64>,
+        _model: Option<&str>,
+        _extra_body: Option<&serde_json::Value>,
+    ) -> BoxStream<'static, Result<StreamChunk, AgentError>> {
+        futures::stream::pending().boxed()
+    }
+}
+
+#[test]
+fn an_abandoned_run_still_restarts_the_clock() {
+    let mut config = AgentConfig {
+        skip_memory: true,
+        skip_context_files: true,
+        session_id: Some("prune-abandoned-session".into()),
+        ..AgentConfig::default()
+    };
+    let _home = isolate_route_learning_home(&mut config);
+    let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), Arc::new(HangingProvider));
+    let past = Instant::now()
+        .checked_sub(Duration::from_secs(6 * 60))
+        .expect("instant");
+    tool_result_prune::record_cache_touch_at("prune-abandoned-session", past);
+    let ttl = Duration::from_secs(5 * 60);
+
+    let outcome = block_on(async {
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            agent.run(vec![Message::user("hi")], None),
+        )
+        .await
+    });
+
+    assert!(outcome.is_err(), "the run was cut off");
+    assert!(!tool_result_prune::cache_expired("prune-abandoned-session", ttl));
 }

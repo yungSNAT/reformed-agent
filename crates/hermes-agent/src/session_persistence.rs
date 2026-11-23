@@ -1091,6 +1091,10 @@ impl SessionPersistence {
                     .map_err(|e| AgentError::Io(format!("Failed to commit session delete: {e}")))?;
             }
         }
+        if let Some(home) = self.sessions_dir.parent() {
+            let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
+            crate::context::tool_result_prune::remove_session_archives(&archives, session_id);
+        }
         let transcript = self.sessions_dir.join(format!("{session_id}.jsonl"));
         match std::fs::remove_file(&transcript) {
             Err(e) if e.kind() != std::io::ErrorKind::NotFound => Err(AgentError::Io(format!(

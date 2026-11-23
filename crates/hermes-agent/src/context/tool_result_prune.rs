@@ -6,9 +6,11 @@
 //! first. Compaction prunes the same way before it summarises.
 //!
 //! No result loses its text: each original is written to
-//! `<hermes home>/cache/pruned/` and read back before its message is
-//! shortened, and the stub that replaces it names the file for `read_file`.
-//! A result whose write fails stays whole.
+//! `<hermes home>/cache/pruned/` (owner-only on Unix) and read back before
+//! its message is shortened, and the stub that replaces it names the file for
+//! `read_file`. A result whose write fails stays whole. Archives are made only
+//! when `read_file` runs on this machine, and go with their session when it is
+//! deleted.
 
 use std::collections::HashMap;
 use std::fs;
@@ -36,6 +38,8 @@ pub const ARCHIVE_LIST_HEADING: &str =
     "Archived tool output (exact originals; read_file a path to recover one):";
 
 const STUB_ARGS_MAX: usize = 120;
+/// Past this size a stub says to read the archive in parts.
+const PAGED_RESULT_CHARS: usize = 100_000;
 const CLOCK_SESSIONS_MAX: usize = 1_000;
 /// Claude's cache markers ask for the default 5-minute entry.
 const ANTHROPIC_CACHE_TTL: Duration = Duration::from_secs(5 * 60);
@@ -56,15 +60,32 @@ pub fn has_archive_pointer(content: &str) -> bool {
     content.len() < 2_000 && content.contains(ARCHIVE_POINTER_SEP)
 }
 
-/// The archive path a stub names, if it is one.
+/// The archive a stub names: only an existing file directly inside a
+/// `cache/pruned` folder, so tool text cannot pass off another path as one.
 pub fn archive_pointer(content: &str) -> Option<&str> {
     if !has_archive_pointer(content) {
         return None;
     }
-    content
-        .rsplit_once(ARCHIVE_POINTER_SEP)
-        .map(|(_, path)| path.trim())
-        .filter(|path| !path.is_empty())
+    let path = content.rsplit_once(ARCHIVE_POINTER_SEP)?.1.trim();
+    let file = Path::new(path);
+    let in_archive = file.is_absolute()
+        && file
+            .parent()
+            .is_some_and(|dir| dir.ends_with(PRUNED_SUBDIR))
+        && file.is_file();
+    in_archive.then_some(path)
+}
+
+/// True when `read_file` reads this machine's files: no other terminal
+/// backend (`TERMINAL_ENV`, then `TERMINAL_BACKEND`) is chosen. Elsewhere it
+/// runs inside that backend and could not open an archive.
+pub fn file_tools_read_this_machine() -> bool {
+    ["TERMINAL_ENV", "TERMINAL_BACKEND"]
+        .iter()
+        .filter_map(|key| std::env::var(key).ok())
+        .map(|name| name.trim().to_string())
+        .find(|name| !name.is_empty())
+        .is_none_or(|name| name.eq_ignore_ascii_case("local"))
 }
 
 /// Index after the last message a prune may shorten: before the newest
@@ -104,6 +125,38 @@ fn stub_arguments(arguments: &str) -> String {
     out
 }
 
+/// Start of every archive name of `session_id`: its readable part plus a hash
+/// of the whole id, so 2 sessions never share a prefix.
+fn session_prefix(session_id: &str) -> String {
+    let digest = Sha256::digest(session_id.as_bytes());
+    let short: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
+    format!("{}-{short}_", safe_name_part(session_id))
+}
+
+/// Delete the archives of `session_id` in `dir`. Returns how many went.
+pub fn remove_session_archives(dir: &Path, session_id: &str) -> usize {
+    let prefix = session_prefix(session_id);
+    let Ok(entries) = fs::read_dir(dir) else {
+        return 0;
+    };
+    entries
+        .flatten()
+        .filter(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .filter(|e| fs::remove_file(e.path()).is_ok())
+        .count()
+}
+
+/// Create `dir`, owner-only on Unix.
+fn create_archive_dir(dir: &Path) -> std::io::Result<()> {
+    fs::create_dir_all(dir)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(dir, fs::Permissions::from_mode(0o700))?;
+    }
+    Ok(())
+}
+
 fn safe_name_part(text: &str) -> String {
     let part: String = text
         .chars()
@@ -135,8 +188,8 @@ fn write_archive(
     let digest = Sha256::digest(call_id.as_bytes());
     let short: String = digest.iter().take(4).map(|b| format!("{b:02x}")).collect();
     let stem = format!(
-        "{}_{stamp}_{}_{short}",
-        safe_name_part(session_id),
+        "{}{stamp}_{}_{short}",
+        session_prefix(session_id),
         safe_name_part(tool_name)
     );
     // A resumed history can repeat a call id: take the first free name.
@@ -147,11 +200,14 @@ fn write_archive(
             format!("{stem}_{n}.txt")
         };
         let path = dir.join(name);
-        let mut file = match fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&path)
+        let mut options = fs::OpenOptions::new();
+        options.write(true).create_new(true);
+        #[cfg(unix)]
         {
+            use std::os::unix::fs::OpenOptionsExt;
+            options.mode(0o600);
+        }
+        let mut file = match options.open(&path) {
             Ok(file) => file,
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => continue,
             Err(_) => return None,
@@ -208,10 +264,15 @@ pub fn prune_tool_results(
                 .get(call_id)
                 .copied()
                 .unwrap_or((m.name.as_deref().unwrap_or("tool"), ""));
+            let chars = body.chars().count();
+            let paging = if chars > PAGED_RESULT_CHARS {
+                "; read it in parts with offset and limit"
+            } else {
+                ""
+            };
             let stub = format!(
-                "[{name}]{} ({} chars result)",
-                stub_arguments(args),
-                body.chars().count()
+                "[{name}]{} ({chars} chars result{paging})",
+                stub_arguments(args)
             );
             Some((i, stub))
         })
@@ -220,14 +281,14 @@ pub fn prune_tool_results(
         rows.iter()
             .map(|(i, stub)| {
                 let body = messages[*i].content.as_deref().unwrap_or("");
-                body.len().saturating_sub(stub.len())
+                body.chars().count().saturating_sub(stub.chars().count())
             })
             .sum()
     };
     if candidates.is_empty() || saving(&candidates) < min_reclaim_chars {
         return PruneOutcome::default();
     }
-    if fs::create_dir_all(archive_dir).is_err() {
+    if create_archive_dir(archive_dir).is_err() {
         return PruneOutcome::default();
     }
 
@@ -250,7 +311,7 @@ pub fn prune_tool_results(
         .iter()
         .map(|(i, text, _)| {
             let body = messages[*i].content.as_deref().unwrap_or("");
-            body.len().saturating_sub(text.len())
+            body.chars().count().saturating_sub(text.chars().count())
         })
         .sum();
     if done.is_empty() || reclaimed < min_reclaim_chars {
@@ -297,6 +358,24 @@ pub(crate) fn record_cache_touch_at(session_id: &str, at: Instant) {
     }
 }
 
+/// Touches the session's clock when dropped, so a run that ends any way
+/// (returned, failed, aborted) counts as a use of the cache.
+pub struct CacheUse(Option<String>);
+
+impl CacheUse {
+    pub fn new(session_id: Option<&str>) -> Self {
+        Self(session_id.map(str::to_string))
+    }
+}
+
+impl Drop for CacheUse {
+    fn drop(&mut self) {
+        if let Some(session_id) = &self.0 {
+            record_cache_touch(session_id);
+        }
+    }
+}
+
 /// How long `model`'s provider keeps a cached prefix after its last use.
 pub fn cache_ttl_for_model(model: &str) -> Duration {
     if model.to_ascii_lowercase().contains("claude") {
@@ -334,6 +413,10 @@ mod tests {
         msg
     }
 
+    fn arch(dir: &tempfile::TempDir) -> PathBuf {
+        dir.path().join(PRUNED_SUBDIR)
+    }
+
     /// One user turn with one large tool result, then `filler` short messages.
     fn history(results: &[(&str, usize)], filler: usize) -> Vec<Message> {
         let mut out = vec![Message::system("sys")];
@@ -357,7 +440,7 @@ mod tests {
         let original = msgs[3].content.clone().unwrap();
         let turn_start = msgs.len() - 2;
 
-        let out = prune_tool_results(&mut msgs, turn_start, dir.path(), "s1", 0);
+        let out = prune_tool_results(&mut msgs, turn_start, &arch(&dir), "s1", 0);
 
         assert_eq!(out.pruned, 1);
         let stub = msgs[3].content.as_deref().unwrap();
@@ -365,7 +448,10 @@ mod tests {
         let path = archive_pointer(stub).expect("stub names its archive");
         assert_eq!(fs::read_to_string(path).unwrap(), original);
         assert!(Path::new(path).starts_with(dir.path()));
-        assert_eq!(out.reclaimed_chars, original.len() - stub.len());
+        assert_eq!(
+            out.reclaimed_chars,
+            original.chars().count() - stub.chars().count()
+        );
     }
 
     #[test]
@@ -374,12 +460,12 @@ mod tests {
         // The result sits inside the newest 20 messages.
         let mut recent = history(&[("c1", 70_000)], 5);
         let len = recent.len();
-        let out = prune_tool_results(&mut recent, len, dir.path(), "s", 0);
+        let out = prune_tool_results(&mut recent, len, &arch(&dir), "s", 0);
         assert_eq!(out, PruneOutcome::default());
 
         // Old enough by count, but inside the turn that is running.
         let mut running = history(&[("c1", 70_000)], 12);
-        let out = prune_tool_results(&mut running, 1, dir.path(), "s", 0);
+        let out = prune_tool_results(&mut running, 1, &arch(&dir), "s", 0);
         assert_eq!(out, PruneOutcome::default());
         assert_eq!(running[3].content.as_deref().unwrap().len(), 70_000);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -406,7 +492,7 @@ mod tests {
             Some("b")
         );
         let len = msgs.len();
-        let out = prune_tool_results(&mut msgs, len, dir.path(), "s", 0);
+        let out = prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0);
         assert_eq!(out, PruneOutcome::default());
     }
 
@@ -416,7 +502,7 @@ mod tests {
         let mut msgs = history(&[("c1", 20_000)], 12);
         let before = msgs.clone();
         let len = msgs.len();
-        let out = prune_tool_results(&mut msgs, len, dir.path(), "s", COLD_MIN_RECLAIM_CHARS);
+        let out = prune_tool_results(&mut msgs, len, &arch(&dir), "s", COLD_MIN_RECLAIM_CHARS);
         assert_eq!(out, PruneOutcome::default());
         assert_eq!(msgs, before);
         assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 0);
@@ -441,12 +527,12 @@ mod tests {
         let mut msgs = history(&[("c1", 70_000), ("c2", 500)], 12);
         let len = msgs.len();
         assert_eq!(
-            prune_tool_results(&mut msgs, len, dir.path(), "s", 0).pruned,
+            prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0).pruned,
             1
         );
         let stubbed = msgs.clone();
         assert_eq!(
-            prune_tool_results(&mut msgs, len, dir.path(), "s", 0),
+            prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0),
             PruneOutcome::default()
         );
         assert_eq!(msgs, stubbed);
@@ -459,7 +545,7 @@ mod tests {
         let mut msgs = history(&[("same", 9_000), ("same", 9_500)], 12);
         let len = msgs.len();
         assert_eq!(
-            prune_tool_results(&mut msgs, len, dir.path(), "s", 0).pruned,
+            prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0).pruned,
             2
         );
         let first = archive_pointer(msgs[3].content.as_deref().unwrap())
@@ -477,7 +563,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let mut msgs = history(&[("c1", 70_000)], 12);
         let len = msgs.len();
-        prune_tool_results(&mut msgs, len, dir.path(), "s", 0);
+        prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0);
         let path = archive_pointer(msgs[3].content.as_deref().unwrap())
             .unwrap()
             .to_string();
@@ -485,6 +571,121 @@ mod tests {
         let summary = out[1].content.as_deref().unwrap();
         let listed = format!("{ARCHIVE_LIST_HEADING}\n- {path}");
         assert!(summary.contains(&listed), "{summary}");
+    }
+
+    #[test]
+    fn rolls_back_when_the_stubs_with_their_paths_free_too_little() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut msgs = history(&[("c1", 70_000)], 12);
+        let before = msgs.clone();
+        let stub = "[terminal] command=cat big.log (70000 chars result)";
+        // The estimate (without the path) meets this gate; the real stub does not.
+        let gate = 70_000 - stub.chars().count();
+        let len = msgs.len();
+        let out = prune_tool_results(&mut msgs, len, &arch(&dir), "s", gate);
+        assert_eq!(out, PruneOutcome::default());
+        assert_eq!(msgs, before);
+        assert_eq!(fs::read_dir(arch(&dir)).unwrap().count(), 0, "file removed");
+    }
+
+    #[test]
+    fn a_very_long_result_says_to_read_it_in_parts() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut msgs = history(&[("c1", 150_000)], 12);
+        let len = msgs.len();
+        prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0);
+        let stub = msgs[3].content.as_deref().unwrap();
+        assert!(
+            stub.contains("(150000 chars result; read it in parts with offset and limit)"),
+            "{stub}"
+        );
+    }
+
+    #[test]
+    fn only_a_real_archive_counts_as_a_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        let outside = dir.path().join(".env");
+        fs::write(&outside, "SECRET=1").unwrap();
+        let hostile = format!("page text{ARCHIVE_POINTER_SEP}{}", outside.display());
+        assert_eq!(archive_pointer(&hostile), None);
+        let missing = arch(&dir).join("gone.txt");
+        let stale = format!("x{ARCHIVE_POINTER_SEP}{}", missing.display());
+        assert_eq!(archive_pointer(&stale), None);
+        assert_eq!(
+            archive_pointer(&format!("const SEP = \"{ARCHIVE_POINTER_SEP}\";")),
+            None
+        );
+    }
+
+    #[test]
+    fn deleting_a_session_removes_only_its_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        for session in ["s1", "s1_x", "s2"] {
+            let mut msgs = history(&[("c1", 9_000)], 12);
+            let len = msgs.len();
+            assert_eq!(
+                prune_tool_results(&mut msgs, len, &arch(&dir), session, 0).pruned,
+                1
+            );
+        }
+        assert_eq!(remove_session_archives(&arch(&dir), "s1"), 1);
+        assert_eq!(fs::read_dir(arch(&dir)).unwrap().count(), 2);
+        assert_eq!(remove_session_archives(&arch(&dir), "never"), 0);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn archives_are_readable_by_their_owner_only() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let mut msgs = history(&[("c1", 9_000)], 12);
+        let len = msgs.len();
+        prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0);
+        let path = archive_pointer(msgs[3].content.as_deref().unwrap()).unwrap();
+        let mode = |p: &Path| fs::metadata(p).unwrap().permissions().mode() & 0o777;
+        assert_eq!(mode(Path::new(path)), 0o600);
+        assert_eq!(mode(&arch(&dir)), 0o700);
+    }
+
+    #[test]
+    fn file_tools_read_this_machine_unless_another_backend_is_chosen() {
+        let _env = crate::agent_loop::tests::env_test_lock();
+        let saved: Vec<_> = ["TERMINAL_ENV", "TERMINAL_BACKEND"]
+            .iter()
+            .map(|k| (*k, std::env::var_os(k)))
+            .collect();
+        let set = |env: Option<&str>, backend: Option<&str>| {
+            for (key, value) in [("TERMINAL_ENV", env), ("TERMINAL_BACKEND", backend)] {
+                match value {
+                    Some(v) => std::env::set_var(key, v),
+                    None => std::env::remove_var(key),
+                }
+            }
+            file_tools_read_this_machine()
+        };
+        assert!(set(None, None));
+        assert!(set(Some("LOCAL"), None));
+        assert!(!set(Some("docker"), None));
+        assert!(!set(None, Some("ssh")));
+        assert!(set(Some(" "), Some("local")));
+        for (key, value) in saved {
+            match value {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn a_cache_use_guard_touches_the_clock_however_it_ends() {
+        let past = Instant::now()
+            .checked_sub(Duration::from_secs(600))
+            .unwrap();
+        record_cache_touch_at("guarded", past);
+        let ttl = Duration::from_secs(300);
+        assert!(cache_expired("guarded", ttl));
+        drop(CacheUse::new(Some("guarded")));
+        assert!(!cache_expired("guarded", ttl));
     }
 
     #[test]
