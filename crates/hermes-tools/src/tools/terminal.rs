@@ -476,10 +476,6 @@ fn sudo_word_regex() -> &'static Regex {
     RE.get_or_init(|| Regex::new(r"\bsudo\b").expect("valid sudo regex"))
 }
 
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\"'\"'"))
-}
-
 fn transform_sudo_command_with_password(command: &str, sudo_password: Option<&str>) -> String {
     let Some(password) = sudo_password.filter(|v| !v.is_empty()) else {
         return command.to_string();
@@ -487,7 +483,10 @@ fn transform_sudo_command_with_password(command: &str, sudo_password: Option<&st
     if !sudo_word_regex().is_match(command) {
         return command.to_string();
     }
-    let replacement = format!("echo {} | sudo -S -p ''", shell_quote(password));
+    let replacement = format!(
+        "echo {} | sudo -S -p ''",
+        crate::tools::tool_result_storage::shell_quote(password)
+    );
     sudo_word_regex()
         .replace_all(command, replacement.as_str())
         .into_owned()
@@ -1450,7 +1449,7 @@ mod tests {
     fn test_transform_sudo_command_quotes_password() {
         let transformed =
             transform_sudo_command_with_password("sudo apt install curl", Some("pa'ss$(whoami)"));
-        assert!(transformed.contains("echo 'pa'\"'\"'ss$(whoami)' | sudo -S -p ''"));
+        assert!(transformed.contains("echo 'pa'\\''ss$(whoami)' | sudo -S -p ''"));
         assert!(transformed.ends_with(" apt install curl"));
     }
 

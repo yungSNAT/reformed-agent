@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
+use base64::Engine as _;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use tokio::sync::Notify;
@@ -523,7 +524,7 @@ impl PlatformAdapter for SignalAdapter {
             .await
             .map_err(|e| GatewayError::SendFailed(format!("Failed to read file: {e}")))?;
 
-        let b64 = base64_encode(&file_bytes);
+        let b64 = base64::engine::general_purpose::STANDARD.encode(&file_bytes);
 
         let scheduler = signal_rate_limit::get_scheduler();
         let started = Instant::now();
@@ -649,31 +650,6 @@ impl PlatformAdapter for SignalAdapter {
     fn platform_name(&self) -> &str {
         "signal"
     }
-}
-
-/// Simple base64 encoding using the `base64` crate convention (standard alphabet).
-fn base64_encode(data: &[u8]) -> String {
-    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-    let mut result = String::with_capacity(data.len().div_ceil(3) * 4);
-    for chunk in data.chunks(3) {
-        let b0 = chunk[0] as u32;
-        let b1 = chunk.get(1).copied().unwrap_or(0) as u32;
-        let b2 = chunk.get(2).copied().unwrap_or(0) as u32;
-        let triple = (b0 << 16) | (b1 << 8) | b2;
-        result.push(ALPHABET[((triple >> 18) & 0x3F) as usize] as char);
-        result.push(ALPHABET[((triple >> 12) & 0x3F) as usize] as char);
-        if chunk.len() > 1 {
-            result.push(ALPHABET[((triple >> 6) & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-        if chunk.len() > 2 {
-            result.push(ALPHABET[(triple & 0x3F) as usize] as char);
-        } else {
-            result.push('=');
-        }
-    }
-    result
 }
 
 #[cfg(test)]

@@ -46,7 +46,7 @@
       "kind": "nonzero_tree_drift",
       "message": "max_files_only_upstream remains nonzero in parity matrix",
       "metric": "max_files_only_upstream",
-      "value": 24465.0
+      "value": 24464.0
     }
   ],
   "audit_gate": {
@@ -615,7 +615,7 @@
     }
   ],
   "critical_gaps": [],
-  "generated_at_utc": "2026-11-22T11:43:26.012564+00:00",
+  "generated_at_utc": "2026-11-22T14:29:26.421007+00:00",
   "intent_domains": [
     {
       "classification": "direct_rust_test",
@@ -1189,7 +1189,7 @@
     "queue_pending": 0,
     "queue_total": 1,
     "rust_test_files": 549,
-    "rust_test_functions": 16591,
+    "rust_test_functions": 16603,
     "test_intent_mapping_ratio": 1.0,
     "test_intents_mapped": 10,
     "test_intents_total": 10,

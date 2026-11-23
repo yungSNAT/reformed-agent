@@ -15,6 +15,10 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: audit-${{ github.event_name }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 jobs:
   cargo:
     runs-on: ubuntu-latest
@@ -34,7 +38,11 @@ jobs:
           tool: cargo-audit@0.22.2
       # Called directly, not as `cargo audit`, so rust-toolchain.toml does not
       # make rustup install a toolchain this job never uses.
-      - name: cargo audit
+      - name: cargo audit (push and PR)
+        if: github.event_name != 'schedule'
+        run: cargo-audit audit --deny unsound --deny yanked
+      - name: cargo audit (scheduled)
+        if: github.event_name == 'schedule'
         run: cargo-audit audit --deny warnings
 
   npm:
