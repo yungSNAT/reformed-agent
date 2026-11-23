@@ -2033,6 +2033,36 @@ fn a_repair_blocked_by_another_writer_runs_once_the_lock_is_released() {
 }
 
 #[test]
+fn a_repair_whose_commit_waits_on_a_reader_runs_once_the_reader_finishes() {
+    let tmp = tempfile::tempdir().unwrap();
+    let sp = SessionPersistence::new(tmp.path());
+    store_damaged_by_old_fts_triggers(&sp);
+    let old_triggers = fts_delete_triggers(&open_db(&sp));
+    // A read transaction's SHARED lock, which the repair's COMMIT has to wait out.
+    let reader = open_db(&sp);
+    reader.execute_batch("BEGIN").unwrap();
+    reader
+        .query_row("SELECT COUNT(*) FROM messages", [], |row| row.get::<_, i64>(0))
+        .unwrap();
+
+    let conn = open_db(&sp);
+    conn.busy_timeout(std::time::Duration::from_millis(50)).unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    assert_eq!(
+        fts_delete_triggers(&conn),
+        old_triggers,
+        "committed under a reader"
+    );
+
+    reader.execute_batch("COMMIT").unwrap();
+    SessionPersistence::ensure_fts_schema(&conn, &sp.db_path).unwrap();
+    fts_index_check(&conn).expect("the index is rebuilt once the reader has finished");
+    assert!(fts_delete_triggers(&conn)
+        .iter()
+        .all(|sql| sql.contains("'delete'")));
+}
+
+#[test]
 fn a_failed_repair_of_a_store_missing_a_trigger_changes_none_of_its_triggers() {
     use rusqlite::hooks::{AuthAction, AuthContext, Authorization};
 
