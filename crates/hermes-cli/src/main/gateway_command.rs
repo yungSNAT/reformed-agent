@@ -995,6 +995,10 @@ async fn run_gateway(
                     gw_expiry.session_expiry_watcher(300).await;
                 }));
             }
+            // Listen before `gateway stop` can find this process through the pid file or ensure
+            // can report it ready through the socket: a SIGTERM sent before the listeners exist
+            // takes the default action and leaves the socket and state file behind.
+            let shutdown = gateway_shutdown_signal();
             let own_pid = std::process::id();
             tokio::fs::write(&pid_path, format!("{}\n", own_pid))
                 .await
@@ -1025,7 +1029,6 @@ async fn run_gateway(
                         .await;
                 }
             });
-            let shutdown = gateway_shutdown_signal();
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             let stopping = match shutdown {

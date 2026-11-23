@@ -795,3 +795,58 @@ fn atomic_write_accepts_a_file_name_that_is_not_utf8() {
     assert!(link.is_symlink(), "the link was replaced by a regular file");
     assert_eq!(std::fs::read(&target).unwrap(), b"linked");
 }
+
+#[test]
+fn atomic_write_leaves_a_temp_file_it_did_not_create() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(&path, "old").unwrap();
+    // Another writer's temp files at the names this process will pick next.
+    let next = ATOMIC_WRITE_COUNTER.load(Ordering::Relaxed);
+    let others: Vec<PathBuf> = (next..next + 1_000)
+        .map(|nonce| {
+            dir.path()
+                .join(format!(".config.yaml.tmp.{}.{nonce}", std::process::id()))
+        })
+        .collect();
+    for other in &others {
+        std::fs::write(other, "theirs").unwrap();
+    }
+
+    assert!(atomic_write_bytes(&path, b"new").is_err());
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "old");
+    for other in &others {
+        assert_eq!(
+            std::fs::read_to_string(other).unwrap(),
+            "theirs",
+            "{} was removed",
+            other.display()
+        );
+    }
+}
+
+#[test]
+fn atomic_write_skips_temp_names_left_by_an_earlier_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.yaml");
+    std::fs::write(&path, "old").unwrap();
+    // As a crashed run with the same pid (a container's) leaves them.
+    let next = ATOMIC_WRITE_COUNTER.load(Ordering::Relaxed);
+    let left: Vec<PathBuf> = (next..next + 3)
+        .map(|nonce| {
+            dir.path()
+                .join(format!(".config.yaml.tmp.{}.{nonce}", std::process::id()))
+        })
+        .collect();
+    for stale in &left {
+        std::fs::write(stale, "stale").unwrap();
+    }
+
+    atomic_write_bytes(&path, b"new").unwrap();
+
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "new");
+    for stale in &left {
+        assert_eq!(std::fs::read_to_string(stale).unwrap(), "stale");
+    }
+}

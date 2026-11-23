@@ -279,7 +279,10 @@ fn find_skill_dir_by_name(root: &Path, name: &str) -> Option<PathBuf> {
         for entry in entries.flatten() {
             let path = entry.path();
             if path.is_dir() {
-                stack.push(path);
+                // Hidden folders hold archived skills and half-copied imports, as in the skill store.
+                if !entry.file_name().to_string_lossy().starts_with('.') {
+                    stack.push(path);
+                }
                 continue;
             }
             if path.file_name() != Some(OsStr::new("SKILL.md")) {
@@ -620,6 +623,22 @@ mod tests {
     use hermes_core::{AgentError, Skill, SkillMeta};
     use std::fs;
     use tempfile::tempdir;
+
+    #[test]
+    fn find_skill_dir_by_name_skips_hidden_dirs() {
+        let tmp = tempdir().unwrap();
+        for dir in [".archive/trail", ".copying-1/trail", "tools/.hidden/trail"] {
+            let skill_dir = tmp.path().join(dir);
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(skill_dir.join("SKILL.md"), "# Trail").unwrap();
+        }
+        assert_eq!(find_skill_dir_by_name(tmp.path(), "trail"), None);
+
+        let live = tmp.path().join("tools").join("trail");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("SKILL.md"), "# Trail").unwrap();
+        assert_eq!(find_skill_dir_by_name(tmp.path(), "trail"), Some(live));
+    }
 
     struct MockSkillProvider;
     #[async_trait]
