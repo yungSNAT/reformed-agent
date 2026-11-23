@@ -195,17 +195,16 @@
       "id": "rust-memory-provider-plugin-parity",
       "status": "approved",
       "workstream": "WS3",
-      "summary": "Keep Honcho, Mem0, ByteRover and RetainDB memory provider behavior in Rust-native memory/provider surfaces instead of vendoring Python plugin trees.",
+      "summary": "Keep Honcho, Mem0 and ByteRover memory provider behavior in Rust-native memory/provider surfaces instead of vendoring Python plugin trees.",
       "owner": "yungSNAT",
       "ticket": 700,
       "last_reviewed": "2026-11-23",
       "review_date": "2027-02-10",
-      "rationale": "Honcho, Mem0, ByteRover and RetainDB are tracked as rust-native memory_plugin entries in the adapter feature matrix and covered by Rust memory/config contracts (crates/hermes-agent/src/memory_plugins); upstream Python plugin files are reference-only, and the Rust runtime never runs them.",
+      "rationale": "Honcho, Mem0 and ByteRover are tracked as rust-native memory_plugin entries in the adapter feature matrix and covered by Rust memory/config contracts (crates/hermes-agent/src/memory_plugins); upstream Python plugin files are reference-only, and the Rust runtime never runs them.",
       "path_prefixes": [
         "plugins/memory/honcho/",
         "plugins/memory/mem0/",
-        "plugins/memory/byterover/",
-        "plugins/memory/retaindb/"
+        "plugins/memory/byterover/"
       ]
     },
     {
