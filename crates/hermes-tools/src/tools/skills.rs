@@ -833,4 +833,20 @@ mod tests {
             .unwrap();
         assert!(result.contains("created"));
     }
+
+    #[test]
+    fn find_skill_dir_by_name_skips_hidden_dirs() {
+        let tmp = tempdir().unwrap();
+        for dir in [".archive/trail", ".copying-1/trail", "tools/.hidden/trail"] {
+            let skill_dir = tmp.path().join(dir);
+            fs::create_dir_all(&skill_dir).unwrap();
+            fs::write(skill_dir.join("SKILL.md"), "# Trail").unwrap();
+        }
+        assert_eq!(find_skill_dir_by_name(tmp.path(), "trail"), None);
+
+        let live = tmp.path().join("tools").join("trail");
+        fs::create_dir_all(&live).unwrap();
+        fs::write(live.join("SKILL.md"), "# Trail").unwrap();
+        assert_eq!(find_skill_dir_by_name(tmp.path(), "trail"), Some(live));
+    }
 }

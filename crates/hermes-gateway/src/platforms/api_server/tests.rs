@@ -453,6 +453,22 @@ fn skill_discovery_reads_nested_skill_dirs() {
 }
 
 #[test]
+fn skill_discovery_skips_hidden_dirs() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    for dir in [".archive/old-skill", ".copying-1/new-skill", "creative/.hidden"] {
+        let skill_dir = tmp.path().join(dir);
+        std::fs::create_dir_all(&skill_dir).expect("create skill dir");
+        std::fs::write(skill_dir.join("SKILL.md"), "# Hidden\n\nNot listed.\n").expect("write");
+    }
+
+    let mut seen = HashSet::new();
+    let mut entries = Vec::new();
+    collect_skill_entries(tmp.path(), tmp.path(), &mut seen, &mut entries);
+
+    assert_eq!(entries, Vec::new());
+}
+
+#[test]
 fn responses_body_shape_matches_openai_responses_contract() {
     let body = make_responses_api_body("resp_abc", "hermes-agent", "done", Some("resp_prev"));
     assert_eq!(body["id"], "resp_abc");
