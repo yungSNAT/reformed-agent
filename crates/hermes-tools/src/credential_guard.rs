@@ -920,6 +920,8 @@ mod tests {
             hermes_home.join("hindsight/config.json"),
             hermes_home.join("openviking.json"),
             hermes_home.join("mem0.json"),
+            hermes_home.join("supermemory.json"),
+            hermes_home.join("contextlattice.json"),
             // A case-insensitive file system opens these as the configs.
             home.join(".Honcho/CONFIG.json"),
             hermes_home.join("Mem0.JSON"),
@@ -936,6 +938,8 @@ mod tests {
             hermes_home.join("hindsight/data.json"),
             hermes_home.join("openviking.yaml"),
             hermes_home.join("memory.json"),
+            hermes_home.join("supermemory.yaml"),
+            hermes_home.join("contextlattice/notes.json"),
             tmp.path().join("project/honcho.json"),
             tmp.path().join("project/.honcho/config.json"),
             tmp.path().join("project/mem0.json"),

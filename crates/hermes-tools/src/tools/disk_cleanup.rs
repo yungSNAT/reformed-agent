@@ -1037,6 +1037,47 @@ mod tests {
     }
 
     #[test]
+    fn track_refuses_the_credential_stores_and_token_sources() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let home = cleaner.hermes_home().to_path_buf();
+        for name in [".env", "auth.json", "honcho.json", "mem0.json"] {
+            fs::write(home.join(name), "{}").unwrap();
+            assert!(
+                !cleaner.track(&home.join(name), "test").unwrap(),
+                "{name} tracked"
+            );
+        }
+        let scratch = home.join("test_scratch.txt");
+        fs::write(&scratch, "x").unwrap();
+        assert!(cleaner.track(&scratch, "test").unwrap());
+
+        assert_eq!(cleaner.quick().deleted, 1);
+        for name in [".env", "auth.json", "honcho.json", "mem0.json"] {
+            assert!(home.join(name).exists(), "{name} deleted");
+        }
+        assert!(!scratch.exists());
+    }
+
+    #[test]
+    fn quick_keeps_tracked_credential_and_outside_paths() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let env = cleaner.hermes_home().join(".env");
+        let outside = tmp.path().join("notes.txt");
+        fs::write(&env, "KEY=1").unwrap();
+        fs::write(&outside, "x").unwrap();
+        // As a tracked list written by hand, or by a file tool, would hold them.
+        cleaner
+            .save_tracked(&[stale_item(&env, "test", 5), stale_item(&outside, "test", 1)])
+            .unwrap();
+
+        assert_eq!(cleaner.quick().deleted, 0);
+        assert!(env.exists());
+        assert!(outside.exists());
+    }
+
+    #[test]
     fn quick_skips_stale_cron_output_jobs_json_and_drops_tracking() {
         let tmp = TempDir::new().unwrap();
         let cleaner = cleaner(&tmp);
