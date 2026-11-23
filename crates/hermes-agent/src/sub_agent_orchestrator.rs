@@ -19,6 +19,7 @@
 //! [`crate::AgentLoop::with_sub_agent_orchestrator`] to swap the default
 //! signal-only behavior with real execution.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
@@ -111,8 +112,6 @@ pub enum SubAgentStatus {
     Failed,
     Cancelled,
     Timeout,
-    /// The process running it stopped before it finished.
-    Interrupted,
 }
 
 /// Parameters forwarded by the `delegate_task` tool invocation.
@@ -155,11 +154,16 @@ pub struct SubAgentOrchestratorConfig {
 /// In-process executor for `delegate_task` tool calls.
 pub struct SubAgentOrchestrator {
     cfg: SubAgentOrchestratorConfig,
+    /// Sub-agent results handed to the model in the current parent run.
+    handed: Mutex<HashSet<String>>,
 }
 
 impl SubAgentOrchestrator {
     pub fn new(cfg: SubAgentOrchestratorConfig) -> Self {
-        Self { cfg }
+        Self {
+            cfg,
+            handed: Mutex::default(),
+        }
     }
 
     /// Default orchestrator that mirrors the current `AgentLoop`'s wiring.
@@ -185,6 +189,7 @@ impl SubAgentOrchestrator {
                     .or_else(|| parent.callbacks.background_review_callback.clone()),
                 code_index: parent.code_index.clone(),
             },
+            handed: Mutex::default(),
         }
     }
 
@@ -208,7 +213,9 @@ impl SubAgentOrchestrator {
                 this.dispatch_background(req)
             } else {
                 let sub_agent_id = format!("subagent-{}", uuid::Uuid::new_v4());
-                this.execute_inner(req, sub_agent_id).await
+                let out = this.clone().execute_inner(req, sub_agent_id.clone()).await;
+                this.note_handed([sub_agent_id]);
+                out
             }
         })
     }
@@ -538,20 +545,43 @@ impl SubAgentOrchestrator {
         let _ = tokio::task::spawn_blocking(move || recovery::write_lineage(&home, &lineage)).await;
     }
 
-    /// A note listing this session's sub-agent results that no finished
-    /// parent turn received, or `None`. See [`recovery`].
-    pub fn recover_undelivered(&self) -> Option<String> {
-        let session = self.cfg.parent_session_id.as_deref()?;
-        recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)
-    }
-
-    /// Record that a parent turn ended normally with this session's finished
-    /// sub-agent results.
-    pub fn mark_delivered(&self) {
-        if let Some(session) = self.cfg.parent_session_id.as_deref() {
-            recovery::mark_delivered(&self.cfg.hermes_home, session);
+    fn note_handed(&self, ids: impl IntoIterator<Item = String>) {
+        if let Ok(mut handed) = self.handed.lock() {
+            handed.extend(ids);
         }
     }
+
+    /// Start of a parent run: a block listing this session's sub-agent
+    /// results that no finished parent run received, or `None`. See
+    /// [`recovery`].
+    pub fn recover_undelivered(&self) -> Option<String> {
+        if let Ok(mut handed) = self.handed.lock() {
+            handed.clear();
+        }
+        let session = self.cfg.parent_session_id.as_deref()?;
+        let (note, ids) = recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)?;
+        self.note_handed(ids);
+        Some(note)
+    }
+
+    /// A parent run ended normally: the results it handed to the model (its
+    /// foreground children and its recovery block) are delivered.
+    pub fn mark_delivered(&self) {
+        let Some(session) = self.cfg.parent_session_id.as_deref() else {
+            return;
+        };
+        let handed = self
+            .handed
+            .lock()
+            .map(|mut h| std::mem::take(&mut *h))
+            .unwrap_or_default();
+        recovery::mark_delivered(&self.cfg.hermes_home, session, &handed);
+    }
+}
+
+/// Delete the undelivered sub-agent results of `session_id`.
+pub fn forget_session_results(hermes_home: &std::path::Path, session_id: &str) {
+    recovery::remove_session_records(hermes_home, session_id);
 }
 
 #[derive(Debug)]

@@ -359,7 +359,17 @@ impl AgentLoop {
             "lifecycle",
             "Recovered sub-agent results from an earlier turn that did not finish",
         );
-        ctx.add_message(Message::system(note));
+        // In the newest user message, not a system one: a child's answer is
+        // tool output and keeps no more trust than that.
+        let messages = ctx.get_messages_mut();
+        match messages.iter_mut().rfind(|m| m.role == MessageRole::User) {
+            Some(user) => {
+                let content = user.content.get_or_insert_with(String::new);
+                content.push_str("\n\n");
+                content.push_str(&note);
+            }
+            None => messages.push(Message::user(note)),
+        }
     }
 
     /// A run that ended normally received its sub-agents' results.
