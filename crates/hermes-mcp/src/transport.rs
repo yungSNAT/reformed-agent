@@ -456,8 +456,8 @@ pub trait McpTransport: Send + Sync {
 
 /// Transport that communicates via stdin/stdout with a child process.
 ///
-/// Defaults to Hermes' legacy Content-Length framing for existing servers.
-/// Standard MCP servers use one JSON message per line.
+/// Frames one JSON message per line, as the MCP specification's stdio
+/// transport does, unless built for Hermes' older Content-Length framing.
 pub struct StdioTransport {
     /// The command to execute.
     command: String,
@@ -468,7 +468,7 @@ pub struct StdioTransport {
     /// The child process.
     child: Option<Child>,
     standard_framing: bool,
-    standard_stdout: Option<BufReader<ChildStdout>>,
+    stdout: Option<BufReader<ChildStdout>>,
     pending_line: Vec<u8>,
     /// Background discovery should not let OAuth helpers prompt on stdin.
     suppress_interactive_oauth: bool,
@@ -490,7 +490,7 @@ impl StdioTransport {
             env: env.clone(),
             child: None,
             standard_framing: false,
-            standard_stdout: None,
+            stdout: None,
             pending_line: Vec::new(),
             suppress_interactive_oauth,
             started: false,
@@ -576,9 +576,7 @@ impl McpTransport for StdioTransport {
             McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
         })?;
 
-        if self.standard_framing {
-            self.standard_stdout = child.stdout.take().map(BufReader::new);
-        }
+        self.stdout = child.stdout.take().map(BufReader::new);
         self.child = Some(child);
         self.started = true;
 
@@ -628,76 +626,16 @@ impl McpTransport for StdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        if let Some(stdout) = &mut self.standard_stdout {
-            return read_stdio_line(stdout, &mut self.pending_line, max_message_bytes_from_env())
-                .await;
-        }
-        let child = self
-            .child
+        let limit = max_message_bytes_from_env();
+        let stdout = self
+            .stdout
             .as_mut()
             .ok_or(McpError::ConnectionError("Process not started".to_string()))?;
-
-        let stdout = child.stdout.as_mut().ok_or(McpError::ConnectionError(
-            "stdout not available".to_string(),
-        ))?;
-
-        // Read Content-Length header
-        let mut reader = tokio::io::BufReader::new(stdout);
-
-        // Read header lines until we get Content-Length or empty line
-        let mut content_length: usize = 0;
-        loop {
-            let mut line = String::new();
-            reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
-
-            if line.is_empty() {
-                return Err(McpError::ConnectionClosed);
-            }
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                // End of headers
-                break;
-            }
-
-            if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-                content_length =
-                    len_str
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| McpError::Protocol {
-                            code: -32700,
-                            message: format!("Invalid Content-Length: {}", e),
-                        })?;
-            }
+        if self.standard_framing {
+            read_stdio_line(stdout, &mut self.pending_line, limit).await
+        } else {
+            read_content_length_message(stdout, limit).await
         }
-
-        if content_length == 0 {
-            return Err(McpError::Protocol {
-                code: -32700,
-                message: "Missing Content-Length header".to_string(),
-            });
-        }
-        enforce_message_size(content_length, max_message_bytes_from_env())?;
-
-        // Read the JSON body
-        let mut body_buf = vec![0u8; content_length];
-        reader
-            .read_exact(&mut body_buf)
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
-
-        trace!("Received MCP message: {} bytes", body_buf.len());
-
-        let value: Value = serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
-            code: -32700,
-            message: format!("JSON parse error: {}", e),
-        })?;
-
-        Ok(value)
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
@@ -714,11 +652,70 @@ impl McpTransport for StdioTransport {
                 }
             }
         }
-        self.standard_stdout = None;
+        self.stdout = None;
         self.pending_line.clear();
         self.started = false;
         Ok(())
     }
+}
+
+/// Reads one Content-Length framed message from a reader kept across calls,
+/// so bytes read past this message stay for the next.
+async fn read_content_length_message(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    limit: usize,
+) -> Result<Value, McpError> {
+    // Read header lines until we get Content-Length or empty line
+    let mut content_length: usize = 0;
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
+
+        if line.is_empty() {
+            return Err(McpError::ConnectionClosed);
+        }
+
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            // End of headers
+            break;
+        }
+
+        if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
+            content_length = len_str
+                .trim()
+                .parse::<usize>()
+                .map_err(|e| McpError::Protocol {
+                    code: -32700,
+                    message: format!("Invalid Content-Length: {}", e),
+                })?;
+        }
+    }
+
+    if content_length == 0 {
+        return Err(McpError::Protocol {
+            code: -32700,
+            message: "Missing Content-Length header".to_string(),
+        });
+    }
+    enforce_message_size(content_length, limit)?;
+
+    // Read the JSON body
+    let mut body_buf = vec![0u8; content_length];
+    reader
+        .read_exact(&mut body_buf)
+        .await
+        .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
+
+    trace!("Received MCP message: {} bytes", body_buf.len());
+
+    serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
+        code: -32700,
+        message: format!("JSON parse error: {}", e),
+    })
 }
 
 async fn read_stdio_line(
@@ -754,12 +751,19 @@ async fn read_stdio_line(
 /// Server-side stdio transport that reads from the process's own stdin
 /// and writes to stdout. Used when hermes itself acts as an MCP server
 /// (e.g. `hermes mcp serve`).
+///
+/// It answers in the framing the client uses, judged from the first message:
+/// one JSON message per line, as the MCP specification's stdio transport
+/// sends it, or Content-Length headers, as older Hermes clients send it.
 pub struct ServerStdioTransport {
     started: bool,
     // `get_mut` reaches each through `&mut self`, so the locks never block;
     // they only make the transport `Sync` over a `Send` stream.
-    input: std::sync::Mutex<Box<dyn tokio::io::AsyncRead + Send + Unpin>>,
+    input: std::sync::Mutex<BufReader<Box<dyn tokio::io::AsyncRead + Send + Unpin>>>,
     output: std::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+    pending_line: Vec<u8>,
+    /// `Some(true)` for Content-Length framing, once the first message shows it.
+    content_length_framing: Option<bool>,
 }
 
 impl ServerStdioTransport {
@@ -773,10 +777,13 @@ impl ServerStdioTransport {
         input: impl tokio::io::AsyncRead + Send + Unpin + 'static,
         output: impl tokio::io::AsyncWrite + Send + Unpin + 'static,
     ) -> Self {
+        let input: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(input);
         Self {
             started: false,
-            input: std::sync::Mutex::new(Box::new(input)),
+            input: std::sync::Mutex::new(BufReader::new(input)),
             output: std::sync::Mutex::new(Box::new(output)),
+            pending_line: Vec::new(),
+            content_length_framing: None,
         }
     }
 }
@@ -784,6 +791,29 @@ impl ServerStdioTransport {
 impl Default for ServerStdioTransport {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Skips leading whitespace and reports whether the next message is
+/// Content-Length framed (it does not open with a JSON brace or bracket).
+/// `None` at end of input. Consumes nothing past the whitespace.
+async fn sniff_content_length_framing(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+) -> Result<Option<bool>, McpError> {
+    loop {
+        let buf = reader
+            .fill_buf()
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        let blank = buf.iter().take_while(|b| b.is_ascii_whitespace()).count();
+        if let Some(&first) = buf.get(blank) {
+            reader.consume(blank);
+            return Ok(Some(!matches!(first, b'{' | b'[')));
+        }
+        reader.consume(blank);
     }
 }
 
@@ -804,20 +834,20 @@ impl McpTransport for ServerStdioTransport {
             serde_json::to_string(&message).map_err(|e| McpError::Serialization(e.to_string()))?;
         let max_message_bytes = max_message_bytes_from_env();
         enforce_message_size(body.len(), max_message_bytes)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        let frame = if self.content_length_framing == Some(true) {
+            format!("Content-Length: {}\r\n\r\n{body}", body.len())
+        } else {
+            format!("{body}\n")
+        };
 
         let stdout = self
             .output
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
         stdout
-            .write_all(header.as_bytes())
+            .write_all(frame.as_bytes())
             .await
-            .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
-        stdout
-            .write_all(body.as_bytes())
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Write body failed: {}", e)))?;
+            .map_err(|e| McpError::ConnectionError(format!("Write message failed: {}", e)))?;
         stdout
             .flush()
             .await
@@ -826,56 +856,26 @@ impl McpTransport for ServerStdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        let stdin = self
+        let limit = max_message_bytes_from_env();
+        let reader = self
             .input
             .get_mut()
             .unwrap_or_else(std::sync::PoisonError::into_inner);
-        let mut reader = tokio::io::BufReader::new(stdin);
-
-        let mut content_length: usize = 0;
-        loop {
-            let mut line = String::new();
-            let n = reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
-            if n == 0 {
-                return Err(McpError::ConnectionClosed);
+        let content_length = match self.content_length_framing {
+            Some(framing) => framing,
+            None => {
+                let framing = sniff_content_length_framing(reader)
+                    .await?
+                    .ok_or(McpError::ConnectionClosed)?;
+                self.content_length_framing = Some(framing);
+                framing
             }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-                content_length =
-                    len_str
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| McpError::Protocol {
-                            code: -32700,
-                            message: format!("Invalid Content-Length: {}", e),
-                        })?;
-            }
+        };
+        if content_length {
+            read_content_length_message(reader, limit).await
+        } else {
+            read_stdio_line(reader, &mut self.pending_line, limit).await
         }
-
-        if content_length == 0 {
-            return Err(McpError::Protocol {
-                code: -32700,
-                message: "Missing Content-Length header".to_string(),
-            });
-        }
-        enforce_message_size(content_length, max_message_bytes_from_env())?;
-
-        let mut body_buf = vec![0u8; content_length];
-        reader
-            .read_exact(&mut body_buf)
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
-
-        serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
-            code: -32700,
-            message: format!("JSON parse error: {}", e),
-        })
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
