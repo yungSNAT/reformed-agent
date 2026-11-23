@@ -266,6 +266,40 @@ fn a_symlinked_archive_folder_leaves_results_whole() {
     assert_eq!(fs::read_dir(elsewhere.path()).unwrap().count(), 0);
 }
 
+#[cfg(unix)]
+#[test]
+fn a_symlinked_cache_folder_leaves_results_whole() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), dir.path().join("cache")).unwrap();
+    let mut msgs = history(&[("c1", 9_000)], 12);
+    let before = msgs.clone();
+    let len = msgs.len();
+
+    let out = prune_tool_results(&mut msgs, len, &arch(&dir), "s", 0);
+
+    assert_eq!(out.pruned, 0);
+    assert_eq!(msgs, before);
+    let pruned = elsewhere.path().join("pruned");
+    assert!(!pruned.exists() || fs::read_dir(pruned).unwrap().count() == 0);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_stub_naming_a_file_behind_a_symlinked_cache_is_not_an_archive() {
+    let dir = tempfile::tempdir().unwrap();
+    let elsewhere = tempfile::tempdir().unwrap();
+    fs::create_dir_all(elsewhere.path().join("pruned")).unwrap();
+    fs::write(elsewhere.path().join("pruned/x.txt"), "x").unwrap();
+    std::os::unix::fs::symlink(elsewhere.path(), dir.path().join("cache")).unwrap();
+    let stub = format!(
+        "[t] (9 chars result){ARCHIVE_POINTER_SEP}{}",
+        arch(&dir).join("x.txt").display()
+    );
+
+    assert_eq!(archive_pointer(&stub), None);
+}
+
 #[test]
 fn a_session_prefix_holds_the_whole_digest() {
     let prefix = session_prefix("s1");

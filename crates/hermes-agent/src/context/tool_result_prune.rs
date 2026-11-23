@@ -61,7 +61,7 @@ pub fn has_archive_pointer(content: &str) -> bool {
 }
 
 /// The archive a stub names: only an existing file, not a symlink, directly
-/// inside a `cache/pruned` folder that is not a symlink either, so tool text
+/// inside a real archive folder (see [`is_real_archive_dir`]), so tool text
 /// cannot pass off another path as one.
 pub fn archive_pointer(content: &str) -> Option<&str> {
     if !has_archive_pointer(content) {
@@ -69,13 +69,26 @@ pub fn archive_pointer(content: &str) -> Option<&str> {
     }
     let path = content.rsplit_once(ARCHIVE_POINTER_SEP)?.1.trim();
     let file = Path::new(path);
-    let real_dir = |dir: &Path| fs::symlink_metadata(dir).is_ok_and(|m| m.is_dir());
     let in_archive = file.is_absolute()
-        && file
-            .parent()
-            .is_some_and(|dir| dir.ends_with(PRUNED_SUBDIR) && real_dir(dir))
+        && file.parent().is_some_and(is_real_archive_dir)
         && fs::symlink_metadata(file).is_ok_and(|m| m.is_file());
     in_archive.then_some(path)
+}
+
+/// True when `dir` is `cache/pruned` and resolves to that folder inside its
+/// Hermes home: neither `cache` nor `pruned` leads elsewhere. The home itself
+/// may be a symlink.
+fn is_real_archive_dir(dir: &Path) -> bool {
+    let Some(home) = dir.parent().and_then(Path::parent) else {
+        return false;
+    };
+    // One component at a time: a canonical Windows path (`\\?\`) takes no `/`.
+    let expected = |home: PathBuf| PRUNED_SUBDIR.split('/').fold(home, |p, part| p.join(part));
+    dir.ends_with(PRUNED_SUBDIR)
+        && matches!(
+            (fs::canonicalize(dir), fs::canonicalize(home)),
+            (Ok(real), Ok(home)) if real == expected(home)
+        )
 }
 
 /// True when `read_file` reads this machine's files: no other terminal
@@ -149,12 +162,12 @@ pub fn remove_session_archives(dir: &Path, session_id: &str) -> usize {
         .count()
 }
 
-/// Create `dir`, owner-only on Unix. Refuses a `dir` that is a symlink, so
-/// archives stay where their stubs say.
+/// Create `dir`, owner-only on Unix. Refuses a `dir` that leads outside its
+/// Hermes home through a symlink, so archives stay where their stubs say.
 fn create_archive_dir(dir: &Path) -> std::io::Result<()> {
     fs::create_dir_all(dir)?;
-    if fs::symlink_metadata(dir)?.file_type().is_symlink() {
-        return Err(std::io::Error::other("the archive folder is a symlink"));
+    if !is_real_archive_dir(dir) {
+        return Err(std::io::Error::other("the archive folder leads elsewhere"));
     }
     #[cfg(unix)]
     {
@@ -223,7 +236,15 @@ fn write_archive(
             .write_all(body.as_bytes())
             .and_then(|()| file.sync_all());
         drop(file);
-        if written.is_ok() && fs::read(&path).is_ok_and(|back| back == body.as_bytes()) {
+        // Checked again after the write, in case the folder was swapped since.
+        let in_place = is_real_archive_dir(dir)
+            && fs::canonicalize(&path)
+                .ok()
+                .as_deref()
+                .and_then(Path::parent)
+                == fs::canonicalize(dir).ok().as_deref();
+        if written.is_ok() && in_place && fs::read(&path).is_ok_and(|back| back == body.as_bytes())
+        {
             return Some(path);
         }
         let _ = fs::remove_file(&path);
