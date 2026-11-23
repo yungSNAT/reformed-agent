@@ -95,11 +95,22 @@ pub fn atomic_write_bytes(path: &Path, bytes: &[u8]) -> Result<(), ConfigError> 
     let path = path.as_path();
     let parent = target_parent(path);
     std::fs::create_dir_all(parent).map_err(io_to_config_error)?;
-    let tmp_path = atomic_temp_path(path)?;
+    // A name already taken, by another writer or a crashed run whose pid and
+    // counter repeat (as in a container), is left alone for a fresh one.
+    let mut attempts = 0;
+    let (tmp_path, mut file) = loop {
+        let tmp_path = atomic_temp_path(path)?;
+        match create_temp_file(&tmp_path, path) {
+            Ok(file) => break (tmp_path, file),
+            Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists && attempts < 15 => {
+                attempts += 1;
+            }
+            Err(err) => return Err(io_to_config_error(err)),
+        }
+    };
     let mut written = false;
 
     let result = (|| -> Result<(), ConfigError> {
-        let mut file = create_temp_file(&tmp_path, path).map_err(io_to_config_error)?;
         #[cfg(unix)]
         if let Ok(existing) = std::fs::metadata(path) {
             use std::os::unix::fs::PermissionsExt;
