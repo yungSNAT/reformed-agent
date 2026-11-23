@@ -4,7 +4,7 @@
 //! with profile recall, semantic search, explicit memory tools, turn capture,
 //! and session-end conversation ingest.
 //!
-//! Mirrors the Python `plugins/memory/supermemory/__init__.py` at capability
+//! Mirrors upstream's Python `plugins/memory/supermemory/__init__.py` at capability
 //! level while using direct HTTP requests.
 
 use std::sync::{Arc, Mutex};

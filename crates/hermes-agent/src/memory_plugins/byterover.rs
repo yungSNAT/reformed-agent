@@ -4,7 +4,7 @@
 //! with hierarchical context, tiered retrieval, and optional cloud sync via
 //! the `brv` CLI.
 //!
-//! Mirrors the Python `plugins/memory/byterover/__init__.py`.
+//! Mirrors upstream's Python `plugins/memory/byterover/__init__.py`.
 //!
 //! Configuration:
 //!   - `brv` CLI must be installed (npm install -g byterover-cli)

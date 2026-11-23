@@ -3,7 +3,7 @@
 //! Implements `MemoryProviderPlugin` for Mem0 — server-side LLM fact
 //! extraction, semantic search with reranking, and automatic deduplication.
 //!
-//! Mirrors the Python `plugins/memory/mem0/__init__.py`.
+//! Mirrors upstream's Python `plugins/memory/mem0/__init__.py`.
 //!
 //! Configuration:
 //!   - `MEM0_API_KEY` (required for cloud, optional for self-hosted)
