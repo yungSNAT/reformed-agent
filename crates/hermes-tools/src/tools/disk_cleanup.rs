@@ -1080,6 +1080,52 @@ mod tests {
     }
 
     #[test]
+    fn track_refuses_a_folder_that_is_or_holds_a_credential_path() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let home = cleaner.hermes_home().to_path_buf();
+        fs::write(home.join(".env"), "KEY=1").unwrap();
+        fs::create_dir_all(home.join("auth")).unwrap();
+        fs::write(home.join("auth/tokens.json"), "{}").unwrap();
+        fs::create_dir_all(home.join("hindsight")).unwrap();
+        fs::write(home.join("hindsight/config.json"), "{}").unwrap();
+        let scratch = home.join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        fs::write(scratch.join("out.txt"), "x").unwrap();
+
+        for dir in [home.clone(), home.join("auth"), home.join("hindsight")] {
+            assert!(
+                !cleaner.track(&dir, "test").unwrap(),
+                "{} tracked",
+                dir.display()
+            );
+        }
+        assert!(cleaner.track(&scratch, "test").unwrap());
+
+        assert_eq!(cleaner.quick().deleted, 1);
+        assert!(!scratch.exists());
+        assert!(home.join(".env").exists());
+        assert!(home.join("auth/tokens.json").exists());
+        assert!(home.join("hindsight/config.json").exists());
+    }
+
+    #[test]
+    fn quick_keeps_a_credential_path_that_appears_in_a_tracked_folder() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let hindsight = cleaner.hermes_home().join("hindsight");
+        fs::create_dir_all(&hindsight).unwrap();
+        fs::write(hindsight.join("data.json"), "x").unwrap();
+        assert!(cleaner.track(&hindsight, "test").unwrap());
+        fs::write(hindsight.join("config.json"), "{}").unwrap();
+
+        cleaner.quick();
+
+        assert!(hindsight.join("config.json").exists());
+        assert!(!hindsight.join("data.json").exists());
+    }
+
+    #[test]
     fn quick_keeps_tracked_credential_and_outside_paths() {
         let tmp = TempDir::new().unwrap();
         let cleaner = cleaner(&tmp);

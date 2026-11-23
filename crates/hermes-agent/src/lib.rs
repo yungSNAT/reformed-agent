@@ -175,3 +175,61 @@ pub fn attach_discovered_memory(mut agent: AgentLoop) -> AgentLoop {
     }
     agent
 }
+
+#[cfg(test)]
+mod stranded_memory_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn a_working_folder_holding_memory_data_is_named_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        std::fs::create_dir_all(cwd.join(".hermes-agent-ultra")).unwrap();
+        std::fs::write(cwd.join(".hermes-agent-ultra/memory_store.db"), "").unwrap();
+        let notice = stranded_memory_notice(&cwd, &home).expect("notice");
+        assert!(notice.contains(&cwd.join(".hermes-agent-ultra").display().to_string()));
+        assert!(notice.contains(&home.display().to_string()));
+        assert!(notice.contains("HERMES_HOME"));
+
+        let warned = AtomicBool::new(false);
+        assert!(warn_stranded_memory_once(&warned, &cwd, &home));
+        assert!(!warn_stranded_memory_once(&warned, &cwd, &home));
+    }
+
+    #[test]
+    fn no_notice_without_stranded_data_or_when_the_folder_is_the_home() {
+        let tmp = tempfile::tempdir().unwrap();
+        let cwd = tmp.path().join("project");
+        let local = cwd.join(".hermes-agent-ultra");
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        assert_eq!(stranded_memory_notice(&cwd, &home), None, "no folder");
+
+        std::fs::create_dir_all(&local).unwrap();
+        std::fs::write(local.join("notes.txt"), "").unwrap();
+        assert_eq!(
+            stranded_memory_notice(&cwd, &home),
+            None,
+            "nothing stranded"
+        );
+
+        std::fs::write(local.join("mem0.json"), "{}").unwrap();
+        assert!(
+            stranded_memory_notice(&cwd, &home).is_some(),
+            "a plugin config"
+        );
+        assert_eq!(
+            stranded_memory_notice(&cwd, &local),
+            None,
+            "the home itself"
+        );
+
+        let warned = AtomicBool::new(false);
+        assert!(!warn_stranded_memory_once(&warned, &cwd, &local));
+        assert!(
+            warn_stranded_memory_once(&warned, &cwd, &home),
+            "flag kept for a real notice"
+        );
+    }
+}
