@@ -84,8 +84,9 @@ const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".pgpass",
 ];
 /// Home files that claw migrate, import-agent and auth discovery read as
-/// tokens. Matched as stores are: by any case or stream spelling, and where
-/// the file or a folder above it links.
+/// tokens, and the memory plugins' shared configs (an API key and the
+/// endpoint it is sent to). Matched as stores are: by any case or stream
+/// spelling, and where the file or a folder above it links.
 const HOME_TOKEN_SOURCES: &[&str] = &[
     ".claude/.credentials.json",
     ".codex/auth.json",
@@ -95,6 +96,18 @@ const HOME_TOKEN_SOURCES: &[&str] = &[
     ".hermes/.anthropic_oauth.json",
     ".hermes/.nous_oauth.json",
     ".qwen/oauth_creds.json",
+    ".honcho/config.json",
+    ".hermes/honcho.json",
+    ".hindsight/config.json",
+];
+/// Memory plugin configs under the active Hermes home, matched as
+/// `HOME_TOKEN_SOURCES` are. The plugins and `hermes memory setup` write them
+/// without the file tools.
+const HERMES_HOME_TOKEN_SOURCES: &[&str] = &[
+    "honcho.json",
+    "hindsight/config.json",
+    "openviking.json",
+    "mem0.json",
 ];
 const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".ssh",
@@ -588,6 +601,11 @@ fn is_expanded_write_denied(
                 .iter()
                 .map(move |source| home.join(source))
         })
+        .chain(hermes_home.into_iter().flat_map(|hermes_home| {
+            HERMES_HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| hermes_home.join(source))
+        }))
         .flat_map(with_link)
         .map(|source| (source, true));
     let form_keys = forms.each_ref().map(|form| store_key(form));
