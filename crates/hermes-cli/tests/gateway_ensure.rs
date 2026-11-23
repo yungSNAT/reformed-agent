@@ -258,6 +258,36 @@ fn a_signalled_run_withdraws_local_mode_before_it_shuts_down() {
     assert!(run.wait().unwrap().success());
 }
 
+/// `gateway stop` sends SIGTERM as soon as the pid file names the owner, before the owner has
+/// reported ready: the owner must already be listening then, or it dies leaving its socket.
+#[test]
+fn a_run_signalled_once_its_pid_file_appears_still_shuts_down() {
+    let (_dir, home) = private_root();
+    let _owner = Owner(home.clone());
+    let mut run = Command::new(cargo_bin("hermes"))
+        .env("HERMES_HOME", &home)
+        .args(["gateway", "run"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .spawn()
+        .unwrap();
+    let pid_file = home.join("gateway.pid");
+    let deadline = Instant::now() + Duration::from_secs(30);
+    while !pid_file.exists() && Instant::now() < deadline {
+        std::thread::yield_now();
+    }
+    assert!(pid_file.exists(), "the run wrote its pid file");
+    let signalled = Command::new("kill")
+        .args(["-TERM", &run.id().to_string()])
+        .status()
+        .unwrap();
+    assert!(signalled.success());
+    let status = run.wait().unwrap();
+    assert!(status.success(), "the run ended on the signal: {status:?}");
+    assert!(!home.join("gateway.sock").exists(), "the socket was left");
+    assert!(!home.join("gateway_state.json").exists());
+}
+
 /// A run that cannot own the home must leave the owner's pid file alone, even when the file names
 /// a dead pid: removing it would leave a ready owner that `gateway stop` cannot find.
 #[test]
