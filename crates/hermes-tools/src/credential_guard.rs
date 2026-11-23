@@ -820,9 +820,12 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
         let hermes_home = tmp.path().join("hermes");
-        // Read as tokens by claw migrate and import-agent.
+        // Read as tokens by claw migrate, import-agent and auth discovery.
         for rel in [
             ".codex/auth.json",
+            ".pi/agent/auth.json",
+            ".hermes/auth.json",
+            ".hermes-agent-ultra/auth.json",
             ".hermes/.anthropic_oauth.json",
             ".hermes/.nous_oauth.json",
             ".qwen/oauth_creds.json",
