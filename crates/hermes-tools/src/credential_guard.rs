@@ -100,6 +100,10 @@ const HOME_TOKEN_SOURCES: &[&str] = &[
     ".hermes/honcho.json",
     ".hindsight/config.json",
 ];
+/// Home folders whose every file is a token source: the Hindsight plugin
+/// writes `<name>.env` here with the LLM key and base URL its local daemon
+/// starts with. Matched as stores are.
+const HOME_TOKEN_FOLDERS: &[&str] = &[".hindsight/profiles"];
 /// Memory plugin configs under the active Hermes home, matched as
 /// `HOME_TOKEN_SOURCES` are. The plugins and `hermes memory setup` write them
 /// without the file tools.
@@ -547,10 +551,16 @@ fn credential_stores(
         let linked = (target != store).then_some(target);
         std::iter::once(store).chain(linked)
     };
+    let home_folders = home.into_iter().flat_map(|home| {
+        HOME_TOKEN_FOLDERS
+            .iter()
+            .map(move |folder| home.join(folder))
+    });
     let stores = auth_override
         .map(Path::to_path_buf)
         .into_iter()
         .chain(profile_stores)
+        .chain(home_folders)
         .flat_map(with_link)
         .map(|store| (store, false));
     let sources = home
