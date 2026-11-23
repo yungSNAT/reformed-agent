@@ -7,8 +7,11 @@
 //! the records it handed to the model: its foreground children and those in
 //! its recovery note. When a run fails or the process stops first, the next
 //! run of the session that offers `delegate_task` hands the remaining results
-//! to the model as the result of a `delegate_task` call. A record still `started`
-//! past its time limit is reported as interrupted.
+//! to the model as the result of a `delegate_task` call. A record still
+//! `started` past its time limit is reported as interrupted.
+//!
+//! On Unix records and their folder are owner-only. Elsewhere they take the
+//! permissions the folder inherits (on Windows, the user profile's by default).
 //!
 //! Delivery is at least once, never exactly once: 2 processes resuming one
 //! session at once can both list a record, and a process that stops after the
