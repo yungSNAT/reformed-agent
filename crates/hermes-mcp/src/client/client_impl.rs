@@ -52,8 +52,16 @@ impl McpClient {
     }
 
     fn connect_timed_out(&self) -> McpError {
+        // A server that reads the other framing usually stays silent.
+        let hint = if !self.config.is_stdio() {
+            ""
+        } else if self.config.stdio_mode == Some(McpStdioMode::LegacyFramed) {
+            "; if this server reads one JSON message per line, remove stdio_mode: legacy_framed"
+        } else {
+            "; if this server reads Content-Length headers, set stdio_mode: legacy_framed"
+        };
         McpError::ConnectionError(format!(
-            "MCP server did not connect within {}s",
+            "MCP server did not connect within {}s{hint}",
             self.connect_timeout.as_secs()
         ))
     }

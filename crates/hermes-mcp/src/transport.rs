@@ -659,39 +659,65 @@ impl McpTransport for StdioTransport {
     }
 }
 
+/// Longest header line, and most header lines, a Content-Length message
+/// may carry.
+const MAX_HEADER_LINE_BYTES: u64 = 1024;
+const MAX_HEADER_LINES: usize = 32;
+
 /// Reads one Content-Length framed message from a reader kept across calls,
 /// so bytes read past this message stay for the next.
 async fn read_content_length_message(
     reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
     limit: usize,
 ) -> Result<Value, McpError> {
-    // Read header lines until we get Content-Length or empty line
+    // Read header lines up to the empty line that ends them.
     let mut content_length: usize = 0;
+    let mut header_lines = 0;
     loop {
-        let mut line = String::new();
-        reader
-            .read_line(&mut line)
+        let mut line = Vec::new();
+        (&mut *reader)
+            .take(MAX_HEADER_LINE_BYTES)
+            .read_until(b'\n', &mut line)
             .await
             .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
-
-        if line.is_empty() {
+        if !line.ends_with(b"\n") {
+            if line.len() as u64 >= MAX_HEADER_LINE_BYTES {
+                return Err(McpError::Protocol {
+                    code: -32700,
+                    message: format!("MCP header line longer than {MAX_HEADER_LINE_BYTES} bytes"),
+                });
+            }
             return Err(McpError::ConnectionClosed);
         }
 
+        let line = String::from_utf8_lossy(&line);
         let trimmed = line.trim();
         if trimmed.is_empty() {
-            // End of headers
             break;
         }
-
-        if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-            content_length = len_str
-                .trim()
-                .parse::<usize>()
-                .map_err(|e| McpError::Protocol {
-                    code: -32700,
-                    message: format!("Invalid Content-Length: {}", e),
-                })?;
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: "the server sent newline-delimited JSON, not Content-Length headers; remove stdio_mode: legacy_framed for it".to_string(),
+            });
+        }
+        header_lines += 1;
+        if header_lines > MAX_HEADER_LINES {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: format!("more than {MAX_HEADER_LINES} MCP header lines"),
+            });
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("Content-Length") {
+                content_length = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|e| McpError::Protocol {
+                        code: -32700,
+                        message: format!("Invalid Content-Length: {}", e),
+                    })?;
+            }
         }
     }
 
@@ -723,25 +749,40 @@ async fn read_stdio_line(
     pending: &mut Vec<u8>,
     limit: usize,
 ) -> Result<Value, McpError> {
-    // Keep partial bytes across an interrupted discovery read. The extra two
-    // bytes accommodate CRLF without counting the delimiter against the limit.
-    let remaining = limit.saturating_add(2).saturating_sub(pending.len());
-    reader
-        .take(remaining as u64)
-        .read_until(b'\n', pending)
-        .await
-        .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
-    let bytes = std::mem::take(pending);
-    let Some(body) = bytes.strip_suffix(b"\n") else {
-        enforce_message_size(bytes.len(), limit)?;
-        return Err(McpError::ConnectionClosed);
-    };
-    let body = body.strip_suffix(b"\r").unwrap_or(body);
-    enforce_message_size(body.len(), limit)?;
-    serde_json::from_slice(body).map_err(|e| McpError::Protocol {
-        code: -32700,
-        message: format!("JSON parse error: {e}"),
-    })
+    loop {
+        // Keep partial bytes across an interrupted discovery read. The extra two
+        // bytes accommodate CRLF without counting the delimiter against the limit.
+        let remaining = limit.saturating_add(2).saturating_sub(pending.len());
+        (&mut *reader)
+            .take(remaining as u64)
+            .read_until(b'\n', pending)
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+        let bytes = std::mem::take(pending);
+        let Some(body) = bytes.strip_suffix(b"\n") else {
+            enforce_message_size(bytes.len(), limit)?;
+            return Err(McpError::ConnectionClosed);
+        };
+        let body = body.strip_suffix(b"\r").unwrap_or(body);
+        // A blank line carries no message; Content-Length framing skipped them.
+        if body.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        enforce_message_size(body.len(), limit)?;
+        if body
+            .get(..15)
+            .is_some_and(|start| start.eq_ignore_ascii_case(b"Content-Length:"))
+        {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: "the server sent a Content-Length header, not one JSON message per line; set stdio_mode: legacy_framed for it".to_string(),
+            });
+        }
+        return serde_json::from_slice(body).map_err(|e| McpError::Protocol {
+            code: -32700,
+            message: format!("JSON parse error: {e}"),
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -807,6 +848,10 @@ async fn sniff_content_length_framing(
             .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
         if buf.is_empty() {
             return Ok(None);
+        }
+        if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            reader.consume(3);
+            continue;
         }
         let blank = buf.iter().take_while(|b| b.is_ascii_whitespace()).count();
         if let Some(&first) = buf.get(blank) {
