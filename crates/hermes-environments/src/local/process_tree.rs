@@ -102,9 +102,13 @@ impl ProcessTree {
     /// a terminal read has stopped so they receive it.
     pub(super) fn terminate(&self) -> io::Result<()> {
         self.signal(libc::SIGTERM)?;
-        // The group may already have ended on SIGTERM.
+        // SIGCONT only wakes stopped members; SIGTERM, whose failure is
+        // returned above, is the stop. ESRCH: the group ended on SIGTERM.
+        // EPERM: no member could be woken, which macOS answers whilst every
+        // member is exiting; the exit check in `signal` can miss a member
+        // part-way through exit, so the woken-nobody answer is not an error.
         match self.signal(libc::SIGCONT) {
-            Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+            Err(err) if matches!(err.raw_os_error(), Some(libc::ESRCH | libc::EPERM)) => Ok(()),
             result => result,
         }
     }
