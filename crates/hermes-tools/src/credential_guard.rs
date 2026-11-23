@@ -811,6 +811,30 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_covers_the_import_credential_sources() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("hermes");
+        // Read as tokens by claw migrate and import-agent.
+        for rel in [
+            ".codex/auth.json",
+            ".hermes/.anthropic_oauth.json",
+            ".hermes/.nous_oauth.json",
+            ".qwen/oauth_creds.json",
+        ] {
+            assert!(
+                is_write_denied_with_roots(&home.join(rel), Some(&home), Some(&hermes_home)),
+                "{rel} is writable"
+            );
+        }
+        assert!(!is_write_denied_with_roots(
+            &home.join(".codex/config.toml"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
     fn write_deny_matches_upstream_sensitive_paths() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
