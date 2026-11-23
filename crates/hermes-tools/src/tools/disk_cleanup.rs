@@ -1166,6 +1166,25 @@ mod tests {
     }
 
     #[test]
+    fn track_and_quick_judge_a_large_folder_without_judging_each_file() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let scratch = cleaner.hermes_home().join("scratch");
+        fs::create_dir_all(&scratch).unwrap();
+        for index in 0..2000 {
+            fs::write(scratch.join(format!("{index}.tmp")), "x").unwrap();
+        }
+
+        let before = crate::credential_guard::guard_calls();
+        assert!(cleaner.track(&scratch, "test").unwrap());
+        cleaner.quick();
+        let calls = crate::credential_guard::guard_calls() - before;
+
+        assert!(!scratch.exists());
+        assert!(calls < 20, "{calls} path judgements for 2000 files");
+    }
+
+    #[test]
     fn quick_keeps_a_tracked_entry_naming_the_hermes_home() {
         let tmp = TempDir::new().unwrap();
         let cleaner = cleaner(&tmp);

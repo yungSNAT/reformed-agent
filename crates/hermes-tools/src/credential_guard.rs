@@ -539,6 +539,177 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 }
 
+/// The credential stores and token sources under these roots, each with
+/// `true` for a token source (one file) or `false` for a store (denied with
+/// everything below it), and each one's link target as well, including a
+/// target that does not exist yet.
+fn credential_stores(
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
+) -> Vec<(PathBuf, bool)> {
+    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
+        // Include known stores even when the directory cannot be listed.
+        let auth = hermes_home.join("auth");
+        WRITE_DENY_HERMES_HOME_PREFIX
+            .iter()
+            .map(move |store| hermes_home.join(store))
+            .chain(
+                std::fs::read_dir(&auth)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.path()),
+            )
+            .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
+    });
+    let with_link = |store: PathBuf| {
+        let target = hermes_config::resolve_symlink_target(&store);
+        let linked = (target != store).then_some(target);
+        std::iter::once(store).chain(linked)
+    };
+    let stores = auth_override
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(profile_stores)
+        .flat_map(with_link)
+        .map(|store| (store, false));
+    let sources = home
+        .into_iter()
+        .flat_map(|home| {
+            HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| home.join(source))
+        })
+        .chain(hermes_home.into_iter().flat_map(|hermes_home| {
+            HERMES_HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| hermes_home.join(source))
+        }))
+        .flat_map(with_link)
+        .map(|source| (source, true));
+    stores.chain(sources).collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static GUARD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Path judgements and set lookups made on this thread, for tests that bound
+/// how many a delete makes.
+#[cfg(test)]
+pub(crate) fn guard_calls() -> usize {
+    GUARD_CALLS.with(std::cell::Cell::get)
+}
+
+/// The protected paths, gathered once so that many deletes can be judged
+/// without judging each file: the credential stores and token sources with
+/// where each links, and the home files and folders the write rule names.
+/// The fixed system paths (`/etc` and the like) are not included; a delete
+/// these tools make stays inside the Hermes home or a temporary folder.
+pub struct ProtectedPaths {
+    /// Each path in both forms, its comparison key, and whether it is one
+    /// file (`true`) or a folder protected with everything below it.
+    members: Vec<(PathBuf, PathBuf, bool)>,
+}
+
+impl ProtectedPaths {
+    /// The paths the file tools protect now: the account's home, the active
+    /// Hermes home and a configured auth store.
+    pub fn current() -> Self {
+        Self::build(
+            dirs::home_dir().as_deref(),
+            Some(&hermes_config::hermes_home()),
+            hermes_config::paths::auth_json_override().as_deref(),
+        )
+    }
+
+    /// The paths under the given roots.
+    pub fn with_roots(home: Option<&Path>, hermes_home: Option<&Path>) -> Self {
+        Self::build(home, hermes_home, None)
+    }
+
+    /// These paths and another Hermes home's stores and sources.
+    pub fn and_hermes_home(mut self, hermes_home: &Path) -> Self {
+        self.members
+            .extend(Self::build(None, Some(hermes_home), None).members);
+        self
+    }
+
+    fn build(
+        home: Option<&Path>,
+        hermes_home: Option<&Path>,
+        auth_override: Option<&Path>,
+    ) -> Self {
+        let mut paths = credential_stores(home, hermes_home, auth_override);
+        if let Some(home) = home {
+            paths.extend(
+                WRITE_DENY_HOME_EXACT
+                    .iter()
+                    .map(|name| (home.join(name), true)),
+            );
+            paths.extend(
+                WRITE_DENY_HOME_PREFIX
+                    .iter()
+                    .map(|name| (home.join(name), false)),
+            );
+        }
+        let members = paths
+            .into_iter()
+            .flat_map(|(path, exact)| {
+                root_forms(&path).map(|form| {
+                    let key = store_key(&form);
+                    (form, key, exact)
+                })
+            })
+            .collect();
+        Self { members }
+    }
+
+    /// Both comparison keys of `path`, or None when a link in it does not
+    /// resolve.
+    fn keys(path: &Path) -> Option<[PathBuf; 2]> {
+        #[cfg(test)]
+        GUARD_CALLS.with(|calls| calls.set(calls.get() + 1));
+        path_forms(path).map(|forms| forms.each_ref().map(|form| store_key(form)))
+    }
+
+    /// Whether `path` is itself protected: a token source, or in a store.
+    /// A path with a link that does not resolve counts as protected.
+    pub fn contains(&self, path: &Path) -> bool {
+        let Some(keys) = Self::keys(path) else {
+            return true;
+        };
+        self.members.iter().any(|(_, member, exact)| {
+            keys.iter().any(|key| {
+                if *exact {
+                    key == member
+                } else {
+                    key.starts_with(member)
+                }
+            })
+        })
+    }
+
+    /// A protected path that deleting `path` would remove: one at or below
+    /// it, or the store it lies in. Decided from the paths alone, without
+    /// reading the folder; a link inside it is not followed by the delete,
+    /// so a store it points at is kept and is not counted.
+    pub fn removed_by(&self, path: &Path) -> Option<PathBuf> {
+        let Some(keys) = Self::keys(path) else {
+            return Some(path.to_path_buf());
+        };
+        self.members
+            .iter()
+            .find(|(_, member, exact)| {
+                keys.iter()
+                    .any(|key| member.starts_with(key) || (!*exact && key.starts_with(member)))
+            })
+            .map(|(form, _, _)| form.clone())
+    }
+}
+
 /// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
 /// has already expanded, so it is not expanded a second time.
 fn is_expanded_write_denied(
@@ -548,6 +719,8 @@ fn is_expanded_write_denied(
     auth_override: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
+    #[cfg(test)]
+    GUARD_CALLS.with(|calls| calls.set(calls.get() + 1));
     let Some(forms) = path_forms(path) else {
         return true;
     };
@@ -589,50 +762,8 @@ fn is_expanded_write_denied(
         }
     }
 
-    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
-        // Include known stores even when the directory cannot be listed.
-        let auth = hermes_home.join("auth");
-        WRITE_DENY_HERMES_HOME_PREFIX
-            .iter()
-            .map(move |store| hermes_home.join(store))
-            .chain(
-                std::fs::read_dir(&auth)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|entry| entry.path()),
-            )
-            .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
-    });
-    // Protect stores where they link, including a target that does not exist yet.
-    let with_link = |store: PathBuf| {
-        let target = hermes_config::resolve_symlink_target(&store);
-        let linked = (target != store).then_some(target);
-        std::iter::once(store).chain(linked)
-    };
-    // A store is denied with everything below it; a token source is one file.
-    let stores = auth_override
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(profile_stores)
-        .flat_map(with_link)
-        .map(|store| (store, false));
-    let sources = home
-        .into_iter()
-        .flat_map(|home| {
-            HOME_TOKEN_SOURCES
-                .iter()
-                .map(move |source| home.join(source))
-        })
-        .chain(hermes_home.into_iter().flat_map(|hermes_home| {
-            HERMES_HOME_TOKEN_SOURCES
-                .iter()
-                .map(move |source| hermes_home.join(source))
-        }))
-        .flat_map(with_link)
-        .map(|source| (source, true));
     let form_keys = forms.each_ref().map(|form| store_key(form));
-    for (store, exact) in stores.chain(sources) {
+    for (store, exact) in credential_stores(home, hermes_home, auth_override) {
         for store_form in root_forms(&store) {
             let store_form = store_key(&store_form);
             if form_keys.iter().any(|form| {
@@ -1001,9 +1132,41 @@ mod tests {
         assert!(!denied(&tmp.path().join("m1")));
     }
 
+    #[test]
+    fn protected_paths_name_what_a_delete_would_remove() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        let protected = ProtectedPaths::with_roots(Some(&home), Some(&hermes_home));
+
+        // A store, a folder holding one, and a file inside a store.
+        assert!(protected.removed_by(&hermes_home.join("auth")).is_some());
+        assert!(protected.removed_by(&hermes_home).is_some());
+        assert!(protected.removed_by(&home).is_some());
+        assert!(protected
+            .removed_by(&hermes_home.join("auth/tokens.json"))
+            .is_some());
+        assert!(protected
+            .removed_by(&home.join(".ssh/id_ed25519"))
+            .is_some());
+        assert!(protected.contains(&hermes_home.join("Mem0.json")));
+        assert!(protected.contains(&home.join(".ssh/config")));
+        // Neither, nor below a one-file source.
+        assert_eq!(protected.removed_by(&tmp.path().join("project")), None);
+        assert_eq!(protected.removed_by(&hermes_home.join("cache")), None);
+        assert_eq!(
+            protected.removed_by(&hermes_home.join("mem0.json/notes")),
+            None
+        );
+        assert!(!protected.contains(&hermes_home.join("cache/a.png")));
+    }
+
     #[cfg(unix)]
     #[test]
-    fn holds_denied_path_finds_a_linked_target_without_following_links() {
+    fn protected_paths_find_a_linked_target_without_reading_the_folder() {
+        use std::os::unix::fs::PermissionsExt;
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
         let hermes_home = tmp.path().join("profile");
@@ -1012,26 +1175,32 @@ mod tests {
         std::fs::create_dir_all(&hermes_home).unwrap();
         std::fs::create_dir_all(workspace.join("nested")).unwrap();
         std::fs::write(workspace.join("nested/kept.json"), "{}").unwrap();
-        let denied =
-            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
-        assert!(!holds_denied_path(&workspace, &denied));
+        let protected = || ProtectedPaths::with_roots(Some(&home), Some(&hermes_home));
+        assert_eq!(protected().removed_by(&workspace), None);
 
         std::os::unix::fs::symlink(
             workspace.join("nested/kept.json"),
             hermes_home.join("honcho.json"),
         )
         .unwrap();
-        assert!(holds_denied_path(&workspace, &denied));
-        assert!(holds_denied_path(
-            &workspace.join("nested/kept.json"),
-            &denied
-        ));
+        let protected = protected();
+        let found = protected.removed_by(&workspace).expect("the linked file");
+        assert!(found.ends_with("kept.json"), "{}", found.display());
+        assert!(protected.contains(&workspace.join("nested/kept.json")));
+        assert!(!protected.contains(&workspace.join("nested")));
+        // Decided from the paths: an unreadable folder gives the same answer.
+        let nested = workspace.join("nested");
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = protected.removed_by(&workspace);
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(unreadable.is_some());
 
-        // A link inside the folder is judged as a link, not walked into.
+        // Deleting a link to a store removes the link, not the store.
         let other = tmp.path().join("other");
         std::fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(hermes_home.join(".env"), other.join("env")).unwrap();
         std::os::unix::fs::symlink(&hermes_home, other.join("profile")).unwrap();
-        assert!(!holds_denied_path(&other, &denied));
+        assert_eq!(protected.removed_by(&other), None);
     }
 
     #[test]
