@@ -87,6 +87,7 @@ const WRITE_DENY_HOME_EXACT: &[&str] = &[
 /// tokens. Matched as stores are: by any case or stream spelling, and where
 /// the file or a folder above it links.
 const HOME_TOKEN_SOURCES: &[&str] = &[
+    ".claude/.credentials.json",
     ".codex/auth.json",
     ".pi/agent/auth.json",
     ".hermes/auth.json",
