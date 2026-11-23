@@ -1,3 +1,6 @@
+/// Name of the tool call that carries recovered sub-agent results.
+const RECOVERED_RESULTS_TOOL: &str = "recovered_sub_agent_results";
+
 impl AgentLoop {
     /// Populate [`AgentConfig::stored_system_prompt`] from SQLite (`sessions.system_prompt`) for session continuation.
     ///
@@ -346,7 +349,9 @@ impl AgentLoop {
     }
 
     /// Hand the model this session's sub-agent results that an earlier turn
-    /// never received (it crashed, restarted or failed first).
+    /// never received (it crashed, restarted or failed first). Delivery is at
+    /// least once: a process that stops after the model saw them but before
+    /// the run ends hands them over again next time.
     fn add_recovered_sub_agent_results(&self, ctx: &mut ContextManager) {
         let Some(note) = self
             .sub_agent_orchestrator
@@ -359,17 +364,23 @@ impl AgentLoop {
             "lifecycle",
             "Recovered sub-agent results from an earlier turn that did not finish",
         );
-        // In the newest user message, not a system one: a child's answer is
-        // tool output and keeps no more trust than that.
-        let messages = ctx.get_messages_mut();
-        match messages.iter_mut().rfind(|m| m.role == MessageRole::User) {
-            Some(user) => {
-                let content = user.content.get_or_insert_with(String::new);
-                content.push_str("\n\n");
-                content.push_str(&note);
-            }
-            None => messages.push(Message::user(note)),
-        }
+        // As a tool call and its result after the newest message, so a
+        // child's answer keeps the tool role and no more trust than that.
+        let id = format!("recovered_{}", uuid::Uuid::new_v4().simple());
+        let call = ToolCall {
+            id: id.clone(),
+            function: hermes_core::FunctionCall {
+                name: RECOVERED_RESULTS_TOOL.to_string(),
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        };
+        ctx.add_message(Message::assistant_with_tool_calls(None, vec![call]));
+        ctx.add_message(Self::named_tool_result_message(
+            id,
+            RECOVERED_RESULTS_TOOL,
+            note,
+        ));
     }
 
     /// A run that ended normally received its sub-agents' results.

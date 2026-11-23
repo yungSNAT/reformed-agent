@@ -6,12 +6,14 @@
 //! pending records. A parent run that ends normally marks delivered exactly
 //! the records it handed to the model: its foreground children and those in
 //! its recovery note. When a run fails or the process stops first, the next
-//! run of the session hands the remaining results to the model, inside the
-//! newest user message and marked as tool output. A record still `started`
+//! run of the session hands the remaining results to the model as the result
+//! of a `recovered_sub_agent_results` tool call. A record still `started`
 //! past its time limit is reported as interrupted.
 //!
-//! 2 processes resuming one session at once can both list a record: the
-//! model sees it twice, nothing is lost. A run whose messages the caller later
+//! Delivery is at least once, never exactly once: 2 processes resuming one
+//! session at once can both list a record, and a process that stops after the
+//! model saw a result but before its run ended lists it again. The model may
+//! see a result twice; none is lost. A run whose messages the caller later
 //! discards still counts as having received its results.
 
 use std::collections::HashSet;

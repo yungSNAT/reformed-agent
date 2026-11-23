@@ -24,7 +24,7 @@ impl LlmProvider for Recording {
         &self,
         messages: &[Message],
         _tools: &[ToolSchema],
-        _max_tokens: Option<u32>,
+        _: Option<u32>,
         _temperature: Option<f64>,
         _model: Option<&str>,
         _extra_body: Option<&serde_json::Value>,
@@ -47,7 +47,7 @@ impl LlmProvider for Recording {
         &self,
         _messages: &[Message],
         _tools: &[ToolSchema],
-        _max_tokens: Option<u32>,
+        _: Option<u32>,
         _temperature: Option<f64>,
         _model: Option<&str>,
         _extra_body: Option<&serde_json::Value>,
@@ -275,19 +275,27 @@ async fn results_stay_pending_through_failed_runs_and_go_after_a_finished_one() 
     let seen = provider.seen.lock().unwrap();
     assert_eq!(notes_in(&seen[0]), 1, "the failed run got the block");
     assert_eq!(notes_in(&seen[runs_before]), 1, "so did the next one");
-    let user = seen[runs_before]
-        .iter()
-        .rfind(|m| m.role == hermes_core::MessageRole::User)
-        .and_then(|m| m.content.as_deref())
-        .unwrap();
-    assert!(
-        user.starts_with("two\n\n<recovered-sub-agent-results>"),
-        "{user}"
+    let sent = &seen[runs_before];
+    let n = sent.len();
+    assert_eq!(
+        sent[n - 3].content.as_deref(),
+        Some("two"),
+        "the user's words stay theirs"
     );
-    assert!(user.contains("task lost (lost): answer lost"));
-    assert!(seen[runs_before]
+    let calls = sent[n - 2]
+        .tool_calls
+        .as_ref()
+        .expect("a recovery tool call");
+    assert_eq!(calls[0].function.name, "recovered_sub_agent_results");
+    let result = &sent[n - 1];
+    assert_eq!(result.role, hermes_core::MessageRole::Tool);
+    assert_eq!(result.tool_call_id.as_deref(), Some(calls[0].id.as_str()));
+    let text = result.content.as_deref().unwrap();
+    assert!(text.starts_with("<recovered-sub-agent-results>"), "{text}");
+    assert!(text.contains("task lost (lost): answer lost"));
+    assert!(sent
         .iter()
-        .filter(|m| m.role == hermes_core::MessageRole::System)
+        .filter(|m| m.role != hermes_core::MessageRole::Tool)
         .all(|m| !m.content.as_deref().unwrap_or("").contains("answer lost")));
     assert_eq!(
         notes_in(&seen[runs_before_third]),
