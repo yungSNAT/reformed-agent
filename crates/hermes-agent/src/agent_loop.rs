@@ -82,6 +82,7 @@ include!("agent_loop/methods_runtime_provider.rs");
 include!("agent_loop/methods_prompt_llm.rs");
 include!("agent_loop/methods_run.rs");
 include!("agent_loop/methods_run_stream.rs");
+include!("agent_loop/methods_tool_prune.rs");
 include!("agent_loop/methods_tools_background.rs");
 include!("agent_loop/finalizer_helpers.rs");
 
@@ -89,4 +90,5 @@ include!("agent_loop/finalizer_helpers.rs");
 pub(crate) mod tests {
     include!("agent_loop/tests_core.rs");
     include!("agent_loop/tests_runtime.rs");
+    include!("agent_loop/tests/tool_result_prune.rs");
 }
