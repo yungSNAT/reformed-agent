@@ -238,7 +238,7 @@ done
     fn script(dir: &tempfile::TempDir, name: &str, body: &str) -> String {
         let path = dir.path().join(name);
         std::fs::write(&path, body).unwrap();
-        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o700)).unwrap();
         path.to_string_lossy().into_owned()
     }
 
