@@ -1061,6 +1061,10 @@ mod tests {
             hermes_home.join("HindSight/config.json"),
             // An NTFS stream suffix opens the file itself.
             hermes_home.join("mem0.json::$DATA"),
+            // The Hindsight plugin's env for its local daemon: the LLM key
+            // and the base URL it is sent to.
+            home.join(".hindsight/profiles/hermes.env"),
+            home.join(".hindsight/profiles/work.env"),
         ] {
             assert!(denied(&path), "{} is writable", path.display());
         }
