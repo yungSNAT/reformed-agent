@@ -1,4 +1,4 @@
-# Exceptions for `cargo audit --deny warnings` (.github/workflows/audit.yml).
+# Exceptions for `cargo audit` (.github/workflows/audit.yml: `--deny unsound --deny yanked` on push/PR, `--deny warnings` on schedule).
 # Each needs more than a compatible update; the comment says what removes it.
 [advisories]
 ignore = []

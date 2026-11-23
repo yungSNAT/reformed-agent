@@ -112,3 +112,4 @@ tungstenite = { path = "third_party/rustsec-patches/tungstenite-0.29.0" }
 [profile.release]
 lto = true
 codegen-units = 1
+strip = true
