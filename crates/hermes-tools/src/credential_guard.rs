@@ -357,6 +357,27 @@ pub fn is_link_target_write_denied(path: &Path) -> bool {
     judge_write(path, None)
 }
 
+/// Whether deleting `path` would remove a path `denied` refuses: `path`
+/// itself or anything below it. Links are judged as links and not walked
+/// into, so a regular file that a store links to is found where it lies.
+pub fn holds_denied_path(path: &Path, denied: &dyn Fn(&Path) -> bool) -> bool {
+    if denied(path) {
+        return true;
+    }
+    std::fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir())
+        && std::fs::read_dir(path).is_ok_and(|entries| {
+            entries
+                .flatten()
+                .any(|entry| holds_denied_path(&entry.path(), denied))
+        })
+}
+
+/// `holds_denied_path` with `is_link_target_write_denied`: for a tool that
+/// deletes a file or folder a model can reach.
+pub fn holds_write_denied_path(path: &Path) -> bool {
+    holds_denied_path(path, &is_link_target_write_denied)
+}
+
 /// `path` as an absolute path where the local backend writes it
 /// (`resolve_path` in hermes-environments): `~` is the `HOME` or
 /// `USERPROFILE` value as set, another relative path sits under a non-empty
@@ -928,6 +949,8 @@ mod tests {
             home.join(".Honcho/CONFIG.json"),
             hermes_home.join("Mem0.JSON"),
             hermes_home.join("HindSight/config.json"),
+            // An NTFS stream suffix opens the file itself.
+            hermes_home.join("mem0.json::$DATA"),
         ] {
             assert!(denied(&path), "{} is writable", path.display());
         }
@@ -940,6 +963,8 @@ mod tests {
             hermes_home.join("hindsight/data.json"),
             hermes_home.join("openviking.yaml"),
             hermes_home.join("memory.json"),
+            // A token source is one file, not a folder.
+            hermes_home.join("mem0.json/notes.txt"),
             hermes_home.join("supermemory.yaml"),
             hermes_home.join("contextlattice/notes.json"),
             tmp.path().join("project/honcho.json"),
@@ -974,6 +999,36 @@ mod tests {
         assert!(!denied(&vault.join("notes.json")));
         assert!(!denied(&banks.join("data.json")));
         assert!(!denied(&tmp.path().join("m1")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn holds_denied_path_finds_a_linked_target_without_following_links() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        std::fs::create_dir_all(workspace.join("nested")).unwrap();
+        std::fs::write(workspace.join("nested/kept.json"), "{}").unwrap();
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+        assert!(!holds_denied_path(&workspace, &denied));
+
+        std::os::unix::fs::symlink(
+            workspace.join("nested/kept.json"),
+            hermes_home.join("honcho.json"),
+        )
+        .unwrap();
+        assert!(holds_denied_path(&workspace, &denied));
+        assert!(holds_denied_path(&workspace.join("nested/kept.json"), &denied));
+
+        // A link inside the folder is judged as a link, not walked into.
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(&hermes_home, other.join("profile")).unwrap();
+        assert!(!holds_denied_path(&other, &denied));
     }
 
     #[test]

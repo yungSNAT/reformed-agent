@@ -468,18 +468,14 @@ impl DiskCleanup {
 
     /// The Hermes home itself, a credential path, or a folder holding one.
     fn holds_credential_path(&self, path: &Path) -> bool {
-        if comparable_path(path) == comparable_path(&self.hermes_home)
-            || self.is_credential_path(path)
-        {
-            return true;
-        }
-        let is_dir = fs::symlink_metadata(path).is_ok_and(|meta| meta.is_dir());
-        is_dir
-            && fs::read_dir(path).is_ok_and(|entries| {
-                entries
-                    .flatten()
-                    .any(|entry| self.holds_credential_path(&entry.path()))
+        self.is_home(path)
+            || crate::credential_guard::holds_denied_path(path, &|path| {
+                self.is_credential_path(path)
             })
+    }
+
+    fn is_home(&self, path: &Path) -> bool {
+        comparable_path(path) == comparable_path(&self.hermes_home)
     }
 
     /// Deletes `path`, leaving any credential path inside it (and the
@@ -1167,6 +1163,20 @@ mod tests {
         assert_eq!(cleaner.quick().deleted, 0);
         assert!(env.exists());
         assert!(outside.exists());
+    }
+
+    #[test]
+    fn quick_keeps_a_tracked_entry_naming_the_hermes_home() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let home = cleaner.hermes_home().to_path_buf();
+        fs::write(home.join("memory_store.db"), "x").unwrap();
+        cleaner
+            .save_tracked(&[stale_item(&home, "test", 5)])
+            .unwrap();
+
+        assert_eq!(cleaner.quick().deleted, 0);
+        assert!(home.join("memory_store.db").exists());
     }
 
     #[test]

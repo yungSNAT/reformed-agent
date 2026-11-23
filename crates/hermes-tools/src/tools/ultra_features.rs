@@ -1980,6 +1980,19 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
     }
 }
 
+#[allow(dead_code)]
+/// A file or folder these tools delete may hold a file a credential store
+/// links to; refuse rather than delete the store's target.
+fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
+    if crate::credential_guard::holds_write_denied_path(path) {
+        return Err(ToolError::ExecutionFailed(format!(
+            "{} holds a credential file or a file a credential store links to; not deleted",
+            path.display()
+        )));
+    }
+    Ok(())
+}
+
 fn write_subagent_manifest(manifest: &SubagentManifest) -> Result<(), ToolError> {
     fs::create_dir_all(&manifest.path).map_err(io_err("create subagent dir"))?;
     fs::write(
@@ -3079,6 +3092,84 @@ mod tests {
             "remove followed the manifest"
         );
         assert!(!state.agents_dir().join("one").exists());
+    }
+
+    /// Runs `delete` with a Hermes home whose `honcho.json` links to
+    /// `target(state)`, a regular file the delete would reach, and returns
+    /// its result with whether the target survived unchanged.
+    #[cfg(unix)]
+    fn delete_near_a_linked_store<F, Fut>(
+        target: impl Fn(&UltraFeatureState) -> PathBuf,
+        delete: F,
+    ) -> (Result<String, ToolError>, bool)
+    where
+        F: FnOnce(UltraFeatureState) -> Fut,
+        Fut: std::future::Future<Output = Result<String, ToolError>>,
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let profile = tmp.path().join("profile");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&profile).unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("HERMES_HOME", Some(&profile)),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let target = target(&state);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                runtime.block_on(async {
+                    fs::write(&target, "KEY=1").unwrap();
+                    std::os::unix::fs::symlink(&target, profile.join("honcho.json")).unwrap();
+                    let result = delete(state).await;
+                    let kept = fs::read_to_string(&target).ok().as_deref() == Some("KEY=1");
+                    (result, kept)
+                })
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subagent_remove_refuses_a_workspace_holding_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.agents_dir().join("one/honcho-real.json"),
+            |state| async move {
+                subagent_workspace(json!({"action":"create","id":"one"}), &state).await?;
+                subagent_workspace(json!({"action":"remove","id":"one"}), &state).await
+            },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kernel_reset_refuses_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.kernels_dir().join("default.json"),
+            |state| async move { eval_kernel(json!({"action":"reset"}), &state).await },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn benchmark_refuses_a_smoke_folder_holding_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.root.join("benchmark-smoke/kept.json"),
+            |state| async move { ultra_feature_benchmark(&state).await },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
     }
 
     #[test]

@@ -262,6 +262,22 @@ mod stranded_memory_tests {
     }
 
     #[test]
+    fn byterover_settings_or_data_alone_are_named() {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home/.hermes-agent-ultra");
+        let settings = tmp.path().join("settings");
+        std::fs::create_dir_all(settings.join(".hermes-agent-ultra")).unwrap();
+        std::fs::write(settings.join(".hermes-agent-ultra/byterover.json"), "{}").unwrap();
+        let data = tmp.path().join("data");
+        std::fs::create_dir_all(data.join(".hermes-agent-ultra/byterover")).unwrap();
+        for cwd in [settings, data] {
+            let local = cwd.join(".hermes-agent-ultra").display().to_string();
+            let notice = stranded_memory_notice(&cwd, &home).expect("notice");
+            assert!(notice.contains(&local), "{notice}");
+        }
+    }
+
+    #[test]
     fn no_notice_without_stranded_data_or_when_the_folder_is_the_home() {
         let tmp = tempfile::tempdir().unwrap();
         let cwd = tmp.path().join("project");
