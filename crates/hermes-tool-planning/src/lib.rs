@@ -379,10 +379,11 @@ fn names_configured_mcp_server(config: &GatewayConfig, token: &str) -> bool {
 
 /// Resolve and filter tool schemas to those allowed for the given platform.
 ///
-/// When the platform's toolsets name no registered tool, every available
-/// tool is offered instead. A platform whose named tools are unavailable or
-/// disabled is offered none of them and no others; the disabled lists apply
-/// either way.
+/// When the platform uses the default toolsets and they name no registered
+/// tool, every available tool is offered instead. Configured toolsets never
+/// widen: when their tools are unknown, not connected, unavailable or
+/// disabled, the platform is offered none of them and no others. The
+/// disabled lists apply either way.
 pub fn resolve_platform_tool_schemas(
     config: &GatewayConfig,
     platform: &str,
@@ -399,7 +400,9 @@ pub fn resolve_platform_tool_schemas(
     let manager = ToolsetManager::new(Arc::clone(registry));
     let (mut allowed, names_registered) =
         requested_tool_names(config, platform, registry, &manager, gateway);
-    if !names_registered {
+    // Only the default toolsets fall back; configured ones never widen.
+    if !names_registered && !platform_has_custom_toolsets(config, &normalize_platform_key(platform))
+    {
         allowed = all_defs.iter().map(|schema| schema.name.clone()).collect();
     }
     remove_disabled_tools(config, &mut allowed, &manager);
@@ -1064,21 +1067,46 @@ mod tests {
     }
 
     #[test]
-    fn the_fallback_for_an_unresolved_platform_keeps_disabled_tools_out() {
+    fn the_default_fallback_keeps_disabled_tools_out() {
+        // The default toolsets name no tool this registry holds.
+        let reg = Arc::new(ToolRegistry::new());
+        for name in ["probe_kept", "probe_disabled"] {
+            let schema = tool_schema(name, "probe", JsonSchema::new("object"));
+            reg.register(
+                name,
+                "probe",
+                schema.clone(),
+                Arc::new(NoopTool { schema }),
+                Arc::new(|| true),
+                Vec::new(),
+                true,
+                "probe",
+                "x",
+                None,
+            );
+        }
         let mut cfg = GatewayConfig::default();
-        cfg.platform_toolsets
-            .insert("cli".to_string(), vec!["no-such-toolset".to_string()]);
-        cfg.tools_config.disabled = vec!["terminal".to_string()];
-        cfg.agent.disabled_toolsets = vec!["browser".to_string()];
+        cfg.tools_config.disabled = vec!["probe_disabled".to_string()];
+
+        assert_eq!(schema_names(&cfg, &reg), ["probe_kept"]);
+    }
+
+    #[test]
+    fn custom_toolsets_that_resolve_to_no_tool_offer_none() {
         let reg = registry_with_minimal_tools();
-
-        let names = schema_names(&cfg, &reg);
-
-        assert!(names.contains(&"read_file".to_string()), "{names:?}");
-        assert!(!names.contains(&"terminal".to_string()), "{names:?}");
-        assert!(
-            !names.contains(&"browser_navigate".to_string()),
-            "{names:?}"
-        );
+        let mut cfg = GatewayConfig {
+            mcp_servers: vec![hermes_config::McpServerEntry {
+                name: "github".to_string(),
+                url: Some("https://example.invalid/mcp".to_string()),
+                ..Default::default()
+            }],
+            ..GatewayConfig::default()
+        };
+        // An unknown token, and a configured MCP server that never connected.
+        for token in ["no-such-toolset", "github"] {
+            cfg.platform_toolsets
+                .insert("cli".to_string(), vec![token.to_string()]);
+            assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new(), "{token}");
+        }
     }
 }
