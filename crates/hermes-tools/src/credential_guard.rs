@@ -524,41 +524,70 @@ pub fn is_write_denied_with_roots_and_safe_root(
 
 /// `hermes_home` and every other profile home `--profile` can select: the
 /// root home (the grandparent when `hermes_home` is itself a profile's
-/// folder) and each folder in `<root>/profiles/`. As `--profile default`
-/// resolves it, any parent of a folder named `profiles` counts as the root.
-fn profile_homes(hermes_home: &Path) -> Vec<PathBuf> {
+/// folder) and each folder in `<root>/profiles/` that a profile name selects.
+/// As `--profile default` resolves it, any parent of a folder named
+/// `profiles` counts as the root. The second value is `<root>/profiles/`
+/// when it exists but cannot be listed in full, so a profile in it may be
+/// missing from the list; the caller protects it whole.
+fn profile_homes(hermes_home: &Path) -> (Vec<PathBuf>, Option<PathBuf>) {
     let root = match hermes_home.parent() {
         Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
             parent.parent().unwrap_or(parent)
         }
         _ => hermes_home,
     };
-    let profiles = std::fs::read_dir(root.join("profiles"))
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| entry.path())
-        .filter(|path| path.is_dir());
+    let folder = root.join("profiles");
     let mut homes = vec![hermes_home.to_path_buf()];
-    for other in std::iter::once(root.to_path_buf()).chain(profiles) {
-        if !homes.contains(&other) {
-            homes.push(other);
+    let mut add = |home: PathBuf| {
+        if !homes.contains(&home) {
+            homes.push(home);
         }
+    };
+    add(root.to_path_buf());
+    let mut listed = true;
+    match std::fs::read_dir(&folder) {
+        Ok(entries) => {
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    listed = false;
+                    continue;
+                };
+                let selectable = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| is_profile_name(&name.to_ascii_lowercase()));
+                if selectable && entry.path().is_dir() {
+                    add(entry.path());
+                }
+            }
+        }
+        Err(_) => listed = !folder.is_dir(),
     }
-    homes
+    (homes, (!listed).then_some(folder))
+}
+
+/// A name `--profile` accepts (upstream's `PROFILE_ID_RE`,
+/// `^[a-z0-9][a-z0-9_-]{0,63}$`), after it folds the name to lower case.
+fn is_profile_name(name: &str) -> bool {
+    name.len() <= 64
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
 }
 
 /// The credential stores and token sources under these roots, and under
 /// every other profile home beside `hermes_home`, each with `true` for a
 /// token source (one file) or `false` for a store (denied with everything
 /// below it), and each one's link target as well, including a target that
-/// does not exist yet.
+/// does not exist yet. A profiles folder that cannot be listed counts as a
+/// store.
 fn credential_stores(
     home: Option<&Path>,
     hermes_home: Option<&Path>,
     auth_override: Option<&Path>,
 ) -> Vec<(PathBuf, bool)> {
-    let hermes_homes: Vec<PathBuf> = hermes_home.map(profile_homes).unwrap_or_default();
+    let (hermes_homes, unlisted_profiles) = hermes_home.map(profile_homes).unwrap_or_default();
     let profile_stores = hermes_homes.iter().flat_map(|hermes_home| {
         // Include known stores even when the directory cannot be listed.
         let auth = hermes_home.join("auth");
@@ -589,6 +618,7 @@ fn credential_stores(
         .into_iter()
         .chain(profile_stores)
         .chain(home_folders)
+        .chain(unlisted_profiles)
         .flat_map(with_link)
         .map(|store| (store, false));
     let sources = home
