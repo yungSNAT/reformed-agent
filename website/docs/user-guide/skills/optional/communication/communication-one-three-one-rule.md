@@ -4,7 +4,7 @@ sidebar_label: "One Three One Rule"
 description: "Structured decision-making framework for technical proposals and trade-off analysis"
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # One Three One Rule
 

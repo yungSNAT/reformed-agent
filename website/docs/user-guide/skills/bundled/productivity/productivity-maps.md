@@ -4,7 +4,7 @@ sidebar_label: "Maps"
 description: "Geocode, POIs, routes, timezones via OpenStreetMap/OSRM"
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # Maps
 

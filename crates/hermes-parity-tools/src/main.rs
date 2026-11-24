@@ -22,6 +22,7 @@ mod release_secret_scan;
 mod report_io;
 mod security_release_gate;
 mod shared_diff_backlog;
+mod skill_docs;
 mod slash_gate;
 mod surface_gate;
 mod test_intent_mapping;
@@ -127,6 +128,9 @@ enum Command {
     /// Write the docs site's llms.txt and llms-full.txt.
     #[command(name = "generate-llms-txt")]
     GenerateLlmsTxt(website::WebsiteArgs),
+    /// Write the docs site's per-skill pages, the 2 skill catalogs and the Skills sidebar block.
+    #[command(name = "generate-skill-docs")]
+    GenerateSkillDocs(website::WebsiteArgs),
 }
 
 fn main() {
@@ -154,6 +158,7 @@ fn main() {
         Command::HarnessHardening(args) => harness_hardening::run(args),
         Command::ExtractSkills(args) => website::run_extract_skills(args),
         Command::GenerateLlmsTxt(args) => llms_txt::run(args),
+        Command::GenerateSkillDocs(args) => skill_docs::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),
