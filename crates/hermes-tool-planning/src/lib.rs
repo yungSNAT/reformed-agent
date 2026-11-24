@@ -6,6 +6,7 @@ use std::sync::Arc;
 use hermes_agent::coding_context::coding_toolset_selection;
 use hermes_config::GatewayConfig;
 use hermes_core::ToolSchema;
+use hermes_tools::mcp_gateway::{is_mcp_gateway_registered, is_mcp_server_tool, MCP_GATEWAY_TOOL};
 use hermes_tools::{ToolRegistry, ToolsetManager};
 
 /// Normalize platform aliases used by runtime adapters to config keys.
@@ -209,11 +210,47 @@ pub fn unknown_platform_toolset_tokens(
 }
 
 /// Resolve tool names allowed for this platform based on configured toolsets.
+///
+/// With the MCP gateway registered (`mcp_tool_mode: gateway`), the `mcp` tool
+/// stands in for every MCP server tool; see [`platform_mcp_tool_names`].
 pub fn resolve_platform_tool_names(
     config: &GatewayConfig,
     platform: &str,
     registry: &Arc<ToolRegistry>,
 ) -> Vec<String> {
+    let gateway = is_mcp_gateway_registered(registry);
+    let mut out: Vec<String> = resolve_tool_names(config, platform, registry, gateway)
+        .into_iter()
+        .collect();
+    out.sort();
+    out
+}
+
+/// The MCP server tools this platform may use: those direct mode would list.
+/// The MCP gateway can search and call exactly these, and none when the
+/// platform does not list the gateway itself (it was disabled).
+pub fn platform_mcp_tool_names(
+    config: &GatewayConfig,
+    platform: &str,
+    registry: &Arc<ToolRegistry>,
+) -> HashSet<String> {
+    if is_mcp_gateway_registered(registry)
+        && !resolve_tool_names(config, platform, registry, true).contains(MCP_GATEWAY_TOOL)
+    {
+        return HashSet::new();
+    }
+    resolve_tool_names(config, platform, registry, false)
+        .into_iter()
+        .filter(|name| is_mcp_server_tool(registry, name))
+        .collect()
+}
+
+fn resolve_tool_names(
+    config: &GatewayConfig,
+    platform: &str,
+    registry: &Arc<ToolRegistry>,
+    gateway: bool,
+) -> HashSet<String> {
     let manager = ToolsetManager::new(Arc::clone(registry));
     let key = normalize_platform_key(platform);
     let has_custom_toolsets = platform_has_custom_toolsets(config, &key);
@@ -223,6 +260,9 @@ pub fn resolve_platform_tool_names(
         append_live_mcp_toolsets(&mut requested, &manager);
     }
 
+    let names_a_server = requested
+        .iter()
+        .any(|token| names_configured_mcp_server(config, token));
     let mut names: HashSet<String> = HashSet::new();
     for token in requested {
         let original = token.trim();
@@ -251,6 +291,16 @@ pub fn resolve_platform_tool_names(
             names.insert(trimmed.to_string());
         }
     }
+    if gateway {
+        // Default toolsets always get the gateway, so the tool list does not
+        // change as servers connect; custom ones when they name MCP tools or
+        // a configured server, connected or not.
+        let before = names.len();
+        names.retain(|name| !is_mcp_server_tool(registry, name));
+        if names.len() < before || !has_custom_toolsets || names_a_server {
+            names.insert(MCP_GATEWAY_TOOL.to_string());
+        }
+    }
     apply_disabled_toolsets(&mut names, &config.agent.disabled_toolsets, &manager);
     for tool_name in &config.tools_config.disabled {
         let trimmed = tool_name.trim();
@@ -259,10 +309,28 @@ pub fn resolve_platform_tool_names(
         }
         names.remove(trimmed);
     }
+    names
+}
 
-    let mut out: Vec<String> = names.into_iter().collect();
-    out.sort();
-    out
+/// Whether a `platform_toolsets` token names a configured MCP server, as
+/// `<server>` or `mcp-<server>`, in its raw or tool-name-safe spelling.
+fn names_configured_mcp_server(config: &GatewayConfig, token: &str) -> bool {
+    let token = token.trim();
+    let bare = token.strip_prefix("mcp-").unwrap_or(token);
+    config.mcp_servers.iter().any(|server| {
+        let safe: String = server
+            .name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        bare == server.name || bare == safe
+    })
 }
 
 /// Resolve and filter tool schemas to those allowed for the given platform.
@@ -271,7 +339,13 @@ pub fn resolve_platform_tool_schemas(
     platform: &str,
     registry: &Arc<ToolRegistry>,
 ) -> Vec<ToolSchema> {
-    let all_defs = registry.get_definitions();
+    let mut all_defs = registry.get_definitions();
+    if is_mcp_gateway_registered(registry) {
+        all_defs.retain(|schema| !is_mcp_server_tool(registry, &schema.name));
+    }
+    // The registry is a hash map, whose order can change as tools come and
+    // go; a sorted list keeps the provider's cached prefix.
+    all_defs.sort_by(|a, b| a.name.cmp(&b.name));
     let allowed = resolve_platform_tool_names(config, platform, registry);
     if allowed.is_empty() {
         return all_defs;
@@ -299,6 +373,9 @@ pub fn tool_definition_summary(defs: &[ToolSchema]) -> Vec<serde_json::Value> {
         })
         .collect()
 }
+
+#[cfg(test)]
+mod mcp_gateway_tests;
 
 #[cfg(test)]
 mod tests {

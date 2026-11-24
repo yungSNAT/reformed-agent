@@ -140,7 +140,8 @@ def main(argv: list[str] | None = None) -> int:
     scheme = "wss" if parsed.scheme == "https" else "ws"
     netloc = parsed.netloc
     base_path = parsed.path.rstrip("/")
-    ws_url = f"{scheme}://{netloc}{base_path}/ws?clientId={client_id}"
+    ws_endpoint = f"{scheme}://{netloc}{base_path}/ws"
+    ws_url = f"{ws_endpoint}?clientId={client_id}"
     if cloud and api_key:
         ws_url += f"&token={api_key}"
 
@@ -151,7 +152,8 @@ def main(argv: list[str] | None = None) -> int:
         preview_dir.mkdir(parents=True, exist_ok=True)
         log(f"Saving previews to {preview_dir}")
 
-    log(f"Connecting to {ws_url} (client_id={client_id})")
+    # The URL carries the cloud API key, so the log names only the endpoint.
+    log(f"Connecting to {ws_endpoint} (client_id={client_id})")
     if args.prompt_id:
         log(f"Filtering messages to prompt_id={args.prompt_id}")
 
