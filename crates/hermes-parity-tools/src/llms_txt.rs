@@ -436,7 +436,9 @@ fn emit_llms_full(docs: &Path, patterns: &Patterns) -> Result<String, String> {
         }
     }
     let mut rest = Vec::new();
-    markdown_files(docs, docs, &mut rest)?;
+    if docs.is_dir() {
+        markdown_files(docs, docs, &mut rest)?;
+    }
     rest.sort();
     for rel in rest {
         if seen.contains(&rel) {

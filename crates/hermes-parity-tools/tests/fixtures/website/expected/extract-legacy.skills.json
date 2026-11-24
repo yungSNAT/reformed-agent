@@ -44,6 +44,22 @@
     "docsPath": "bundled/apple/apple-reminders"
   },
   {
+    "name": "dup-key",
+    "description": "Last value wins",
+    "overview": "Duplicate keys keep the last value.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-dup-key"
+  },
+  {
     "name": "findmy",
     "description": "Find my devices: {quoted}",
     "overview": "Real overview after a fence. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here.",
@@ -132,6 +148,50 @@
     "envVars": [],
     "commands": [],
     "docsPath": "optional/my-cat/my-cat-x-tool"
+  },
+  {
+    "name": "s1",
+    "description": "x",
+    "category": "d",
+    "categoryLabel": "D",
+    "source": "community",
+    "tags": "data",
+    "platforms": [],
+    "author": "",
+    "version": ""
+  },
+  {
+    "name": "s2",
+    "description": "x",
+    "category": "d",
+    "categoryLabel": "D",
+    "source": "community",
+    "tags": "data",
+    "platforms": [],
+    "author": "",
+    "version": ""
+  },
+  {
+    "name": "s3",
+    "description": "x",
+    "category": "d",
+    "categoryLabel": "D",
+    "source": "community",
+    "tags": "dance",
+    "platforms": [],
+    "author": "",
+    "version": ""
+  },
+  {
+    "name": "s4",
+    "description": "x",
+    "category": "d",
+    "categoryLabel": "D",
+    "source": "community",
+    "tags": "docs",
+    "platforms": [],
+    "author": "",
+    "version": ""
   },
   {
     "name": "Untitled helper",

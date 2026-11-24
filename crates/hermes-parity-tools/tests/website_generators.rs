@@ -118,6 +118,23 @@ fn extract_skills_matches_the_python_generator_in_every_index_mode() {
 }
 
 #[test]
+fn generate_llms_txt_without_a_docs_tree_writes_the_header_only() {
+    let (_dir, root) = tree("legacy");
+    fs::remove_dir_all(root.join("website/docs")).unwrap();
+    let stdout = run(&root, "generate-llms-txt");
+    assert_eq!(mask_root(&stdout, &root), expected("llms-nodocs.stdout"));
+    let stat = root.join("website/static");
+    assert_eq!(
+        fs::read_to_string(stat.join("llms.txt")).unwrap(),
+        expected("llms-nodocs.txt")
+    );
+    assert_eq!(
+        fs::read_to_string(stat.join("llms-full.txt")).unwrap(),
+        expected("llms-full-nodocs.txt")
+    );
+}
+
+#[test]
 fn generate_llms_txt_matches_the_python_generator() {
     let (_dir, root) = tree("legacy");
     let stdout = run(&root, "generate-llms-txt");
