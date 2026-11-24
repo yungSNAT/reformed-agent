@@ -239,7 +239,9 @@
         )
         .await;
 
-        assert_eq!(*calls.lock().unwrap(), ["probe_visible"]);
+        // The agent may ask again for a final answer, so the model may call it twice.
+        let calls = calls.lock().unwrap();
+        assert!(!calls.is_empty() && calls.iter().all(|name| name == "probe_visible"), "{calls:?}");
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
