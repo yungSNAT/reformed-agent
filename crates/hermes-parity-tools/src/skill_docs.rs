@@ -533,7 +533,9 @@ fn rewrite_sidebar(text: &str) -> Result<String, String> {
                 depth -= 1;
                 if depth == 0 {
                     let close = start + offset;
-                    let end = text[close..].find('\n').map_or(0, |n| close + n + 1);
+                    let end = text[close..]
+                        .find('\n')
+                        .map_or(text.len(), |n| close + n + 1);
                     return Ok(format!("{}{SKILLS_BLOCK}{}", &text[..start], &text[end..]));
                 }
             }
