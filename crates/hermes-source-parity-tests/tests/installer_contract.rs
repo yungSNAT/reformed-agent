@@ -693,9 +693,15 @@ fn powershell_installer_enforces_security_and_coexistence_contracts() {
         "[string]$InstallDir",
         "SecurityProtocolType]::Tls12",
         "Test-TrustedUri",
+        "AllowAutoRedirect = $false",
+        "Resolve-LocalPath",
+        "GetUnresolvedProviderPathFromPSPath",
         "Invoke-NativeCaptured",
         "$ErrorActionPreference = 'Continue'",
         "-LiteralPath",
+        "Confirm-InteractiveStep",
+        "^[-/]noni",
+        "& `\"$BinPath`\" setup",
         "HERMES_REQUIRE_SIGNATURE",
         "cosign",
         "release\\.yml@refs/tags/",
@@ -709,6 +715,11 @@ fn powershell_installer_enforces_security_and_coexistence_contracts() {
             "scripts/install.ps1 missing required contract marker: {required}"
         );
     }
+
+    assert!(
+        !text.contains("*.old"),
+        "scripts/install.ps1 must not sweep unrelated *.old recovery backups before replacement succeeds"
+    );
 
     let hash_pos = text
         .find("if ($actualHash -cne $expectedHash)")

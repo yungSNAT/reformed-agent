@@ -41,8 +41,9 @@ irm https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/insta
 Homebrew (macOS and Linux):
 
 ```bash
-curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/hermes-agent-ultra.rb -o hermes-agent-ultra.rb
-brew install --formula ./hermes-agent-ultra.rb
+test -d "$(brew --repository local/reformed)/Formula" || brew tap-new --no-git local/reformed
+curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/hermes-agent-ultra.rb -o "$(brew --repository local/reformed)/Formula/hermes-agent-ultra.rb"
+brew install local/reformed/hermes-agent-ultra
 ```
 
 The repository copy of the formula is [`packaging/homebrew/hermes-agent.rb`](./packaging/homebrew/hermes-agent.rb).

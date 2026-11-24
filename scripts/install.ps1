@@ -92,14 +92,83 @@ function Test-TrustedUri {
     return $false
 }
 
-function Get-ResponseUri {
-    param($Response)
-    if ($null -eq $Response -or $null -eq $Response.BaseResponse) { return $null }
-    if ($Response.BaseResponse.ResponseUri) { return $Response.BaseResponse.ResponseUri }
-    if ($Response.BaseResponse.RequestMessage -and $Response.BaseResponse.RequestMessage.RequestUri) {
-        return $Response.BaseResponse.RequestMessage.RequestUri
+function Resolve-LocalPath {
+    param([Parameter(Mandatory = $true)][string]$Path)
+    $provider = $null
+    $resolved = $ExecutionContext.SessionState.Path.GetUnresolvedProviderPathFromPSPath($Path, [ref]$provider, [ref]$null)
+    if ($null -eq $provider -or $provider.Name -ne 'FileSystem') {
+        throw "Refusing to install: path '$Path' must resolve to a filesystem location."
     }
-    return $null
+    return $resolved
+}
+
+function Invoke-VerifiedWebRequest {
+    param(
+        [Parameter(Mandatory = $true)][string]$Url,
+        [ValidateSet('GET', 'HEAD')][string]$Method = 'GET',
+        [string]$OutFile,
+        [Uri]$LoopbackBase,
+        [int]$TimeoutSec = 120,
+        [int]$MaxRedirects = 5
+    )
+    $currentUri = $null
+    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$currentUri) -or -not (Test-TrustedUri -Uri $currentUri -LoopbackBase $LoopbackBase)) {
+        throw "Refusing to install: untrusted download URI '$Url' (HTTPS required)."
+    }
+
+    for ($hop = 0; $hop -le $MaxRedirects; $hop++) {
+        $req = [Net.HttpWebRequest]::Create($currentUri)
+        $req.Method = $Method
+        $req.AllowAutoRedirect = $false
+        $req.Timeout = $TimeoutSec * 1000
+        $req.ReadWriteTimeout = $TimeoutSec * 1000
+        $req.UserAgent = 'ReformedAgent-Installer'
+
+        $resp = $null
+        try {
+            $resp = [Net.HttpWebResponse]$req.GetResponse()
+            $code = [int]$resp.StatusCode
+            if ($code -in @(301, 302, 303, 307, 308)) {
+                $location = $resp.Headers['Location']
+                $resp.Close()
+                $resp = $null
+                if ($hop -eq $MaxRedirects) {
+                    throw "Refusing to install: too many redirects for '$Url'."
+                }
+                $nextUri = $null
+                if ([string]::IsNullOrWhiteSpace($location) -or -not [Uri]::TryCreate($currentUri, $location, [ref]$nextUri)) {
+                    throw "Refusing to install: invalid redirect target '$location' from '$currentUri'."
+                }
+                if (-not (Test-TrustedUri -Uri $nextUri -LoopbackBase $LoopbackBase)) {
+                    throw "Refusing to install: '$Url' redirected to untrusted URI '$nextUri'."
+                }
+                if ($code -eq 303 -and $Method -eq 'HEAD') {
+                    $Method = 'GET'
+                }
+                $currentUri = $nextUri
+                continue
+            }
+            if ($OutFile) {
+                $stream = $resp.GetResponseStream()
+                $file = [IO.File]::Create($OutFile)
+                try {
+                    $stream.CopyTo($file)
+                } finally {
+                    $file.Dispose()
+                    $stream.Dispose()
+                }
+            }
+            return $currentUri
+        } catch [Net.WebException] {
+            if ($_.Exception.Response) { $_.Exception.Response.Close() }
+            if ($OutFile -and (Test-Path -LiteralPath $OutFile)) {
+                Remove-Item -LiteralPath $OutFile -Force -ErrorAction SilentlyContinue
+            }
+            throw "Refusing to install: failed downloading $currentUri ($($_.Exception.Message))."
+        } finally {
+            if ($null -ne $resp) { $resp.Close() }
+        }
+    }
 }
 
 function Invoke-VerifiedDownload {
@@ -108,30 +177,13 @@ function Invoke-VerifiedDownload {
         [Parameter(Mandatory = $true)][string]$OutFile,
         [Uri]$LoopbackBase
     )
-    $targetUri = $null
-    if (-not [Uri]::TryCreate($Url, [UriKind]::Absolute, [ref]$targetUri) -or -not (Test-TrustedUri -Uri $targetUri -LoopbackBase $LoopbackBase)) {
-        throw "Refusing to install: untrusted download URI '$Url' (HTTPS required)."
-    }
-    try {
-        $response = Invoke-WebRequest -Uri $targetUri -OutFile $OutFile -TimeoutSec 120 -MaximumRedirection 5 -UseBasicParsing -PassThru
-    } catch {
-        throw "Refusing to install: failed downloading $Url ($($_.Exception.Message))."
-    }
-    $finalUri = Get-ResponseUri -Response $response
-    if (-not (Test-TrustedUri -Uri $finalUri -LoopbackBase $LoopbackBase)) {
-        throw "Refusing to install: '$Url' redirected to untrusted URI '$finalUri'."
-    }
+    [void](Invoke-VerifiedWebRequest -Url $Url -Method 'GET' -OutFile $OutFile -LoopbackBase $LoopbackBase -TimeoutSec 120)
 }
 
 function Resolve-LatestTag {
     param([Parameter(Mandatory = $true)][string]$RepoSlug)
     $latestUrl = "https://github.com/$RepoSlug/releases/latest"
-    try {
-        $response = Invoke-WebRequest -Method Head -Uri $latestUrl -TimeoutSec 60 -MaximumRedirection 5 -UseBasicParsing
-    } catch {
-        throw "Refusing to install: could not resolve latest release tag for $RepoSlug ($($_.Exception.Message))."
-    }
-    $finalUri = Get-ResponseUri -Response $response
+    $finalUri = Invoke-VerifiedWebRequest -Url $latestUrl -Method 'HEAD' -LoopbackBase $null -TimeoutSec 60
     if (-not (Test-TrustedUri -Uri $finalUri -LoopbackBase $null) -or $finalUri.Host -ne 'github.com') {
         throw "Refusing to install: unexpected redirect target '$finalUri' resolving latest release."
     }
@@ -197,7 +249,6 @@ function Install-BinariesWithRollback {
         }
         foreach ($name in $Targets) {
             $target = Join-Path $DestDir $name
-            Get-ChildItem -LiteralPath $DestDir -Filter "$name.*.old" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
             $old = if (Test-Path -LiteralPath $target) { "$target.$([Guid]::NewGuid().ToString('N')).old" } else { $null }
             $replaced += , @($target, $old)
             if ($old) {
@@ -239,9 +290,13 @@ function Install-BinariesWithRollback {
 }
 
 function Add-ToUserPath {
-    param([Parameter(Mandatory = $true)][string]$Dir)
+    param(
+        [Parameter(Mandatory = $true)][string]$Dir,
+        [string]$RegSubKey = 'Environment'
+    )
     $normDir = $Dir.TrimEnd('\', '/')
-    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
+    $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey($RegSubKey)
+    $addedRegistry = $false
     try {
         $userPath = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
         $entries = @($userPath -split ';' | Where-Object { $_ })
@@ -252,12 +307,28 @@ function Add-ToUserPath {
             $notify = "HERMES_INSTALL_$([Guid]::NewGuid().ToString('N'))"
             [Environment]::SetEnvironmentVariable($notify, '1', 'User')
             [Environment]::SetEnvironmentVariable($notify, $null, 'User')
-            $env:Path = "$Dir;$env:Path"
-            Write-Output "Added $Dir to your user PATH; open a new terminal to use it elsewhere."
+            $addedRegistry = $true
         }
     } finally {
         $key.Close()
     }
+    $inProcessPath = @($env:Path -split ';' | Where-Object { $_ -and $_.TrimEnd('\', '/') -ieq $normDir })
+    if (-not $inProcessPath) {
+        $env:Path = if ($env:Path) { "$Dir;$env:Path" } else { $Dir }
+    }
+    if ($addedRegistry) {
+        Write-Output "Added $Dir to your user PATH; open a new terminal to use it elsewhere."
+    }
+}
+
+function Confirm-InteractiveStep {
+    param([Parameter(Mandatory = $true)][string]$Prompt)
+    try {
+        $reply = Read-Host $Prompt
+    } catch {
+        return $false
+    }
+    return [string]::IsNullOrWhiteSpace($reply) -or $reply -match '^(?i)y(es)?$'
 }
 
 function Invoke-PostInstall {
@@ -273,13 +344,12 @@ function Invoke-PostInstall {
     if ($Mode -eq 'auto') {
         if (-not $Interactive) {
             Write-Output 'Post-install setup skipped (non-interactive install). Run later:'
-            Write-Output "  `"$BinPath`" setup"
+            Write-Output "  & `"$BinPath`" setup"
             return
         }
-        $reply = Read-Host 'Run post-install setup flow (doctor + auth status + setup)? [Y/n]'
-        if (-not [string]::IsNullOrWhiteSpace($reply) -and $reply -notmatch '^(?i)y(es)?$') {
+        if (-not (Confirm-InteractiveStep 'Run post-install setup flow (doctor + auth status + setup)? [Y/n]')) {
             Write-Output 'Post-install setup skipped. Run later:'
-            Write-Output "  `"$BinPath`" setup"
+            Write-Output "  & `"$BinPath`" setup"
             return
         }
     }
@@ -296,13 +366,12 @@ function Invoke-PostInstall {
         Write-Output 'Current auth/platform status:'
         & $BinPath auth status
         if ($Interactive) {
-            $reply = Read-Host 'Run interactive setup now? [Y/n]'
-            if ([string]::IsNullOrWhiteSpace($reply) -or $reply -match '^(?i)y(es)?$') {
+            if (Confirm-InteractiveStep 'Run interactive setup now? [Y/n]') {
                 & $BinPath setup
             }
         } else {
             Write-Output 'Interactive setup skipped (non-interactive shell). Run later:'
-            Write-Output "  `"$BinPath`" setup"
+            Write-Output "  & `"$BinPath`" setup"
         }
     } finally {
         foreach ($var in $saved.Keys) {
@@ -340,19 +409,21 @@ if ($MyInvocation.InvocationName -ne '.') {
         }
     }
 
-    $resolvedInstallDir = if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
+    $rawInstallDir = if (-not [string]::IsNullOrWhiteSpace($InstallDir)) {
         $InstallDir
     } elseif ($env:LOCALAPPDATA) {
         Join-Path $env:LOCALAPPDATA 'Programs\ReformedAgent'
     } else {
         Join-Path $HOME '.local\bin'
     }
+    $resolvedInstallDir = Resolve-LocalPath -Path $rawInstallDir
     $homeRoot = if ($env:HOME) { $env:HOME } elseif ($env:USERPROFILE) { $env:USERPROFILE } else { $HOME }
-    $resolvedHermesHome = if (-not [string]::IsNullOrWhiteSpace($HermesHome)) {
+    $rawHermesHome = if (-not [string]::IsNullOrWhiteSpace($HermesHome)) {
         $HermesHome
     } else {
         Join-Path $homeRoot '.hermes-agent-ultra'
     }
+    $resolvedHermesHome = Resolve-LocalPath -Path $rawHermesHome
     $installLegacy = $LegacyAlias.IsPresent -or (Test-Truthy $env:INSTALL_LEGACY_ALIAS)
     $skipPathUpdate = $NoModifyPath.IsPresent -or (Test-Truthy $env:HERMES_NO_MODIFY_PATH)
     $requireSig = Test-Truthy $env:HERMES_REQUIRE_SIGNATURE
@@ -496,7 +567,8 @@ if ($MyInvocation.InvocationName -ne '.') {
             Add-ToUserPath -Dir $resolvedInstallDir
         }
 
-        $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected
+        $nonInteractiveFlag = @([Environment]::GetCommandLineArgs() | Where-Object { $_ -match '^[-/]noni(?:n(?:t(?:e(?:r(?:a(?:c(?:t(?:i(?:ve)?)?)?)?)?)?)?)?)?$' }).Count -gt 0
+        $interactive = [Environment]::UserInteractive -and -not [Console]::IsInputRedirected -and -not $nonInteractiveFlag
         Invoke-PostInstall -BinPath $canonicalPath -Mode $setupMode -Interactive $interactive
     } finally {
         [Net.ServicePointManager]::SecurityProtocol = $savedProtocols
