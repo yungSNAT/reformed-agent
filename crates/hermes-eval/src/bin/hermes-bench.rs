@@ -226,7 +226,10 @@ fn bench_skills_dir() -> PathBuf {
 
 /// `--config-dir` chooses the Hermes home, as it does for `hermes`.
 fn use_config_dir_as_home(config_dir: Option<&Path>) {
-    let _ = config_dir;
+    if let Some(dir) = config_dir {
+        std::env::set_var("HERMES_HOME", dir);
+    }
+    hermes_config::normalize_hermes_home_env();
 }
 
 #[cfg(all(test, feature = "agent-loop"))]
