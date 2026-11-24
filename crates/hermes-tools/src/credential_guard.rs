@@ -757,21 +757,15 @@ impl ProtectedPaths {
     }
 }
 
-/// How deep below a protected folder, and how many entries in all, the
-/// comparison for a multiply-linked file reads; past the entry limit the
-/// write is refused.
-const PROTECTED_TREE_DEPTH: usize = 4;
-const PROTECTED_TREE_ENTRIES: usize = 4096;
-
 /// Whether `path` names, under another name, the same file as a protected
 /// one: a credential store or token source, a file inside a store folder or
 /// a protected home folder, or a home or system file the rule names. A hard
 /// link made outside the file tools (the terminal's `ln`) gives such a file a
 /// name the path rules cannot see, and a write through it changes the file in
 /// place; so can another spelling of the same file (a Windows loopback share,
-/// a bind mount). A file with one link is compared with the named files and
-/// stores and the files directly in each protected folder; one with more links
-/// with everything up to 4 levels inside each protected folder.
+/// a bind mount). Traverses the full protected subtree (without following
+/// directory symlinks, so symlink loops cannot occur) regardless of depth,
+/// entry count, or target link count.
 fn is_hard_link_to_protected_file(
     path: &Path,
     home: Option<&Path>,
@@ -791,18 +785,10 @@ fn is_hard_link_to_protected_file(
             .map(move |name| home.join(name))
     });
     let system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
-    let mut pending: Vec<(PathBuf, usize)> = stores
-        .chain(home_files)
-        .chain(system_files)
-        .map(|protected| (protected, 0))
-        .collect();
-    let mut read = 0;
-    while let Some((protected, depth)) = pending.pop() {
+    let mut pending: Vec<PathBuf> = stores.chain(home_files).chain(system_files).collect();
+    while let Some(protected) = pending.pop() {
         if hermes_config::file_identity(&protected).is_some_and(|id| id.same_file(&target)) {
             return true;
-        }
-        if (target.links < 2 && depth > 0) || depth == PROTECTED_TREE_DEPTH {
-            continue;
         }
         // A folder's entries, links not followed; a file has none.
         for entry in std::fs::read_dir(&protected)
@@ -810,19 +796,10 @@ fn is_hard_link_to_protected_file(
             .flatten()
             .flatten()
         {
-            read += 1;
-            if read > PROTECTED_TREE_ENTRIES {
-                // Past the limit a linked file is refused; for another, the
-                // named files are still compared, but no more folders read.
-                if target.links >= 2 {
-                    return true;
-                }
-                break;
-            }
             let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
             let path = entry.path();
             if is_dir {
-                pending.push((path, depth + 1));
+                pending.push(path);
             } else if hermes_config::file_identity(&path).is_some_and(|id| id.same_file(&target)) {
                 return true;
             }
@@ -1778,6 +1755,42 @@ mod tests {
         std::fs::hard_link(&key, &alias).expect("hard link");
 
         assert!(is_write_denied_with_roots(&alias, Some(&home), None));
+
+        // 5-level deep subtree (past old depth-4 cap) stays protected too.
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("deep dir");
+        let deep_key = deep.join("id_deep");
+        std::fs::write(&deep_key, "x").expect("deep key");
+        let deep_alias = tmp.path().join("deep-notes.txt");
+        std::fs::hard_link(&deep_key, &deep_alias).expect("deep hard link");
+        assert!(is_write_denied_with_roots(&deep_alias, Some(&home), None));
+    }
+
+    #[test]
+    fn write_deny_allows_unrelated_multiply_linked_file_past_4096_protected_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let many = home.join(".ssh").join("many");
+        let elsewhere = tmp.path().join("work");
+        std::fs::create_dir_all(&many).expect("many");
+        std::fs::create_dir_all(&elsewhere).expect("work");
+        for i in 0..4_100 {
+            std::fs::write(many.join(format!("entry-{i}")), "x").expect("entry");
+        }
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(
+            !is_write_denied_with_roots(&plain, Some(&home), None),
+            "unrelated multiply-linked file denied due to protected entry count"
+        );
+        let protected_alias = elsewhere.join("leak-4099.txt");
+        std::fs::hard_link(many.join("entry-4099"), &protected_alias).expect("protected alias");
+        assert!(is_write_denied_with_roots(
+            &protected_alias,
+            Some(&home),
+            None
+        ));
     }
 
     /// The loopback share names a local file under a path the path rules do
@@ -1789,13 +1802,16 @@ mod tests {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
         let hermes_home = tmp.path().join("profile");
-        std::fs::create_dir_all(home.join(".ssh")).expect("ssh");
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("ssh deep");
         std::fs::create_dir_all(&hermes_home).expect("profile");
         std::fs::write(hermes_home.join(".env"), "x").expect("env");
         std::fs::write(home.join(".ssh").join("authorized_keys"), "x").expect("keys");
+        std::fs::write(deep.join("id_ed25519"), "x").expect("deep key");
         for local in [
             hermes_home.join(".env"),
             home.join(".ssh").join("authorized_keys"),
+            deep.join("id_ed25519"),
         ] {
             let local = local.to_string_lossy().to_string();
             let Some((drive, rest)) = local.split_once(":\\") else {
