@@ -188,3 +188,31 @@ impl Default for ModelCapabilities {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn capability_summary_reports_modalities_and_flags_in_display_order() {
+        assert_eq!(ModelInfo::default().format_capabilities(), "basic");
+        let mut model = ModelInfo {
+            reasoning: true,
+            tool_call: true,
+            structured_output: true,
+            open_weights: true,
+            input_modalities: vec!["image".into(), "pdf".into(), "audio".into()],
+            ..ModelInfo::default()
+        };
+        assert_eq!(
+            model.format_capabilities(),
+            "reasoning, tools, vision, PDF, audio, structured output, open weights"
+        );
+        model.input_modalities.clear();
+        model.attachment = true;
+        assert_eq!(
+            model.format_capabilities(),
+            "reasoning, tools, vision, structured output, open weights"
+        );
+    }
+}

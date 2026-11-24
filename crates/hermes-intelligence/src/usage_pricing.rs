@@ -564,7 +564,9 @@ pub fn normalize_usage(
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         return CanonicalUsage {
-            input_tokens: input_total.saturating_sub(cache_read + cache_write),
+            input_tokens: input_total
+                .saturating_sub(cache_read)
+                .saturating_sub(cache_write),
             output_tokens,
             cache_read_tokens: cache_read,
             cache_write_tokens: cache_write,
@@ -599,7 +601,9 @@ pub fn normalize_usage(
         .unwrap_or(0);
 
     CanonicalUsage {
-        input_tokens: prompt_total.saturating_sub(cache_read + cache_write),
+        input_tokens: prompt_total
+            .saturating_sub(cache_read)
+            .saturating_sub(cache_write),
         output_tokens: completion_tokens,
         cache_read_tokens: cache_read,
         cache_write_tokens: cache_write,
@@ -719,6 +723,52 @@ mod tests {
         assert_eq!(format_token_count_compact(500), "500");
         assert_eq!(format_token_count_compact(1500), "1.50K");
         assert_eq!(format_token_count_compact(1_500_000), "1.5M");
+    }
+
+    #[test]
+    fn codex_responses_keep_cached_tokens_separate_from_uncached_input() {
+        let raw = serde_json::json!({
+            "input_tokens": 100,
+            "output_tokens": 8,
+            "input_tokens_details": { "cached_tokens": 12, "cache_creation_tokens": 5 }
+        });
+        let usage = normalize_usage(&raw, None, Some(" CODEX_RESPONSES "));
+        assert_eq!(usage.input_tokens, 83);
+        assert_eq!(usage.output_tokens, 8);
+        assert_eq!(usage.cache_read_tokens, 12);
+        assert_eq!(usage.cache_write_tokens, 5);
+        assert_eq!(usage.request_count, 1);
+
+        let raw = serde_json::json!({ "input_tokens": 21, "output_tokens": 3 });
+        let usage = normalize_usage(&raw, None, Some("codex_responses"));
+        assert_eq!(usage.input_tokens, 21);
+        assert_eq!(usage.cache_read_tokens, 0);
+        assert_eq!(usage.cache_write_tokens, 0);
+    }
+
+    #[test]
+    fn inconsistent_cache_totals_cannot_overflow_uncached_input_accounting() {
+        for (mode, raw) in [
+            (
+                "codex_responses",
+                serde_json::json!({
+                    "input_tokens": 10,
+                    "input_tokens_details": { "cached_tokens": u64::MAX, "cache_creation_tokens": 1 }
+                }),
+            ),
+            (
+                "chat_completions",
+                serde_json::json!({
+                    "prompt_tokens": 10,
+                    "prompt_tokens_details": { "cached_tokens": u64::MAX, "cache_write_tokens": 1 }
+                }),
+            ),
+        ] {
+            let usage = normalize_usage(&raw, None, Some(mode));
+            assert_eq!(usage.input_tokens, 0, "{mode}");
+            assert_eq!(usage.cache_read_tokens, u64::MAX, "{mode}");
+            assert_eq!(usage.cache_write_tokens, 1, "{mode}");
+        }
     }
 
     #[test]
