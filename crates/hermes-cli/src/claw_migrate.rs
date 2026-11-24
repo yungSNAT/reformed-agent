@@ -565,7 +565,10 @@ mod tests {
         };
         let (status, reason) = migrate_file(entry, &home, &destination, &options).unwrap_err();
         assert_eq!(status, MigrationStatus::Error);
-        assert!(!reason.is_empty());
+        assert!(
+            reason.starts_with("failed to persist temporary file:"),
+            "{reason}"
+        );
         assert_eq!(
             std::fs::read_to_string(marker).unwrap(),
             "Existing destination"
