@@ -94,7 +94,11 @@ pub fn remember(session_id: &str, request: CachedRequest) {
 
 /// Stop any keep-alive armed for `session_id` (a run is starting).
 pub fn cancel(session_id: &str) {
-    if let Some(handle) = ARMED.lock().ok().and_then(|mut armed| armed.remove(session_id)) {
+    if let Some(handle) = ARMED
+        .lock()
+        .ok()
+        .and_then(|mut armed| armed.remove(session_id))
+    {
         handle.abort();
     }
 }

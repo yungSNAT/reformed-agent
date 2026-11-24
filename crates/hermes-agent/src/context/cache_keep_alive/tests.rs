@@ -208,7 +208,10 @@ async fn arm_sends_nothing_when_off_or_unwarmable_and_a_new_run_cancels_it() {
     remember(session, tiny);
     arm(session, plan(3, 60, None));
     tokio::time::sleep(Duration::from_secs(7_200)).await;
-    assert!(small.calls().is_empty(), "a prefix under the cacheable floor");
+    assert!(
+        small.calls().is_empty(),
+        "a prefix under the cacheable floor"
+    );
 
     let provider = CacheProvider::new(50_000, 0);
     remember(session, request(provider.clone(), "claude-test", None));
