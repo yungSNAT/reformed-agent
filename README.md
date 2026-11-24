@@ -20,9 +20,40 @@
 
 Rust-first autonomous agent runtime with functional parity goals against `NousResearch/hermes-agent`. Reformed Agent is a fork of [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) and keeps its reliability, security and operator-control layer. It installs as Rust binaries and needs no Python or Node.js runtime to run the agent, whilst upstream's source installer adds Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg; tools that call another program, such as FFmpeg for video or `npx` for some MCP servers, still need it.
 
-Translations of an earlier README, which predate this fork: [中文](./README_ZH.md), [日本語](./README_JA.md), [한국어](./README_KO.md).
-
 ## Install
+
+### Prebuilt binaries
+
+Linux and macOS (`x86_64`, `aarch64`):
+
+```bash
+curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/install.sh -o install.sh
+bash install.sh
+```
+
+Windows (`x86_64`, PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+Homebrew (macOS and Linux):
+
+```bash
+test -d "$(brew --repository local/reformed)/Formula" || brew tap-new --no-git local/reformed
+curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/hermes-agent-ultra.rb -o "$(brew --repository local/reformed)/Formula/hermes-agent-ultra.rb"
+brew install local/reformed/hermes-agent-ultra
+```
+
+The repository copy of the formula is [`packaging/homebrew/hermes-agent.rb`](./packaging/homebrew/hermes-agent.rb).
+
+Before unpacking a release asset, both `install.sh` and [`scripts/install.ps1`](./scripts/install.ps1)
+verify it against the release's `SHA256SUMS` and, when `cosign` is on `PATH`, verify `SHA256SUMS`
+against its signature from this repository's release workflow for that tag. Set
+`HERMES_REQUIRE_SIGNATURE=true` to refuse any install that cannot be verified that way.
+Both installers install `hermes-agent-ultra` and `hermes-ultra`, leaving any existing
+`hermes` command untouched.
 
 ### From source
 
@@ -42,16 +73,10 @@ cd reformed-agent
 bash scripts/install.sh
 ```
 
-The installer looks for a release asset first. This fork has published none, so
-in a checkout with `cargo` available it builds from source instead. Set a custom
-install path with `INSTALL_DIR=/usr/local/bin`, and pass `--setup` to run the
-setup wizard after installing. Ultra's one-line `curl | bash` install needs a
-published release, so it does not work for this fork yet.
-
-Before it unpacks a release asset, the installer checks it against the
-release's `SHA256SUMS` and, when `cosign` is on `PATH`, checks that file's
-signature from this repository's release workflow for that tag. Set
-`HERMES_REQUIRE_SIGNATURE=true` to refuse any install it cannot verify that way.
+The installer checks for a matching prebuilt release archive first and falls back
+to building from source with `cargo` when run from a checkout for a target without
+a release asset. Set a custom install path with `INSTALL_DIR=/usr/local/bin`, and
+pass `--setup` to run the setup wizard after installing.
 
 ## Use
 
@@ -134,13 +159,13 @@ What Reformed has against [Hermes Agent v0.23.1](https://github.com/NousResearch
 | --- | --- | --- |
 | Runtime | One Rust binary; no Python or Node.js ([Footprint](#footprint)) | Python 3.14, Node.js, npm, pnpm, ripgrep and FFmpeg, from its installer ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L53-L55)) |
 | Start-up and size | 35.5 ms cold `--version`; 59.7 MB binary ([Footprint](#footprint)) | 881 ms cold `--version`; 901.6 MB install directory ([Footprint](#footprint)) |
-| Install | From source only, with `cargo install` or [`scripts/install.sh`](./scripts/install.sh); no release yet ([Install](#install)) | One-line installers for Linux, macOS, WSL2 and Windows, a Termux APT repository and an MSIX package ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L35-L61)) |
+| Install | Prebuilt release binaries (Linux, macOS and Windows) via [`scripts/install.sh`](./scripts/install.sh), [`scripts/install.ps1`](./scripts/install.ps1) and [Homebrew formula](https://github.com/yungSNAT/reformed-agent/releases/latest/download/hermes-agent-ultra.rb), plus `cargo install` from source; no Termux APT repository or MSIX package ([Install](#install)) | One-line installers for Linux, macOS, WSL2 and Windows, a Termux APT repository and an MSIX package ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L35-L61)) |
 | Desktop app | None | Hermes Desktop ([`apps/desktop`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/apps/desktop)) |
 | Terminal UI | Yes, on Ratatui ([`hermes-cli/src/tui`](./crates/hermes-cli/src/tui)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L24)) |
 | Chat platforms | 17 built in: BlueBubbles, DingTalk, Discord, Email, Feishu, Home Assistant, Matrix, Mattermost, ntfy, QQ Bot, Signal, Slack, SMS, Telegram, WeCom, Weixin and WhatsApp ([`platforms`](./crates/hermes-gateway/src/platforms), enabled by [`gateway-adapters-all`](./crates/hermes-cli/Cargo.toml)) | 26 bundled, adding A2A, Buzz, Google Chat, IRC, LINE, Photon, Raft, SimpleX, Teams and WhatsApp Cloud ([`plugins/platforms`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/plugins/platforms)); Home Assistant is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/homeassistant.yaml)) |
 | API server and webhooks | Yes ([`api_server`](./crates/hermes-gateway/src/platforms/api_server.rs), [`webhook`](./crates/hermes-gateway/src/platforms/webhook.rs)) | Yes ([`api_server.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/api_server.py), [`webhook.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/gateway/platforms/webhook.py)) |
 | Terminal backends | Local, Docker, SSH and Singularity in every build. Modal and Daytona are left out of the build; configuring one stops commands and file operations with an error rather than running them locally ([`manager.rs`](./crates/hermes-environments/src/manager.rs)) | Local, Docker, SSH, Modal, Daytona and Vercel Sandbox ([`tools/environments`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/tools/environments)); Singularity is an official plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/singularity.yaml)) |
-| Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs), with a dry run by default), Claude Code and Codex ([`import-agent`](./crates/hermes-cli/src/agent_import.rs), likewise) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From OpenClaw, Claude Code, Codex, Cursor and others through the official `agent-importers` plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/agent-importers.yaml)) |
+| Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs), with a dry run by default), Claude Code and Codex ([`import-agent`](./crates/hermes-cli/src/agent_import.rs), likewise) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From OpenClaw, Claude Code, Codex and others through the official `agent-importers` plugin ([catalogue](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/plugin-catalog/agent-importers.yaml)) |
 | Cron, MCP, ACP, skills, subagents | Yes ([`hermes-cron`](./crates/hermes-cron), [`hermes-mcp`](./crates/hermes-mcp), [`hermes-acp`](./crates/hermes-acp), [`hermes-skills`](./crates/hermes-skills), [`delegation.rs`](./crates/hermes-tools/src/tools/delegation.rs)) | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L26-L28), [MCP](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L178), [`acp_adapter`](https://github.com/NousResearch/hermes-agent/tree/v0.23.1/acp_adapter)) |
 | Batch trajectories and RL training | None. The `rl_*` training tools and the batch runners behind them were removed: they reported simulated runs and wrote fixed text without calling a model | Yes ([README](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/README.md?plain=1#L30), [`batch_runner.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/batch_runner.py), [`trajectory_compressor.py`](https://github.com/NousResearch/hermes-agent/blob/v0.23.1/trajectory_compressor.py)) |
 | Documentation | This README and the guides under [Documentation](#documentation), in the repository; no published site | A site at [hermes-agent.nousresearch.com/docs](https://hermes-agent.nousresearch.com/docs/) |
@@ -156,7 +181,7 @@ What Reformed has against [OpenClaw v2026.11.4](https://github.com/openclaw/open
 | --- | --- | --- |
 | Runtime | One Rust binary; no Python or Node.js ([Footprint](#footprint)) | Node.js 24.16 or later, or 26.1 or later; its installers provide one when needed ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L26-L41)) |
 | Start-up and size | 46.7 ms cold `--version`; 44.8 MB binary ([Footprint](#footprint), measured against v2026.11.3) | 577 ms cold `--version`; 546.8 MB npm prefix, at v2026.11.3 ([Footprint](#footprint)) |
-| Install | From source only; no release yet ([Install](#install)) | Installers for macOS, Linux, WSL2 and Windows, and the `openclaw` npm package ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L24-L47)) |
+| Install | Prebuilt release binaries for Linux, macOS, WSL2 and Windows, Homebrew formula, and `cargo install` from source; no npm package ([Install](#install)) | Installers for macOS, Linux, WSL2 and Windows, and the `openclaw` npm package ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L24-L47)) |
 | Desktop and mobile apps | None | Apps for macOS, iOS, Android, Windows and Linux ([README](https://github.com/openclaw/openclaw/blob/v2026.11.4/README.md?plain=1#L18), [`apps`](https://github.com/openclaw/openclaw/tree/v2026.11.4/apps)) |
 | Chat platforms | 17 built in ([Against Hermes Agent](#against-hermes-agent)); OpenClaw has no channel for BlueBubbles, DingTalk, Home Assistant, ntfy, QQ Bot, WeCom or Weixin | 25 bundled channel plugins, adding Buzz, ClickClack, Google Chat, iMessage, IRC, LINE, Microsoft Teams, Nextcloud Talk, Nostr, Raft, Synology Chat, Tlon, Twitch, X, Zalo and Zalo Personal (the plugins in [`extensions`](https://github.com/openclaw/openclaw/tree/v2026.11.4/extensions) whose `openclaw.plugin.json` has the `channels` category); email arrives through an IMAP trigger ([`imap`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/imap/openclaw.plugin.json)) |
 | Importing another agent | From Hermes ([`migrate`](./crates/hermes-cli/src/commands/hermes_migrate.rs)), Claude Code and Codex ([`import-agent`](./crates/hermes-cli/src/agent_import.rs)) and OpenClaw ([`claw migrate`](./crates/hermes-cli/src/claw_migrate.rs)) | From Hermes, Claude Code and Claude Desktop ([`migrate-hermes`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/migrate-hermes/openclaw.plugin.json), [`migrate-claude`](https://github.com/openclaw/openclaw/blob/v2026.11.4/extensions/migrate-claude/openclaw.plugin.json)) |
@@ -166,7 +191,7 @@ What Reformed has against [OpenClaw v2026.11.4](https://github.com/openclaw/open
 
 - **Base:** Hermes Agent Ultra [`v0.22.0`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs/releases/v0.22.0.md) at commit `c002f8c4`.
 - **History:** Ultra's plans, roadmaps and release notes up to the fork stay in [Hermes Agent Ultra](https://github.com/sheawinkler/hermes-agent-ultra) at that commit: [`docs`](https://github.com/sheawinkler/hermes-agent-ultra/tree/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/docs) and [`PARITY_PLAN.md`](https://github.com/sheawinkler/hermes-agent-ultra/blob/c002f8c4efe475c89c9f14d3995d44e6a5df5b27/PARITY_PLAN.md).
-- **Releases:** none published from this fork yet. Build from source (see [Install](#install)).
+- **Releases:** published on [GitHub Releases](https://github.com/yungSNAT/reformed-agent/releases) from [`v0.22.0`](https://github.com/yungSNAT/reformed-agent/releases/tag/v0.22.0) with checksummed, cosign-signed prebuilt archives (Linux x86_64/aarch64/musl, macOS x86_64/aarch64, Windows x86_64), `install.sh` and `hermes-agent-ultra.rb` (see [Install](#install)).
 - **Names:** the binaries keep Ultra's names, `hermes-agent-ultra` and `hermes-ultra`, and its config home, `~/.hermes-agent-ultra`.
 - **Parity:** the [parity dashboard](./docs/parity/PARITY_DASHBOARD.md) reports the latest checked comparison against the [pinned upstream revision](./docs/parity/upstream-reference.txt). See the [slash-command divergences](./docs/parity/slash-command-divergence.json) for missing commands, the [intentional divergence rules](./docs/parity/intentional-divergence.json) for omitted files, the [shared-file backlog](./docs/parity/shared-diff-backlog.md) for deferred reviews and the [test coverage audit](./docs/parity/test-coverage-audit.md) for missing or outdated evidence. The [global parity proof](./docs/parity/global-parity-proof.md) records the release gate result and the checks that determine it.
 - **Drift:** upstream has moved since the pin. The daily [Parity Audit](https://github.com/yungSNAT/reformed-agent/actions/workflows/parity-audit.yml) run reports the current gap against upstream `main` in its job summary.
@@ -338,6 +363,8 @@ Full MCP guide: [docs/mcp.md](./docs/mcp.md)
 hermes-ultra mcp sentrux
 hermes-ultra mcp sentrux-status
 ```
+
+With many MCP servers, set `mcp_tool_mode: gateway` in `config.yaml`. The model then sees one `mcp` tool that searches and calls the servers' tools, so its tool list stays the same as servers connect or change their tools, and the provider's prompt cache keeps hitting. The default, `direct`, lists every MCP tool. The mode covers the servers in `config.yaml`, not those an ACP client passes; with a tool policy allowlist, allow `mcp` as well as the MCP tools.
 
 Key operator commands:
 

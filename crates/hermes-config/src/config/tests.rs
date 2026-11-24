@@ -585,4 +585,56 @@ terminal:
         assert_eq!(back.http_proxy, Some("http://proxy:8080".to_string()));
         assert_eq!(back.socks_proxy, None);
     }
+
+    #[test]
+    fn mcp_tool_mode_defaults_to_direct_and_reads_gateway() {
+        assert_eq!(GatewayConfig::default().mcp_tool_mode, McpToolMode::Direct);
+        let cfg: GatewayConfig =
+            serde_yaml::from_str("mcp_tool_mode: gateway\n").expect("mode should deserialize");
+        assert_eq!(cfg.mcp_tool_mode, McpToolMode::Gateway);
+        assert!(serde_yaml::from_str::<GatewayConfig>("mcp_tool_mode: lazy\n").is_err());
+        let saved = |cfg: &GatewayConfig| serde_yaml::to_string(cfg).expect("serialize");
+        assert!(!saved(&GatewayConfig::default()).contains("mcp_tool_mode"));
+        assert!(saved(&cfg).contains("mcp_tool_mode: gateway"));
+    }
+
+    #[test]
+    fn prompt_caching_reads_the_documented_keys_and_defaults_to_spending_nothing() {
+        let cfg = GatewayConfig::default();
+        assert_eq!(cfg.prompt_caching.cache_ttl, PromptCacheTtl::FiveMinutes);
+        assert_eq!(cfg.prompt_caching.keep_alive.pings(), 0);
+        assert!(!cfg.prompt_caching.compact_when_cold);
+
+        let cfg: GatewayConfig = serde_yaml::from_str(
+            r#"
+prompt_caching:
+  cache_ttl: "1h"
+  keep_alive:
+    max_pings: 50
+    max_idle_minutes: 1000
+  compact_when_cold: true
+"#,
+        )
+        .expect("prompt_caching section");
+        assert_eq!(cfg.prompt_caching.cache_ttl, PromptCacheTtl::OneHour);
+        assert_eq!(cfg.prompt_caching.cache_ttl.seconds(), 3_600);
+        assert_eq!(cfg.prompt_caching.keep_alive.pings(), KEEP_ALIVE_MAX_PINGS_LIMIT);
+        assert_eq!(cfg.prompt_caching.keep_alive.max_idle_seconds(), 240 * 60);
+        assert!(cfg.prompt_caching.compact_when_cold);
+
+        let cfg: GatewayConfig =
+            serde_yaml::from_str("prompt_caching:\n  cache_ttl: \"5m\"\n").expect("5m");
+        assert_eq!(cfg.prompt_caching.keep_alive.max_idle_seconds(), 60 * 60);
+        assert!(serde_yaml::from_str::<GatewayConfig>("prompt_caching:\n  cache_ttl: 2h\n").is_err());
+        let saved = |cfg: &GatewayConfig| serde_yaml::to_string(cfg).expect("serialize");
+        assert!(!saved(&GatewayConfig::default()).contains("prompt_caching"));
+        let hour = GatewayConfig {
+            prompt_caching: PromptCachingConfig {
+                cache_ttl: PromptCacheTtl::OneHour,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(saved(&hour).contains("prompt_caching:") && saved(&hour).contains("1h"));
+    }
 }

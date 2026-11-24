@@ -317,6 +317,16 @@ pub async fn connect_configured_mcp_servers(
     if servers.is_empty() {
         return;
     }
+    if config.mcp_tool_mode == hermes_config::McpToolMode::Gateway {
+        // Before connecting, so the tool list is the same whichever servers
+        // connect in time.
+        let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            tool_registry,
+            &names,
+            cli_mcp_gateway_scope(config),
+        );
+    }
     let mut manager = McpManager::new(Arc::clone(tool_registry));
     let discovery = manager.connect_all_parallel(servers);
     if tokio::time::timeout(MCP_STARTUP_TIMEOUT, discovery)
@@ -329,6 +339,20 @@ pub async fn connect_configured_mcp_servers(
             manager.connected_servers()
         );
     }
+}
+
+/// The MCP tools the CLI's gateway may reach under `config`.
+fn cli_mcp_gateway_scope(config: &GatewayConfig) -> hermes_tools::mcp_gateway::McpGatewayScope {
+    let config = config.clone();
+    Arc::new(move |registry: &ToolRegistry| {
+        hermes_tool_planning::platform_mcp_tool_names(&config, "cli", &Arc::new(registry.clone()))
+    })
+}
+
+/// After the session's config changes (`/tools enable|disable`, `/reload`),
+/// hold the MCP gateway, if any, to the new config.
+pub(crate) fn rescope_cli_mcp_gateway(config: &GatewayConfig, tool_registry: &ToolRegistry) {
+    hermes_tools::mcp_gateway::rescope_mcp_gateway(tool_registry, cli_mcp_gateway_scope(config));
 }
 
 #[cfg(test)]
@@ -903,6 +927,187 @@ mod tests {
                 assert_eq!(session, Some("stub-session"), "{method}");
             }
         }
+    }
+
+    /// `mcp_tool_mode: gateway`: the model sees one `mcp` tool in place of the
+    /// server's tools, finds the server's tool through it and calls it; the
+    /// agent's bridge cannot call the server's tool by name.
+    #[tokio::test]
+    async fn gateway_mode_reaches_a_server_tool_through_one_tool() {
+        let _env = crate::test_env_lock::lock_async().await;
+        let (url, _requests) = streamable_mcp_stub().await;
+        let home = TempDir::new().expect("home");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!(
+                "mcp_tool_mode: gateway\nmcp_servers:\n  - name: composio\n    url: \"{url}\"\n"
+            ),
+        )
+        .expect("write config");
+        let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")))
+            .expect("config loads");
+
+        let registry = Arc::new(ToolRegistry::new());
+        connect_configured_mcp_servers(&config, home.path(), &registry).await;
+        let names: Vec<String> =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry)
+                .into_iter()
+                .map(|schema| schema.name)
+                .collect();
+        assert_eq!(names, ["mcp"]);
+        let agent_tools = crate::app::bridge_tool_registry(&registry);
+        assert!(
+            !agent_tools
+                .names()
+                .iter()
+                .any(|name| name.contains("composio")),
+            "{:?}",
+            agent_tools.names()
+        );
+
+        let found = registry
+            .dispatch_async("mcp", json!({"action": "search", "query": "search tools"}))
+            .await;
+        let found: serde_json::Value = serde_json::from_str(&found).expect("search JSON");
+        let tool = found["tools"][0]["name"]
+            .as_str()
+            .expect("the server's tool is found")
+            .to_string();
+        assert!(
+            tool.to_ascii_lowercase().contains("composio_search_tools"),
+            "{found}"
+        );
+        let out = registry
+            .dispatch_async(
+                "mcp",
+                json!({"action": "call", "tool": tool, "arguments": {"query": "gmail"}}),
+            )
+            .await;
+        assert!(out.contains("found: gmail"), "{out}");
+    }
+
+    /// The agent's tools, built as the CLI builds them in gateway mode, hold
+    /// the `mcp` tool and no server tool, and a call through them reaches the
+    /// server from a multi-threaded runtime, as the agent loop makes it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_agent_reaches_a_gateway_server_tool_through_its_bridge() {
+        let _env = crate::test_env_lock::lock_async().await;
+        let (url, _requests) = streamable_mcp_stub().await;
+        let home = TempDir::new().expect("home");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!(
+                "mcp_tool_mode: gateway\nmcp_servers:\n  - name: composio\n    url: \"{url}\"\n"
+            ),
+        )
+        .expect("write config");
+        let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")))
+            .expect("config loads");
+        let registry = Arc::new(ToolRegistry::new());
+        connect_configured_mcp_servers(&config, home.path(), &registry).await;
+        let schemas =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry);
+        let agent_tools = crate::app::bridge_offered_tools(&registry, &schemas);
+        assert_eq!(agent_tools.names(), ["mcp"]);
+
+        let gateway = agent_tools
+            .get("mcp")
+            .expect("gateway bridged")
+            .handler
+            .clone();
+        let found = gateway(json!({"action": "search", "query": "search tools"})).expect("search");
+        let found: serde_json::Value = serde_json::from_str(&found).expect("search JSON");
+        let tool = found["tools"][0]["name"]
+            .as_str()
+            .expect("the server's tool is found")
+            .to_string();
+        let out = gateway(json!({"action": "call", "tool": tool, "arguments": {"query": "gmail"}}))
+            .expect("call");
+        assert!(out.contains("found: gmail"), "{out}");
+    }
+
+    /// `/tools disable` and `/reload` narrow the gateway's reach as they
+    /// narrow the tool list, and leave its schema alone.
+    #[tokio::test]
+    async fn a_config_change_rescopes_the_gateway() {
+        struct Page;
+        #[async_trait]
+        impl ToolHandler for Page {
+            async fn execute(
+                &self,
+                _params: serde_json::Value,
+            ) -> Result<String, hermes_core::ToolError> {
+                Ok("page".to_string())
+            }
+            fn schema(&self) -> hermes_core::ToolSchema {
+                hermes_core::tool_schema("page", "page", hermes_core::JsonSchema::new("object"))
+            }
+        }
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register(
+            "mcp_docs_page",
+            "mcp-docs",
+            hermes_core::tool_schema(
+                "mcp_docs_page",
+                "A page",
+                hermes_core::JsonSchema::new("object"),
+            ),
+            Arc::new(Page),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "A page",
+            "x",
+            None,
+        );
+        let mut config = hermes_config::GatewayConfig::default();
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            &registry,
+            &["docs".to_string()],
+            cli_mcp_gateway_scope(&config),
+        );
+        let call = json!({"action": "call", "tool": "mcp_docs_page"});
+        assert!(registry
+            .dispatch_async("mcp", call.clone())
+            .await
+            .contains("page"));
+        let schemas =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry);
+
+        config.tools_config.disabled = vec!["mcp_docs_page".to_string()];
+        rescope_cli_mcp_gateway(&config, &registry);
+        let out = registry.dispatch_async("mcp", call).await;
+        assert!(
+            out.contains("not an MCP tool this session can call"),
+            "{out}"
+        );
+        assert_eq!(
+            schemas,
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry)
+        );
+    }
+
+    /// Direct mode (the default) registers no gateway.
+    #[tokio::test]
+    async fn direct_mode_registers_no_gateway() {
+        let _env = crate::test_env_lock::lock_async().await;
+        let (url, _requests) = streamable_mcp_stub().await;
+        let home = TempDir::new().expect("home");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!("mcp_servers:\n  - name: composio\n    url: \"{url}\"\n"),
+        )
+        .expect("write config");
+        let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")))
+            .expect("config loads");
+        let registry = Arc::new(ToolRegistry::new());
+        connect_configured_mcp_servers(&config, home.path(), &registry).await;
+        assert!(registry.get_tool("mcp").is_none());
+        let agent_tools = crate::app::bridge_tool_registry(&registry);
+        assert!(agent_tools
+            .names()
+            .iter()
+            .any(|name| name.contains("composio")));
     }
 
     /// A command that loads config.yaml to change it and saves it writes the

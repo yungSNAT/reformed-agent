@@ -156,6 +156,7 @@ mod tests {
             pending_system_notes: Vec::new(),
             quorum_armed_once: false,
             pet_settings: PetSettings::default(),
+            tool_snapshot_sync_error: None,
             fail_model_rebuild_for: None,
         }
     }
@@ -1199,5 +1200,6 @@ mod tests {
     }
 
     include!("tests/session_runtime.rs");
+    include!("tests/tool_scope.rs");
 
 }

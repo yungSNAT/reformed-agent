@@ -49,12 +49,22 @@ Validation rules:
 
 ### Local stdio framing
 
-Set `stdio_mode: standard_stdio` on a local server to use newline-delimited
-JSON and discover support for MCP 2026-07-28. If discovery is unsupported or the
-server stays silent, Hermes tries the older initialize handshake on the same
-process. Use `standard_legacy` to start with initialize for an older server that
-already uses newline-delimited JSON. Existing entries default to
-`legacy_framed`, which uses Content-Length and initialize.
+A local server entry without `stdio_mode` uses `standard_legacy`: one JSON
+message per line, as the MCP specification's stdio transport frames it, then the
+initialize handshake. Set `stdio_mode: standard_stdio` to also discover support
+for MCP 2026-07-28 first; if discovery is unsupported or the server stays silent,
+Hermes tries initialize on the same process. Set `stdio_mode: legacy_framed` for
+a server that only reads Content-Length headers, such as `hermes-ultra mcp serve`
+(also run as `hermes mcp serve`) built before 24 November 2026. Until then the
+default was `legacy_framed`, so an entry for such a server now needs that line.
+
+A framing mismatch fails at once when the server answers in the other framing,
+with an error naming the `stdio_mode` to set. A server that stays silent instead
+fails at the connect timeout, and that error names the setting too. Blank lines
+between messages are skipped.
+
+`hermes-ultra mcp serve` answers either framing: it judges the client's framing
+from its first message and replies in kind.
 
 ```yaml
 mcp_servers:
@@ -94,6 +104,21 @@ mcp_servers:
 ```
 
 Set `COMPOSIO_CONSUMER_KEY` to the consumer key from Composio's dashboard (an account with Composio is needed). Its search, schema, execute and connection tools then appear as MCP tools, and the first use of an app returns an OAuth link to approve in a browser. The same shape works for any catalogue that takes an API key header. `hermes_cli`'s `hosted_catalogue_preset_reaches_a_streamable_http_server` test runs this preset against a local Streamable HTTP server.
+
+### Gateway tool mode
+
+By default (`mcp_tool_mode: direct`) every MCP tool is its own tool in the model's tool list. With many servers, set:
+
+```yaml
+mcp_tool_mode: gateway
+```
+
+The model then sees one `mcp` tool in their place:
+
+- `{"action": "search", "query": "create issue", "limit": 10}` returns the matching tools' names, descriptions and input schemas (an empty query lists them all; `limit` defaults to 10, at most 50);
+- `{"action": "call", "tool": "mcp_github_create_issue", "arguments": {...}}` runs that tool through the same dispatch as a direct call, so tool policy, secret refusal, masking, raw-output requests and the tool's size limit apply as before.
+
+The tool list then stays byte-identical whichever servers connect in time, fail or send `tools/list_changed`, so the provider's prompt cache keeps hitting. The gateway reaches only the MCP tools direct mode would list for the CLI: `tools_config.disabled`, `agent.disabled_toolsets` and custom `platform_toolsets` apply, `/tools enable|disable` and `/reload` update its reach, and disabling `mcp` itself leaves it nothing to reach. A tool policy allowlist must allow `mcp` as well as the MCP tools. The mode covers the servers in `config.yaml`; servers an ACP client passes keep direct mode. Hooks and progress lines name the `mcp` tool, not the MCP tool it calls.
 
 ## Runtime Behavior
 

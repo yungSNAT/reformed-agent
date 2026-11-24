@@ -1,25 +1,25 @@
 {
-  "generated_at_utc": "2026-11-22T13:56:10.103681+00:00",
+  "generated_at_utc": "2026-11-23T12:37:56.022141+00:00",
   "refs": {
     "local_ref": "HEAD",
-    "local_sha": "ba9213aaab39898949b61ea1c502e1d8f5398f28",
+    "local_sha": "aff366282dbe812cac50d18d6b02630e414786ba",
     "upstream_ref": "upstream/parity-reference",
     "upstream_sha": "ae2a81ccc00e9b7c06301523e5bb09608397149c",
     "merge_base": null
   },
   "summary": {
     "commits_behind": 1,
-    "commits_ahead": 1716,
+    "commits_ahead": 1723,
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1444,
-    "files_only_upstream": 24465,
-    "files_only_local": 1943,
+    "local_patch_unique": 1452,
+    "files_only_upstream": 24464,
+    "files_only_local": 1760,
     "files_shared_identical": 559,
-    "files_shared_different": 1166,
-    "tree_files_changed": 27330,
-    "tree_insertions": 4612761,
-    "tree_deletions": 859555
+    "files_shared_different": 1167,
+    "tree_files_changed": 27147,
+    "tree_insertions": 4612754,
+    "tree_deletions": 791166
   },
   "top_upstream_only": [
     {
@@ -348,23 +348,23 @@
   "top_local_only": [
     {
       "path": "crates/hermes-cli",
-      "count": 304
-    },
-    {
-      "path": "crates/hermes-tools",
-      "count": 151
+      "count": 200
     },
     {
       "path": "skills/creative",
       "count": 143
     },
     {
+      "path": "crates/hermes-tools",
+      "count": 135
+    },
+    {
       "path": "crates/hermes-agent",
-      "count": 137
+      "count": 121
     },
     {
       "path": "crates/hermes-gateway",
-      "count": 121
+      "count": 114
     },
     {
       "path": "website/docs",
@@ -383,24 +383,24 @@
       "count": 59
     },
     {
-      "path": "crates/hermes-parity-tools",
-      "count": 53
-    },
-    {
       "path": "skills/mlops",
       "count": 45
-    },
-    {
-      "path": "crates/hermes-config",
-      "count": 42
     },
     {
       "path": "optional-skills/mlops",
       "count": 42
     },
     {
-      "path": "crates/hermes-intelligence",
+      "path": "crates/hermes-config",
       "count": 41
+    },
+    {
+      "path": "crates/hermes-intelligence",
+      "count": 39
+    },
+    {
+      "path": "crates/hermes-parity-tools",
+      "count": 39
     },
     {
       "path": "third_party/rustsec-patches",
@@ -411,24 +411,24 @@
       "count": 26
     },
     {
-      "path": "crates/hermes-acp",
-      "count": 24
-    },
-    {
       "path": "plugins/memory",
       "count": 24
     },
     {
-      "path": "crates/hermes-eval",
-      "count": 23
+      "path": "crates/hermes-acp",
+      "count": 22
     },
     {
       "path": "crates/hermes-environments",
       "count": 19
     },
     {
-      "path": "crates/hermes-cron",
+      "path": "crates/hermes-eval",
       "count": 18
+    },
+    {
+      "path": "crates/hermes-cron",
+      "count": 17
     },
     {
       "path": "crates/hermes-source-parity-tests",
@@ -448,14 +448,10 @@
     },
     {
       "path": "crates/hermes-mcp",
-      "count": 13
-    },
-    {
-      "path": "crates/hermes-skills",
       "count": 12
     },
     {
-      "path": "tests/run_agent",
+      "path": "crates/hermes-skills",
       "count": 12
     },
     {
@@ -463,12 +459,12 @@
       "count": 11
     },
     {
-      "path": "ui-tui/src",
+      "path": "tests/run_agent",
       "count": 11
     },
     {
-      "path": "crates/hermes-http",
-      "count": 10
+      "path": "ui-tui/src",
+      "count": 11
     },
     {
       "path": "tests/gateway",
@@ -492,6 +488,10 @@
     },
     {
       "path": ".github/assets",
+      "count": 7
+    },
+    {
+      "path": "crates/hermes-http",
       "count": 7
     },
     {
@@ -672,23 +672,23 @@
   "top_unique_to_local": [
     {
       "path": "crates/hermes-cli",
-      "count": 304
-    },
-    {
-      "path": "crates/hermes-tools",
-      "count": 151
+      "count": 200
     },
     {
       "path": "skills/creative",
       "count": 143
     },
     {
+      "path": "crates/hermes-tools",
+      "count": 135
+    },
+    {
       "path": "crates/hermes-agent",
-      "count": 137
+      "count": 121
     },
     {
       "path": "crates/hermes-gateway",
-      "count": 121
+      "count": 114
     },
     {
       "path": "website/docs",
@@ -707,24 +707,24 @@
       "count": 59
     },
     {
-      "path": "crates/hermes-parity-tools",
-      "count": 53
-    },
-    {
       "path": "skills/mlops",
       "count": 45
-    },
-    {
-      "path": "crates/hermes-config",
-      "count": 42
     },
     {
       "path": "optional-skills/mlops",
       "count": 42
     },
     {
-      "path": "crates/hermes-intelligence",
+      "path": "crates/hermes-config",
       "count": 41
+    },
+    {
+      "path": "crates/hermes-intelligence",
+      "count": 39
+    },
+    {
+      "path": "crates/hermes-parity-tools",
+      "count": 39
     },
     {
       "path": "third_party/rustsec-patches",
@@ -735,24 +735,24 @@
       "count": 26
     },
     {
-      "path": "crates/hermes-acp",
-      "count": 24
-    },
-    {
       "path": "plugins/memory",
       "count": 24
     },
     {
-      "path": "crates/hermes-eval",
-      "count": 23
+      "path": "crates/hermes-acp",
+      "count": 22
     },
     {
       "path": "crates/hermes-environments",
       "count": 19
     },
     {
-      "path": "crates/hermes-cron",
+      "path": "crates/hermes-eval",
       "count": 18
+    },
+    {
+      "path": "crates/hermes-cron",
+      "count": 17
     },
     {
       "path": "crates/hermes-source-parity-tests",
@@ -772,14 +772,10 @@
     },
     {
       "path": "crates/hermes-mcp",
-      "count": 13
-    },
-    {
-      "path": "crates/hermes-skills",
       "count": 12
     },
     {
-      "path": "tests/run_agent",
+      "path": "crates/hermes-skills",
       "count": 12
     },
     {
@@ -787,12 +783,12 @@
       "count": 11
     },
     {
-      "path": "ui-tui/src",
+      "path": "tests/run_agent",
       "count": 11
     },
     {
-      "path": "crates/hermes-http",
-      "count": 10
+      "path": "ui-tui/src",
+      "count": 11
     },
     {
       "path": "tests/gateway",
@@ -819,6 +815,10 @@
       "count": 7
     },
     {
+      "path": "crates/hermes-http",
+      "count": 7
+    },
+    {
       "path": "tests/skills",
       "count": 7
     },
@@ -836,9 +836,9 @@
       "workstream": "WS8",
       "issue": 12,
       "name": "Compatibility and divergence policy",
-      "upstream_only": 13186,
-      "shared_different": 13,
-      "local_only": 404,
+      "upstream_only": 13185,
+      "shared_different": 14,
+      "local_only": 370,
       "risk": "critical",
       "effort": "XL"
     },
@@ -848,7 +848,7 @@
       "name": "Tests and CI parity",
       "upstream_only": 8396,
       "shared_different": 353,
-      "local_only": 85,
+      "local_only": 81,
       "risk": "critical",
       "effort": "XL"
     },
@@ -868,7 +868,7 @@
       "name": "Tools and adapters parity",
       "upstream_only": 767,
       "shared_different": 134,
-      "local_only": 243,
+      "local_only": 217,
       "risk": "high",
       "effort": "XL"
     },
@@ -888,7 +888,7 @@
       "name": "Core runtime parity",
       "upstream_only": 413,
       "shared_different": 0,
-      "local_only": 577,
+      "local_only": 458,
       "risk": "critical",
       "effort": "XL"
     },
@@ -906,7 +906,7 @@
   "commit_mapping": {
     "upstream_patch_missing": 1,
     "upstream_patch_represented": 0,
-    "local_patch_unique": 1444,
+    "local_patch_unique": 1452,
     "local_patch_equivalent_to_upstream": 0,
     "upstream_patch_missing_sample": [
       "ae2a81ccc00e9b7c06301523e5bb09608397149c"

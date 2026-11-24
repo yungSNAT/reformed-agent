@@ -93,11 +93,12 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> EvalResult<()> {
     let args = Args::parse();
+    let config_dir = use_config_dir_as_home(args.config_dir.as_deref());
     // Before anything writes to the home; see check_implicit_home for the limit.
     hermes_config::check_implicit_home().map_err(EvalError::Other)?;
     let benchmark_path = args.benchmark.clone();
 
-    let cfg = load_gateway_config(args.config_dir.as_deref())?;
+    let cfg = load_gateway_config(config_dir.as_deref())?;
     let model = resolve_model(&args, &cfg);
     let output_path = args
         .output
@@ -200,7 +201,7 @@ async fn run_agent_rollout(
 ) -> EvalResult<hermes_eval::RunRecord> {
     let tool_registry = Arc::new(ToolRegistry::new());
     let terminal_backend = hermes_cli::terminal_backend::build_terminal_backend(config);
-    let skill_store = Arc::new(FileSkillStore::new(FileSkillStore::default_dir()));
+    let skill_store = Arc::new(FileSkillStore::new(bench_skills_dir()));
     let skill_provider: Arc<dyn SkillProvider> = Arc::new(SkillManager::new(skill_store));
     hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
     hermes_cli::runtime_tool_wiring::wire_stdio_clarify_backend(&tool_registry);
@@ -215,6 +216,37 @@ async fn run_agent_rollout(
     ));
     let rollout = Arc::new(AgentLoopRollout::new(agent).with_full_state(full_state));
     runner.run(adapter, rollout).await
+}
+
+/// The skills folder the bench agent loads, the one `hermes` itself uses.
+#[cfg(feature = "agent-loop")]
+fn bench_skills_dir() -> PathBuf {
+    hermes_config::skills_dir()
+}
+
+/// `--config-dir` chooses the Hermes home, as it does for `hermes`. Returns
+/// the configuration folder its later readers get.
+fn use_config_dir_as_home(config_dir: Option<&Path>) -> Option<PathBuf> {
+    if let Some(dir) = config_dir {
+        std::env::set_var("HERMES_HOME", dir);
+    }
+    hermes_config::normalize_hermes_home_env();
+    // As in hermes: the flag's later readers get the folder the environment
+    // now names, so configuration and skills come from one folder.
+    config_dir.and_then(|_| std::env::var_os("HERMES_HOME").map(PathBuf::from))
+}
+
+#[cfg(all(test, feature = "agent-loop"))]
+mod tests {
+    #[test]
+    fn config_dir_sets_one_home_for_the_bench_skills_and_configuration() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Padded, as a quoted shell argument can be; the home is normalised.
+        let padded = std::path::PathBuf::from(format!(" {} ", dir.path().display()));
+        let config_dir = super::use_config_dir_as_home(Some(&padded));
+        assert_eq!(super::bench_skills_dir(), dir.path().join("skills"));
+        assert_eq!(config_dir.as_deref(), Some(dir.path()));
+    }
 }
 
 #[cfg(test)]

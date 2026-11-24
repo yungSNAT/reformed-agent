@@ -28,18 +28,120 @@ pub fn bridge_tool_registry_with(
     })
 }
 
-/// Bridge for the runner of a cron scheduler that `tools` itself holds, as the
-/// `cronjob` tool's backend. It omits that tool, so jobs cannot schedule jobs,
-/// and holds `tools` weakly: a strong handle would keep the registry, and so
-/// its MCP clients and their server processes, alive for good.
-fn bridge_tool_registry_for_cron(
+/// The agent's tools for a session: those in `offered`, the list planned for
+/// the model. A run given no list of its own (a sub-agent with its own
+/// toolset, the background review) then reaches no tool the session hides.
+pub fn bridge_offered_tools(tools: &ToolRegistry, offered: &[ToolSchema]) -> AgentToolRegistry {
+    bridge_offered_tools_with(tools, offered, hermes_tools::ToolOverrides::new())
+}
+
+/// [`bridge_offered_tools`] with `overrides`; see [`bridge_tool_registry_with`].
+pub fn bridge_offered_tools_with(
     tools: &ToolRegistry,
+    offered: &[ToolSchema],
     overrides: hermes_tools::ToolOverrides,
 ) -> AgentToolRegistry {
+    let mut bridged = bridge_tool_registry_with(tools, overrides);
+    bridged.retain_offered(offered);
+    bridged
+}
+
+/// The MCP tools a cron run's gateway may reach under `config`.
+fn cron_mcp_gateway_scope(config: &GatewayConfig) -> hermes_tools::mcp_gateway::McpGatewayScope {
+    let config = config.clone();
+    Arc::new(move |registry: &ToolRegistry| {
+        hermes_tool_planning::platform_mcp_tool_names(&config, "cron", &Arc::new(registry.clone()))
+    })
+}
+
+/// Bridge for cron runners: keeps only the `"cron"` platform plan minus
+/// hard-disabled cron tools (`cronjob`, `send_message`, `clarify`), scopes `"mcp"`
+/// in gateway mode to `"cron"`, and holds `tools` weakly so the scheduler's
+/// `cronjob` backend creates no strong cycle keeping MCP clients alive.
+pub fn bridge_tool_registry_for_cron(
+    config: &GatewayConfig,
+    tools: &ToolRegistry,
+    mut overrides: hermes_tools::ToolOverrides,
+) -> AgentToolRegistry {
+    if !overrides.contains_key(hermes_tools::mcp_gateway::MCP_GATEWAY_TOOL) {
+        if let Some(handler) = hermes_tools::mcp_gateway::scoped_mcp_gateway_handler(
+            tools,
+            cron_mcp_gateway_scope(config),
+        ) {
+            overrides.insert(
+                hermes_tools::mcp_gateway::MCP_GATEWAY_TOOL.to_string(),
+                handler,
+            );
+        }
+    }
+    let offered = hermes_tool_planning::resolve_platform_tool_schemas(
+        config,
+        "cron",
+        &Arc::new(tools.clone()),
+    );
     let weak = tools.downgrade();
     let overrides = Arc::new(overrides);
-    bridge_tool_schemas(tools, &["cronjob"], move |name, params| {
-        Ok(weak.upgrade_for_call()?.dispatch_with(name, params, &overrides))
+    let mut bridged = bridge_tool_schemas(
+        tools,
+        hermes_cron::CRON_HARD_DISABLED_TOOLS,
+        move |name, params| Ok(weak.upgrade_for_call()?.dispatch_with(name, params, &overrides)),
+    );
+    bridged.retain_offered(&offered);
+    bridged
+}
+
+/// Build a cron runner weakly bound to `tools` and scoped to the `"cron"`
+/// platform plan, giving each job run an isolated browser.
+pub fn build_cron_runner_for_registry(
+    config: &GatewayConfig,
+    provider: Arc<dyn LlmProvider>,
+    tools: &ToolRegistry,
+) -> CronRunner {
+    build_cron_runner_with_optional_owner(config, provider, tools, None)
+}
+
+/// Like [`build_cron_runner_for_registry`], keeping `tools` alive for the
+/// runner's own lifetime when the caller holds no external handle and wires no
+/// `cronjob` cycle back into `tools`.
+pub fn build_standalone_cron_runner(
+    config: &GatewayConfig,
+    provider: Arc<dyn LlmProvider>,
+    tools: Arc<ToolRegistry>,
+) -> CronRunner {
+    build_cron_runner_with_optional_owner(config, provider, &tools, Some(tools.clone()))
+}
+
+fn build_cron_runner_with_optional_owner(
+    config: &GatewayConfig,
+    provider: Arc<dyn LlmProvider>,
+    tools: &ToolRegistry,
+    owner: Option<Arc<ToolRegistry>>,
+) -> CronRunner {
+    let weak = tools.downgrade();
+    let schemas = Arc::new(bridge_tool_registry_for_cron(
+        config,
+        tools,
+        hermes_tools::ToolOverrides::new(),
+    ));
+    let schemas_for_run = schemas.clone();
+    let config_for_run = config.clone();
+    CronRunner::new(provider, schemas).with_planned_run_tools(move || {
+        let _keep_owner_alive = &owner;
+        let browser =
+            hermes_tools::SharedBrowser::lazy(hermes_tools::isolated_browser_backend_from_env);
+        let run_tools = weak.upgrade().map_or_else(
+            || schemas_for_run.clone(),
+            |tools| {
+                Arc::new(bridge_tool_registry_for_cron(
+                    &config_for_run,
+                    &tools,
+                    hermes_tools::browser_overrides(&browser),
+                ))
+            },
+        );
+        let mut offered = run_tools.schemas();
+        offered.sort_by(|a, b| a.name.cmp(&b.name));
+        (run_tools, offered, browser)
     })
 }
 
@@ -53,8 +155,13 @@ fn bridge_tool_schemas(
         + 'static,
 ) -> AgentToolRegistry {
     let mut agent_registry = AgentToolRegistry::new();
+    // In gateway mode MCP server tools are reached only through the gateway,
+    // which holds each call to the session's MCP scope.
+    let gateway = hermes_tools::mcp_gateway::is_mcp_gateway_registered(tools);
     for schema in tools.get_definitions() {
-        if excluded.iter().any(|name| schema.name == *name) {
+        if excluded.iter().any(|name| schema.name == *name)
+            || (gateway && hermes_tools::mcp_gateway::is_mcp_server_tool(tools, &schema.name))
+        {
             continue;
         }
         let name = schema.name.clone();
@@ -85,16 +192,7 @@ pub fn build_runtime_cron_scheduler(
     )
     .selected_model;
     let provider = build_provider(config, &model);
-    let weak = tools.downgrade();
-    let schemas = Arc::new(bridge_tool_registry_for_cron(tools, hermes_tools::ToolOverrides::new()));
-    let runner = Arc::new(CronRunner::new(provider, schemas.clone()).with_run_tools(move || {
-        let browser = hermes_tools::SharedBrowser::lazy(hermes_tools::isolated_browser_backend_from_env);
-        let tools = weak.upgrade().map_or_else(
-            || schemas.clone(),
-            |tools| Arc::new(bridge_tool_registry_for_cron(&tools, hermes_tools::browser_overrides(&browser))),
-        );
-        (tools, browser)
-    }));
+    let runner = Arc::new(build_cron_runner_for_registry(config, provider, tools));
     CronScheduler::new(persistence, runner)
 }
 

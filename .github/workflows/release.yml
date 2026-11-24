@@ -13,6 +13,7 @@ on:
       - .github/workflows/release.yml
       - crates/hermes-parity-tools/**
       - scripts/install.sh
+      - scripts/install.ps1
       - scripts/smoke-release-artifact.sh
       - scripts/generate-homebrew-formula.sh
 
@@ -248,7 +249,7 @@ jobs:
             echo "::error::Expected 6 archives, found ${count}."
             exit 1
           fi
-          cp scripts/install.sh Formula/hermes-agent-ultra.rb security/release-sbom.cdx.json dist/
+          cp scripts/install.sh scripts/install.ps1 Formula/hermes-agent-ultra.rb security/release-sbom.cdx.json dist/
           (cd dist && sha256sum -- * > ../SHA256SUMS) && mv SHA256SUMS dist/
           cat dist/SHA256SUMS
       - name: Upload staged assets

@@ -83,6 +83,38 @@ const WRITE_DENY_HOME_EXACT: &[&str] = &[
     ".pypirc",
     ".pgpass",
 ];
+/// Home files that claw migrate, import-agent and auth discovery read as
+/// tokens, and the memory plugins' shared configs (an API key and the
+/// endpoint it is sent to). Matched as stores are: by any case or stream
+/// spelling, and where the file or a folder above it links.
+const HOME_TOKEN_SOURCES: &[&str] = &[
+    ".claude/.credentials.json",
+    ".codex/auth.json",
+    ".pi/agent/auth.json",
+    ".hermes/auth.json",
+    ".hermes-agent-ultra/auth.json",
+    ".hermes/.anthropic_oauth.json",
+    ".hermes/.nous_oauth.json",
+    ".qwen/oauth_creds.json",
+    ".honcho/config.json",
+    ".hermes/honcho.json",
+    ".hindsight/config.json",
+];
+/// Home folders whose every file is a token source: the Hindsight plugin
+/// writes `<name>.env` here with the LLM key and base URL its local daemon
+/// starts with. Matched as stores are.
+const HOME_TOKEN_FOLDERS: &[&str] = &[".hindsight/profiles"];
+/// Memory plugin configs under each profile's Hermes home, matched as
+/// `HOME_TOKEN_SOURCES` are. The plugins and `hermes memory setup` write them
+/// without the file tools.
+const HERMES_HOME_TOKEN_SOURCES: &[&str] = &[
+    "honcho.json",
+    "hindsight/config.json",
+    "openviking.json",
+    "mem0.json",
+    "supermemory.json",
+    "contextlattice.json",
+];
 const WRITE_DENY_HOME_PREFIX: &[&str] = &[
     ".ssh",
     ".aws",
@@ -128,7 +160,7 @@ fn store_key(path: &Path) -> PathBuf {
         .collect()
 }
 
-/// Credential stores under the active Hermes home, each denied with
+/// Credential stores under each profile's Hermes home, each denied with
 /// everything below it: provider keys (`.env`); the Nous OAuth token
 /// (`auth.json`); the token store, credential pool, provenance key and Gemini
 /// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
@@ -490,6 +522,463 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 }
 
+/// `hermes_home` and every other profile home `--profile` can select: the
+/// root home (the grandparent when `hermes_home` is itself a profile's
+/// folder) and each folder in `<root>/profiles/` that a profile name selects.
+/// As `--profile default` resolves it, any parent of a folder named
+/// `profiles` counts as the root. The second value is `<root>/profiles/`
+/// when it exists but cannot be listed in full, so a profile in it may be
+/// missing from the list; the caller protects it whole.
+fn profile_homes(hermes_home: &Path) -> (Vec<PathBuf>, Option<PathBuf>) {
+    let root = match hermes_home.parent() {
+        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+            parent.parent().unwrap_or(parent)
+        }
+        _ => hermes_home,
+    };
+    let folder = root.join("profiles");
+    let mut homes = vec![hermes_home.to_path_buf()];
+    let mut add = |home: PathBuf| {
+        if !homes.contains(&home) {
+            homes.push(home);
+        }
+    };
+    add(root.to_path_buf());
+    let mut listed = true;
+    match std::fs::read_dir(&folder) {
+        Ok(entries) => {
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    listed = false;
+                    continue;
+                };
+                let selectable = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| is_profile_name(&name.to_ascii_lowercase()));
+                if selectable && entry.path().is_dir() {
+                    add(entry.path());
+                }
+            }
+        }
+        Err(_) => listed = !folder.is_dir(),
+    }
+    (homes, (!listed).then_some(folder))
+}
+
+/// A name `--profile` accepts (upstream's `PROFILE_ID_RE`,
+/// `^[a-z0-9][a-z0-9_-]{0,63}$`), after it folds the name to lower case.
+fn is_profile_name(name: &str) -> bool {
+    name.len() <= 64
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+/// The credential stores and token sources under these roots, and under
+/// every other profile home beside `hermes_home`, each with `true` for a
+/// token source (one file) or `false` for a store (denied with everything
+/// below it), and each one's link target as well, including a target that
+/// does not exist yet. A profiles folder that cannot be listed counts as a
+/// store.
+fn credential_stores(
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
+) -> Vec<(PathBuf, bool)> {
+    let (hermes_homes, unlisted_profiles) = hermes_home.map(profile_homes).unwrap_or_default();
+    let profile_stores = hermes_homes.iter().flat_map(|hermes_home| {
+        // Include known stores even when the directory cannot be listed.
+        let auth = hermes_home.join("auth");
+        WRITE_DENY_HERMES_HOME_PREFIX
+            .iter()
+            .map(move |store| hermes_home.join(store))
+            .chain(
+                std::fs::read_dir(&auth)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|entry| entry.path()),
+            )
+            .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
+    });
+    let with_link = |store: PathBuf| {
+        let target = hermes_config::resolve_symlink_target(&store);
+        let linked = (target != store).then_some(target);
+        std::iter::once(store).chain(linked)
+    };
+    let home_folders = home.into_iter().flat_map(|home| {
+        HOME_TOKEN_FOLDERS
+            .iter()
+            .map(move |folder| home.join(folder))
+    });
+    let stores = auth_override
+        .map(Path::to_path_buf)
+        .into_iter()
+        .chain(profile_stores)
+        .chain(home_folders)
+        .chain(unlisted_profiles)
+        .flat_map(with_link)
+        .map(|store| (store, false));
+    let sources = home
+        .into_iter()
+        .flat_map(|home| {
+            HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| home.join(source))
+        })
+        .chain(hermes_homes.iter().flat_map(|hermes_home| {
+            HERMES_HOME_TOKEN_SOURCES
+                .iter()
+                .map(move |source| hermes_home.join(source))
+        }))
+        .flat_map(with_link)
+        .map(|source| (source, true));
+    stores.chain(sources).collect()
+}
+
+#[cfg(test)]
+thread_local! {
+    static GUARD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SUBTREE_DIRS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(target_os = "linux")]
+    static TEST_LINUX_MOUNTINFO: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Path judgements and set lookups made on this thread, for tests that bound
+/// how many a delete makes.
+#[cfg(test)]
+pub(crate) fn guard_calls() -> usize {
+    GUARD_CALLS.with(std::cell::Cell::get)
+}
+
+/// The protected paths, gathered once so that many deletes can be judged
+/// without judging each file: the credential stores and token sources with
+/// where each links, and the home files and folders the write rule names.
+/// The fixed system paths (`/etc` and the like) are not included; a delete
+/// these tools make stays inside the Hermes home or a temporary folder.
+pub struct ProtectedPaths {
+    /// Each path in both forms, its comparison key, and whether it is one
+    /// file (`true`) or a folder protected with everything below it.
+    members: Vec<(PathBuf, PathBuf, bool)>,
+}
+
+impl ProtectedPaths {
+    /// The paths the file tools protect now: the account's home, the active
+    /// Hermes home and a configured auth store.
+    pub fn current() -> Self {
+        Self::build(
+            dirs::home_dir().as_deref(),
+            Some(&hermes_config::hermes_home()),
+            hermes_config::paths::auth_json_override().as_deref(),
+        )
+    }
+
+    /// The paths under the given roots.
+    pub fn with_roots(home: Option<&Path>, hermes_home: Option<&Path>) -> Self {
+        Self::build(home, hermes_home, None)
+    }
+
+    /// These paths and another Hermes home's stores and sources.
+    pub fn and_hermes_home(mut self, hermes_home: &Path) -> Self {
+        self.members
+            .extend(Self::build(None, Some(hermes_home), None).members);
+        self
+    }
+
+    fn build(
+        home: Option<&Path>,
+        hermes_home: Option<&Path>,
+        auth_override: Option<&Path>,
+    ) -> Self {
+        let mut paths = credential_stores(home, hermes_home, auth_override);
+        if let Some(home) = home {
+            paths.extend(
+                WRITE_DENY_HOME_EXACT
+                    .iter()
+                    .map(|name| (home.join(name), true)),
+            );
+            paths.extend(
+                WRITE_DENY_HOME_PREFIX
+                    .iter()
+                    .map(|name| (home.join(name), false)),
+            );
+        }
+        let members = paths
+            .into_iter()
+            .flat_map(|(path, exact)| {
+                root_forms(&path).map(|form| {
+                    let key = store_key(&form);
+                    (form, key, exact)
+                })
+            })
+            .collect();
+        Self { members }
+    }
+
+    /// Both comparison keys of `path`, or None when a link in it does not
+    /// resolve.
+    fn keys(path: &Path) -> Option<[PathBuf; 2]> {
+        #[cfg(test)]
+        GUARD_CALLS.with(|calls| calls.set(calls.get() + 1));
+        path_forms(path).map(|forms| forms.each_ref().map(|form| store_key(form)))
+    }
+
+    /// Whether `path` is itself protected: a token source, or in a store.
+    /// A path with a link that does not resolve counts as protected.
+    pub fn contains(&self, path: &Path) -> bool {
+        let Some(keys) = Self::keys(path) else {
+            return true;
+        };
+        self.members.iter().any(|(_, member, exact)| {
+            keys.iter().any(|key| {
+                if *exact {
+                    key == member
+                } else {
+                    key.starts_with(member)
+                }
+            })
+        })
+    }
+
+    /// A protected path that deleting `path` would remove: one at or below
+    /// it, or the store it lies in. Decided from the paths alone, without
+    /// reading the folder; a link inside it is not followed by the delete,
+    /// so a store it points at is kept and is not counted.
+    pub fn removed_by(&self, path: &Path) -> Option<PathBuf> {
+        let Some(keys) = Self::keys(path) else {
+            return Some(path.to_path_buf());
+        };
+        self.members
+            .iter()
+            .find(|(_, member, exact)| {
+                keys.iter()
+                    .any(|key| member.starts_with(key) || (!*exact && key.starts_with(member)))
+            })
+            .map(|(form, _, _)| form.clone())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn decode_mountinfo_path(raw: &str) -> PathBuf {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 3 < bytes.len() {
+            let oct = &bytes[i + 1..i + 4];
+            if oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
+                let val = u16::from(oct[0] - b'0') * 64
+                    + u16::from(oct[1] - b'0') * 8
+                    + u16::from(oct[2] - b'0');
+                if val <= 255 {
+                    out.push(val as u8);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(out))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_mounts(mountinfo: &str) -> Option<Vec<PathBuf>> {
+    let mut mounts: Vec<PathBuf> = mountinfo
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .map(decode_mountinfo_path)
+        .collect();
+    if mounts.is_empty() {
+        return None;
+    }
+    mounts.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+    Some(mounts)
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_mounts() -> Option<Vec<PathBuf>> {
+    #[cfg(test)]
+    if let Some(override_text) = TEST_LINUX_MOUNTINFO.with(|cell| cell.borrow().clone()) {
+        return parse_linux_mounts(&override_text);
+    }
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    parse_linux_mounts(&mountinfo)
+}
+
+/// Whether `target_path` (the resolved path of a `links == 1` write) may name
+/// a file inside `store_dir` under a spelling path checks did not see (such as
+/// a UNC loopback share, cross-drive/subst prefix, macOS firmlink, Linux bind
+/// mount, or a symlinked store root).
+fn may_have_single_link_alias(
+    target_path: &Path,
+    store_dir: &Path,
+    #[cfg(target_os = "linux")] linux_mounts: Option<&[PathBuf]>,
+) -> bool {
+    let Ok(canon_store) = std::fs::canonicalize(store_dir) else {
+        return true;
+    };
+    if target_path.starts_with(&canon_store) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let disk_of = |p: &Path| match p.components().next() {
+            Some(Component::Prefix(pre)) => match pre.kind() {
+                Prefix::Disk(d) | Prefix::VerbatimDisk(d) => Some(d.to_ascii_uppercase()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(t_disk) = disk_of(target_path) else {
+            return true;
+        };
+        disk_of(&canon_store) != Some(t_disk) || disk_of(store_dir) != Some(t_disk)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = canon_store;
+        target_path.starts_with("/System/Volumes/")
+            || target_path.starts_with("/Volumes/")
+            || target_path.starts_with("/dev/")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if target_path.starts_with("/proc/") || target_path.starts_with("/dev/") {
+            return true;
+        }
+        let Some(mounts) = linux_mounts else {
+            return true;
+        };
+        let mp = |p: &Path| mounts.iter().find(|m| p.starts_with(m));
+        if mp(target_path) != mp(&canon_store) {
+            return true;
+        }
+        mounts
+            .iter()
+            .any(|m| m != &canon_store && m.starts_with(&canon_store))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = canon_store;
+        true
+    }
+}
+
+/// Whether `path` names, under another name, the same file as a protected
+/// one: a credential store or token source, a file inside a store folder or
+/// a protected home folder, or a home or system file the rule names. A hard
+/// link made outside the file tools (the terminal's `ln`) gives such a file a
+/// name the path rules cannot see, and a write through it changes the file in
+/// place; so can another spelling of the same file (a Windows loopback share,
+/// a bind mount). Tracks visited directory `(volume, file)` identities so
+/// `auth/` overlap and bind-mount cycles cannot re-walk, and skips subtree
+/// recursion on ordinary local `links == 1` writes without an alternate
+/// spelling (whilst directory symlinks/junctions below protected roots remain
+/// excluded by `entry.file_type().is_dir()`).
+fn is_hard_link_to_protected_file(
+    path: &Path,
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
+) -> bool {
+    let Some(target) = hermes_config::file_identity(path) else {
+        return false;
+    };
+    let stores = credential_stores(home, hermes_home, auth_override);
+    let exact_home_files = home.into_iter().flat_map(|home| {
+        WRITE_DENY_HOME_EXACT
+            .iter()
+            .map(move |name| home.join(name))
+    });
+    let exact_system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
+    let mut exact_files: Vec<PathBuf> = exact_home_files.chain(exact_system_files).collect();
+    let mut pending: Vec<PathBuf> = home
+        .into_iter()
+        .flat_map(|home| {
+            WRITE_DENY_HOME_PREFIX
+                .iter()
+                .map(move |name| home.join(name))
+        })
+        .collect();
+    for (candidate, is_exact_file) in stores {
+        if is_exact_file {
+            exact_files.push(candidate);
+        } else {
+            pending.push(candidate);
+        }
+    }
+    for file in exact_files {
+        if hermes_config::file_identity(&file).is_some_and(|id| id.same_file(&target)) {
+            return true;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    let linux_mounts = if target.links < 2 {
+        read_linux_mounts()
+    } else {
+        None
+    };
+
+    let mut seen_dirs: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
+    while let Some(protected) = pending.pop() {
+        let Some(id) = hermes_config::file_identity(&protected) else {
+            continue;
+        };
+        if id.same_file(&target) {
+            return true;
+        }
+        if !protected.is_dir() {
+            continue;
+        }
+        if target.links < 2
+            && !may_have_single_link_alias(
+                path,
+                &protected,
+                #[cfg(target_os = "linux")]
+                linux_mounts.as_deref(),
+            )
+        {
+            continue;
+        }
+        if !seen_dirs.insert((id.volume, id.file)) {
+            continue;
+        }
+        #[cfg(test)]
+        SUBTREE_DIRS_READ.with(|reads| reads.set(reads.get() + 1));
+        // A folder's entries, links not followed; a file has none.
+        for entry in std::fs::read_dir(&protected)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let entry_path = entry.path();
+            if is_dir {
+                pending.push(entry_path);
+            } else if hermes_config::file_identity(&entry_path)
+                .is_some_and(|entry_id| entry_id.same_file(&target))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
 /// has already expanded, so it is not expanded a second time.
 fn is_expanded_write_denied(
@@ -499,6 +988,8 @@ fn is_expanded_write_denied(
     auth_override: Option<&Path>,
     safe_root: Option<&Path>,
 ) -> bool {
+    #[cfg(test)]
+    GUARD_CALLS.with(|calls| calls.set(calls.get() + 1));
     let Some(forms) = path_forms(path) else {
         return true;
     };
@@ -540,39 +1031,24 @@ fn is_expanded_write_denied(
         }
     }
 
-    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
-        // Include known stores even when the directory cannot be listed.
-        let auth = hermes_home.join("auth");
-        WRITE_DENY_HERMES_HOME_PREFIX
-            .iter()
-            .map(move |store| hermes_home.join(store))
-            .chain(
-                std::fs::read_dir(&auth)
-                    .into_iter()
-                    .flatten()
-                    .flatten()
-                    .map(|entry| entry.path()),
-            )
-            .chain(AUTH_STORE_FILES.iter().map(move |name| auth.join(name)))
-    });
-    // Protect stores where they link, including a target that does not exist yet.
-    let stores = auth_override
-        .map(Path::to_path_buf)
-        .into_iter()
-        .chain(profile_stores)
-        .flat_map(|store| {
-            let target = hermes_config::resolve_symlink_target(&store);
-            let linked = (target != store).then_some(target);
-            std::iter::once(store).chain(linked)
-        });
     let form_keys = forms.each_ref().map(|form| store_key(form));
-    for store in stores {
+    for (store, exact) in credential_stores(home, hermes_home, auth_override) {
         for store_form in root_forms(&store) {
             let store_form = store_key(&store_form);
-            if form_keys.iter().any(|form| form.starts_with(&store_form)) {
+            if form_keys.iter().any(|form| {
+                if exact {
+                    *form == store_form
+                } else {
+                    form.starts_with(&store_form)
+                }
+            }) {
                 return true;
             }
         }
+    }
+
+    if is_hard_link_to_protected_file(&forms[1], home, hermes_home, auth_override) {
+        return true;
     }
 
     if let Some(safe_root) = safe_root {
@@ -808,6 +1284,342 @@ mod tests {
         assert!(is_protected_file(Path::new("Credentials.JSON")));
         assert!(is_protected_file(Path::new("ID_RSA")));
         assert!(is_protected_file(Path::new("Server.KEY")));
+    }
+
+    #[test]
+    fn write_deny_covers_the_import_credential_sources() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("hermes");
+        // Read as tokens by claw migrate, import-agent and auth discovery.
+        for rel in [
+            ".claude/.credentials.json",
+            ".codex/auth.json",
+            ".pi/agent/auth.json",
+            ".hermes/auth.json",
+            ".hermes-agent-ultra/auth.json",
+            ".hermes/.anthropic_oauth.json",
+            ".hermes/.nous_oauth.json",
+            ".qwen/oauth_creds.json",
+        ] {
+            assert!(
+                is_write_denied_with_roots(&home.join(rel), Some(&home), Some(&hermes_home)),
+                "{rel} is writable"
+            );
+        }
+        // Other files in those folders, and the same names outside the home.
+        for path in [
+            home.join(".codex/config.toml"),
+            home.join(".pi/agent/settings.json"),
+            home.join(".hermes-agent-ultra/config.yaml"),
+            home.join(".qwen/settings.json"),
+            tmp.path().join("project/.codex/auth.json"),
+            tmp.path().join("project/.qwen/oauth_creds.json"),
+        ] {
+            assert!(
+                !is_write_denied_with_roots(&path, Some(&home), Some(&hermes_home)),
+                "{} is refused",
+                path.display()
+            );
+        }
+        // A case-insensitive file system opens AUTH.JSON as auth.json.
+        assert!(is_write_denied_with_roots(
+            &home.join(".codex/AUTH.JSON"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
+    fn write_deny_covers_the_memory_plugin_configs() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+        // Each holds a memory provider's API key (Honcho's also OAuth tokens)
+        // and the endpoint the plugin sends it and the memory traffic to.
+        for path in [
+            home.join(".honcho/config.json"),
+            home.join(".hermes/honcho.json"),
+            home.join(".hindsight/config.json"),
+            hermes_home.join("honcho.json"),
+            hermes_home.join("hindsight/config.json"),
+            hermes_home.join("openviking.json"),
+            hermes_home.join("mem0.json"),
+            hermes_home.join("supermemory.json"),
+            hermes_home.join("contextlattice.json"),
+            // A case-insensitive file system opens these as the configs.
+            home.join(".Honcho/CONFIG.json"),
+            hermes_home.join("Mem0.JSON"),
+            hermes_home.join("HindSight/config.json"),
+            // An NTFS stream suffix opens the file itself.
+            hermes_home.join("mem0.json::$DATA"),
+            // The Hindsight plugin's env for its local daemon: the LLM key
+            // and the base URL it is sent to.
+            home.join(".hindsight/profiles/hermes.env"),
+            home.join(".hindsight/profiles/work.env"),
+        ] {
+            assert!(denied(&path), "{} is writable", path.display());
+        }
+        // Their neighbours, and the same names outside both homes.
+        for path in [
+            home.join(".honcho/notes.json"),
+            home.join(".hermes/config.yaml"),
+            home.join(".hindsight/banks.json"),
+            hermes_home.join("honcho.json.bak"),
+            hermes_home.join("hindsight/data.json"),
+            hermes_home.join("openviking.yaml"),
+            hermes_home.join("memory.json"),
+            // A token source is one file, not a folder.
+            hermes_home.join("mem0.json/notes.txt"),
+            hermes_home.join("supermemory.yaml"),
+            hermes_home.join("contextlattice/notes.json"),
+            tmp.path().join("project/honcho.json"),
+            tmp.path().join("project/.honcho/config.json"),
+            tmp.path().join("project/mem0.json"),
+        ] {
+            assert!(!denied(&path), "{} is refused", path.display());
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_linked_memory_plugin_config_folders() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let vault = tmp.path().join("vault");
+        let banks = tmp.path().join("banks");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::fs::create_dir_all(&banks).unwrap();
+        std::os::unix::fs::symlink(&vault, home.join(".honcho")).unwrap();
+        std::os::unix::fs::symlink(&banks, hermes_home.join("hindsight")).unwrap();
+        std::os::unix::fs::symlink(tmp.path().join("m0"), hermes_home.join("mem0.json")).unwrap();
+        let denied =
+            |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(&hermes_home));
+
+        assert!(denied(&vault.join("config.json")));
+        assert!(denied(&banks.join("config.json")));
+        assert!(denied(&tmp.path().join("m0")));
+        assert!(!denied(&vault.join("notes.json")));
+        assert!(!denied(&banks.join("data.json")));
+        assert!(!denied(&tmp.path().join("m1")));
+    }
+
+    #[test]
+    fn protected_paths_name_what_a_delete_would_remove() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        let protected = ProtectedPaths::with_roots(Some(&home), Some(&hermes_home));
+
+        // A store, a folder holding one, and a file inside a store.
+        assert!(protected.removed_by(&hermes_home.join("auth")).is_some());
+        assert!(protected.removed_by(&hermes_home).is_some());
+        assert!(protected.removed_by(&home).is_some());
+        assert!(protected
+            .removed_by(&hermes_home.join("auth/tokens.json"))
+            .is_some());
+        assert!(protected
+            .removed_by(&home.join(".ssh/id_ed25519"))
+            .is_some());
+        assert!(protected.contains(&hermes_home.join("Mem0.json")));
+        assert!(protected.contains(&home.join(".ssh/config")));
+        // Neither, nor below a one-file source.
+        assert_eq!(protected.removed_by(&tmp.path().join("project")), None);
+        assert_eq!(protected.removed_by(&hermes_home.join("cache")), None);
+        assert_eq!(
+            protected.removed_by(&hermes_home.join("mem0.json/notes")),
+            None
+        );
+        assert!(!protected.contains(&hermes_home.join("cache/a.png")));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn protected_paths_find_a_linked_target_without_reading_the_folder() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let workspace = tmp.path().join("workspace");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&hermes_home).unwrap();
+        std::fs::create_dir_all(workspace.join("nested")).unwrap();
+        std::fs::write(workspace.join("nested/kept.json"), "{}").unwrap();
+        let protected = || ProtectedPaths::with_roots(Some(&home), Some(&hermes_home));
+        assert_eq!(protected().removed_by(&workspace), None);
+
+        std::os::unix::fs::symlink(
+            workspace.join("nested/kept.json"),
+            hermes_home.join("honcho.json"),
+        )
+        .unwrap();
+        let protected = protected();
+        let found = protected.removed_by(&workspace).expect("the linked file");
+        assert!(found.ends_with("kept.json"), "{}", found.display());
+        assert!(protected.contains(&workspace.join("nested/kept.json")));
+        assert!(!protected.contains(&workspace.join("nested")));
+        // Decided from the paths: an unreadable folder gives the same answer.
+        let nested = workspace.join("nested");
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let unreadable = protected.removed_by(&workspace);
+        std::fs::set_permissions(&nested, std::fs::Permissions::from_mode(0o700)).unwrap();
+        assert!(unreadable.is_some());
+
+        // Deleting a link to a store removes the link, not the store.
+        let other = tmp.path().join("other");
+        std::fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(hermes_home.join(".env"), other.join("env")).unwrap();
+        std::os::unix::fs::symlink(&hermes_home, other.join("profile")).unwrap();
+        assert_eq!(protected.removed_by(&other), None);
+    }
+
+    #[test]
+    fn write_deny_covers_every_profile_home_beside_the_active_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let work = root.join("profiles/work");
+        let play = root.join("profiles/play");
+        // Not a name `--profile` can select.
+        let backup = root.join("profiles/Work.bak");
+        for dir in [&home, &work, &play, &backup] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(root.join("profiles/default.yaml"), "").unwrap();
+
+        for active in [&root, &work] {
+            let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(active));
+            assert!(!denied(&backup.join(".env")));
+            for profile in [&root, &work, &play] {
+                for store in [
+                    ".env",
+                    "auth.json",
+                    "auth/tokens.json",
+                    "mem0.json",
+                    "honcho.json",
+                ] {
+                    let path = profile.join(store);
+                    assert!(
+                        denied(&path),
+                        "{} writable from {}",
+                        path.display(),
+                        active.display()
+                    );
+                }
+                assert!(!denied(&profile.join("notes.txt")));
+            }
+            assert!(!denied(&root.join("profiles/default.yaml")));
+
+            let protected = ProtectedPaths::with_roots(Some(&home), Some(active));
+            assert!(protected.removed_by(&root.join("profiles")).is_some());
+            assert!(protected.contains(&play.join(".env")));
+            assert_eq!(protected.removed_by(&play.join("cache")), None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_covers_profiles_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let profiles = root.join("profiles");
+        let work = profiles.join("work");
+        for dir in [&home, &work] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        // Searchable but not readable: `--profile work` still finds the
+        // folder, but it cannot be listed.
+        let set_mode = |mode| {
+            std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set_mode(0o100);
+        let listed = std::fs::read_dir(&profiles).is_ok();
+        let denied = is_write_denied_with_roots(&work.join(".env"), Some(&home), Some(&root));
+        let removed = ProtectedPaths::with_roots(Some(&home), Some(&root)).removed_by(&work);
+        set_mode(0o700);
+
+        // Root can list any folder, so the case cannot arise.
+        if !listed {
+            assert!(denied, "an unlisted profile's .env is writable");
+            assert!(removed.is_some());
+        }
+    }
+
+    #[test]
+    fn write_deny_refuses_an_import_credential_source_but_not_what_is_below_it() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("hermes");
+        // Not a token file: a folder that happens to have the name.
+        std::fs::create_dir_all(home.join(".codex/auth.json")).unwrap();
+
+        assert!(is_write_denied_with_roots(
+            &home.join(".codex/auth.json"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &home.join(".codex/auth.json/notes.txt"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_an_import_credential_source_linked_to_a_missing_file() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let elsewhere = tmp.path().join("elsewhere");
+        std::fs::create_dir_all(home.join(".qwen")).unwrap();
+        std::fs::create_dir_all(&elsewhere).unwrap();
+        std::os::unix::fs::symlink(elsewhere.join("creds"), home.join(".qwen/oauth_creds.json"))
+            .unwrap();
+        let hermes_home = tmp.path().join("hermes");
+
+        assert!(is_write_denied_with_roots(
+            &elsewhere.join("creds"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &elsewhere.join("notes.txt"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_follows_a_linked_import_credential_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let vault = tmp.path().join("vault");
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::create_dir_all(&vault).unwrap();
+        std::os::unix::fs::symlink(&vault, home.join(".codex")).unwrap();
+        let hermes_home = tmp.path().join("hermes");
+
+        assert!(is_write_denied_with_roots(
+            &vault.join("auth.json"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert!(!is_write_denied_with_roots(
+            &vault.join("config.toml"),
+            Some(&home),
+            Some(&hermes_home)
+        ));
     }
 
     #[test]
@@ -1098,6 +1910,240 @@ mod tests {
         assert!(!is_write_denied_with_roots(
             &vault.join("notes.md"),
             None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
+    fn write_deny_refuses_a_hard_link_to_a_file_deep_in_a_protected_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let keys = home.join(".gnupg").join("private-keys-v1.d");
+        std::fs::create_dir_all(&keys).expect("keys dir");
+        let key = keys.join("ABCD.key");
+        std::fs::write(&key, "x").expect("key");
+        let alias = tmp.path().join("notes.txt");
+        std::fs::hard_link(&key, &alias).expect("hard link");
+
+        assert!(is_write_denied_with_roots(&alias, Some(&home), None));
+
+        // 5-level deep subtree (past old depth-4 cap) stays protected too.
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("deep dir");
+        let deep_key = deep.join("id_deep");
+        std::fs::write(&deep_key, "x").expect("deep key");
+        let deep_alias = tmp.path().join("deep-notes.txt");
+        std::fs::hard_link(&deep_key, &deep_alias).expect("deep hard link");
+        assert!(is_write_denied_with_roots(&deep_alias, Some(&home), None));
+    }
+
+    #[test]
+    fn write_deny_allows_unrelated_multiply_linked_file_past_4096_protected_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let many = home.join(".ssh").join("many");
+        let elsewhere = tmp.path().join("work");
+        std::fs::create_dir_all(&many).expect("many");
+        std::fs::create_dir_all(&elsewhere).expect("work");
+        for i in 0..4_100 {
+            std::fs::write(many.join(format!("entry-{i}")), "x").expect("entry");
+        }
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(
+            !is_write_denied_with_roots(&plain, Some(&home), None),
+            "unrelated multiply-linked file denied due to protected entry count"
+        );
+        let protected_alias = elsewhere.join("leak-4099.txt");
+        std::fs::hard_link(many.join("entry-4099"), &protected_alias).expect("protected alias");
+        assert!(is_write_denied_with_roots(
+            &protected_alias,
+            Some(&home),
+            None
+        ));
+    }
+
+    #[test]
+    fn ordinary_single_link_write_skips_protected_subtrees_and_seen_dedups_auth_subfolders() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let auth_sub = hermes_home.join("auth").join("nested");
+        let ssh_sub = home.join(".ssh").join("cache");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&auth_sub).expect("auth_sub");
+        std::fs::create_dir_all(&ssh_sub).expect("ssh_sub");
+        std::fs::create_dir_all(&work).expect("work");
+        let token = auth_sub.join("token.json");
+        std::fs::write(&token, "{}").expect("token");
+        std::fs::write(ssh_sub.join("id_ed25519"), "k").expect("key");
+        let plain = work.join("note.txt");
+        std::fs::write(&plain, "ok").expect("plain");
+
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 0);
+
+        let token_alias = work.join("token_alias.json");
+        std::fs::hard_link(&token, &token_alias).expect("hard link");
+        let unrelated_link = work.join("other_a.txt");
+        std::fs::write(&unrelated_link, "x").expect("unrelated");
+        std::fs::hard_link(&unrelated_link, work.join("other_b.txt")).expect("other link");
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &unrelated_link,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        // 4 unique dirs: auth, auth/nested, .ssh, .ssh/cache -> auth/nested visited once.
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 4);
+        assert!(is_write_denied_with_roots(
+            &token_alias,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+
+        #[cfg(unix)]
+        {
+            let vault = tmp.path().join("vault");
+            std::fs::create_dir_all(vault.join("kube/sub")).expect("vault kube");
+            let linked_cfg = vault.join("kube/sub/config");
+            std::fs::write(&linked_cfg, "k").expect("cfg");
+            std::os::unix::fs::symlink(vault.join("kube"), home.join(".kube")).expect("kube link");
+            assert!(is_write_denied_with_roots(&linked_cfg, Some(&home), None));
+        }
+    }
+
+    #[test]
+    fn linux_mountinfo_escapes_are_decoded_and_trigger_bind_mount_subtree_scan() {
+        let parsed = parse_linux_mounts(
+            "10 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n\
+             20 10 8:1 /home/u/.ssh /mnt/tab\\011nl\\012bs\\134sp\\040lit\\134040 rw - ext4 /dev/sda1 rw\n",
+        )
+        .expect("mounts");
+        assert_eq!(parsed[0], PathBuf::from("/mnt/tab\tnl\nbs\\sp lit\\040"));
+        assert_eq!(parsed[1], PathBuf::from("/"));
+
+        #[cfg(target_os = "linux")]
+        {
+            struct ResetMountinfo;
+            impl Drop for ResetMountinfo {
+                fn drop(&mut self) {
+                    TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = None);
+                }
+            }
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let home = tmp.path().join("home");
+            std::fs::create_dir_all(home.join(".ssh")).expect("ssh");
+            std::fs::write(home.join(".ssh/id_ed25519"), "k").expect("key");
+            let mnt = tmp.path().join("mnt\t\n\\ sp");
+            std::fs::create_dir_all(&mnt).expect("mnt");
+            let alias = mnt.join("id_ed25519");
+            std::fs::write(&alias, "x").expect("alias");
+            let canon_mnt = std::fs::canonicalize(&mnt).expect("canon mnt");
+            let escaped = canon_mnt
+                .to_string_lossy()
+                .replace('\\', r"\134")
+                .replace(' ', r"\040")
+                .replace('\t', r"\011")
+                .replace('\n', r"\012");
+            let table = format!(
+                "10 1 8:1 / / rw - ext4 /dev/sda1 rw\n20 10 8:1 /x {escaped} rw - ext4 /dev/sda1 rw\n"
+            );
+            let _reset = ResetMountinfo;
+            TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = Some(table));
+            SUBTREE_DIRS_READ.with(|r| r.set(0));
+            assert!(!is_write_denied_with_roots(&alias, Some(&home), None));
+            assert!(
+                SUBTREE_DIRS_READ.with(std::cell::Cell::get) > 0,
+                "escaped bind mountpoint skipped protected subtree scan"
+            );
+        }
+    }
+
+    /// The loopback share names a local file under a path the path rules do
+    /// not know; it is the same file, with one link. Skipped where the
+    /// administrative share cannot be reached.
+    #[cfg(windows)]
+    #[test]
+    fn write_deny_refuses_a_protected_file_through_the_loopback_share() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("ssh deep");
+        std::fs::create_dir_all(&hermes_home).expect("profile");
+        std::fs::write(hermes_home.join(".env"), "x").expect("env");
+        std::fs::write(home.join(".ssh").join("authorized_keys"), "x").expect("keys");
+        std::fs::write(deep.join("id_ed25519"), "x").expect("deep key");
+        for local in [
+            hermes_home.join(".env"),
+            home.join(".ssh").join("authorized_keys"),
+            deep.join("id_ed25519"),
+        ] {
+            let local = local.to_string_lossy().to_string();
+            let Some((drive, rest)) = local.split_once(":\\") else {
+                return;
+            };
+            let share = PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"));
+            if hermes_config::file_identity(&share).is_none() {
+                eprintln!("skipped: the loopback share is not reachable");
+                return;
+            }
+            assert!(
+                is_write_denied_with_roots(&share, Some(&home), Some(&hermes_home)),
+                "{}",
+                share.display()
+            );
+        }
+    }
+
+    #[test]
+    fn write_deny_refuses_a_hard_link_to_a_protected_file_under_another_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = home.join(".hermes");
+        let elsewhere = tmp.path().join("work");
+        for dir in [
+            hermes_home.join("auth"),
+            home.join(".ssh"),
+            home.join(".claude"),
+            elsewhere.clone(),
+        ] {
+            std::fs::create_dir_all(dir).expect("dir");
+        }
+        for (index, protected) in [
+            hermes_home.join(".env"),
+            hermes_home.join("auth").join("tokens.json"),
+            home.join(".ssh").join("id_ed25519"),
+            home.join(".bashrc"),
+            home.join(".claude").join(".credentials.json"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            std::fs::write(protected, "x").expect("protected file");
+            let alias = elsewhere.join(format!("notes-{index}.txt"));
+            std::fs::hard_link(protected, &alias).expect("hard link");
+            assert!(
+                is_write_denied_with_roots(&alias, Some(&home), Some(&hermes_home)),
+                "a hard link to {} was writable",
+                protected.display()
+            );
+        }
+
+        // A multiply-linked file that is no protected file stays writable.
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
             Some(&hermes_home)
         ));
     }
@@ -1447,6 +2493,12 @@ mod tests {
             || {
                 assert!(is_write_denied(&store));
                 assert!(is_link_target_write_denied(&store));
+                // The safe root confines the file tools only.
+                let outside = tmp
+                    .path()
+                    .with_file_name("hermes-outside-the-safe-root.txt");
+                assert!(is_write_denied(&outside));
+                assert!(!is_link_target_write_denied(&outside));
                 assert!(is_write_denied(&home.join("auth.json")));
                 assert!(!is_write_denied(
                     &tmp.path().join("provider-state-notes.json")

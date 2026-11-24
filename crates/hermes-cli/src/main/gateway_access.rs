@@ -1161,7 +1161,11 @@ where
             allowed_users.extend(extra_string_set(platform_cfg, key));
         }
         allowed_users.extend(global_allowed_users.iter().cloned());
-        if global_allow_all || gateway_platform_config_allows_all_users(platform_cfg) {
+        // Home Assistant events come from the token-authenticated WebSocket, not a person.
+        if global_allow_all
+            || platform == "homeassistant"
+            || gateway_platform_config_allows_all_users(platform_cfg)
+        {
             allowed_users.insert("*".to_string());
         }
         if let Some(env) = platform_gateway_auth_env(&platform) {

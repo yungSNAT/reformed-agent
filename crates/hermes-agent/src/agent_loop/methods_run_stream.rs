@@ -12,7 +12,17 @@ impl AgentLoop {
     ) -> Result<AgentResult, AgentError> {
         match on_chunk {
             Some(on_chunk) => {
-                Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk)).await
+                let _cache_use =
+                    tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
+                self.cancel_cache_keep_alive();
+                let result =
+                    Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk))
+                        .await;
+                self.note_sub_agent_results_delivered(&result);
+                if result.is_ok() {
+                    self.arm_cache_keep_alive();
+                }
+                result
             }
             None => self.run(messages, tools).await,
         }
@@ -176,6 +186,8 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
+        // Before the turn's user message is recorded, as the pair goes ahead of it.
+        self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas, prefill_end);
         let mut steers = TurnSteers::new(ctx.get_messages());
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
@@ -213,6 +225,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
 
+        self.prune_tool_results_on_cold_cache(&mut ctx, &tool_schemas);
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);
         }

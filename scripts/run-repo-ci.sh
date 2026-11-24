@@ -94,7 +94,12 @@ run cargo fmt --all --check
 run bash scripts/clippy-warning-gate.sh --check
 run cargo test -p hermes-source-parity-tests --test rust_module_size_policy -- --nocapture
 run bash scripts/check-runtime-placeholders.sh
-run cargo test --workspace
+if cargo nextest --version >/dev/null 2>&1; then
+  run cargo nextest run --locked --workspace --no-fail-fast
+  run cargo test --workspace --locked --doc
+else
+  run cargo test --workspace
+fi
 run cargo run --locked -q -p hermes-parity-tools -- check-fork-carry
 run cargo test -p hermes-parity-tests
 run cargo test -p hermes-source-parity-tests --test cli_command_contract

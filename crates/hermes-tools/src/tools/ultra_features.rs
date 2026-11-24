@@ -17,7 +17,7 @@ use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use crate::credential_guard::CredentialGuard;
+use crate::credential_guard::{CredentialGuard, ProtectedPaths};
 use crate::tools::file::{content_looks_like_internal_read_status, file_edit_lock};
 
 const MAX_RESOURCE_CHARS: usize = 200_000;
@@ -721,7 +721,7 @@ fn uri_to_local_path(uri: &str, state: &UltraFeatureState) -> Option<PathBuf> {
     }
     if let Some(spec) = uri.strip_prefix("agent://") {
         let (id, rel) = split_once_or_all(spec, '/');
-        return Some(clean_join(&state.agents_dir().join(safe_id(id)), rel));
+        return subagent_file(state, id, rel).ok();
     }
     (!uri.contains("://")).then(|| clean_path(PathBuf::from(uri)))
 }
@@ -887,8 +887,7 @@ fn read_memory_resource(query: &str) -> Result<String, ToolError> {
 
 fn read_agent_resource(spec: &str, state: &UltraFeatureState) -> Result<String, ToolError> {
     let (id, rel) = split_once_or_all(spec, '/');
-    fs::read_to_string(clean_join(&state.agents_dir().join(safe_id(id)), rel))
-        .map_err(io_err("read agent resource"))
+    fs::read_to_string(subagent_file(state, id, rel)?).map_err(io_err("read agent resource"))
 }
 
 fn read_conflict_resource(spec: &str) -> Result<String, ToolError> {
@@ -1922,7 +1921,7 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                 .get("path")
                 .and_then(Value::as_str)
                 .unwrap_or("manifest.json");
-            tokio::fs::read_to_string(clean_join(&state.agents_dir().join(id), rel))
+            tokio::fs::read_to_string(subagent_file(state, &id, rel)?)
                 .await
                 .map_err(io_err("read subagent artifact"))
         }
@@ -1930,12 +1929,14 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
             let id = safe_id(required_str(&params, "id")?);
             let rel = required_str(&params, "path")?;
             let content = params.get("content").and_then(Value::as_str).unwrap_or("");
-            let base = state.agents_dir().join(&id);
-            let path = clean_join(&base, rel);
-            if !path.starts_with(&base) {
-                return Err(ToolError::InvalidParams(
-                    "subagent path escaped workspace".into(),
-                ));
+            let path = subagent_file(state, &id, rel)?;
+            // The write rule without the file tools' safe root: the
+            // workspace lies outside any project the safe root names.
+            if crate::credential_guard::is_link_target_write_denied(&path) {
+                return Err(ToolError::ExecutionFailed(format!(
+                    "Access denied: '{}' is a protected credential file",
+                    path.display()
+                )));
             }
             if let Some(parent) = path.parent() {
                 tokio::fs::create_dir_all(parent)
@@ -1949,12 +1950,15 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
         }
         "remove" => {
             let id = safe_id(required_str(&params, "id")?);
-            let manifest =
-                read_subagent_manifest_path(&state.agents_dir().join(&id).join("manifest.json"))?;
+            // The workspace is always `agents/<id>`; the manifest's own path is
+            // not trusted, as the write action can rewrite it.
+            let workspace = state.agents_dir().join(&id);
+            let manifest = read_subagent_manifest_path(&workspace.join("manifest.json"))?;
+            refuse_guarded_delete(&workspace)?;
             if manifest.git_worktree {
                 let status = tokio::process::Command::new("git")
                     .args(["worktree", "remove", "--force"])
-                    .arg(&manifest.path)
+                    .arg(&workspace)
                     .status()
                     .await
                     .map_err(|e| {
@@ -1965,8 +1969,8 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
                         "git worktree remove exited with {status}"
                     )));
                 }
-            } else if manifest.path.exists() {
-                tokio::fs::remove_dir_all(&manifest.path)
+            } else if workspace.exists() {
+                tokio::fs::remove_dir_all(&workspace)
                     .await
                     .map_err(io_err("remove subagent workspace"))?;
             }
@@ -1975,6 +1979,47 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
         other => Err(ToolError::InvalidParams(format!(
             "unknown subagent action: {other}"
         ))),
+    }
+}
+
+/// A file or folder these tools delete may hold a file a credential store
+/// links to; refuse rather than delete the store's target.
+pub(crate) fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
+    match ProtectedPaths::current().removed_by(path) {
+        Some(found) => Err(ToolError::ExecutionFailed(format!(
+            "not deleting {}: it holds {}, a credential file or a file a credential store links to",
+            path.display(),
+            found.display()
+        ))),
+        None => Ok(()),
+    }
+}
+
+/// `rel` inside subagent `id`'s workspace, refused when it leaves the
+/// workspace by `..` or by a link, so a link checked out into a worktree
+/// cannot reach a file outside it.
+fn subagent_file(state: &UltraFeatureState, id: &str, rel: &str) -> Result<PathBuf, ToolError> {
+    let base = state.agents_dir().join(safe_id(id));
+    let path = clean_join(&base, rel);
+    let escaped = || ToolError::InvalidParams("subagent path escaped workspace".into());
+    if !path.starts_with(&base) {
+        return Err(escaped());
+    }
+    // The nearest part of the path that exists, resolved through its links,
+    // must still be in the resolved workspace; what is missing is created as
+    // plain folders.
+    let real_base = fs::canonicalize(&base).unwrap_or_else(|_| base.clone());
+    let existing = path
+        .ancestors()
+        .find(|ancestor| ancestor.symlink_metadata().is_ok())
+        .unwrap_or(&base);
+    if existing != base && base.starts_with(existing) {
+        // The workspace itself does not exist yet.
+        return Ok(path);
+    }
+    match fs::canonicalize(existing) {
+        Ok(real) if real.starts_with(&real_base) => Ok(path),
+        _ => Err(escaped()),
     }
 }
 
@@ -2014,6 +2059,7 @@ async fn eval_kernel(params: Value, state: &UltraFeatureState) -> Result<String,
         .join(format!("{}.json", safe_id(session)));
     match action {
         "reset" => {
+            refuse_guarded_delete(&path)?;
             let _ = tokio::fs::remove_file(path).await;
             Ok(json!({"reset":true,"session":session}).to_string())
         }
@@ -2384,6 +2430,7 @@ fn scan_agent_configs(root: &Path, max_chars: usize) -> Vec<InheritFinding> {
 
 async fn ultra_feature_benchmark(state: &UltraFeatureState) -> Result<String, ToolError> {
     let bench_dir = state.root.join("benchmark-smoke");
+    refuse_guarded_delete(&bench_dir)?;
     let _ = tokio::fs::remove_dir_all(&bench_dir).await;
     tokio::fs::create_dir_all(&bench_dir)
         .await
@@ -3046,6 +3093,260 @@ mod tests {
             read_agent_resource("worker-one/result.md", &state).unwrap(),
             "ok"
         );
+    }
+
+    #[tokio::test]
+    async fn subagent_remove_deletes_only_its_own_workspace() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        let victim = tmp.path().join("victim");
+        fs::create_dir_all(&victim).unwrap();
+        fs::write(victim.join("keep.txt"), "x").unwrap();
+        subagent_workspace(json!({"action":"create","id":"one"}), &state)
+            .await
+            .unwrap();
+        // The write action reaches the manifest, so its path is not to be trusted.
+        let planted = json!({"id":"one","goal":"","path":victim,"branch":null,
+            "git_worktree":false,"created_at":"","status":"active"});
+        subagent_workspace(
+            json!({"action":"write","id":"one","path":"manifest.json","content":planted.to_string()}),
+            &state,
+        )
+        .await
+        .unwrap();
+
+        subagent_workspace(json!({"action":"remove","id":"one"}), &state)
+            .await
+            .unwrap();
+
+        assert!(
+            victim.join("keep.txt").exists(),
+            "remove followed the manifest"
+        );
+        assert!(!state.agents_dir().join("one").exists());
+    }
+
+    /// Runs `delete` with a Hermes home whose `honcho.json` links to
+    /// `target(state)`, a regular file the delete would reach, and returns
+    /// its result with whether the target survived unchanged.
+    #[cfg(unix)]
+    fn delete_near_a_linked_store<F, Fut>(
+        target: impl Fn(&UltraFeatureState) -> PathBuf,
+        delete: F,
+    ) -> (Result<String, ToolError>, bool)
+    where
+        F: FnOnce(UltraFeatureState) -> Fut,
+        Fut: std::future::Future<Output = Result<String, ToolError>>,
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let profile = tmp.path().join("profile");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&profile).unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("HERMES_HOME", Some(&profile)),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                let runtime = tokio::runtime::Runtime::new().unwrap();
+                let target = target(&state);
+                if let Some(parent) = target.parent() {
+                    fs::create_dir_all(parent).unwrap();
+                }
+                runtime.block_on(async {
+                    fs::write(&target, "KEY=1").unwrap();
+                    std::os::unix::fs::symlink(&target, profile.join("honcho.json")).unwrap();
+                    let result = delete(state).await;
+                    let kept = fs::read_to_string(&target).ok().as_deref() == Some("KEY=1");
+                    (result, kept)
+                })
+            },
+        )
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subagent_remove_refuses_a_workspace_holding_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.agents_dir().join("one/honcho-real.json"),
+            |state| async move {
+                subagent_workspace(json!({"action":"create","id":"one"}), &state).await?;
+                subagent_workspace(json!({"action":"remove","id":"one"}), &state).await
+            },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn kernel_reset_refuses_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.kernels_dir().join("default.json"),
+            |state| async move { eval_kernel(json!({"action":"reset"}), &state).await },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
+    }
+
+    /// Runs `check` with a Hermes home at `<tmp>/profile`, a home at
+    /// `<tmp>/home` and a fresh state, on a runtime of its own.
+    #[cfg(unix)]
+    fn with_hermes_home<F, Fut>(check: F)
+    where
+        F: FnOnce(UltraFeatureState, PathBuf) -> Fut,
+        Fut: std::future::Future<Output = ()>,
+    {
+        let tmp = tempfile::tempdir().unwrap();
+        let home = tmp.path().join("home");
+        let profile = tmp.path().join("profile");
+        fs::create_dir_all(&home).unwrap();
+        fs::create_dir_all(&profile).unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        with_env(
+            &[
+                ("HOME", Some(&home)),
+                ("HERMES_HOME", Some(&profile)),
+                ("HERMES_AGENT_ULTRA_HOME", None),
+                ("HERMES_WRITE_SAFE_ROOT", None),
+            ],
+            || {
+                tokio::runtime::Runtime::new()
+                    .unwrap()
+                    .block_on(check(state, profile.clone()))
+            },
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subagent_files_are_not_written_or_read_through_a_link_out_of_the_workspace() {
+        with_hermes_home(|state, profile| async move {
+            subagent_workspace(json!({"action":"create","id":"x"}), &state)
+                .await
+                .unwrap();
+            fs::write(profile.join(".env"), "KEY=1").unwrap();
+            // As a committed `hh -> ../../..` lands in a worktree workspace.
+            std::os::unix::fs::symlink(&profile, state.agents_dir().join("x/hh")).unwrap();
+
+            let write = subagent_workspace(
+                json!({"action":"write","id":"x","path":"hh/mem0.json","content":"{}"}),
+                &state,
+            )
+            .await;
+            assert!(write.is_err(), "{write:?}");
+            assert!(!profile.join("mem0.json").exists());
+            let read =
+                subagent_workspace(json!({"action":"read","id":"x","path":"hh/.env"}), &state)
+                    .await;
+            assert!(read.is_err(), "{read:?}");
+            assert!(read_agent_resource("x/hh/.env", &state).is_err());
+            let search =
+                search_resource(json!({"uri":"agent://x/hh","pattern":"KEY"}), &state).await;
+            assert!(
+                !search.as_ref().is_ok_and(|found| found.contains("KEY=1")),
+                "{search:?}"
+            );
+
+            // A plain file in the workspace is still written and read.
+            subagent_workspace(
+                json!({"action":"write","id":"x","path":"notes/a.txt","content":"hello"}),
+                &state,
+            )
+            .await
+            .unwrap();
+            let read = subagent_workspace(
+                json!({"action":"read","id":"x","path":"notes/a.txt"}),
+                &state,
+            )
+            .await
+            .unwrap();
+            assert_eq!(read, "hello");
+            assert_eq!(
+                read_agent_resource("x/notes/a.txt", &state).unwrap(),
+                "hello"
+            );
+        });
+    }
+
+    // The safe root half of this rule is `is_link_target_write_denied`'s own
+    // test: setting HERMES_WRITE_SAFE_ROOT here would race unlocked tests.
+    #[tokio::test]
+    async fn subagent_write_keeps_token_like_code() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = UltraFeatureState::new(tmp.path().join("state"));
+        let code = "token = os.environ[\"SERVICE_TOKEN_NAME\"]\n";
+        subagent_workspace(json!({"action":"create","id":"x"}), &state)
+            .await
+            .unwrap();
+        let written = subagent_workspace(
+            json!({"action":"write","id":"x","path":"src/app.py","content":code}),
+            &state,
+        )
+        .await;
+        assert!(written.is_ok(), "{written:?}");
+        assert_eq!(
+            fs::read_to_string(state.agents_dir().join("x/src/app.py")).unwrap(),
+            code
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subagent_remove_keeps_a_store_the_workspace_only_links_to() {
+        with_hermes_home(|state, profile| async move {
+            subagent_workspace(json!({"action":"create","id":"x"}), &state)
+                .await
+                .unwrap();
+            fs::write(profile.join(".env"), "KEY=1").unwrap();
+            std::os::unix::fs::symlink(profile.join(".env"), state.agents_dir().join("x/env"))
+                .unwrap();
+
+            let removed = subagent_workspace(json!({"action":"remove","id":"x"}), &state).await;
+
+            assert!(removed.is_ok(), "{removed:?}");
+            assert!(!state.agents_dir().join("x").exists());
+            assert_eq!(fs::read_to_string(profile.join(".env")).unwrap(), "KEY=1");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn subagent_remove_judges_a_large_workspace_without_judging_each_file() {
+        with_hermes_home(|state, _profile| async move {
+            subagent_workspace(json!({"action":"create","id":"x"}), &state)
+                .await
+                .unwrap();
+            let build = state.agents_dir().join("x/target");
+            fs::create_dir_all(&build).unwrap();
+            for index in 0..2000 {
+                fs::write(build.join(format!("{index}.o")), "x").unwrap();
+            }
+
+            let before = crate::credential_guard::guard_calls();
+            subagent_workspace(json!({"action":"remove","id":"x"}), &state)
+                .await
+                .unwrap();
+            let calls = crate::credential_guard::guard_calls() - before;
+
+            assert!(!state.agents_dir().join("x").exists());
+            assert!(calls < 20, "{calls} path judgements for 2000 files");
+        });
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn benchmark_refuses_a_smoke_folder_holding_a_linked_store() {
+        let (result, kept) = delete_near_a_linked_store(
+            |state| state.root.join("benchmark-smoke/kept.json"),
+            |state| async move { ultra_feature_benchmark(&state).await },
+        );
+        assert!(result.is_err(), "{result:?}");
+        assert!(kept, "the store's target was deleted");
     }
 
     #[test]

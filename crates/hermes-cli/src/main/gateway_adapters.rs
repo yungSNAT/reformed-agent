@@ -102,6 +102,7 @@ async fn run_webhook_inbound_loop(gateway: Arc<Gateway>, mut rx: mpsc::Receiver<
 
 #[cfg(any(
     feature = "gateway-dingtalk",
+    feature = "gateway-homeassistant",
     feature = "gateway-ntfy",
     feature = "gateway-weixin"
 ))]
@@ -667,26 +668,22 @@ async fn register_gateway_adapters(
     #[cfg(feature = "gateway-homeassistant")]
     if let Some(platform_cfg) = config.platforms.get("homeassistant") {
         if platform_cfg.enabled {
-            let base_url = extra_string(platform_cfg, "base_url").unwrap_or_default();
-            let long_lived_token = platform_token_or_extra(platform_cfg)
-                .or_else(|| extra_string(platform_cfg, "long_lived_token"))
-                .unwrap_or_default();
-            if base_url.is_empty() || long_lived_token.is_empty() {
+            let ha_cfg = HomeAssistantConfig::from_platform_config(platform_cfg);
+            if ha_cfg.long_lived_token.is_empty() {
                 println!(
-                    "HomeAssistant is enabled but base_url/token is missing; skipping homeassistant adapter."
+                    "HomeAssistant is enabled but the token (HASS_TOKEN) is missing; skipping homeassistant adapter."
                 );
             } else {
-                let ha_cfg = HomeAssistantConfig {
-                    base_url,
-                    long_lived_token,
-                    webhook_id: extra_string(platform_cfg, "webhook_id"),
-                    proxy: Default::default(),
-                };
                 match HomeAssistantAdapter::new(ha_cfg) {
                     Ok(adapter) => {
-                        gateway
-                            .register_adapter("homeassistant", Arc::new(adapter))
-                            .await
+                        let adapter = Arc::new(adapter);
+                        let (tx, rx) = mpsc::channel::<GatewayIncomingMessage>(512);
+                        adapter.set_inbound_sender(tx).await;
+                        gateway.register_adapter("homeassistant", adapter).await;
+                        let gw_clone = gateway.clone();
+                        sidecar_tasks.push(tokio::spawn(async move {
+                            run_gateway_incoming_loop(gw_clone, rx, "homeassistant").await;
+                        }));
                     }
                     Err(e) => println!("HomeAssistant enabled but failed to initialize: {}", e),
                 }

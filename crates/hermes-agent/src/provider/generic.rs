@@ -338,7 +338,7 @@ impl GenericProvider {
     }
 
     fn is_local_request_control_key(key: &str) -> bool {
-        matches!(key, "strict_tool_calls" | "strict_api" | "provider_strict")
+        crate::provider::is_local_control_key(key)
             || provider_profiles::local_control_key_for_profile(None, key)
     }
 
@@ -372,8 +372,15 @@ impl GenericProvider {
         let model_supports_vision =
             Self::supports_multimodal_tool_results(profile, effective_model, extra_body);
         let mut out = Vec::with_capacity(messages.len());
+        let keep_empty_reasoning =
+            provider_profiles::echoes_empty_reasoning(profile, effective_model);
         for msg in messages {
             let mut api_msg = serde_json::to_value(msg).unwrap_or_else(|_| serde_json::json!({}));
+            if !keep_empty_reasoning && msg.reasoning_content.as_deref() == Some("") {
+                if let Some(obj) = api_msg.as_object_mut() {
+                    obj.remove("reasoning_content");
+                }
+            }
             if let Some(parts) = api_msg
                 .get("content")
                 .and_then(|v| v.as_str())

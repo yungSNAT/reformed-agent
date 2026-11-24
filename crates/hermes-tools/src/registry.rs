@@ -76,6 +76,11 @@ pub struct ToolRegistryInner {
     pub rtk_raw_mode: bool,
     /// One-shot raw pass-through for the next tool call only.
     pub rtk_raw_once: bool,
+    /// The handler whose dispatch passes its result through untouched (the
+    /// MCP gateway's); see [`ToolRegistry::set_passthrough_handler`]. Weak,
+    /// so a dropped gateway's allocation stays reserved and cannot match a
+    /// later handler.
+    passthrough_handler: Option<Weak<dyn ToolHandler>>,
 }
 
 /// Thread-safe wrapper around `ToolRegistryInner`.
@@ -137,6 +142,7 @@ impl ToolRegistry {
                 rtk_filter: RtkFilterEngine::from_env(),
                 rtk_raw_mode: false,
                 rtk_raw_once: false,
+                passthrough_handler: None,
             })),
             disk_cleanup_auto: DiskCleanupAutoTracker::default(),
         }
@@ -154,6 +160,7 @@ impl ToolRegistry {
                 rtk_filter: RtkFilterEngine::from_env(),
                 rtk_raw_mode: false,
                 rtk_raw_once: false,
+                passthrough_handler: None,
             })),
             disk_cleanup_auto: DiskCleanupAutoTracker::default(),
         }
@@ -252,6 +259,12 @@ impl ToolRegistry {
         );
     }
 
+    /// Let `handler`'s dispatch pass its result through: no raw-mode use,
+    /// rewriting or filtering. Only the MCP gateway uses this.
+    pub(crate) fn set_passthrough_handler(&self, handler: &Arc<dyn ToolHandler>) {
+        self.inner.lock().unwrap().passthrough_handler = Some(Arc::downgrade(handler));
+    }
+
     /// Deregister a tool by name.
     ///
     /// Returns `true` if the tool was present and removed.
@@ -310,8 +323,9 @@ impl ToolRegistry {
         ) = {
             let mut inner = self.inner.lock().unwrap();
             let decision = evaluate_dispatch_policy(&inner.policy, name, &params);
-            let raw_bypassed = inner.rtk_raw_mode || inner.rtk_raw_once;
-            if inner.rtk_raw_once {
+            let passthrough = passes_through(&inner, name);
+            let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
+            if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
             }
             let (effective_params, rewrite_applied) =
@@ -388,8 +402,9 @@ impl ToolRegistry {
             rtk_filter,
         ) = {
             let mut inner = self.inner.lock().unwrap();
-            let raw_bypassed = inner.rtk_raw_mode || inner.rtk_raw_once;
-            if inner.rtk_raw_once {
+            let passthrough = passes_through(&inner, name);
+            let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
+            if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
             }
             let (effective_params, rewrite_applied) =
@@ -599,6 +614,21 @@ impl ToolRegistry {
         let _ =
             persist_tool_policy_counters(&default_tool_policy_counters_path(), &counters_snapshot);
     }
+}
+
+/// Whether `name` is the MCP gateway the crate registered. Its inner
+/// dispatch applies raw mode and output filtering for the tool it calls;
+/// applying them to the gateway's own call as well would spend a one-shot
+/// raw request before the inner tool could use it. Matched by handler, so
+/// another tool registered under the same name gets no pass-through.
+fn passes_through(inner: &ToolRegistryInner, name: &str) -> bool {
+    let marked = inner.passthrough_handler.as_ref().and_then(Weak::upgrade);
+    marked.is_some_and(|marked| {
+        inner
+            .tools
+            .get(name)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.handler, &marked))
+    })
 }
 
 fn evaluate_dispatch_policy(
@@ -1303,5 +1333,56 @@ mod tests {
             "registry tool_result fast-path regressed: {} ns/op",
             ns_per_op
         );
+    }
+
+    /// The pass-through marker holds its handler weakly. Once that handler is
+    /// deregistered and dropped the marker cannot upgrade, so no handler
+    /// registered later passes through, whatever address it is given: the
+    /// weak handle keeps the old allocation from being reused while it lives.
+    #[test]
+    fn a_dropped_pass_through_handler_marks_no_later_handler() {
+        let registry = ToolRegistry::new();
+        let register = |handler: Arc<dyn ToolHandler>| {
+            registry.register(
+                "mcp",
+                "mcp",
+                tool_schema("mcp", "gateway", JsonSchema::new("object")),
+                handler,
+                Arc::new(|| true),
+                vec![],
+                true,
+                "gateway",
+                "x",
+                None,
+            );
+        };
+        let gateway: Arc<dyn ToolHandler> = Arc::new(EchoHandler);
+        register(gateway.clone());
+        registry.set_passthrough_handler(&gateway);
+        assert!(passes_through(&registry.inner.lock().unwrap(), "mcp"));
+
+        assert!(registry.deregister("mcp"));
+        let marker = registry
+            .inner
+            .lock()
+            .unwrap()
+            .passthrough_handler
+            .clone()
+            .expect("marker kept");
+        let stale = marker.as_ptr().cast::<()>();
+        drop(gateway);
+        assert!(
+            marker.upgrade().is_none(),
+            "the stale marker cannot upgrade"
+        );
+
+        let later: Arc<dyn ToolHandler> = Arc::new(EchoHandler);
+        assert_ne!(
+            Arc::as_ptr(&later).cast::<()>(),
+            stale,
+            "allocation still held"
+        );
+        register(later);
+        assert!(!passes_through(&registry.inner.lock().unwrap(), "mcp"));
     }
 }

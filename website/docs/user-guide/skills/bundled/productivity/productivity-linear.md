@@ -4,7 +4,7 @@ sidebar_label: "Linear"
 description: "Linear: manage issues, projects, teams via GraphQL + curl"
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # Linear
 

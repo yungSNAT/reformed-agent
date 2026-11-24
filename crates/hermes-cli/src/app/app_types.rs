@@ -301,6 +301,9 @@ pub struct App {
     /// Animated companion pet settings.
     pub pet_settings: PetSettings,
 
+    /// Last tool-snapshot rebuild failure; turns fail closed until a rebuild succeeds.
+    tool_snapshot_sync_error: Option<String>,
+
     /// Test-only hook for proving model-switch rollback on rebuild failure.
     #[cfg(test)]
     fail_model_rebuild_for: Option<String>,
@@ -312,6 +315,7 @@ pub struct AgentToolSnapshotRefresh {
     pub after_count: usize,
     pub added: Vec<String>,
     pub removed: Vec<String>,
+    pub rebuild_error: Option<String>,
 }
 
 impl AgentToolSnapshotRefresh {
@@ -377,6 +381,7 @@ impl Clone for App {
             pending_system_notes: self.pending_system_notes.clone(),
             quorum_armed_once: self.quorum_armed_once,
             pet_settings: self.pet_settings.clone(),
+            tool_snapshot_sync_error: self.tool_snapshot_sync_error.clone(),
             #[cfg(test)]
             fail_model_rebuild_for: self.fail_model_rebuild_for.clone(),
         }

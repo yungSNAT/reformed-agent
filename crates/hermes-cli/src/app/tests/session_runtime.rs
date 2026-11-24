@@ -116,6 +116,19 @@
     }
 
     #[test]
+    fn test_resume_session_id_rebuilds_the_agent_for_that_session() {
+        let _guard = env_test_lock();
+        let mut app = build_minimal_test_app();
+        app.resume_session_id("resumed-session".to_string());
+        assert_eq!(app.session_id, "resumed-session");
+        assert_eq!(
+            app.agent.config.session_id.as_deref(),
+            Some("resumed-session"),
+            "the agent and its sub-agent orchestrator follow the resumed session"
+        );
+    }
+
+    #[test]
     fn test_apply_agent_result_and_persist_writes_updated_messages() {
         let _guard = env_test_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
@@ -766,13 +779,383 @@
     fn runtime_cron_scheduler_bridge_excludes_recursive_cronjob_tool() {
         let tools = ToolRegistry::new();
         register_test_tool(&tools, "cronjob");
+        register_test_tool(&tools, "send_message");
+        register_test_tool(&tools, "clarify");
         register_test_tool(&tools, "terminal");
 
-        let agent_registry = bridge_tool_registry_for_cron(&tools, hermes_tools::ToolOverrides::new());
+        let agent_registry = bridge_tool_registry_for_cron(
+            &GatewayConfig::default(),
+            &tools,
+            hermes_tools::ToolOverrides::new(),
+        );
         let names = agent_registry.names();
 
         assert!(!names.contains(&"cronjob".to_string()));
+        assert!(!names.contains(&"send_message".to_string()));
+        assert!(!names.contains(&"clarify".to_string()));
         assert!(names.contains(&"terminal".to_string()));
+    }
+
+    struct CronReviewMockResponder {
+        main_calls: std::sync::atomic::AtomicUsize,
+        review_offered: Arc<std::sync::Mutex<Vec<Vec<String>>>>,
+        review_done: Arc<tokio::sync::Notify>,
+        probe_tool: &'static str,
+        excluded_calls: Vec<&'static str>,
+    }
+
+    impl wiremock::Respond for CronReviewMockResponder {
+        fn respond(&self, req: &wiremock::Request) -> wiremock::ResponseTemplate {
+            let body: serde_json::Value =
+                serde_json::from_slice(&req.body).unwrap_or_else(|_| serde_json::json!({}));
+            let messages = body["messages"].as_array().cloned().unwrap_or_default();
+            let mut offered: Vec<String> = body["tools"]
+                .as_array()
+                .map(|tools| {
+                    tools
+                        .iter()
+                        .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+                        .collect()
+                })
+                .unwrap_or_default();
+            offered.sort();
+            let is_review = messages.iter().any(|m| {
+                m["role"].as_str() == Some("user")
+                    && m["content"]
+                        .as_str()
+                        .is_some_and(|c| c.contains("saving or updating a skill"))
+            });
+            let last_is_tool = messages
+                .last()
+                .is_some_and(|m| m["role"].as_str() == Some("tool"));
+
+            let message = if is_review {
+                self.review_offered.lock().unwrap().push(offered);
+                if last_is_tool {
+                    self.review_done.notify_one();
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": "review-complete"
+                    })
+                } else {
+                    let tool_calls: Vec<serde_json::Value> = self
+                        .excluded_calls
+                        .iter()
+                        .enumerate()
+                        .map(|(idx, name)| {
+                            serde_json::json!({
+                                "id": format!("rev-{idx}"),
+                                "type": "function",
+                                "function": {"name": name, "arguments": "{}"}
+                            })
+                        })
+                        .collect();
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": serde_json::Value::Null,
+                        "tool_calls": tool_calls
+                    })
+                }
+            } else {
+                let n = self
+                    .main_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                if n < 10 {
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": serde_json::Value::Null,
+                        "tool_calls": [{
+                            "id": format!("main-{n}"),
+                            "type": "function",
+                            "function": {"name": self.probe_tool, "arguments": "{}"}
+                        }]
+                    })
+                } else {
+                    serde_json::json!({
+                        "role": "assistant",
+                        "content": "cron-main-done"
+                    })
+                }
+            };
+            let finish_reason = if message.get("tool_calls").is_some() {
+                "tool_calls"
+            } else {
+                "stop"
+            };
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-cron-review-scope",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-cron-scope",
+                "choices": [{
+                    "index": 0,
+                    "message": message,
+                    "finish_reason": finish_reason
+                }]
+            }))
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runtime_cron_scheduler_background_review_only_reaches_planned_cron_tools() {
+        let _guard = test_env_lock::lock_async().await;
+        let home = tempfile::tempdir().expect("home tempdir");
+        let _env = EnvSnapshot::capture(&["HERMES_HOME", "HERMES_IGNORE_USER_CONFIG"]);
+        std::env::set_var("HERMES_HOME", home.path());
+        std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "platform_toolsets:\n  cron: [probe_allowed, skill_manage, cronjob, send_message, clarify]\ntools_config:\n  disabled: [probe_disabled]\n",
+        )
+        .expect("write config");
+
+        let server = MockServer::start().await;
+        let review_offered = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let review_done = Arc::new(tokio::sync::Notify::new());
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(CronReviewMockResponder {
+                main_calls: std::sync::atomic::AtomicUsize::new(0),
+                review_offered: review_offered.clone(),
+                review_done: review_done.clone(),
+                probe_tool: "probe_allowed",
+                excluded_calls: vec![
+                    "probe_outside",
+                    "probe_disabled",
+                    "cronjob",
+                    "send_message",
+                    "clarify",
+                ],
+            })
+            .mount(&server)
+            .await;
+
+        let mut config = GatewayConfig {
+            model: Some("openai:gpt-cron-scope".to_string()),
+            ..Default::default()
+        };
+        config.platform_toolsets.insert(
+            "cron".to_string(),
+            vec![
+                "probe_allowed".to_string(),
+                "skill_manage".to_string(),
+                "cronjob".to_string(),
+                "send_message".to_string(),
+                "clarify".to_string(),
+            ],
+        );
+        config.tools_config.disabled = vec!["probe_disabled".to_string()];
+        config.llm_providers.insert(
+            "openai".to_string(),
+            LlmProviderConfig {
+                api_key: Some("test-key".to_string()),
+                base_url: Some(server.uri()),
+                model: Some("gpt-cron-scope".to_string()),
+                ..LlmProviderConfig::default()
+            },
+        );
+
+        struct CountingProbe {
+            name: &'static str,
+            calls: Arc<std::sync::Mutex<Vec<String>>>,
+        }
+        #[async_trait::async_trait]
+        impl hermes_core::ToolHandler for CountingProbe {
+            async fn execute(&self, _params: Value) -> Result<String, hermes_core::ToolError> {
+                self.calls.lock().unwrap().push(self.name.to_string());
+                Ok(format!("{} ok", self.name))
+            }
+            fn schema(&self) -> ToolSchema {
+                ToolSchema::new(self.name, "probe", hermes_core::JsonSchema::new("object"))
+            }
+        }
+
+        let tools = ToolRegistry::new();
+        let all_calls = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+        for (name, toolset) in [
+            ("probe_allowed", "probe"),
+            ("skill_manage", "skills"),
+            ("probe_outside", "probe"),
+            ("probe_disabled", "probe"),
+            ("cronjob", "cronjob"),
+            ("send_message", "messaging"),
+            ("clarify", "clarify"),
+        ] {
+            let handler: Arc<dyn hermes_core::ToolHandler> = Arc::new(CountingProbe {
+                name,
+                calls: all_calls.clone(),
+            });
+            tools.register(
+                name,
+                toolset,
+                handler.schema(),
+                handler,
+                Arc::new(|| true),
+                Vec::new(),
+                true,
+                "probe",
+                "x",
+                None,
+            );
+        }
+
+        let scheduler = build_runtime_cron_scheduler(
+            &config,
+            "openai:gpt-cron-scope",
+            home.path().join("cron"),
+            &tools,
+        );
+        let job_id = scheduler
+            .create_job(hermes_cron::CronJob::new("0 * * * *", "trigger review"))
+            .await
+            .expect("create job");
+        scheduler.run_job(&job_id).await.expect("run job");
+        tokio::time::timeout(Duration::from_secs(10), review_done.notified())
+            .await
+            .expect("background review finished");
+
+        let offered = review_offered.lock().unwrap().clone();
+        assert_eq!(
+            offered.first(),
+            Some(&vec![
+                "probe_allowed".to_string(),
+                "skill_manage".to_string()
+            ]),
+            "background review must see only planned cron tools: {offered:?}"
+        );
+        let calls = all_calls.lock().unwrap().clone();
+        assert!(
+            calls.iter().all(|name| name == "probe_allowed"),
+            "excluded tools ran: {calls:?}"
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn runtime_cron_scheduler_gateway_mode_uses_cron_mcp_scope() {
+        let _guard = test_env_lock::lock_async().await;
+        let home = tempfile::tempdir().expect("home tempdir");
+        let _env = EnvSnapshot::capture(&["HERMES_HOME", "HERMES_IGNORE_USER_CONFIG"]);
+        std::env::set_var("HERMES_HOME", home.path());
+        std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            "mcp_tool_mode: gateway\nplatform_toolsets:\n  cli: [github]\n  cron: [docs]\n",
+        )
+        .expect("write config");
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-cron-mcp-call",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-cron-mcp",
+                "choices": [{
+                    "index": 0,
+                    "message": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "id": "call-github",
+                                "type": "function",
+                                "function": {"name": "mcp", "arguments": "{\"action\":\"call\",\"tool\":\"mcp_github_issue\"}"}
+                            },
+                            {
+                                "id": "call-docs",
+                                "type": "function",
+                                "function": {"name": "mcp", "arguments": "{\"action\":\"call\",\"tool\":\"mcp_docs_search\"}"}
+                            }
+                        ]
+                    },
+                    "finish_reason": "tool_calls"
+                }]
+            })))
+            .with_priority(1)
+            .up_to_n_times(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                "id": "chatcmpl-cron-mcp-done",
+                "object": "chat.completion",
+                "created": 0,
+                "model": "gpt-cron-mcp",
+                "choices": [{
+                    "index": 0,
+                    "message": {"role": "assistant", "content": "done"},
+                    "finish_reason": "stop"
+                }]
+            })))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+
+        let mut config = GatewayConfig {
+            model: Some("openai:gpt-cron-mcp".to_string()),
+            mcp_tool_mode: hermes_config::McpToolMode::Gateway,
+            ..Default::default()
+        };
+        config.platform_toolsets.insert("cli".to_string(), vec!["github".to_string()]);
+        config.platform_toolsets.insert("cron".to_string(), vec!["docs".to_string()]);
+        config.llm_providers.insert(
+            "openai".to_string(),
+            LlmProviderConfig {
+                api_key: Some("test-key".to_string()),
+                base_url: Some(server.uri()),
+                model: Some("gpt-cron-mcp".to_string()),
+                ..LlmProviderConfig::default()
+            },
+        );
+
+        let tools = ToolRegistry::new();
+        register_test_tool_in_toolset(&tools, "mcp_github_issue", "mcp-github");
+        register_test_tool_in_toolset(&tools, "mcp_docs_search", "mcp-docs");
+        tools.register_toolset_alias("github", "mcp-github");
+        tools.register_toolset_alias("docs", "mcp-docs");
+        let cli_cfg = config.clone();
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            &tools,
+            &["github".to_string(), "docs".to_string()],
+            Arc::new(move |reg: &ToolRegistry| {
+                hermes_tool_planning::platform_mcp_tool_names(
+                    &cli_cfg,
+                    "cli",
+                    &Arc::new(reg.clone()),
+                )
+            }),
+        );
+
+        let scheduler = build_runtime_cron_scheduler(
+            &config,
+            "openai:gpt-cron-mcp",
+            home.path().join("cron"),
+            &tools,
+        );
+        let job_id = scheduler
+            .create_job(hermes_cron::CronJob::new("0 * * * *", "check mcp scope"))
+            .await
+            .expect("create job");
+        let result = scheduler.run_job(&job_id).await.expect("run job");
+        let github_out = result
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("call-github"))
+            .and_then(|m| m.content.as_deref())
+            .unwrap_or_default();
+        let docs_out = result
+            .messages
+            .iter()
+            .find(|m| m.tool_call_id.as_deref() == Some("call-docs"))
+            .and_then(|m| m.content.as_deref())
+            .unwrap_or_default();
+        assert!(
+            github_out.contains("not an MCP tool this session can call"),
+            "cron must refuse CLI-only MCP server: {github_out}"
+        );
+        assert!(docs_out.contains("mcp_docs_search ok"), "{docs_out}");
     }
 
     #[test]

@@ -102,9 +102,17 @@ impl ProcessTree {
     /// a terminal read has stopped so they receive it.
     pub(super) fn terminate(&self) -> io::Result<()> {
         self.signal(libc::SIGTERM)?;
-        // The group may already have ended on SIGTERM.
+        // SIGCONT only wakes stopped members; SIGTERM, whose failure is
+        // returned above, is the stop. ESRCH: the group ended on SIGTERM.
+        // EPERM (macOS): no member could be woken, which macOS answers whilst
+        // every member is exiting; the exit check in `signal` can miss a
+        // member part-way through exit, so the woken-nobody answer is not an
+        // error.
         match self.signal(libc::SIGCONT) {
             Err(err) if err.raw_os_error() == Some(libc::ESRCH) => Ok(()),
+            Err(err) if cfg!(target_os = "macos") && err.raw_os_error() == Some(libc::EPERM) => {
+                Ok(())
+            }
             result => result,
         }
     }
@@ -112,6 +120,21 @@ impl ProcessTree {
     /// Stops every process in the tree (SIGKILL).
     pub(super) fn kill(&self) -> io::Result<()> {
         self.signal(libc::SIGKILL)
+    }
+
+    /// Whether every member has ended within 2 seconds of a kill. kill(2)
+    /// succeeds when any member takes the signal, so a member that refused
+    /// it (one running as another user) is found only by looking. Where the
+    /// group cannot be listed (Unix other than Linux and macOS) this is true.
+    pub(super) async fn has_ended(&self) -> bool {
+        #[cfg(any(target_os = "linux", target_os = "macos"))]
+        for _ in 0..40 {
+            if group_has_exited(self.pgid) {
+                return true;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        cfg!(not(any(target_os = "linux", target_os = "macos")))
     }
 
     fn signal(&self, signal: libc::c_int) -> io::Result<()> {
@@ -182,6 +205,100 @@ pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
             written == 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH)
         }
     })
+}
+
+/// Whether every process left in group `pgid` is a zombie or dead. False when
+/// `/proc` cannot be listed or a member's state cannot be read, so a live
+/// member is never taken for one that has ended. A process hidden by a
+/// `hidepid` mount of `/proc` is not seen.
+#[cfg(target_os = "linux")]
+pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
+    let Ok(entries) = std::fs::read_dir("/proc") else {
+        return false;
+    };
+    for entry in entries {
+        let Ok(entry) = entry else {
+            return false;
+        };
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .filter(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|name| name.parse::<libc::pid_t>().ok())
+        else {
+            continue;
+        };
+        let stat = match std::fs::read(entry.path().join("stat")) {
+            Ok(stat) => stat,
+            // Reaped since the listing.
+            Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            // `hidepid=1` lists another user's process but hides its stat;
+            // getpgid still answers. Its state is unknown, so a member of
+            // the group counts as live.
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                // SAFETY: getpgid reads no memory of ours.
+                match unsafe { libc::getpgid(pid) } {
+                    -1 if io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) => {
+                        continue
+                    }
+                    group if group == pgid => return false,
+                    -1 => return false,
+                    _ => continue,
+                }
+            }
+            Err(_) => return false,
+        };
+        if proc_stat_live_in_group(&stat, pgid) {
+            return false;
+        }
+    }
+    true
+}
+
+/// Whether a Linux `/proc/<pid>/stat` payload describes a live member of
+/// `pgid`. Reads only the ASCII suffix after the last `)` so raw non-UTF-8
+/// bytes in `comm` never hide group exit; fails closed on malformed fields.
+#[cfg(target_os = "linux")]
+fn proc_stat_live_in_group(stat: &[u8], pgid: libc::pid_t) -> bool {
+    // `pid (comm) state ppid pgrp ...`; `comm` may hold spaces, `)` and raw bytes.
+    let Some(close) = stat.iter().rposition(|&byte| byte == b')') else {
+        return true;
+    };
+    let Ok(suffix) = std::str::from_utf8(&stat[close + 1..]) else {
+        return true;
+    };
+    let mut fields = suffix.split_whitespace();
+    let (Some(state), Some(_ppid), Some(pgrp)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return true;
+    };
+    let Ok(member_pgrp) = pgrp.parse::<libc::pid_t>() else {
+        return true;
+    };
+    member_pgrp == pgid && !matches!(state, "Z" | "X" | "x")
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod tests {
+    use super::proc_stat_live_in_group;
+
+    #[test]
+    fn proc_stat_parser_skips_non_utf8_comm_and_fails_closed() {
+        assert!(!proc_stat_live_in_group(
+            b"123 (bad\xff)name) S 1 999 999\n",
+            42
+        ));
+        assert!(proc_stat_live_in_group(
+            b"123 (bad\xff)name) S 1 42 42\n",
+            42
+        ));
+        assert!(!proc_stat_live_in_group(
+            b"123 (bad\xff)name) Z 1 42 42\n",
+            42
+        ));
+        assert!(proc_stat_live_in_group(b"123 (truncated", 42));
+        assert!(proc_stat_live_in_group(b"123 (bad) S 1 badpgrp\n", 42));
+    }
 }
 
 #[cfg(windows)]

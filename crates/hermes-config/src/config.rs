@@ -162,6 +162,11 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub mcp_servers: Vec<McpServerEntry>,
 
+    /// Whether the model sees each MCP tool or one `mcp` gateway tool.
+    /// Saved only when set, so a save leaves the user's file as it was.
+    #[serde(default, skip_serializing_if = "McpToolMode::is_direct")]
+    pub mcp_tool_mode: McpToolMode,
+
     /// Profile system: selected profile and named profile files.
     #[serde(default)]
     pub profile: ProfileConfig,
@@ -169,6 +174,10 @@ pub struct GatewayConfig {
     /// Agent loop nudges + background review (parity with Python `memory` / `skills` cadence).
     #[serde(default)]
     pub agent: AgentLoopBehaviorConfig,
+
+    /// Prompt-cache lifetime, keep-alive and cold-return compaction.
+    #[serde(default, skip_serializing_if = "PromptCachingConfig::is_default")]
+    pub prompt_caching: PromptCachingConfig,
 
     /// Override for the hermes home directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -211,8 +220,10 @@ impl Default for GatewayConfig {
             skills: SkillsSettings::default(),
             tools_config: ToolsSettings::default(),
             mcp_servers: Vec::new(),
+            mcp_tool_mode: McpToolMode::default(),
             profile: ProfileConfig::default(),
             agent: AgentLoopBehaviorConfig::default(),
+            prompt_caching: PromptCachingConfig::default(),
             home_dir: None,
         }
     }
@@ -813,6 +824,7 @@ pub fn default_platform_toolsets() -> HashMap<String, Vec<String>> {
 }
 
 include!("config/agent_loop_behavior.rs");
+include!("config/prompt_caching.rs");
 // ---------------------------------------------------------------------------
 // LlmProviderConfig
 // ---------------------------------------------------------------------------

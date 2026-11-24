@@ -297,6 +297,8 @@ mod tests {
 
     #[test]
     fn test_processing_cycle_tracks_and_resets_stats() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         assert!(state.processing);
@@ -324,7 +326,8 @@ mod tests {
 
     #[test]
     fn test_processing_cycle_yields_flash_credit_notice() {
-        // The credits state is process-wide; the usage command tests clear it.
+        // The credits state is process-wide: the usage command tests clear it and
+        // every begin_processing_cycle test yields its notice, all under this lock.
         let _guard = env_test_lock();
         hermes_core::credits::clear_last_nous_credits_state();
         hermes_core::credits::capture_nous_credits_from_pairs([
@@ -357,6 +360,8 @@ mod tests {
 
     #[test]
     fn test_progress_pulse_emits_activity_row() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         state.processing_started_at = Some(Instant::now() - Duration::from_secs(2));
@@ -372,6 +377,8 @@ mod tests {
 
     #[test]
     fn test_processing_stage_labels() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         assert_eq!(state.processing_stage_label(), "idle");
         state.begin_processing_cycle("nous:test-model");
@@ -387,6 +394,8 @@ mod tests {
 
     #[test]
     fn test_phase_updates_set_progress_and_activity() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         state.update_processing_phase("retrieval", "collecting evidence", Some(42));
@@ -1112,5 +1121,164 @@ mod tests {
                 "{provider}"
             );
         }
+    }
+
+    struct CountingTuiProvider {
+        requests: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait::async_trait]
+    impl hermes_core::LlmProvider for CountingTuiProvider {
+        async fn chat_completion(
+            &self,
+            _messages: &[Message],
+            _tools: &[hermes_core::ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> Result<hermes_core::LlmResponse, AgentError> {
+            self.requests
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant("tui-ok"),
+                usage: None,
+                model: "counting-tui".to_string(),
+                finish_reason: Some("stop".to_string()),
+            })
+        }
+
+        fn chat_completion_stream(
+            &self,
+            _messages: &[Message],
+            _tools: &[hermes_core::ToolSchema],
+            _max_tokens: Option<u32>,
+            _temperature: Option<f64>,
+            _model: Option<&str>,
+            _extra_body: Option<&serde_json::Value>,
+        ) -> futures::stream::BoxStream<'static, Result<StreamChunk, AgentError>> {
+            use futures::StreamExt;
+            futures::stream::empty().boxed()
+        }
+    }
+
+    async fn build_tui_test_app_with_counting_provider(
+        home: &Path,
+    ) -> (App, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+        let config_dir = home.join("config");
+        std::fs::create_dir_all(&config_dir).expect("create config dir");
+        let cli = crate::cli::Cli::try_parse_from(vec![
+            "hermes".to_string(),
+            "-C".to_string(),
+            config_dir.display().to_string(),
+            "--ignore-user-config".to_string(),
+            "--ignore-rules".to_string(),
+        ])
+        .expect("parse cli");
+        let mut app = App::new(cli).await.expect("build app");
+        std::sync::Arc::make_mut(&mut app.config)
+            .streaming
+            .enabled = false;
+        let requests = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut agent_config = app.agent.config.clone();
+        agent_config.skip_memory = true;
+        agent_config.skip_context_files = true;
+        agent_config.background_review_enabled = false;
+        let agent = hermes_agent::AgentLoop::new(
+            agent_config,
+            app.agent.tool_registry.clone(),
+            std::sync::Arc::new(CountingTuiProvider {
+                requests: requests.clone(),
+            }),
+        );
+        app.agent = std::sync::Arc::new(agent);
+        (app, requests)
+    }
+
+    #[tokio::test]
+    async fn direct_tui_turn_fails_closed_after_tool_snapshot_rebuild_failure() {
+        let _guard = test_env_lock::lock_async().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (mut app, requests) = build_tui_test_app_with_counting_provider(temp.path()).await;
+        app.force_model_rebuild_failure_for_test(&app.current_model.clone());
+        let refresh = app.refresh_agent_tool_snapshot();
+        assert!(refresh.rebuild_error.is_some());
+
+        let (stream_tx, _stream_rx) = mpsc::unbounded_channel();
+        let mut state = TuiState::default();
+        let task = spawn_tui_direct_agent_turn(&mut app, &mut state, "hello", stream_tx);
+        if let Some(handle) = task {
+            let _ = handle.await;
+            panic!("direct TUI turn must fail closed after tool snapshot rebuild failure");
+        }
+
+        assert!(!state.processing);
+        assert!(
+            state.status_message.contains("Error:")
+                && state.status_message.contains("rebuild failed"),
+            "status_message: {}",
+            state.status_message
+        );
+        assert!(
+            state
+                .recent_activity
+                .iter()
+                .any(|row| row.contains("rebuild failed")),
+            "recent_activity: {:?}",
+            state.recent_activity
+        );
+        assert!(
+            app.ui_messages.iter().any(|msg| {
+                msg.message
+                    .content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("Error:") && c.contains("rebuild failed"))
+            }),
+            "ui_messages: {:?}",
+            app.ui_messages
+        );
+        assert!(app.messages.is_empty());
+        assert!(app.input_history.is_empty());
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn direct_tui_turn_refuses_schema_mismatch_and_runs_when_synced() {
+        let _guard = test_env_lock::lock_async().await;
+        let temp = tempfile::tempdir().expect("tempdir");
+        let (mut app, requests) = build_tui_test_app_with_counting_provider(temp.path()).await;
+
+        app.tool_schemas.push(hermes_core::ToolSchema::new(
+            "missing_unbridged_tool",
+            "missing",
+            hermes_core::JsonSchema::new("object"),
+        ));
+        let (stream_tx, mut stream_rx) = mpsc::unbounded_channel();
+        let mut state = TuiState::default();
+        let mismatch_task =
+            spawn_tui_direct_agent_turn(&mut app, &mut state, "check mismatch", stream_tx.clone());
+        if let Some(handle) = mismatch_task {
+            let _ = handle.await;
+            panic!("direct TUI turn must refuse out-of-sync tool schemas");
+        }
+        assert!(
+            state.status_message.contains("Error:") && state.status_message.contains("out of sync"),
+            "status_message: {}",
+            state.status_message
+        );
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(app.messages.is_empty());
+
+        app.tool_schemas.pop();
+        let mut healthy_state = TuiState::default();
+        let ok_task =
+            spawn_tui_direct_agent_turn(&mut app, &mut healthy_state, "hello", stream_tx)
+                .expect("synced TUI turn must spawn");
+        ok_task.await.expect("join TUI turn");
+        match stream_rx.try_recv() {
+            Ok(Event::AgentRunComplete { result: Ok(_), .. }) => {}
+            other => panic!("expected AgentRunComplete Ok, got {other:?}"),
+        }
+        assert_eq!(requests.load(std::sync::atomic::Ordering::SeqCst), 1);
     }
 }

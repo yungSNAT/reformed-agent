@@ -589,6 +589,18 @@ fn apply_kimi_profile(body: &mut Value, extra_body: Option<&Value>) {
     }
 }
 
+/// Whether requests should keep an empty `reasoning_content` on assistant
+/// messages: Kimi and DeepSeek thinking models expect it on every earlier
+/// tool call, and other providers may refuse the field.
+pub(crate) fn echoes_empty_reasoning(profile: Option<&str>, model: &str) -> bool {
+    let kimi_profile = matches!(
+        profile.and_then(canonical_provider_profile_id),
+        Some("kimi-coding" | "kimi-coding-cn")
+    );
+    let id = model.rsplit('/').next().unwrap_or(model);
+    kimi_profile || id.to_ascii_lowercase().starts_with("kimi") || is_deepseek_thinking_model(id)
+}
+
 /// DeepSeek V4 and later, and the legacy `deepseek-reasoner`, think unless a
 /// request turns it off; V3 (`deepseek-chat`) has no thinking mode. The
 /// model id is DeepSeek's own, as upstream matches it: a relay strips its

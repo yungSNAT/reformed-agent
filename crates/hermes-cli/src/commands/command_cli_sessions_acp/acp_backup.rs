@@ -259,6 +259,7 @@ impl CliAcpPromptExecutor {
     fn tools_for_prompt(
         &self,
         session: &hermes_acp::SessionState,
+        offered: &[hermes_core::ToolSchema],
     ) -> hermes_agent::agent_loop::ToolRegistry {
         let mut overrides = hermes_tools::ToolOverrides::new();
         if self.config.terminal.backend == hermes_config::TerminalBackendType::Local
@@ -270,7 +271,7 @@ impl CliAcpPromptExecutor {
             .with_session_workdir(session.cwd.clone());
             overrides.insert("terminal".into(), Arc::new(handler));
         }
-        crate::app::bridge_tool_registry_with(&self.tool_registry, overrides)
+        crate::app::bridge_offered_tools_with(&self.tool_registry, offered, overrides)
     }
 
     fn current_tool_schemas(&self) -> Vec<hermes_core::ToolSchema> {
@@ -334,7 +335,8 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         let mut agent_config = crate::app::build_agent_config(&self.config, &model);
         agent_config.session_id = Some(session.session_id.clone());
 
-        let agent_tools = Arc::new(self.tools_for_prompt(session));
+        let tool_schemas = self.current_tool_schemas();
+        let agent_tools = Arc::new(self.tools_for_prompt(session, &tool_schemas));
         let interrupt =
             register_interrupt(&self.interrupts, &self.session_manager, &session.session_id);
         let streamed = Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -360,7 +362,7 @@ impl hermes_acp::AcpPromptExecutor for CliAcpPromptExecutor {
         let result = agent
             .run_stream(
                 messages,
-                Some(self.current_tool_schemas()),
+                Some(tool_schemas),
                 Some(Box::new(|_| {})),
             )
             .await;

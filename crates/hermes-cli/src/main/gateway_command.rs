@@ -297,7 +297,6 @@ async fn run_gateway(
             let tool_registry_for_stream = tool_registry.clone();
             let terminal_for_msg = terminal_backend.clone();
             let terminal_for_stream = terminal_backend;
-            let agent_tools_for_cron = Arc::new(bridge_tool_registry(&tool_registry));
             let clarify_for_msg = clarify_dispatcher.clone();
             let clarify_for_stream = clarify_dispatcher.clone();
             let config_arc = Arc::new(config.clone());
@@ -327,8 +326,14 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                        let tool_schemas = resolve_platform_tool_schemas(
+                            config.as_ref(),
+                            &ctx.platform,
                             &runtime_tools,
+                        );
+                        let agent_tools = Arc::new(bridge_offered_tools_with(
+                            &runtime_tools,
+                            &tool_schemas,
                             gateway_turn_tool_overrides(
                                 &terminal_backend,
                                 &gateway_for_review,
@@ -338,11 +343,6 @@ async fn run_gateway(
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
-                        );
-                        let tool_schemas = resolve_platform_tool_schemas(
-                            config.as_ref(),
-                            &ctx.platform,
-                            &runtime_tools,
                         );
                         let tool_defs = tool_definition_summary(&tool_schemas);
                         gateway_for_review
@@ -610,8 +610,14 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                        let tool_schemas = resolve_platform_tool_schemas(
+                            config.as_ref(),
+                            &ctx.platform,
                             &runtime_tools,
+                        );
+                        let agent_tools = Arc::new(bridge_offered_tools_with(
+                            &runtime_tools,
+                            &tool_schemas,
                             gateway_turn_tool_overrides(
                                 &terminal_backend,
                                 &gateway_for_review,
@@ -621,11 +627,6 @@ async fn run_gateway(
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
-                        );
-                        let tool_schemas = resolve_platform_tool_schemas(
-                            config.as_ref(),
-                            &ctx.platform,
-                            &runtime_tools,
                         );
                         let tool_defs = tool_definition_summary(&tool_schemas);
                         gateway_for_review
@@ -922,18 +923,11 @@ async fn run_gateway(
                 .unwrap_or_else(|| "gpt-5.5".to_string());
             let cron_persistence = Arc::new(FileJobPersistence::with_dir(cron_dir.clone()));
             let cron_llm = build_provider(&config, &default_model);
-            let cron_tools = tool_registry.clone();
-            let cron_runner = Arc::new(
-                CronRunner::new(cron_llm, agent_tools_for_cron).with_run_tools(move || {
-                    // Each job run has a browser of its own.
-                    let browser = hermes_tools::SharedBrowser::lazy(
-                        hermes_tools::isolated_browser_backend_from_env,
-                    );
-                    let overrides = hermes_tools::browser_overrides(&browser);
-                    let tools = bridge_tool_registry_with(&cron_tools, overrides);
-                    (Arc::new(tools), browser)
-                }),
-            );
+            let cron_runner = Arc::new(build_cron_runner_for_registry(
+                &config,
+                cron_llm,
+                &tool_registry,
+            ));
             let mut cron_scheduler = CronScheduler::new(cron_persistence, cron_runner);
             let (cron_tx, cron_rx) = broadcast::channel::<CronCompletionEvent>(64);
             let cron_platform_rx = cron_tx.subscribe();
@@ -995,6 +989,10 @@ async fn run_gateway(
                     gw_expiry.session_expiry_watcher(300).await;
                 }));
             }
+            // Listen before `gateway stop` can find this process through the pid file or ensure
+            // can report it ready through the socket: a SIGTERM sent before the listeners exist
+            // takes the default action and leaves the socket and state file behind.
+            let shutdown = gateway_shutdown_signal();
             let own_pid = std::process::id();
             tokio::fs::write(&pid_path, format!("{}\n", own_pid))
                 .await
@@ -1025,7 +1023,6 @@ async fn run_gateway(
                         .await;
                 }
             });
-            let shutdown = gateway_shutdown_signal();
             println!("Gateway runtime initialized with context-aware model/provider routing.");
             println!("Gateway is ready. Press Ctrl+C to stop.");
             let stopping = match shutdown {

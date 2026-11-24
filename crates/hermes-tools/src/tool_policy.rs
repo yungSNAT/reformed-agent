@@ -632,16 +632,7 @@ pub fn default_tool_policy_counters_path() -> PathBuf {
             return PathBuf::from(path);
         }
     }
-    let home = std::env::var("HERMES_HOME")
-        .ok()
-        .or_else(|| std::env::var("HERMES_AGENT_ULTRA_HOME").ok())
-        .or_else(|| {
-            std::env::var("HOME")
-                .ok()
-                .map(|h| format!("{h}/.hermes-agent-ultra"))
-        })
-        .unwrap_or_else(|| ".hermes-agent-ultra".to_string());
-    PathBuf::from(home)
+    hermes_config::hermes_home()
         .join("logs")
         .join("tool-policy-counters.json")
 }

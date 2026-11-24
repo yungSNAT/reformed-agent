@@ -618,6 +618,7 @@ async fn prune_old_screenshots(dir: &Path) {
             return;
         }
     };
+    let protected = crate::credential_guard::ProtectedPaths::current();
     loop {
         let entry = match entries.next_entry().await {
             Ok(Some(entry)) => entry,
@@ -634,7 +635,16 @@ async fn prune_old_screenshots(dir: &Path) {
         }
         let path = entry.path();
         let outcome = match entry.metadata().await.and_then(|meta| meta.modified()) {
-            Ok(modified) if modified < cutoff => tokio::fs::remove_file(&path).await,
+            Ok(modified) if modified < cutoff => {
+                if protected.contains(&path) {
+                    tracing::debug!(
+                        "keeping old screenshot {}: a credential store links to it",
+                        path.display()
+                    );
+                    continue;
+                }
+                tokio::fs::remove_file(&path).await
+            }
             Ok(_) => continue,
             Err(e) => Err(e),
         };

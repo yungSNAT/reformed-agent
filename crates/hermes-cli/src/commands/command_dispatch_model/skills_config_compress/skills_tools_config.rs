@@ -339,8 +339,12 @@ fn handle_tools_toggle_command(app: &mut App, args: &[&str]) -> Result<CommandRe
         let config = Arc::make_mut(&mut app.config);
         config.tools_config = disk.tools_config.clone();
     }
-    app.tool_schemas =
-        hermes_tool_planning::resolve_platform_tool_schemas(&app.config, "cli", &app.tool_registry);
+    crate::runtime_tool_wiring::rescope_cli_mcp_gateway(&app.config, &app.tool_registry);
+    // Replans the tool list and rebuilds the agent's tools to match it.
+    let refresh = app.refresh_agent_tool_snapshot();
+    if let Some(err) = refresh.rebuild_error {
+        return Err(AgentError::Config(err));
+    }
 
     let state = if action == "enable" {
         "Enabled"

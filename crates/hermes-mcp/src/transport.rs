@@ -139,18 +139,108 @@ fn command_allowed_by_profile(
         return true;
     }
     let base = command_basename(command);
-    if !allowlist.is_empty() && allowlist.iter().any(|entry| entry == &base) {
+    let name = program_name(command);
+    if allowlist
+        .iter()
+        .any(|entry| entry == &base || name.as_deref() == Some(entry.as_str()))
+    {
         return true;
     }
 
     match profile {
         McpSandboxProfile::Strict => false,
-        McpSandboxProfile::Balanced => {
-            // Block direct shell launches in balanced mode unless explicitly allowlisted.
-            !matches!(base.as_str(), "sh" | "bash" | "zsh" | "fish")
-        }
+        // Block direct shell launches in balanced mode unless explicitly allowlisted.
+        McpSandboxProfile::Balanced => !is_direct_shell(name.as_deref()),
         McpSandboxProfile::Relaxed => true,
     }
+}
+
+/// Shells, and launchers that start one, the balanced profile refuses to
+/// launch directly.
+const DIRECT_SHELLS: &[&str] = &[
+    "sh",
+    "bash",
+    "rbash",
+    "zsh",
+    "fish",
+    "dash",
+    "ash",
+    "ksh",
+    "mksh",
+    "yash",
+    "csh",
+    "tcsh",
+    "nu",
+    "elvish",
+    "xonsh",
+    "busybox",
+    "toybox",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "wsl",
+];
+
+#[cfg(windows)]
+fn raw_program_name(command: &str) -> Option<&str> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in command.split(['/', '\\']) {
+        // Windows only treats exact "." and ".." as dot-components before
+        // stripping trailing spaces and dots from the final component.
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            part => parts.push(part),
+        }
+    }
+    let last = parts.last()?.trim_end_matches(['.', ' ']);
+    // A drive-relative name (`C:cmd.exe`) runs the file after the drive.
+    let last = match last.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => last[2..].trim_end_matches(['.', ' ']),
+        _ => last,
+    };
+    (!last.is_empty()).then_some(last)
+}
+
+#[cfg(not(windows))]
+fn raw_program_name(command: &str) -> Option<&str> {
+    // Native Unix basename: backslash is a filename byte and `...` is a valid directory.
+    let last = std::path::Path::new(command).file_name()?.to_str()?;
+    (!last.is_empty()).then_some(last)
+}
+
+/// The name of the program `command` runs, using Windows path normalisation
+/// on Windows and the native basename on Unix, folded to lower case (Unicode,
+/// as a case-insensitive file system folds it) with `.exe` stripped. None when
+/// no name is left.
+fn program_name(command: &str) -> Option<String> {
+    let last = raw_program_name(command)?;
+    let name: String = last
+        .chars()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(
+        name.strip_suffix(".exe")
+            .map(str::to_string)
+            .unwrap_or(name),
+    )
+}
+
+/// Whether `name` runs a listed shell (see [`program_name`]). A command that
+/// leaves no name, or on Windows has an 8.3 short name (`POWERS~1.EXE`),
+/// is refused too. A shell copied or linked under another name is not detected.
+fn is_direct_shell(name: Option<&str>) -> bool {
+    let Some(name) = name else {
+        return true;
+    };
+    let short_name = cfg!(windows)
+        && name
+            .split_once('~')
+            .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
+    short_name || DIRECT_SHELLS.contains(&name)
 }
 
 fn default_allowlist() -> Vec<String> {
@@ -456,8 +546,8 @@ pub trait McpTransport: Send + Sync {
 
 /// Transport that communicates via stdin/stdout with a child process.
 ///
-/// Defaults to Hermes' legacy Content-Length framing for existing servers.
-/// Standard MCP servers use one JSON message per line.
+/// Frames one JSON message per line, as the MCP specification's stdio
+/// transport does, unless built for Hermes' older Content-Length framing.
 pub struct StdioTransport {
     /// The command to execute.
     command: String,
@@ -468,7 +558,7 @@ pub struct StdioTransport {
     /// The child process.
     child: Option<Child>,
     standard_framing: bool,
-    standard_stdout: Option<BufReader<ChildStdout>>,
+    stdout: Option<BufReader<ChildStdout>>,
     pending_line: Vec<u8>,
     /// Background discovery should not let OAuth helpers prompt on stdin.
     suppress_interactive_oauth: bool,
@@ -490,7 +580,7 @@ impl StdioTransport {
             env: env.clone(),
             child: None,
             standard_framing: false,
-            standard_stdout: None,
+            stdout: None,
             pending_line: Vec::new(),
             suppress_interactive_oauth,
             started: false,
@@ -576,9 +666,7 @@ impl McpTransport for StdioTransport {
             McpError::ConnectionError(format!("Failed to spawn process '{}': {}", self.command, e))
         })?;
 
-        if self.standard_framing {
-            self.standard_stdout = child.stdout.take().map(BufReader::new);
-        }
+        self.stdout = child.stdout.take().map(BufReader::new);
         self.child = Some(child);
         self.started = true;
 
@@ -628,76 +716,16 @@ impl McpTransport for StdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        if let Some(stdout) = &mut self.standard_stdout {
-            return read_stdio_line(stdout, &mut self.pending_line, max_message_bytes_from_env())
-                .await;
-        }
-        let child = self
-            .child
+        let limit = max_message_bytes_from_env();
+        let stdout = self
+            .stdout
             .as_mut()
             .ok_or(McpError::ConnectionError("Process not started".to_string()))?;
-
-        let stdout = child.stdout.as_mut().ok_or(McpError::ConnectionError(
-            "stdout not available".to_string(),
-        ))?;
-
-        // Read Content-Length header
-        let mut reader = tokio::io::BufReader::new(stdout);
-
-        // Read header lines until we get Content-Length or empty line
-        let mut content_length: usize = 0;
-        loop {
-            let mut line = String::new();
-            reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
-
-            if line.is_empty() {
-                return Err(McpError::ConnectionClosed);
-            }
-
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                // End of headers
-                break;
-            }
-
-            if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-                content_length =
-                    len_str
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| McpError::Protocol {
-                            code: -32700,
-                            message: format!("Invalid Content-Length: {}", e),
-                        })?;
-            }
+        if self.standard_framing {
+            read_stdio_line(stdout, &mut self.pending_line, limit).await
+        } else {
+            read_content_length_message(stdout, limit).await
         }
-
-        if content_length == 0 {
-            return Err(McpError::Protocol {
-                code: -32700,
-                message: "Missing Content-Length header".to_string(),
-            });
-        }
-        enforce_message_size(content_length, max_message_bytes_from_env())?;
-
-        // Read the JSON body
-        let mut body_buf = vec![0u8; content_length];
-        reader
-            .read_exact(&mut body_buf)
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
-
-        trace!("Received MCP message: {} bytes", body_buf.len());
-
-        let value: Value = serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
-            code: -32700,
-            message: format!("JSON parse error: {}", e),
-        })?;
-
-        Ok(value)
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
@@ -714,11 +742,96 @@ impl McpTransport for StdioTransport {
                 }
             }
         }
-        self.standard_stdout = None;
+        self.stdout = None;
         self.pending_line.clear();
         self.started = false;
         Ok(())
     }
+}
+
+/// Longest header line, and most header lines, a Content-Length message
+/// may carry.
+const MAX_HEADER_LINE_BYTES: u64 = 1024;
+const MAX_HEADER_LINES: usize = 32;
+
+/// Reads one Content-Length framed message from a reader kept across calls,
+/// so bytes read past this message stay for the next.
+async fn read_content_length_message(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+    limit: usize,
+) -> Result<Value, McpError> {
+    // Read header lines up to the empty line that ends them.
+    let mut content_length: usize = 0;
+    let mut header_lines = 0;
+    loop {
+        let mut line = Vec::new();
+        (&mut *reader)
+            .take(MAX_HEADER_LINE_BYTES)
+            .read_until(b'\n', &mut line)
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
+        if !line.ends_with(b"\n") {
+            if line.len() as u64 >= MAX_HEADER_LINE_BYTES {
+                return Err(McpError::Protocol {
+                    code: -32700,
+                    message: format!("MCP header line longer than {MAX_HEADER_LINE_BYTES} bytes"),
+                });
+            }
+            return Err(McpError::ConnectionClosed);
+        }
+
+        let line = String::from_utf8_lossy(&line);
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if trimmed.starts_with('{') || trimmed.starts_with('[') {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: "the server sent newline-delimited JSON, not Content-Length headers; remove stdio_mode: legacy_framed for it".to_string(),
+            });
+        }
+        header_lines += 1;
+        if header_lines > MAX_HEADER_LINES {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: format!("more than {MAX_HEADER_LINES} MCP header lines"),
+            });
+        }
+        if let Some((name, value)) = trimmed.split_once(':') {
+            if name.trim().eq_ignore_ascii_case("Content-Length") {
+                content_length = value
+                    .trim()
+                    .parse::<usize>()
+                    .map_err(|e| McpError::Protocol {
+                        code: -32700,
+                        message: format!("Invalid Content-Length: {}", e),
+                    })?;
+            }
+        }
+    }
+
+    if content_length == 0 {
+        return Err(McpError::Protocol {
+            code: -32700,
+            message: "Missing Content-Length header".to_string(),
+        });
+    }
+    enforce_message_size(content_length, limit)?;
+
+    // Read the JSON body
+    let mut body_buf = vec![0u8; content_length];
+    reader
+        .read_exact(&mut body_buf)
+        .await
+        .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
+
+    trace!("Received MCP message: {} bytes", body_buf.len());
+
+    serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
+        code: -32700,
+        message: format!("JSON parse error: {}", e),
+    })
 }
 
 async fn read_stdio_line(
@@ -726,25 +839,40 @@ async fn read_stdio_line(
     pending: &mut Vec<u8>,
     limit: usize,
 ) -> Result<Value, McpError> {
-    // Keep partial bytes across an interrupted discovery read. The extra two
-    // bytes accommodate CRLF without counting the delimiter against the limit.
-    let remaining = limit.saturating_add(2).saturating_sub(pending.len());
-    reader
-        .take(remaining as u64)
-        .read_until(b'\n', pending)
-        .await
-        .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
-    let bytes = std::mem::take(pending);
-    let Some(body) = bytes.strip_suffix(b"\n") else {
-        enforce_message_size(bytes.len(), limit)?;
-        return Err(McpError::ConnectionClosed);
-    };
-    let body = body.strip_suffix(b"\r").unwrap_or(body);
-    enforce_message_size(body.len(), limit)?;
-    serde_json::from_slice(body).map_err(|e| McpError::Protocol {
-        code: -32700,
-        message: format!("JSON parse error: {e}"),
-    })
+    loop {
+        // Keep partial bytes across an interrupted discovery read. The extra two
+        // bytes accommodate CRLF without counting the delimiter against the limit.
+        let remaining = limit.saturating_add(2).saturating_sub(pending.len());
+        (&mut *reader)
+            .take(remaining as u64)
+            .read_until(b'\n', pending)
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+        let bytes = std::mem::take(pending);
+        let Some(body) = bytes.strip_suffix(b"\n") else {
+            enforce_message_size(bytes.len(), limit)?;
+            return Err(McpError::ConnectionClosed);
+        };
+        let body = body.strip_suffix(b"\r").unwrap_or(body);
+        // A blank line carries no message; Content-Length framing skipped them.
+        if body.iter().all(u8::is_ascii_whitespace) {
+            continue;
+        }
+        enforce_message_size(body.len(), limit)?;
+        if body
+            .get(..15)
+            .is_some_and(|start| start.eq_ignore_ascii_case(b"Content-Length:"))
+        {
+            return Err(McpError::Protocol {
+                code: -32700,
+                message: "the server sent a Content-Length header, not one JSON message per line; set stdio_mode: legacy_framed for it".to_string(),
+            });
+        }
+        return serde_json::from_slice(body).map_err(|e| McpError::Protocol {
+            code: -32700,
+            message: format!("JSON parse error: {e}"),
+        });
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -754,19 +882,73 @@ async fn read_stdio_line(
 /// Server-side stdio transport that reads from the process's own stdin
 /// and writes to stdout. Used when hermes itself acts as an MCP server
 /// (e.g. `hermes mcp serve`).
+///
+/// It answers in the framing the client uses, judged from the first message:
+/// one JSON message per line, as the MCP specification's stdio transport
+/// sends it, or Content-Length headers, as older Hermes clients send it.
 pub struct ServerStdioTransport {
     started: bool,
+    // `get_mut` reaches each through `&mut self`, so the locks never block;
+    // they only make the transport `Sync` over a `Send` stream.
+    input: std::sync::Mutex<BufReader<Box<dyn tokio::io::AsyncRead + Send + Unpin>>>,
+    output: std::sync::Mutex<Box<dyn tokio::io::AsyncWrite + Send + Unpin>>,
+    pending_line: Vec<u8>,
+    /// `Some(true)` for Content-Length framing, once the first message shows it.
+    content_length_framing: Option<bool>,
 }
 
 impl ServerStdioTransport {
     pub fn new() -> Self {
-        Self { started: false }
+        Self::with_io(tokio::io::stdin(), tokio::io::stdout())
+    }
+
+    /// A server transport over the given streams in place of the process's
+    /// own stdin and stdout.
+    pub(crate) fn with_io(
+        input: impl tokio::io::AsyncRead + Send + Unpin + 'static,
+        output: impl tokio::io::AsyncWrite + Send + Unpin + 'static,
+    ) -> Self {
+        let input: Box<dyn tokio::io::AsyncRead + Send + Unpin> = Box::new(input);
+        Self {
+            started: false,
+            input: std::sync::Mutex::new(BufReader::new(input)),
+            output: std::sync::Mutex::new(Box::new(output)),
+            pending_line: Vec::new(),
+            content_length_framing: None,
+        }
     }
 }
 
 impl Default for ServerStdioTransport {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Skips leading whitespace and reports whether the next message is
+/// Content-Length framed (it does not open with a JSON brace or bracket).
+/// `None` at end of input. Consumes nothing past the whitespace.
+async fn sniff_content_length_framing(
+    reader: &mut (impl tokio::io::AsyncBufRead + Unpin),
+) -> Result<Option<bool>, McpError> {
+    loop {
+        let buf = reader
+            .fill_buf()
+            .await
+            .map_err(|e| McpError::ConnectionError(format!("Read message failed: {e}")))?;
+        if buf.is_empty() {
+            return Ok(None);
+        }
+        if buf.starts_with(&[0xEF, 0xBB, 0xBF]) {
+            reader.consume(3);
+            continue;
+        }
+        let blank = buf.iter().take_while(|b| b.is_ascii_whitespace()).count();
+        if let Some(&first) = buf.get(blank) {
+            reader.consume(blank);
+            return Ok(Some(!matches!(first, b'{' | b'[')));
+        }
+        reader.consume(blank);
     }
 }
 
@@ -787,17 +969,20 @@ impl McpTransport for ServerStdioTransport {
             serde_json::to_string(&message).map_err(|e| McpError::Serialization(e.to_string()))?;
         let max_message_bytes = max_message_bytes_from_env();
         enforce_message_size(body.len(), max_message_bytes)?;
-        let header = format!("Content-Length: {}\r\n\r\n", body.len());
+        let frame = if self.content_length_framing == Some(true) {
+            format!("Content-Length: {}\r\n\r\n{body}", body.len())
+        } else {
+            format!("{body}\n")
+        };
 
-        let mut stdout = tokio::io::stdout();
+        let stdout = self
+            .output
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         stdout
-            .write_all(header.as_bytes())
+            .write_all(frame.as_bytes())
             .await
-            .map_err(|e| McpError::ConnectionError(format!("Write header failed: {}", e)))?;
-        stdout
-            .write_all(body.as_bytes())
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Write body failed: {}", e)))?;
+            .map_err(|e| McpError::ConnectionError(format!("Write message failed: {}", e)))?;
         stdout
             .flush()
             .await
@@ -806,53 +991,26 @@ impl McpTransport for ServerStdioTransport {
     }
 
     async fn receive(&mut self) -> Result<Value, McpError> {
-        let stdin = tokio::io::stdin();
-        let mut reader = tokio::io::BufReader::new(stdin);
-
-        let mut content_length: usize = 0;
-        loop {
-            let mut line = String::new();
-            let n = reader
-                .read_line(&mut line)
-                .await
-                .map_err(|e| McpError::ConnectionError(format!("Read header failed: {}", e)))?;
-            if n == 0 {
-                return Err(McpError::ConnectionClosed);
+        let limit = max_message_bytes_from_env();
+        let reader = self
+            .input
+            .get_mut()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        let content_length = match self.content_length_framing {
+            Some(framing) => framing,
+            None => {
+                let framing = sniff_content_length_framing(reader)
+                    .await?
+                    .ok_or(McpError::ConnectionClosed)?;
+                self.content_length_framing = Some(framing);
+                framing
             }
-            let trimmed = line.trim();
-            if trimmed.is_empty() {
-                break;
-            }
-            if let Some(len_str) = trimmed.strip_prefix("Content-Length:") {
-                content_length =
-                    len_str
-                        .trim()
-                        .parse::<usize>()
-                        .map_err(|e| McpError::Protocol {
-                            code: -32700,
-                            message: format!("Invalid Content-Length: {}", e),
-                        })?;
-            }
+        };
+        if content_length {
+            read_content_length_message(reader, limit).await
+        } else {
+            read_stdio_line(reader, &mut self.pending_line, limit).await
         }
-
-        if content_length == 0 {
-            return Err(McpError::Protocol {
-                code: -32700,
-                message: "Missing Content-Length header".to_string(),
-            });
-        }
-        enforce_message_size(content_length, max_message_bytes_from_env())?;
-
-        let mut body_buf = vec![0u8; content_length];
-        reader
-            .read_exact(&mut body_buf)
-            .await
-            .map_err(|e| McpError::ConnectionError(format!("Read body failed: {}", e)))?;
-
-        serde_json::from_slice(&body_buf).map_err(|e| McpError::Protocol {
-            code: -32700,
-            message: format!("JSON parse error: {}", e),
-        })
     }
 
     async fn close(&mut self) -> Result<(), McpError> {
@@ -2044,6 +2202,114 @@ mod tests {
     }
 
     #[test]
+    fn balanced_profile_blocks_windows_and_posix_shells_by_any_spelling() {
+        for command in [
+            "cmd",
+            "CMD.EXE",
+            "powershell",
+            "pwsh",
+            "pwsh.exe",
+            "/usr/bin/pwsh",
+            "Bash.exe",
+            "/bin/dash",
+            "ksh",
+            "tcsh",
+            "csh",
+            "C:/Windows/System32/cmd.exe/.",
+            "..",
+            "",
+            "wsl",
+            "wsl.exe",
+            "busybox",
+            "rbash",
+            // A case-insensitive file system folds the long s to `s`.
+            "ba\u{17f}h",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        #[cfg(windows)]
+        for command in [
+            "POWERS~1.EXE",
+            "cmd.exe.",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe",
+            // Windows drops `.` and resolves `..` after a file name.
+            r"C:\Windows\System32\cmd.exe\.",
+            r"C:\Windows\System32\cmd.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\..\cmd.exe\.",
+            r"C:\Program Files\PowerShell\7\pwsh.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\...",
+            r"C:\Windows\System32\wsl.exe",
+            "C:cmd.exe",
+            "C:",
+            r"tools\C:",
+            r"C:\Windows\System32\cmd.exe\. .",
+            r"C:\Windows\System32\cmd.exe\ .",
+            r"C:\Windows\System32\cmd.exe\. \..",
+            r"C:\Windows\System32\cmd.exe\.. \..",
+            r"C:\Windows\System32\cmd.exe\ . \..",
+            r"C:\Windows\System32\cmd.exe\...\..",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        for command in ["node", "node.exe", "uvx"] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        #[cfg(windows)]
+        for command in [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Windows\System32\...\..\Windows\System32\node.exe",
+        ] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/.../node",
+                &[]
+            ));
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/worker~1",
+                &[]
+            ));
+            assert!(!command_allowed_by_profile(
+                McpSandboxProfile::Strict,
+                r"/tmp/other\node",
+                &["node".to_string()]
+            ));
+        }
+        let allowlist = vec!["pwsh".to_string()];
+        for command in [
+            "pwsh",
+            "pwsh.exe",
+            #[cfg(windows)]
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            #[cfg(not(windows))]
+            "/usr/local/bin/pwsh.exe",
+        ] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &allowlist),
+                "{command} should be allowlisted"
+            );
+        }
+    }
+
+    #[test]
     fn test_sanitize_child_env_balanced_removes_secrets() {
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), "/usr/bin".to_string());
@@ -2891,3 +3157,6 @@ mod tests {
         stub.abort();
     }
 }
+
+#[cfg(test)]
+mod framing_tests;

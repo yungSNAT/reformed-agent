@@ -766,7 +766,7 @@ fn load_session_from_path(
             .map(str::trim)
             .filter(|s| !s.is_empty())
         {
-            app.session_id = crate::app::resumed_session_id(restored_id);
+            app.resume_session_id(crate::app::resumed_session_id(restored_id));
         }
     }
 

@@ -407,59 +407,14 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
                                             });
                                             active_agent_task = Some(task);
                                         } else {
-                                            // Non-slash prompts run in a background task so stream events
-                                            // can be consumed/rendered live by this UI loop.
-                                            app.input_history.push(trimmed.clone());
-                                            app.history_index = app.input_history.len();
-                                            let user_message = app.prepare_user_message(&trimmed);
-                                            app.messages.push(Message::user(user_message));
-
-                                            state.begin_processing_cycle(&app.current_model);
-                                            state.status_message = "Processing...".to_string();
-
-                                            let stream_tx = tui.stream_sender();
-                                            let agent = app.agent.clone();
-                                            let stream_enabled = app.config.streaming.enabled;
-                                            let tool_schemas = app.tool_schemas.clone();
-                                            let messages = app.messages.clone();
-                                            let stream_handle = app.stream_handle.clone();
-
-                                            let task = tokio::spawn(async move {
-                                                let started = Instant::now();
-                                                let result = if stream_enabled {
-                                                    let stream_cb: Option<
-                                                        Box<
-                                                            dyn Fn(hermes_core::StreamChunk)
-                                                                + Send
-                                                                + Sync,
-                                                        >,
-                                                    > = stream_handle.map(|h| {
-                                                        Box::new(
-                                                            move |chunk: hermes_core::StreamChunk| {
-                                                                h.send_chunk(chunk);
-                                                            },
-                                                        )
-                                                            as Box<
-                                                                dyn Fn(hermes_core::StreamChunk)
-                                                                    + Send
-                                                                    + Sync,
-                                                            >
-                                                    });
-                                                    agent.run_stream(
-                                                        messages,
-                                                        Some(tool_schemas),
-                                                        stream_cb,
-                                                    )
-                                                    .await
-                                                } else {
-                                                    agent.run(messages, Some(tool_schemas)).await
-                                                };
-                                                let _ = stream_tx.send(Event::AgentRunComplete {
-                                                    result: result.map_err(|e| e.to_string()),
-                                                    elapsed_secs: started.elapsed().as_secs_f64(),
-                                                });
-                                            });
-                                            active_agent_task = Some(task);
+                                            if let Some(task) = spawn_tui_direct_agent_turn(
+                                                &mut app,
+                                                &mut state,
+                                                &trimmed,
+                                                tui.stream_sender(),
+                                            ) {
+                                                active_agent_task = Some(task);
+                                            }
                                         }
                                     }
                                 }
@@ -639,6 +594,56 @@ pub async fn run(mut app: App) -> Result<(), AgentError> {
         .map_err(|e| AgentError::Config(e.to_string()))?;
 
     Ok(())
+}
+
+/// Queue a non-managed interactive prompt on a background Tokio task so stream
+/// chunks render live in the TUI event loop.
+fn spawn_tui_direct_agent_turn(
+    app: &mut App,
+    state: &mut TuiState,
+    trimmed: &str,
+    stream_tx: mpsc::UnboundedSender<Event>,
+) -> Option<JoinHandle<()>> {
+    if let Err(err) = app.check_tool_snapshot_sync(true) {
+        state.status_message = format!("Error: {err}");
+        state.push_activity(format!("✖ {err}"));
+        app.push_ui_assistant(format!("Error: {err}"));
+        return None;
+    }
+    app.input_history.push(trimmed.to_string());
+    app.history_index = app.input_history.len();
+    let user_message = app.prepare_user_message(trimmed);
+    app.messages.push(Message::user(user_message));
+
+    state.begin_processing_cycle(&app.current_model);
+    state.status_message = "Processing...".to_string();
+
+    let agent = app.agent.clone();
+    let stream_enabled = app.config.streaming.enabled;
+    let tool_schemas = app.tool_schemas.clone();
+    let messages = app.messages.clone();
+    let stream_handle = app.stream_handle.clone();
+
+    Some(tokio::spawn(async move {
+        let started = Instant::now();
+        let result = if stream_enabled {
+            let stream_cb: Option<Box<dyn Fn(hermes_core::StreamChunk) + Send + Sync>> =
+                stream_handle.map(|h| {
+                    Box::new(move |chunk: hermes_core::StreamChunk| {
+                        h.send_chunk(chunk);
+                    }) as Box<dyn Fn(hermes_core::StreamChunk) + Send + Sync>
+                });
+            agent
+                .run_stream(messages, Some(tool_schemas), stream_cb)
+                .await
+        } else {
+            agent.run(messages, Some(tool_schemas)).await
+        };
+        let _ = stream_tx.send(Event::AgentRunComplete {
+            result: result.map_err(|e| e.to_string()),
+            elapsed_secs: started.elapsed().as_secs_f64(),
+        });
+    }))
 }
 
 #[cfg(test)]

@@ -453,6 +453,24 @@ impl std::fmt::Debug for McpServerEntry {
     }
 }
 
+/// How the model reaches the tools of the `mcp_servers`.
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum McpToolMode {
+    /// Each MCP tool is its own tool in the model's tool list.
+    #[default]
+    Direct,
+    /// One `mcp` tool searches and calls the MCP tools, so the tool list
+    /// stays the same however many servers connect or change their tools.
+    Gateway,
+}
+
+impl McpToolMode {
+    fn is_direct(&self) -> bool {
+        *self == Self::Direct
+    }
+}
+
 /// Active profile info.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ProfileConfig {

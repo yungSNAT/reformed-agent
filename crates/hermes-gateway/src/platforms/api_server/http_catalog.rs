@@ -221,7 +221,8 @@ fn collect_skill_entries(
     };
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        // Hidden folders hold archived skills and half-copied imports, as in the skill store.
+        if !path.is_dir() || entry.file_name().to_string_lossy().starts_with('.') {
             continue;
         }
         let skill_md = path.join("SKILL.md");

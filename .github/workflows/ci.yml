@@ -35,6 +35,11 @@ jobs:
         uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        with:
+          tool: cargo-nextest@0.9.150
+          fallback: none
       - name: Generate parity governance artifacts
         run: |
           cargo run --locked -q -p hermes-parity-tools -- generate-parity-matrix --local-ref HEAD --upstream-branch parity-reference --no-fetch
@@ -56,7 +61,9 @@ jobs:
       - name: Placeholder gate
         run: bash scripts/check-runtime-placeholders.sh
       - name: Tests
-        run: cargo test --workspace
+        run: |
+          cargo nextest run --locked --workspace --no-fail-fast
+          cargo test --workspace --locked --doc
       - name: Verify fork carry contracts
         run: cargo run --locked -q -p hermes-parity-tools -- check-fork-carry
       - name: Parity fixture tests
@@ -294,6 +301,8 @@ jobs:
         run: cargo test --locked -p hermes-tools --lib credential_guard
       - name: Native tests
         if: ${{ !cancelled() }}
+        env:
+          REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER: '1'
         run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp
 
   desktop-gateway:

@@ -72,6 +72,13 @@
       "ticket": 305
     },
     {
+      "classification": "policy_only",
+      "owner": "yungSNAT",
+      "path": "SECURITY.md",
+      "rationale": "Security policy for this repository: its private reporting route, scope and supported versions. Repository process, not runtime behavior.",
+      "ticket": 25
+    },
+    {
       "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "cli-config.yaml.example",
@@ -1418,6 +1425,13 @@
       "path": "plugins/web/xai/provider.py",
       "rationale": "Rust-native xAI web search now routes through the Responses API server-side web_search tool with deterministic result normalization; the Python plugin remains reference/compatibility code.",
       "ticket": 25
+    },
+    {
+      "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "scripts/install.ps1",
+      "rationale": "Windows PowerShell installer intentionally downloads checksummed Reformed Agent Rust release binaries (hermes-windows-x86_64.zip) instead of cloning upstream's Python/uv environment; installer contracts cover SHA-256 verification, HTTPS enforcement and coexistence.",
+      "ticket": 305
     },
     {
       "classification": "intentional_divergence",
