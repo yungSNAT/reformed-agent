@@ -642,6 +642,8 @@ fn credential_stores(
 thread_local! {
     static GUARD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
     static SUBTREE_DIRS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(target_os = "linux")]
+    static TEST_LINUX_MOUNTINFO: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Path judgements and set lookups made on this thread, for tests that bound
@@ -758,19 +760,61 @@ impl ProtectedPaths {
     }
 }
 
-#[cfg(target_os = "linux")]
-fn read_linux_mounts() -> Option<Vec<PathBuf>> {
-    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+#[cfg(any(target_os = "linux", test))]
+fn decode_mountinfo_path(raw: &str) -> PathBuf {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 3 < bytes.len() {
+            let oct = &bytes[i + 1..i + 4];
+            if oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
+                let val = u16::from(oct[0] - b'0') * 64
+                    + u16::from(oct[1] - b'0') * 8
+                    + u16::from(oct[2] - b'0');
+                if val <= 255 {
+                    out.push(val as u8);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(out))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_mounts(mountinfo: &str) -> Option<Vec<PathBuf>> {
     let mut mounts: Vec<PathBuf> = mountinfo
         .lines()
         .filter_map(|line| line.split_whitespace().nth(4))
-        .map(|mp| PathBuf::from(mp.replace(r"\040", " ")))
+        .map(decode_mountinfo_path)
         .collect();
     if mounts.is_empty() {
         return None;
     }
     mounts.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
     Some(mounts)
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_mounts() -> Option<Vec<PathBuf>> {
+    #[cfg(test)]
+    if let Some(override_text) = TEST_LINUX_MOUNTINFO.with(|cell| cell.borrow().clone()) {
+        return parse_linux_mounts(&override_text);
+    }
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    parse_linux_mounts(&mountinfo)
 }
 
 /// Whether `target_path` (the resolved path of a `links == 1` write) may name
@@ -1972,6 +2016,53 @@ mod tests {
             std::fs::write(&linked_cfg, "k").expect("cfg");
             std::os::unix::fs::symlink(vault.join("kube"), home.join(".kube")).expect("kube link");
             assert!(is_write_denied_with_roots(&linked_cfg, Some(&home), None));
+        }
+    }
+
+    #[test]
+    fn linux_mountinfo_escapes_are_decoded_and_trigger_bind_mount_subtree_scan() {
+        let parsed = parse_linux_mounts(
+            "10 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n\
+             20 10 8:1 /home/u/.ssh /mnt/tab\\011nl\\012bs\\134sp\\040lit\\134040 rw - ext4 /dev/sda1 rw\n",
+        )
+        .expect("mounts");
+        assert_eq!(parsed[0], PathBuf::from("/mnt/tab\tnl\nbs\\sp lit\\040"));
+        assert_eq!(parsed[1], PathBuf::from("/"));
+
+        #[cfg(target_os = "linux")]
+        {
+            struct ResetMountinfo;
+            impl Drop for ResetMountinfo {
+                fn drop(&mut self) {
+                    TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = None);
+                }
+            }
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let home = tmp.path().join("home");
+            std::fs::create_dir_all(home.join(".ssh")).expect("ssh");
+            std::fs::write(home.join(".ssh/id_ed25519"), "k").expect("key");
+            let mnt = tmp.path().join("mnt\t\n\\ sp");
+            std::fs::create_dir_all(&mnt).expect("mnt");
+            let alias = mnt.join("id_ed25519");
+            std::fs::write(&alias, "x").expect("alias");
+            let canon_mnt = std::fs::canonicalize(&mnt).expect("canon mnt");
+            let escaped = canon_mnt
+                .to_string_lossy()
+                .replace('\\', r"\134")
+                .replace(' ', r"\040")
+                .replace('\t', r"\011")
+                .replace('\n', r"\012");
+            let table = format!(
+                "10 1 8:1 / / rw - ext4 /dev/sda1 rw\n20 10 8:1 /x {escaped} rw - ext4 /dev/sda1 rw\n"
+            );
+            let _reset = ResetMountinfo;
+            TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = Some(table));
+            SUBTREE_DIRS_READ.with(|r| r.set(0));
+            assert!(!is_write_denied_with_roots(&alias, Some(&home), None));
+            assert!(
+                SUBTREE_DIRS_READ.with(std::cell::Cell::get) > 0,
+                "escaped bind mountpoint skipped protected subtree scan"
+            );
         }
     }
 
