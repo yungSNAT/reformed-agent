@@ -687,6 +687,23 @@ Points at a custom OpenAI-compatible endpoint. Uses `OPENAI_API_KEY` for auth.
 The summary model **must** have a context window at least as large as your main agent model's. The compressor sends the full middle section of the conversation to the summary model — if that model's context window is smaller than the main model's, the summarization call will fail with a context length error. When this happens, the middle turns are **dropped without a summary**, losing conversation context silently. If you override the model, verify its context length meets or exceeds your main model's.
 :::
 
+## Prompt Caching
+
+Claude requests carry cache markers, so a turn that follows within the cache lifetime reads the conversation prefix from the provider's cache instead of paying to write it again. Three settings control that lifetime. None of them spends anything unless you change it.
+
+```yaml
+prompt_caching:
+  cache_ttl: "5m"           # "5m" (default) or "1h"
+  keep_alive:
+    max_pings: 0            # keep-alive requests per idle stretch; 0 = off (default), at most 12
+    max_idle_minutes: 60    # no keep-alive once the session has been idle this long; at most 240
+  compact_when_cold: false  # compact a large history when you return after the cache expired
+```
+
+- **`cache_ttl`.** `"1h"` puts `ttl: "1h"` on every cache marker. The provider charges 2 times the base input price to write a 1-hour entry, against 1.25 times for the 5-minute default; reads cost the same (about 0.1 times base input). It pays when you often pause for more than 5 minutes between turns.
+- **`keep_alive`.** After a turn, the agent re-sends that turn's last request with a 1-token output cap at 5/6 of the cache lifetime (about every 4 minutes 10 seconds on `5m`, every 50 minutes on `1h`), so the prefix stays cached while you are away. **Each keep-alive is a billed request.** It costs about the cached prefix times the cache-read price plus 1 output token: a 100,000-token prefix on a model priced at $5 per million input tokens costs about $0.05 a ping. The most one idle stretch can cost is `max_pings` pings. Warming stops at the first of: `max_pings` sent; the next ping would land after `max_idle_minutes`; a ping that came back uncached; a ping whose worst case (the whole prefix written again) would take this idle stretch past `max_cost_usd`, when that is set; an unknown model price. Nothing is sent for a request with a thinking budget, a model without cache markers, a prefix under 1,024 tokens, or a delegated sub-agent. A new turn cancels any pending keep-alive. Each ping is logged at INFO with its cache counts and estimated cost.
+- **`compact_when_cold`.** When a session's cache has expired, its next request rewrites the whole prefix anyway. With this on, a history that is at least half the compression threshold is compacted before that request, so the rewrite is smaller. Compaction is lossy (the replaced turns stay in the session store), so it is off by default.
+
 ## Context Engine
 
 The context engine controls how conversations are managed when approaching the model's token limit. The built-in `compressor` engine uses lossy summarization (see [Context Compression](/docs/developer-guide/context-compression-and-caching)). Plugin engines can replace it with alternative strategies.

@@ -259,6 +259,7 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
         code_index_max_symbols: config.agent.code_index_max_symbols,
         lsp_context_enabled: config.agent.lsp_context_enabled,
         lsp_context_max_chars: config.agent.lsp_context_max_chars,
+        prompt_caching: config.prompt_caching,
         ..AgentConfig::default()
     }
 }

@@ -459,6 +459,8 @@ impl SubAgentOrchestrator {
         };
 
         let mut child = parent.clone();
+        // A child runs to the end unattended: nothing waits on its cache.
+        child.prompt_caching.keep_alive.max_pings = 0;
         child.session_id = Some(child_session_id);
         child.max_turns = child_turns;
         child.stream = false;

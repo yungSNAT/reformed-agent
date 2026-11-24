@@ -292,12 +292,24 @@ impl AgentLoop {
             "Context pressure at {}%, triggering compression",
             (total_chars * 100) / max_c
         );
+        self.compress_with_status(ctx, &message, false);
+    }
+
+    /// Compress `ctx`, reporting `message`: past the 80% threshold only, or
+    /// whatever its size when `force`.
+    fn compress_with_status(&self, ctx: &mut ContextManager, message: &str, force: bool) {
+        let total_chars = ctx.total_chars();
+        let max_c = ctx.max_context_chars().max(1);
         tracing::info!("{message}");
-        self.emit_status("lifecycle", &message);
+        self.emit_status("lifecycle", message);
         if let Some(note) = self.memory_pre_compress_note(ctx.get_messages()) {
             ctx.add_message(Message::system(note));
         }
-        ctx.compress();
+        if force {
+            ctx.compress_now();
+        } else {
+            ctx.compress();
+        }
         let after_chars = ctx.total_chars();
         self.emit_compaction_contextlattice_checkpoint(total_chars, after_chars, max_c);
     }
@@ -524,6 +536,9 @@ impl AgentLoop {
         {
             body["strict_api"] = Value::Bool(true);
         }
+        if self.config.prompt_caching.cache_ttl == hermes_config::PromptCacheTtl::OneHour {
+            body[crate::provider::PROMPT_CACHE_TTL_KEY] = Value::String("1h".to_string());
+        }
         Some(body)
     }
 
@@ -623,7 +638,15 @@ impl AgentLoop {
             };
 
             match result {
-                Ok(response) => return Ok(response),
+                Ok(response) => {
+                    self.remember_cache_request(
+                        &target,
+                        &api_messages,
+                        tool_schemas,
+                        response.usage.as_ref(),
+                    );
+                    return Ok(response);
+                }
                 Err(e) => {
                     let err_str = e.to_string();
                     let class = classify_error(&err_str);
@@ -1293,6 +1316,12 @@ impl AgentLoop {
             let message =
                 Self::assemble_stream_assistant_message(&content, &reasoning_content, &tool_calls);
 
+            self.remember_cache_request(
+                &target,
+                &api_messages,
+                tool_schemas,
+                last_usage.as_ref(),
+            );
             return Ok(StreamCollectOutcome::Complete(LlmResponse {
                 message,
                 usage: last_usage,
