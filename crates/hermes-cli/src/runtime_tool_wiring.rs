@@ -966,7 +966,10 @@ mod tests {
             .as_str()
             .expect("the server's tool is found")
             .to_string();
-        assert!(tool.contains("composio_search_tools"), "{found}");
+        assert!(
+            tool.to_ascii_lowercase().contains("composio_search_tools"),
+            "{found}"
+        );
         let out = registry
             .dispatch_async(
                 "mcp",

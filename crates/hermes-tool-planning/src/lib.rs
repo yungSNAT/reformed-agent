@@ -312,6 +312,9 @@ pub fn resolve_platform_tool_schemas(
     if is_mcp_gateway_registered(registry) {
         all_defs.retain(|schema| !is_mcp_server_tool(registry, &schema.name));
     }
+    // The registry is a hash map, whose order can change as tools come and
+    // go; a sorted list keeps the provider's cached prefix.
+    all_defs.sort_by(|a, b| a.name.cmp(&b.name));
     let allowed = resolve_platform_tool_names(config, platform, registry);
     if allowed.is_empty() {
         return all_defs;
