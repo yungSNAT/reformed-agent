@@ -685,6 +685,74 @@ async fn a_replaced_server_that_never_closes_does_not_hold_up_its_replacement() 
 }
 
 #[tokio::test(start_paused = true)]
+async fn manager_marks_server_unavailable_after_one_failed_keepalive_reconnect() {
+    use std::sync::atomic::AtomicUsize;
+    use std::time::Duration;
+
+    struct RejectReconnect(Arc<AtomicUsize>);
+
+    #[async_trait]
+    impl crate::auth::McpAuthProvider for RejectReconnect {
+        async fn get_token(&self) -> Result<String, McpError> {
+            self.0.fetch_add(1, Ordering::SeqCst);
+            Err(McpError::ConnectionError(
+                "fixture authentication is unavailable".to_string(),
+            ))
+        }
+
+        fn provider_type(&self) -> &str {
+            "fixture"
+        }
+    }
+
+    let mut transport = no_tools_server();
+    transport
+        .responses
+        .push_back(json!({"jsonrpc": "2.0", "id": 3, "result": {}}));
+    let closed = Arc::clone(&transport.closed);
+    let sent = Arc::clone(&transport.sent);
+    let reconnect_attempts = Arc::new(AtomicUsize::new(0));
+    let config = McpServerConfig::http("http://127.0.0.1:9/mcp")
+        .with_keepalive_interval(MIN_MCP_KEEPALIVE_INTERVAL_SECS)
+        .with_auth(Arc::new(RejectReconnect(Arc::clone(&reconnect_attempts))));
+    let interval = mcp_keepalive_interval_duration(&config);
+    let mut manager = McpManager::new(Arc::new(hermes_tools::ToolRegistry::new()));
+    manager
+        .connect_with_transport_for_test("srv", config, Box::new(transport))
+        .await
+        .expect("connect the in-memory MCP transport");
+
+    let pings = || {
+        sent.lock()
+            .unwrap()
+            .iter()
+            .filter(|request| request["method"] == "ping")
+            .count()
+    };
+    tokio::time::sleep(interval + Duration::from_millis(1)).await;
+    assert_eq!(pings(), 1);
+    assert!(manager.is_connected("srv"));
+    assert!(!closed.load(Ordering::SeqCst));
+    assert_eq!(reconnect_attempts.load(Ordering::SeqCst), 0);
+
+    tokio::time::sleep(interval).await;
+    assert_eq!(pings(), 2);
+    assert!(closed.load(Ordering::SeqCst));
+    assert_eq!(reconnect_attempts.load(Ordering::SeqCst), 1);
+    assert!(!manager.clients["srv"].available.load(Ordering::SeqCst));
+    assert!(!manager.is_connected("srv"));
+
+    tokio::time::sleep(interval * 2).await;
+    assert_eq!(pings(), 2);
+    assert_eq!(reconnect_attempts.load(Ordering::SeqCst), 1);
+    manager
+        .disconnect("srv")
+        .await
+        .expect("remove failed server");
+    assert!(manager.connected_servers().is_empty());
+}
+
+#[tokio::test(start_paused = true)]
 async fn connect_gives_up_on_a_server_that_never_answers_and_closes_it() {
     let close_called = Arc::new(AtomicBool::new(false));
     let (err, took) = connect_silent(SilentTransport {
