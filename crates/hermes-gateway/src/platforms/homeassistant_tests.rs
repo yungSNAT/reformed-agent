@@ -239,7 +239,9 @@ async fn rejected_token_is_an_auth_error() {
     cfg.base_url = url;
     let (adapter, _rx) = adapter_with_inbox(cfg).await;
     let server = tokio::spawn(async move { accept_handshake(&listener, false).await });
-    let err = adapter.inner.connect().await.err().expect("auth rejected");
+    let Err(err) = adapter.inner.connect().await else {
+        panic!("auth rejected token was accepted");
+    };
     assert!(matches!(err, GatewayError::Auth(_)), "{err:?}");
     assert!(!err.to_string().contains("tok"), "token leaked: {err}");
     server.await.expect("server");
