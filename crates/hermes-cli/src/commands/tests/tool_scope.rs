@@ -362,3 +362,100 @@
         .await;
         assert_eq!(*calls.lock().unwrap(), Vec::<String>::new());
     }
+
+    /// Registers one server tool, `mcp_docs_page`, and an MCP gateway whose
+    /// scope holds it until `/tools` or `/reload` rescopes the gateway.
+    fn gateway_over_a_docs_page(app: &App) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handler = Arc::new(ScopeProbe {
+            name: "mcp_docs_page".to_string(),
+            calls: calls.clone(),
+        });
+        app.tool_registry.register(
+            "mcp_docs_page",
+            "mcp-docs",
+            hermes_core::ToolHandler::schema(handler.as_ref()),
+            handler,
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "probe",
+            "mcp",
+            None,
+        );
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            &app.tool_registry,
+            &["docs".to_string()],
+            Arc::new(|_: &hermes_tools::ToolRegistry| ["mcp_docs_page".to_string()].into()),
+        );
+        calls
+    }
+
+    /// Whether a gateway call to `mcp_docs_page` runs it.
+    async fn gateway_calls_docs_page(app: &App, calls: &std::sync::Mutex<Vec<String>>) -> bool {
+        let before = calls.lock().unwrap().len();
+        let out = app
+            .tool_registry
+            .dispatch_async(
+                "mcp",
+                serde_json::json!({"action": "call", "tool": "mcp_docs_page"}),
+            )
+            .await;
+        let ran = calls.lock().unwrap().len() > before;
+        assert_eq!(ran, out.contains("mcp_docs_page ran"), "{out}");
+        if !ran {
+            assert!(
+                out.contains("not an MCP tool this session can call"),
+                "{out}"
+            );
+        }
+        ran
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_disable_and_enable_rescope_the_mcp_gateway() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let calls = gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+
+        handle_slash_command(&mut app, "/tools", &["disable", "mcp_docs_page"])
+            .await
+            .expect("disable");
+        assert!(!gateway_calls_docs_page(&app, &calls).await);
+
+        handle_slash_command(&mut app, "/tools", &["enable", "mcp_docs_page"])
+            .await
+            .expect("enable");
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reload_rescopes_the_mcp_gateway() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let calls = gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+        // Control: a reload that leaves the tool enabled keeps it callable.
+        std::fs::write(
+            app.state_root.join("config.yaml"),
+            "tools_config:\n  disabled: []\n",
+        )
+        .expect("write config");
+        handle_slash_command(&mut app, "/reload", &[]).await.expect("reload");
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+
+        std::fs::write(
+            app.state_root.join("config.yaml"),
+            "tools_config:\n  disabled: [mcp_docs_page]\n",
+        )
+        .expect("write config");
+
+        handle_slash_command(&mut app, "/reload", &[]).await.expect("reload");
+
+        assert!(!gateway_calls_docs_page(&app, &calls).await);
+    }
