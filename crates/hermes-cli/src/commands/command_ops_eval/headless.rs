@@ -37,8 +37,8 @@ fn absolute_cli_path(path: &Path) -> Result<PathBuf, AgentError> {
 
 /// A flag wins over its environment variable; blank values count as unset.
 fn flag_or_env(flag: Option<String>, var: &str) -> Option<String> {
-    flag.or_else(|| std::env::var(var).ok())
-        .filter(|v| !v.trim().is_empty())
+    flag.filter(|v| !v.trim().is_empty())
+        .or_else(|| std::env::var(var).ok().filter(|v| !v.trim().is_empty()))
 }
 
 /// Run the SLO check and, when it fails, the rollback command; print the
