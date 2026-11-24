@@ -15,6 +15,7 @@ mod git;
 mod global_proof;
 mod gpar_closure;
 mod harness_hardening;
+mod llms_txt;
 mod parity_matrix;
 mod release_readiness;
 mod release_secret_scan;
@@ -25,6 +26,7 @@ mod slash_gate;
 mod surface_gate;
 mod test_intent_mapping;
 mod upstream_queue;
+mod website;
 mod workstream_status;
 
 use clap::{Parser, Subcommand};
@@ -119,6 +121,12 @@ enum Command {
     Dashboard(dashboard::DashboardArgs),
     #[command(name = "generate-sota-harness-hardening", args_override_self = true)]
     HarnessHardening(harness_hardening::HarnessHardeningArgs),
+    /// Write the docs site's Skills Hub data (website/src/data/skills.json and skills-meta.json).
+    #[command(name = "extract-skills")]
+    ExtractSkills(website::WebsiteArgs),
+    /// Write the docs site's llms.txt and llms-full.txt.
+    #[command(name = "generate-llms-txt")]
+    GenerateLlmsTxt(website::WebsiteArgs),
 }
 
 fn main() {
@@ -144,6 +152,8 @@ fn main() {
         Command::BehavioralSimilarity(args) => deep_problem_solving::run_behavioral(args),
         Command::Dashboard(args) => dashboard::run(args),
         Command::HarnessHardening(args) => harness_hardening::run(args),
+        Command::ExtractSkills(args) => website::run_extract_skills(args),
+        Command::GenerateLlmsTxt(args) => llms_txt::run(args),
     };
     match result {
         Ok(code) => std::process::exit(code),

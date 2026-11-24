@@ -20,9 +20,10 @@ fn build_live_cron_scheduler(cli: &Cli, data_dir: &Path) -> Result<CronScheduler
         Arc::new(SkillManager::new(skill_store));
     hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
 
-    let runner = Arc::new(CronRunner::new(
+    let runner = Arc::new(build_standalone_cron_runner(
+        &config,
         provider,
-        Arc::new(bridge_tool_registry(&tool_registry)),
+        tool_registry,
     ));
     let persistence = Arc::new(FileJobPersistence::with_dir(data_dir.to_path_buf()));
     Ok(CronScheduler::new(persistence, runner))

@@ -185,14 +185,27 @@ fn custom_toolsets_get_the_gateway_only_with_mcp_tools() {
 }
 
 #[test]
-fn unresolved_toolsets_fall_back_without_mcp_server_tools() {
+fn unresolved_custom_toolsets_offer_no_tool() {
     let mut cfg = GatewayConfig::default();
     cfg.platform_toolsets
         .insert("cli".to_string(), vec!["no_such_toolset".to_string()]);
-    let names = schema_names(&cfg, &registry(&cfg, true));
-    assert!(names.contains(&"terminal".to_string()), "{names:?}");
-    assert!(
-        !names.iter().any(|name| name.starts_with("mcp_")),
-        "{names:?}"
+    assert!(schema_names(&cfg, &registry(&cfg, true)).is_empty());
+}
+
+#[test]
+fn default_toolsets_naming_only_server_tools_offer_just_the_gateway() {
+    // The live server toolset is the only registered tool the defaults name,
+    // so the plan does not fall back to every tool.
+    let cfg = GatewayConfig::default();
+    let reg = Arc::new(ToolRegistry::new());
+    register(&reg, "probe", "probe");
+    register(&reg, "mcp_docs_search", "mcp-docs");
+    register_mcp_gateway(
+        &reg,
+        &["docs".to_string()],
+        Arc::new(|reg: &ToolRegistry| {
+            platform_mcp_tool_names(&GatewayConfig::default(), "cli", &Arc::new(reg.clone()))
+        }),
     );
+    assert_eq!(schema_names(&cfg, &reg), [MCP_GATEWAY_TOOL]);
 }

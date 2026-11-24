@@ -265,8 +265,9 @@
             "session-2".into(),
             second_path.to_str().unwrap().to_owned(),
         );
-        let first_tools = executor.tools_for_prompt(&first_session);
-        let second_tools = executor.tools_for_prompt(&second_session);
+        let tools = executor.current_tool_schemas();
+        let first_tools = executor.tools_for_prompt(&first_session, &tools);
+        let second_tools = executor.tools_for_prompt(&second_session, &tools);
         let first_call = &first_tools.get("terminal").unwrap().handler;
         let second_call = &second_tools.get("terminal").unwrap().handler;
 

@@ -1215,6 +1215,7 @@ note the fixtures"));
     include!("tests/promoted_commands.rs");
     include!("tests/background_jobs.rs");
     include!("tests/surface_and_compression.rs");
+    include!("tests/tool_scope.rs");
 
     mod runtime_parity_ops;
     mod skill_model_policy;

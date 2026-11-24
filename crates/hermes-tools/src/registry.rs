@@ -1334,4 +1334,55 @@ mod tests {
             ns_per_op
         );
     }
+
+    /// The pass-through marker holds its handler weakly. Once that handler is
+    /// deregistered and dropped the marker cannot upgrade, so no handler
+    /// registered later passes through, whatever address it is given: the
+    /// weak handle keeps the old allocation from being reused while it lives.
+    #[test]
+    fn a_dropped_pass_through_handler_marks_no_later_handler() {
+        let registry = ToolRegistry::new();
+        let register = |handler: Arc<dyn ToolHandler>| {
+            registry.register(
+                "mcp",
+                "mcp",
+                tool_schema("mcp", "gateway", JsonSchema::new("object")),
+                handler,
+                Arc::new(|| true),
+                vec![],
+                true,
+                "gateway",
+                "x",
+                None,
+            );
+        };
+        let gateway: Arc<dyn ToolHandler> = Arc::new(EchoHandler);
+        register(gateway.clone());
+        registry.set_passthrough_handler(&gateway);
+        assert!(passes_through(&registry.inner.lock().unwrap(), "mcp"));
+
+        assert!(registry.deregister("mcp"));
+        let marker = registry
+            .inner
+            .lock()
+            .unwrap()
+            .passthrough_handler
+            .clone()
+            .expect("marker kept");
+        let stale = marker.as_ptr().cast::<()>();
+        drop(gateway);
+        assert!(
+            marker.upgrade().is_none(),
+            "the stale marker cannot upgrade"
+        );
+
+        let later: Arc<dyn ToolHandler> = Arc::new(EchoHandler);
+        assert_ne!(
+            Arc::as_ptr(&later).cast::<()>(),
+            stale,
+            "allocation still held"
+        );
+        register(later);
+        assert!(!passes_through(&registry.inner.lock().unwrap(), "mcp"));
+    }
 }

@@ -443,4 +443,26 @@ impl AgentLoop {
         self
     }
 
+    /// Return a copy of this loop bound to `tool_registry`, dropping any
+    /// inherited sub-agent orchestrator so delegated runs cannot use an older
+    /// wider registry.
+    pub fn clone_with_tool_registry(&self, tool_registry: Arc<ToolRegistry>) -> Self {
+        Self {
+            config: self.config.clone(),
+            tool_registry,
+            llm_provider: self.llm_provider.clone(),
+            interrupt: self.interrupt.clone(),
+            memory_manager: self.memory_manager.clone(),
+            plugin_manager: self.plugin_manager.clone(),
+            callbacks: self.callbacks.clone(),
+            delegate_depth: self.delegate_depth,
+            primary_credential_pool: self.primary_credential_pool.clone(),
+            evolution_counters: self.evolution_counters.clone(),
+            oauth_refresh_backoff: self.oauth_refresh_backoff.clone(),
+            sub_agent_orchestrator: None,
+            code_index: self.code_index.clone(),
+            lsp_context: self.lsp_context.clone(),
+            route_learning: self.route_learning.clone(),
+        }
+    }
 }
