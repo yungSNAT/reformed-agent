@@ -220,17 +220,32 @@ pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
         let Ok(entry) = entry else {
             return false;
         };
-        if !entry
+        let Some(pid) = entry
             .file_name()
             .to_str()
-            .is_some_and(|name| !name.is_empty() && name.bytes().all(|byte| byte.is_ascii_digit()))
-        {
+            .filter(|name| name.bytes().all(|byte| byte.is_ascii_digit()))
+            .and_then(|name| name.parse::<libc::pid_t>().ok())
+        else {
             continue;
-        }
+        };
         let stat = match std::fs::read_to_string(entry.path().join("stat")) {
             Ok(stat) => stat,
             // Reaped since the listing.
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
+            // `hidepid=1` lists another user's process but hides its stat;
+            // getpgid still answers. Its state is unknown, so a member of
+            // the group counts as live.
+            Err(err) if err.kind() == io::ErrorKind::PermissionDenied => {
+                // SAFETY: getpgid reads no memory of ours.
+                match unsafe { libc::getpgid(pid) } {
+                    -1 if io::Error::last_os_error().raw_os_error() == Some(libc::ESRCH) => {
+                        continue
+                    }
+                    group if group == pgid => return false,
+                    -1 => return false,
+                    _ => continue,
+                }
+            }
             Err(_) => return false,
         };
         // `pid (comm) state ppid pgrp ...`; comm may hold spaces and `)`.
