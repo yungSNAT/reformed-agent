@@ -1027,19 +1027,37 @@ fn not_utf8(prefix: &str) -> std::ffi::OsString {
     }
 }
 
+fn child_test_command(
+    test: &str,
+    envs: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--exact", test, "--test-threads=1"])
+        .env("REFORMED_TEST_CHILD", "1")
+        .envs(envs.iter().map(|(k, v)| (k, v)));
+    cmd
+}
+
+fn child_passed(mut cmd: std::process::Command) -> bool {
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ok = output.status.success() && stdout.contains("1 passed");
+    if !ok {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "child test failed ({}):\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status
+        );
+    }
+    ok
+}
+
 /// Runs `test` (its full path) in a child copy of this test binary with
 /// `envs` added, so a variable that is not UTF-8 never enters this process,
 /// whose other tests read the environment. True when the child ran it and it
 /// passed.
 fn passes_in_child(test: &str, envs: &[(std::ffi::OsString, std::ffi::OsString)]) -> bool {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--test-threads=1"])
-        .env("REFORMED_TEST_CHILD", "1")
-        .envs(envs.iter().map(|(k, v)| (k, v)))
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    output.status.success() && stdout.contains("1 passed")
+    child_passed(child_test_command(test, envs))
 }
 
 #[test]
@@ -1320,6 +1338,246 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
         "a live member was taken for one that has ended"
     );
     assert!(after_kill, "the group was not seen as ended");
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+struct NobodySleepGuard {
+    pattern: String,
+    active: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl NobodySleepGuard {
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for NobodySleepGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = std::process::Command::new("sudo")
+                .args([
+                    "-n",
+                    "-u",
+                    "nobody",
+                    "pkill",
+                    "-u",
+                    "nobody",
+                    "-f",
+                    &self.pattern,
+                ])
+                .status();
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn kill_process_with_live_refusing_member() {
+    let required = std::env::var_os("REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER").is_some();
+    let skip_or_fail = |reason: &str| {
+        if required {
+            panic!("REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER set: {reason}");
+        }
+        eprintln!("skipped: {reason}");
+    };
+    let probe = tokio::process::Command::new("sudo")
+        .args([
+            "-n",
+            "-u",
+            "nobody",
+            "sh",
+            "-c",
+            "sleep 5 </dev/null >/dev/null 2>&1 & printf '%s\\n' \"$!\"",
+        ])
+        .output()
+        .await;
+    let Some(probe) = probe.ok().filter(|output| output.status.success()) else {
+        skip_or_fail("passwordless sudo to nobody is not available");
+        return;
+    };
+    let Ok(probe_pid) = String::from_utf8_lossy(&probe.stdout)
+        .trim()
+        .parse::<libc::pid_t>()
+    else {
+        skip_or_fail("sudo nobody probe did not report a pid");
+        return;
+    };
+    // SAFETY: signal 0 checks permission without delivering a signal.
+    let can_signal_nobody = unsafe { libc::kill(probe_pid, 0) } == 0
+        || std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM);
+    let _ = tokio::process::Command::new("sudo")
+        .args(["-n", "-u", "nobody", "kill", "-9", &probe_pid.to_string()])
+        .status()
+        .await;
+    if can_signal_nobody {
+        skip_or_fail("caller can signal processes owned by nobody");
+        return;
+    }
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("member");
+    let shell_marker = marker.to_string_lossy().replace('\\', "/");
+    let sleep_secs = format!("31.{:06}", 100_000 + (std::process::id() % 900_000));
+    let pattern = format!("sleep {sleep_secs}");
+    // Fork `sleep` from a short-lived `nobody` subshell so `sudo` (whose real
+    // uid is the caller's and would forward SIGTERM) exits before the kill,
+    // leaving an unkillable `nobody` child in the shell's process group.
+    let command = format!(
+        "sudo -n -u nobody sh -c '{pattern} </dev/null >/dev/null 2>&1 &' && {{ echo > \"{shell_marker}.ready\"; sleep 30 & wait; }}"
+    );
+    let backend = LocalBackend::new(60, 1_048_576);
+    let mut guard = NobodySleepGuard {
+        pattern: pattern.clone(),
+        active: true,
+    };
+    let started = backend
+        .execute_command(&command, None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+    wait_until_ready(&marker).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let killed = backend.kill_process(session_id).await;
+    let cleanup = tokio::process::Command::new("sudo")
+        .args([
+            "-n", "-u", "nobody", "pkill", "-u", "nobody", "-f", &pattern,
+        ])
+        .status()
+        .await;
+    if cleanup.as_ref().is_ok_and(|status| status.success()) {
+        guard.disarm();
+    }
+
+    assert!(
+        !matches!(&killed, Ok(value) if value["status"] == "killed"),
+        "a group with a live member was reported killed: {killed:?}"
+    );
+    assert!(
+        cleanup.as_ref().is_ok_and(|status| status.success()),
+        "cleanup failed while sleeper was live: {cleanup:?}"
+    );
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+fn assert_passed_in_setsid_child(test_name: &str) {
+    use std::os::unix::process::CommandExt;
+
+    let mut cmd = child_test_command(test_name, &[]);
+    // SAFETY: `setsid` is async-signal-safe and detaches `/dev/tty` before
+    // `exec` so `sudo` `use_pty` never moves the `nobody` sleeper to a new
+    // session and process group.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    assert!(child_passed(cmd));
+}
+
+/// A group member that refuses the signal (here one running as another
+/// user) leaves the group alive, so `kill_process` must not report it
+/// killed. Runs in a `setsid()` child so `/dev/tty` is detached even when
+/// `cargo test` runs from a terminal (avoiding `sudo` `use_pty`). Needs
+/// passwordless `sudo -u nobody` that refuses signals from this caller;
+/// skipped without it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed() {
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        block_on(kill_process_with_live_refusing_member());
+        return;
+    }
+    assert_passed_in_setsid_child(
+        "local::tests::test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed",
+    );
+}
+
+#[cfg(target_os = "linux")]
+struct ChildKillGuard(Option<std::process::Child>);
+
+#[cfg(target_os = "linux")]
+impl Drop for ChildKillGuard {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.0.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+}
+
+/// An unrelated Linux process whose `/proc/<pid>/stat` `comm` holds
+/// non-UTF-8 bytes must not fail closed (blocking clean exits) or abort
+/// `/proc` scanning before detecting a later live refusing member.
+#[cfg(target_os = "linux")]
+#[test]
+fn test_kill_process_ignores_unrelated_process_with_non_utf8_comm() {
+    use std::os::unix::ffi::OsStrExt;
+    use std::os::unix::process::CommandExt;
+
+    if std::env::var_os("REFORMED_TEST_NON_UTF8_COMM_CHILD").is_some() {
+        if let Some(ready) = std::env::var_os("REFORMED_TEST_READY") {
+            let _ = std::fs::write(ready, b"ready");
+        }
+        std::thread::sleep(std::time::Duration::from_secs(15));
+        return;
+    }
+    if std::env::var_os("REFORMED_TEST_CHILD").is_none() {
+        assert_passed_in_setsid_child(
+            "local::tests::test_kill_process_ignores_unrelated_process_with_non_utf8_comm",
+        );
+        return;
+    }
+
+    let dir = tempdir().unwrap();
+    let ready = dir.path().join("comm.ready");
+    let bad_link = dir.path().join(std::ffi::OsStr::from_bytes(b"bad\xffcomm"));
+    std::os::unix::fs::symlink(std::env::current_exe().unwrap(), &bad_link).unwrap();
+    let mut cmd = std::process::Command::new(&bad_link);
+    cmd.arg0("rust-test")
+        .args([
+            "--exact",
+            "local::tests::test_kill_process_ignores_unrelated_process_with_non_utf8_comm",
+            "--nocapture",
+        ])
+        .env("REFORMED_TEST_NON_UTF8_COMM_CHILD", "1")
+        .env("REFORMED_TEST_READY", &ready)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    let _child = ChildKillGuard(Some(cmd.spawn().unwrap()));
+    for _ in 0..100 {
+        if ready.exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(50));
+    }
+    assert!(ready.exists(), "non-utf8 comm child did not become ready");
+
+    let killed = block_on(async {
+        let backend = LocalBackend::new(60, 1_048_576);
+        let started = backend
+            .execute_command("sleep 30", None, None, true, false)
+            .await
+            .unwrap();
+        let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+        let session_id = payload["session_id"].as_str().expect("session_id");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        backend.kill_process(session_id).await
+    });
+    assert!(
+        matches!(&killed, Ok(value) if value["status"] == "killed"),
+        "unrelated non-utf8 comm caused kill_process failure: {killed:?}"
+    );
+
+    // Spawned after `_child`, so `/proc` visits `bad\xffcomm` before the
+    // `nobody` sleeper when `sudo -u nobody` is available.
+    block_on(kill_process_with_live_refusing_member());
 }
 
 #[tokio::test]
