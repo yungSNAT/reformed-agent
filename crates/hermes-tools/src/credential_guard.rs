@@ -812,7 +812,8 @@ fn is_hard_link_to_protected_file(
         {
             read += 1;
             if read > PROTECTED_TREE_ENTRIES {
-                return true;
+                // Past the limit a linked file is refused; another is let through.
+                return target.links >= 2;
             }
             let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
             let path = entry.path();
