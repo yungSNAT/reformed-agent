@@ -130,7 +130,9 @@
         // make the folder read-only can still take the lock.
         std::fs::write(auth_dir.join("tokens.json.lock"), "").expect("token store lock file");
 
-        let server = MockServer::start().await;
+        // A server of its own: `MockServer::start()` lends pooled servers, which
+        // can count a request another test left in flight as one of this test's.
+        let server = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(body_string_contains("refresh_token=old-refresh"))
             .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
@@ -246,7 +248,7 @@
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
         let (_home, token_server, cfg) = anthropic_oauth_fixture("old-access").await;
-        let api = MockServer::start().await;
+        let api = MockServer::builder().start().await;
         Mock::given(method("POST"))
             .and(path("/v1/messages"))
             .respond_with(ResponseTemplate::new(401))
