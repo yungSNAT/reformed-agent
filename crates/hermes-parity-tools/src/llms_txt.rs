@@ -13,269 +13,137 @@ use crate::website::{read_text, rel_posix, rstrip, write_text, WebsiteArgs};
 
 const SITE_BASE: &str = "https://hermes-agent.nousresearch.com/docs";
 
+const SECTIONS_TABLE: &str = "\
+## Getting Started
+getting-started/installation | Installation
+getting-started/quickstart | Quickstart
+getting-started/learning-path | Learning Path
+getting-started/updating | Updating
+getting-started/termux | Termux (Android)
+getting-started/nix-setup | Nix Setup
+## Using Hermes
+user-guide/cli | CLI
+user-guide/tui | TUI (Ink terminal UI)
+user-guide/configuration | Configuration
+user-guide/configuring-models | Configuring Models
+user-guide/sessions | Sessions
+user-guide/profiles | Profiles
+user-guide/git-worktrees | Git Worktrees
+user-guide/docker | Docker Backend
+user-guide/security | Security
+user-guide/checkpoints-and-rollback | Checkpoints & Rollback
+## Core Features
+user-guide/features/overview | Features Overview
+user-guide/features/tools | Tools
+user-guide/features/skills | Skills System
+user-guide/features/curator | Curator
+user-guide/features/memory | Memory
+user-guide/features/memory-providers | Memory Providers
+user-guide/features/context-files | Context Files
+user-guide/features/context-references | Context References
+user-guide/features/personality | Personality & SOUL.md
+user-guide/features/plugins | Plugins
+user-guide/features/built-in-plugins | Built-in Plugins
+## Automation
+user-guide/features/cron | Cron Jobs
+user-guide/features/delegation | Delegation
+user-guide/features/kanban | Kanban Multi-Agent
+user-guide/features/kanban-tutorial | Kanban Tutorial
+user-guide/features/goals | Persistent Goals
+user-guide/features/code-execution | Code Execution
+user-guide/features/hooks | Hooks
+user-guide/features/batch-processing | Batch Processing
+## Media & Web
+user-guide/features/voice-mode | Voice Mode
+user-guide/features/browser | Browser
+user-guide/features/vision | Vision
+user-guide/features/image-generation | Image Generation
+user-guide/features/tts | Text-to-Speech
+## Messaging Platforms
+user-guide/messaging/index | Overview
+user-guide/messaging/telegram | Telegram
+user-guide/messaging/discord | Discord
+user-guide/messaging/slack | Slack
+user-guide/messaging/whatsapp | WhatsApp
+user-guide/messaging/signal | Signal
+user-guide/messaging/email | Email
+user-guide/messaging/sms | SMS
+user-guide/messaging/matrix | Matrix
+user-guide/messaging/mattermost | Mattermost
+user-guide/messaging/homeassistant | Home Assistant
+user-guide/messaging/webhooks | Webhooks
+## Integrations
+integrations/index | Integrations Overview
+integrations/providers | Providers
+user-guide/features/mcp | MCP (Model Context Protocol)
+user-guide/features/acp | ACP (Agent Context Protocol)
+user-guide/features/api-server | API Server
+user-guide/features/honcho | Honcho Memory
+user-guide/features/provider-routing | Provider Routing
+user-guide/features/fallback-providers | Fallback Providers
+user-guide/features/credential-pools | Credential Pools
+## Guides & Tutorials
+guides/tips | Tips & Best Practices
+guides/local-llm-on-mac | Local LLMs on Mac
+guides/daily-briefing-bot | Daily Briefing Bot
+guides/team-telegram-assistant | Team Telegram Assistant
+guides/python-library | Use Hermes as a Python Library
+guides/use-mcp-with-hermes | Use MCP with Hermes
+guides/use-voice-mode-with-hermes | Use Voice Mode with Hermes
+guides/use-soul-with-hermes | Use SOUL.md with Hermes
+guides/build-a-hermes-plugin | Build a Hermes Plugin
+guides/automate-with-cron | Automate with Cron
+guides/work-with-skills | Work with Skills
+guides/delegation-patterns | Delegation Patterns
+guides/github-pr-review-agent | GitHub PR Review Agent
+## Developer Guide
+developer-guide/contributing | Contributing
+developer-guide/architecture | Architecture
+developer-guide/agent-loop | Agent Loop
+developer-guide/prompt-assembly | Prompt Assembly
+developer-guide/context-compression-and-caching | Context Compression & Caching
+developer-guide/gateway-internals | Gateway Internals
+developer-guide/session-storage | Session Storage
+developer-guide/provider-runtime | Provider Runtime
+developer-guide/adding-tools | Adding Tools
+developer-guide/adding-providers | Adding Providers
+developer-guide/adding-platform-adapters | Adding Platform Adapters
+developer-guide/creating-skills | Creating Skills
+developer-guide/extending-the-cli | Extending the CLI
+## Reference
+reference/cli-commands | CLI Commands
+reference/slash-commands | Slash Commands
+reference/profile-commands | Profile Commands
+reference/environment-variables | Environment Variables
+reference/tools-reference | Tools Reference
+reference/toolsets-reference | Toolsets Reference
+reference/mcp-config-reference | MCP Config Reference
+reference/model-catalog | Model Catalog
+reference/skills-catalog | Bundled Skills Catalog | Table of all ~90 skills bundled with Hermes
+reference/optional-skills-catalog | Optional Skills Catalog | Table of ~60 additional installable skills
+reference/faq | FAQ & Troubleshooting
+";
+
 type Section = (
     &'static str,
-    &'static [(&'static str, &'static str, Option<&'static str>)],
+    Vec<(&'static str, &'static str, Option<&'static str>)>,
 );
 
-const SECTIONS: &[Section] = &[
-    (
-        "Getting Started",
-        &[
-            ("getting-started/installation", "Installation", None),
-            ("getting-started/quickstart", "Quickstart", None),
-            ("getting-started/learning-path", "Learning Path", None),
-            ("getting-started/updating", "Updating", None),
-            ("getting-started/termux", "Termux (Android)", None),
-            ("getting-started/nix-setup", "Nix Setup", None),
-        ],
-    ),
-    (
-        "Using Hermes",
-        &[
-            ("user-guide/cli", "CLI", None),
-            ("user-guide/tui", "TUI (Ink terminal UI)", None),
-            ("user-guide/configuration", "Configuration", None),
-            ("user-guide/configuring-models", "Configuring Models", None),
-            ("user-guide/sessions", "Sessions", None),
-            ("user-guide/profiles", "Profiles", None),
-            ("user-guide/git-worktrees", "Git Worktrees", None),
-            ("user-guide/docker", "Docker Backend", None),
-            ("user-guide/security", "Security", None),
-            (
-                "user-guide/checkpoints-and-rollback",
-                "Checkpoints & Rollback",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Core Features",
-        &[
-            ("user-guide/features/overview", "Features Overview", None),
-            ("user-guide/features/tools", "Tools", None),
-            ("user-guide/features/skills", "Skills System", None),
-            ("user-guide/features/curator", "Curator", None),
-            ("user-guide/features/memory", "Memory", None),
-            (
-                "user-guide/features/memory-providers",
-                "Memory Providers",
-                None,
-            ),
-            ("user-guide/features/context-files", "Context Files", None),
-            (
-                "user-guide/features/context-references",
-                "Context References",
-                None,
-            ),
-            (
-                "user-guide/features/personality",
-                "Personality & SOUL.md",
-                None,
-            ),
-            ("user-guide/features/plugins", "Plugins", None),
-            (
-                "user-guide/features/built-in-plugins",
-                "Built-in Plugins",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Automation",
-        &[
-            ("user-guide/features/cron", "Cron Jobs", None),
-            ("user-guide/features/delegation", "Delegation", None),
-            ("user-guide/features/kanban", "Kanban Multi-Agent", None),
-            (
-                "user-guide/features/kanban-tutorial",
-                "Kanban Tutorial",
-                None,
-            ),
-            ("user-guide/features/goals", "Persistent Goals", None),
-            ("user-guide/features/code-execution", "Code Execution", None),
-            ("user-guide/features/hooks", "Hooks", None),
-            (
-                "user-guide/features/batch-processing",
-                "Batch Processing",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Media & Web",
-        &[
-            ("user-guide/features/voice-mode", "Voice Mode", None),
-            ("user-guide/features/browser", "Browser", None),
-            ("user-guide/features/vision", "Vision", None),
-            (
-                "user-guide/features/image-generation",
-                "Image Generation",
-                None,
-            ),
-            ("user-guide/features/tts", "Text-to-Speech", None),
-        ],
-    ),
-    (
-        "Messaging Platforms",
-        &[
-            ("user-guide/messaging/index", "Overview", None),
-            ("user-guide/messaging/telegram", "Telegram", None),
-            ("user-guide/messaging/discord", "Discord", None),
-            ("user-guide/messaging/slack", "Slack", None),
-            ("user-guide/messaging/whatsapp", "WhatsApp", None),
-            ("user-guide/messaging/signal", "Signal", None),
-            ("user-guide/messaging/email", "Email", None),
-            ("user-guide/messaging/sms", "SMS", None),
-            ("user-guide/messaging/matrix", "Matrix", None),
-            ("user-guide/messaging/mattermost", "Mattermost", None),
-            ("user-guide/messaging/homeassistant", "Home Assistant", None),
-            ("user-guide/messaging/webhooks", "Webhooks", None),
-        ],
-    ),
-    (
-        "Integrations",
-        &[
-            ("integrations/index", "Integrations Overview", None),
-            ("integrations/providers", "Providers", None),
-            (
-                "user-guide/features/mcp",
-                "MCP (Model Context Protocol)",
-                None,
-            ),
-            (
-                "user-guide/features/acp",
-                "ACP (Agent Context Protocol)",
-                None,
-            ),
-            ("user-guide/features/api-server", "API Server", None),
-            ("user-guide/features/honcho", "Honcho Memory", None),
-            (
-                "user-guide/features/provider-routing",
-                "Provider Routing",
-                None,
-            ),
-            (
-                "user-guide/features/fallback-providers",
-                "Fallback Providers",
-                None,
-            ),
-            (
-                "user-guide/features/credential-pools",
-                "Credential Pools",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Guides & Tutorials",
-        &[
-            ("guides/tips", "Tips & Best Practices", None),
-            ("guides/local-llm-on-mac", "Local LLMs on Mac", None),
-            ("guides/daily-briefing-bot", "Daily Briefing Bot", None),
-            (
-                "guides/team-telegram-assistant",
-                "Team Telegram Assistant",
-                None,
-            ),
-            (
-                "guides/python-library",
-                "Use Hermes as a Python Library",
-                None,
-            ),
-            ("guides/use-mcp-with-hermes", "Use MCP with Hermes", None),
-            (
-                "guides/use-voice-mode-with-hermes",
-                "Use Voice Mode with Hermes",
-                None,
-            ),
-            (
-                "guides/use-soul-with-hermes",
-                "Use SOUL.md with Hermes",
-                None,
-            ),
-            (
-                "guides/build-a-hermes-plugin",
-                "Build a Hermes Plugin",
-                None,
-            ),
-            ("guides/automate-with-cron", "Automate with Cron", None),
-            ("guides/work-with-skills", "Work with Skills", None),
-            ("guides/delegation-patterns", "Delegation Patterns", None),
-            (
-                "guides/github-pr-review-agent",
-                "GitHub PR Review Agent",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Developer Guide",
-        &[
-            ("developer-guide/contributing", "Contributing", None),
-            ("developer-guide/architecture", "Architecture", None),
-            ("developer-guide/agent-loop", "Agent Loop", None),
-            ("developer-guide/prompt-assembly", "Prompt Assembly", None),
-            (
-                "developer-guide/context-compression-and-caching",
-                "Context Compression & Caching",
-                None,
-            ),
-            (
-                "developer-guide/gateway-internals",
-                "Gateway Internals",
-                None,
-            ),
-            ("developer-guide/session-storage", "Session Storage", None),
-            ("developer-guide/provider-runtime", "Provider Runtime", None),
-            ("developer-guide/adding-tools", "Adding Tools", None),
-            ("developer-guide/adding-providers", "Adding Providers", None),
-            (
-                "developer-guide/adding-platform-adapters",
-                "Adding Platform Adapters",
-                None,
-            ),
-            ("developer-guide/creating-skills", "Creating Skills", None),
-            (
-                "developer-guide/extending-the-cli",
-                "Extending the CLI",
-                None,
-            ),
-        ],
-    ),
-    (
-        "Reference",
-        &[
-            ("reference/cli-commands", "CLI Commands", None),
-            ("reference/slash-commands", "Slash Commands", None),
-            ("reference/profile-commands", "Profile Commands", None),
-            (
-                "reference/environment-variables",
-                "Environment Variables",
-                None,
-            ),
-            ("reference/tools-reference", "Tools Reference", None),
-            ("reference/toolsets-reference", "Toolsets Reference", None),
-            (
-                "reference/mcp-config-reference",
-                "MCP Config Reference",
-                None,
-            ),
-            ("reference/model-catalog", "Model Catalog", None),
-            (
-                "reference/skills-catalog",
-                "Bundled Skills Catalog",
-                Some("Table of all ~90 skills bundled with Hermes"),
-            ),
-            (
-                "reference/optional-skills-catalog",
-                "Optional Skills Catalog",
-                Some("Table of ~60 additional installable skills"),
-            ),
-            ("reference/faq", "FAQ & Troubleshooting", None),
-        ],
-    ),
-];
+fn sections() -> Vec<Section> {
+    let mut out: Vec<Section> = Vec::new();
+    for line in SECTIONS_TABLE.lines() {
+        if let Some(heading) = line.strip_prefix("## ") {
+            out.push((heading, Vec::new()));
+        } else if !line.is_empty() {
+            let mut parts = line.splitn(3, " | ");
+            let slug = parts.next().expect("slug");
+            let title = parts.next().expect("title");
+            let desc = parts.next();
+            out.last_mut().expect("section").1.push((slug, title, desc));
+        }
+    }
+    out
+}
 
 struct DocMeta {
     title: Option<String>,
@@ -353,10 +221,11 @@ fn emit_llms_index(docs: &Path, patterns: &Patterns) -> Result<String, String> {
         "Repo: https://github.com/yungSNAT/reformed-agent".into(),
         String::new(),
     ];
-    for (section, items) in SECTIONS {
+    let nav = sections();
+    for (section, items) in &nav {
         lines.push(format!("## {section}"));
         lines.push(String::new());
-        for (slug, title, provided) in *items {
+        for (slug, title, provided) in items {
             let desc = match provided {
                 Some(desc) => (*desc).to_string(),
                 None => match doc_path(docs, slug) {
@@ -422,8 +291,8 @@ fn emit_llms_full(docs: &Path, patterns: &Patterns) -> Result<String, String> {
             chunks.push(format!("{}\n\n---\n\n", rstrip(&body)));
             Ok(())
         };
-    for (_, items) in SECTIONS {
-        for (slug, _, _) in *items {
+    for (_, items) in sections() {
+        for (slug, _, _) in items {
             let Some(path) = doc_path(docs, slug) else {
                 continue;
             };
@@ -431,7 +300,7 @@ fn emit_llms_full(docs: &Path, patterns: &Patterns) -> Result<String, String> {
             if seen.contains(&rel) {
                 continue;
             }
-            emit(&rel, (*slug).to_string(), &mut chunks)?;
+            emit(&rel, slug.to_string(), &mut chunks)?;
             seen.push(rel);
         }
     }

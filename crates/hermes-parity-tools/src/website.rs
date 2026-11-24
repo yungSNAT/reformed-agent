@@ -71,7 +71,9 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), String> {
 /// `yaml.safe_load` of a frontmatter block, as the values the generators read.
 /// A repeated mapping key keeps its last value and `<<` merges mappings (explicit
 /// keys win; earlier entries in a merge list win), as PyYAML does (quoted `"<<"`
-/// keys also merge). Plain scalars resolve by the YAML 1.2 core schema, not
+/// keys also merge, and quoted `"<<": <non-mapping>` drops the skill like
+/// unquoted `<<`). Integers outside `i128::MIN..=i128::MAX` coerce to `f64`
+/// (`Py::Float`). Plain scalars resolve by the YAML 1.2 core schema, not
 /// PyYAML's YAML 1.1 rules (`yes`, `on`, `010`, `1_000`, `1:30` and `1e3` differ);
 /// no skill in the tree uses such a scalar where the generators read it.
 pub(crate) fn load_yaml(text: &str) -> Option<Py> {
