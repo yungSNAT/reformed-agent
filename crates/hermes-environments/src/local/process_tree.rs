@@ -228,7 +228,7 @@ pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
         else {
             continue;
         };
-        let stat = match std::fs::read_to_string(entry.path().join("stat")) {
+        let stat = match std::fs::read(entry.path().join("stat")) {
             Ok(stat) => stat,
             // Reaped since the listing.
             Err(err) if err.kind() == io::ErrorKind::NotFound => continue,
@@ -248,20 +248,57 @@ pub(super) fn group_has_exited(pgid: libc::pid_t) -> bool {
             }
             Err(_) => return false,
         };
-        // `pid (comm) state ppid pgrp ...`; comm may hold spaces and `)`.
-        let Some((_, fields)) = stat.rsplit_once(')') else {
-            return false;
-        };
-        let mut fields = fields.split_whitespace();
-        let (Some(state), Some(_ppid), Some(pgrp)) = (fields.next(), fields.next(), fields.next())
-        else {
-            return false;
-        };
-        if pgrp.parse::<libc::pid_t>().ok() == Some(pgid) && !matches!(state, "Z" | "X" | "x") {
+        if proc_stat_live_in_group(&stat, pgid) {
             return false;
         }
     }
     true
+}
+
+/// Whether a Linux `/proc/<pid>/stat` payload describes a live member of
+/// `pgid`. Reads only the ASCII suffix after the last `)` so raw non-UTF-8
+/// bytes in `comm` never hide group exit; fails closed on malformed fields.
+#[cfg(target_os = "linux")]
+fn proc_stat_live_in_group(stat: &[u8], pgid: libc::pid_t) -> bool {
+    // `pid (comm) state ppid pgrp ...`; `comm` may hold spaces, `)` and raw bytes.
+    let Some(close) = stat.iter().rposition(|&byte| byte == b')') else {
+        return true;
+    };
+    let Ok(suffix) = std::str::from_utf8(&stat[close + 1..]) else {
+        return true;
+    };
+    let mut fields = suffix.split_whitespace();
+    let (Some(state), Some(_ppid), Some(pgrp)) = (fields.next(), fields.next(), fields.next())
+    else {
+        return true;
+    };
+    let Ok(member_pgrp) = pgrp.parse::<libc::pid_t>() else {
+        return true;
+    };
+    member_pgrp == pgid && !matches!(state, "Z" | "X" | "x")
+}
+
+#[cfg(all(target_os = "linux", test))]
+mod tests {
+    use super::proc_stat_live_in_group;
+
+    #[test]
+    fn proc_stat_parser_skips_non_utf8_comm_and_fails_closed() {
+        assert!(!proc_stat_live_in_group(
+            b"123 (bad\xff)name) S 1 999 999\n",
+            42
+        ));
+        assert!(proc_stat_live_in_group(
+            b"123 (bad\xff)name) S 1 42 42\n",
+            42
+        ));
+        assert!(!proc_stat_live_in_group(
+            b"123 (bad\xff)name) Z 1 42 42\n",
+            42
+        ));
+        assert!(proc_stat_live_in_group(b"123 (truncated", 42));
+        assert!(proc_stat_live_in_group(b"123 (bad) S 1 badpgrp\n", 42));
+    }
 }
 
 #[cfg(windows)]
