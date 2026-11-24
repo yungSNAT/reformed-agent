@@ -675,4 +675,33 @@ mod tests {
                 .is_some()
         );
     }
+
+    /// Each included file is listed once, however often it is included, so
+    /// a repository cannot multiply the listings.
+    #[cfg(unix)]
+    #[test]
+    fn an_include_named_many_times_is_listed_once() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        new_repo(&repo);
+        let fan = "[include]\n".to_string() + &"\tpath = next.config\n".repeat(8);
+        std::fs::write(repo.join("first.config"), &fan).unwrap();
+        std::fs::write(repo.join("next.config"), "[core]\n\tbare = false\n").unwrap();
+        for _ in 0..8 {
+            git(
+                &repo,
+                &["config", "--add", "include.path", "../first.config"],
+            );
+        }
+        let (spy, log) = recording_git(tmp.path());
+
+        workspace_git_with(spy.as_os_str(), &repo, LazyFetchGuard::NoPromisorRemote);
+
+        let calls = std::fs::read_to_string(&log).unwrap_or_default();
+        let listings = calls
+            .lines()
+            .filter(|call| call.contains("--no-includes"))
+            .count();
+        assert!(listings <= 4, "{listings} listings: {calls}");
+    }
 }
