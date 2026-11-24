@@ -15,8 +15,8 @@ async fn raw_output(app: &mut App, args: &[&str]) -> String {
 
 #[tokio::test]
 async fn raw_replay_command_reports_and_exports_fixture_events() {
-    if !isolated_profile::enter(
-        "replay_command_contract::raw_replay_command_reports_and_exports_fixture_events",
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::replay_command_contract::raw_replay_command_reports_and_exports_fixture_events",
     ) {
         return;
     }

@@ -4,8 +4,7 @@ const CHILD_TEST: &str = "HERMES_ISOLATED_COMMAND_TEST";
 
 /// Runs the named test in a child with a disposable profile.
 /// Returns true in that child so it can execute the command assertions.
-pub(super) fn enter(test: &str) -> bool {
-    let test = format!("commands::tests::{test}");
+pub(crate) fn enter(test: &str) -> bool {
     if env::var(CHILD_TEST).is_ok_and(|child| child == test) {
         return true;
     }
@@ -23,8 +22,8 @@ pub(super) fn enter(test: &str) -> bool {
         .env("HOME", root.path())
         .env("HERMES_HOME", root.path())
         .env("HERMES_MANAGED_DIR", managed)
-        .env(CHILD_TEST, &test)
-        .args(["--exact", &test, "--color", "never"]);
+        .env(CHILD_TEST, test)
+        .args(["--exact", test, "--color", "never"]);
     if let Some(profile) = env::var_os("LLVM_PROFILE_FILE") {
         command.env("LLVM_PROFILE_FILE", profile);
     }

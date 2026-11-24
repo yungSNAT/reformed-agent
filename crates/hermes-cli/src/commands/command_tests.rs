@@ -1218,8 +1218,6 @@ note the fixtures"));
     include!("tests/tool_scope.rs");
 
     #[cfg(unix)]
-    mod isolated_profile;
-    #[cfg(unix)]
     mod objective_contract;
     #[cfg(unix)]
     mod replay_command_contract;

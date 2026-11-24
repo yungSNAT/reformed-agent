@@ -29,8 +29,8 @@ async fn assert_objective_output(app: &mut App, args: &[&str], expected: &str) {
 
 #[tokio::test]
 async fn objective_lifecycle_persists_state_and_controls_prompt_injection() {
-    if !isolated_profile::enter(
-        "objective_contract::objective_lifecycle_persists_state_and_controls_prompt_injection",
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::objective_contract::objective_lifecycle_persists_state_and_controls_prompt_injection",
     ) {
         return;
     }
@@ -78,7 +78,7 @@ async fn objective_lifecycle_persists_state_and_controls_prompt_injection() {
 
 #[tokio::test]
 async fn objective_wait_replaces_the_previous_target_and_records_each_transition() {
-    if !isolated_profile::enter("objective_contract::objective_wait_replaces_the_previous_target_and_records_each_transition") {
+    if !crate::isolated_test_profile::enter("commands::tests::objective_contract::objective_wait_replaces_the_previous_target_and_records_each_transition") {
         return;
     }
     let _guard = test_env_lock::lock_async().await;
@@ -156,8 +156,8 @@ async fn objective_wait_replaces_the_previous_target_and_records_each_transition
 
 #[tokio::test]
 async fn objective_commands_persist_policy_and_workspace_records() {
-    if !isolated_profile::enter(
-        "objective_contract::objective_commands_persist_policy_and_workspace_records",
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::objective_contract::objective_commands_persist_policy_and_workspace_records",
     ) {
         return;
     }
@@ -219,8 +219,8 @@ async fn objective_commands_persist_policy_and_workspace_records() {
 
 #[tokio::test]
 async fn objective_verifier_checks_trend_and_deduplicates_evidence_paths() {
-    if !isolated_profile::enter(
-        "objective_contract::objective_verifier_checks_trend_and_deduplicates_evidence_paths",
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::objective_contract::objective_verifier_checks_trend_and_deduplicates_evidence_paths",
     ) {
         return;
     }
