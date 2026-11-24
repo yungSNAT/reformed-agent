@@ -1984,7 +1984,7 @@ async fn subagent_workspace(params: Value, state: &UltraFeatureState) -> Result<
 
 /// A file or folder these tools delete may hold a file a credential store
 /// links to; refuse rather than delete the store's target.
-fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
+pub(crate) fn refuse_guarded_delete(path: &Path) -> Result<(), ToolError> {
     match ProtectedPaths::current().removed_by(path) {
         Some(found) => Err(ToolError::ExecutionFailed(format!(
             "not deleting {}: it holds {}, a credential file or a file a credential store links to",
