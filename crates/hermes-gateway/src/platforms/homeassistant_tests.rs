@@ -16,14 +16,15 @@ fn platform(extra: Value) -> hermes_config::PlatformConfig {
         .unwrap_or_default();
     hermes_config::PlatformConfig {
         enabled: true,
-        token: Some("tok".into()),
         extra,
         ..Default::default()
     }
 }
 
 fn config(extra: Value) -> HomeAssistantConfig {
-    HomeAssistantConfig::from_platform_config_with_env(&platform(extra), |_| None)
+    HomeAssistantConfig::from_platform_config_with_env(&platform(extra), |key| {
+        (key == "HASS_TOKEN").then(|| "tok".to_string())
+    })
 }
 
 async fn adapter_with_inbox(

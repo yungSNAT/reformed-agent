@@ -494,13 +494,12 @@ impl HaInner {
                             Ok(_) => {}
                             Err(_) => debug!("Invalid JSON from HA WebSocket"),
                         },
-                        Some(Ok(Message::Ping(payload))) => {
-                            ws.send(Message::Pong(payload)).await.map_err(ws_err)?;
-                        }
                         Some(Ok(Message::Close(_))) | None => return Ok(()),
                         Some(Ok(_)) => {}
                         Some(Err(e)) => return Err(ws_err(e)),
                     }
+                    // A slow inbound queue is not a lost connection.
+                    last_seen = Instant::now();
                 }
             }
         }
@@ -539,9 +538,6 @@ async fn recv_json(ws: &mut WsStream) -> Result<Value, GatewayError> {
                 return serde_json::from_str(text.as_str()).map_err(|e| {
                     GatewayError::ConnectionFailed(format!("HA WebSocket sent invalid JSON: {e}"))
                 })
-            }
-            Some(Ok(Message::Ping(payload))) => {
-                ws.send(Message::Pong(payload)).await.map_err(ws_err)?
             }
             Some(Ok(Message::Close(_))) | None => {
                 return Err(GatewayError::ConnectionFailed(
