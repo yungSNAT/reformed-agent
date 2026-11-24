@@ -1970,7 +1970,9 @@ mod tests {
                 assert!(is_write_denied(&store));
                 assert!(is_link_target_write_denied(&store));
                 // The safe root confines the file tools only.
-                let outside = std::env::temp_dir().join("hermes-outside-the-safe-root.txt");
+                let outside = tmp
+                    .path()
+                    .with_file_name("hermes-outside-the-safe-root.txt");
                 assert!(is_write_denied(&outside));
                 assert!(!is_link_target_write_denied(&outside));
                 assert!(is_write_denied(&home.join("auth.json")));
