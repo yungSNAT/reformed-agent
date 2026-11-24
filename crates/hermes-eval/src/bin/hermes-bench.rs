@@ -231,7 +231,9 @@ fn use_config_dir_as_home(config_dir: Option<&Path>) -> Option<PathBuf> {
         std::env::set_var("HERMES_HOME", dir);
     }
     hermes_config::normalize_hermes_home_env();
-    config_dir.map(Path::to_path_buf)
+    // As in hermes: the flag's later readers get the folder the environment
+    // now names, so configuration and skills come from one folder.
+    config_dir.and_then(|_| std::env::var_os("HERMES_HOME").map(PathBuf::from))
 }
 
 #[cfg(all(test, feature = "agent-loop"))]
