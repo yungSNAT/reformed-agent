@@ -139,11 +139,13 @@ fn disabling_the_gateway_hides_it_and_every_mcp_tool() {
 
 #[test]
 fn custom_toolsets_naming_an_unconnected_server_keep_the_gateway() {
-    let mut cfg = GatewayConfig::default();
-    cfg.mcp_servers = vec![hermes_config::McpServerEntry {
-        name: "late-docs".to_string(),
+    let mut cfg = GatewayConfig {
+        mcp_servers: vec![hermes_config::McpServerEntry {
+            name: "late-docs".to_string(),
+            ..Default::default()
+        }],
         ..Default::default()
-    }];
+    };
     for token in ["late-docs", "mcp-late_docs"] {
         cfg.platform_toolsets.insert(
             "cli".to_string(),
