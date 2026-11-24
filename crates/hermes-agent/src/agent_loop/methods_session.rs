@@ -355,7 +355,8 @@ impl AgentLoop {
     /// of `delegate_task`, so only on a turn that offers that tool; otherwise
     /// they wait for a later turn. The pair goes just before the newest user
     /// message at or after `from`, so it closes the earlier turn and the
-    /// current one starts with the user, as thinking modes expect.
+    /// current one starts with the user, as thinking modes expect; a run
+    /// with no such message leaves them waiting too.
     fn add_recovered_sub_agent_results(
         &self,
         ctx: &mut ContextManager,
@@ -363,10 +364,15 @@ impl AgentLoop {
         from: usize,
     ) {
         let offered = tool_schemas.iter().any(|t| t.name == RECOVERED_RESULTS_TOOL);
+        let at = ctx
+            .get_messages()
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+            .filter(|&i| i >= from);
         let Some(note) = self
             .sub_agent_orchestrator
             .as_ref()
-            .and_then(|o| o.recover_undelivered(offered))
+            .and_then(|o| o.recover_undelivered(offered && at.is_some()))
         else {
             return;
         };
@@ -387,22 +393,23 @@ impl AgentLoop {
         };
         let mut assistant = Message::assistant_with_tool_calls(None, vec![call]);
         // Present but empty: a thinking provider expects the field echoed on
-        // every earlier tool call, and this call had no reasoning.
+        // every earlier tool call, and this call had no reasoning. Request
+        // bodies for other providers leave an empty one out.
         assistant.reasoning_content = Some(String::new());
         let result = Self::named_tool_result_message(id, RECOVERED_RESULTS_TOOL, note);
-        let messages = ctx.get_messages_mut();
-        let at = messages
-            .iter()
-            .rposition(|m| m.role == MessageRole::User)
-            .filter(|&i| i >= from)
-            .unwrap_or(messages.len());
-        messages.splice(at..at, [assistant, result]);
+        let at = at.unwrap_or_default();
+        ctx.get_messages_mut().splice(at..at, [assistant, result]);
     }
 
-    /// A run that ended normally received its sub-agents' results.
+    /// A run that ended normally received its sub-agents' results; one that
+    /// failed counts against handing them over again.
     fn note_sub_agent_results_delivered(&self, result: &Result<AgentResult, AgentError>) {
-        if let (Ok(_), Some(orchestrator)) = (result, self.sub_agent_orchestrator.as_ref()) {
-            orchestrator.mark_delivered();
+        let Some(orchestrator) = self.sub_agent_orchestrator.as_ref() else {
+            return;
+        };
+        match result {
+            Ok(_) => orchestrator.mark_delivered(),
+            Err(_) => orchestrator.note_run_failed(),
         }
     }
 

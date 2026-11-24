@@ -23,6 +23,7 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -156,13 +157,24 @@ pub struct SubAgentOrchestrator {
     cfg: SubAgentOrchestratorConfig,
     /// Sub-agent results handed to the model in the current parent run.
     handed: Mutex<HashSet<String>>,
+    /// Whether the current parent run carries recovered results.
+    recovering: AtomicBool,
+    /// Parent runs that carried recovered results and failed, since one
+    /// that carried them last finished.
+    failed_recoveries: AtomicU32,
 }
+
+/// Failed parent runs carrying recovered results after which this process
+/// stops adding them, in case the provider rejects them; they stay pending.
+const MAX_FAILED_RECOVERIES: u32 = 2;
 
 impl SubAgentOrchestrator {
     pub fn new(cfg: SubAgentOrchestratorConfig) -> Self {
         Self {
             cfg,
             handed: Mutex::default(),
+            recovering: AtomicBool::new(false),
+            failed_recoveries: AtomicU32::new(0),
         }
     }
 
@@ -190,6 +202,8 @@ impl SubAgentOrchestrator {
                 code_index: parent.code_index.clone(),
             },
             handed: Mutex::default(),
+            recovering: AtomicBool::new(false),
+            failed_recoveries: AtomicU32::new(0),
         }
     }
 
@@ -554,23 +568,44 @@ impl SubAgentOrchestrator {
     /// Start of a parent run: a block listing this session's sub-agent
     /// results that no finished parent run received, or `None`. With
     /// `can_deliver` false (the run cannot hand them over) nothing is listed
-    /// and they wait for a later run. See [`recovery`].
+    /// and they wait for a later run, as they do in this process after
+    /// [`MAX_FAILED_RECOVERIES`] failed runs that carried them. See
+    /// [`recovery`].
     pub fn recover_undelivered(&self, can_deliver: bool) -> Option<String> {
         if let Ok(mut handed) = self.handed.lock() {
             handed.clear();
         }
+        self.recovering.store(false, Ordering::SeqCst);
         if !can_deliver {
             return None;
         }
         let session = self.cfg.parent_session_id.as_deref()?;
+        if self.failed_recoveries.load(Ordering::SeqCst) >= MAX_FAILED_RECOVERIES {
+            tracing::warn!(
+                session,
+                "not adding recovered sub-agent results after failed runs that carried them"
+            );
+            return None;
+        }
         let (note, ids) = recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)?;
         self.note_handed(ids);
+        self.recovering.store(true, Ordering::SeqCst);
         Some(note)
+    }
+
+    /// A parent run failed: if it carried recovered results, count it.
+    pub fn note_run_failed(&self) {
+        if self.recovering.swap(false, Ordering::SeqCst) {
+            self.failed_recoveries.fetch_add(1, Ordering::SeqCst);
+        }
     }
 
     /// A parent run ended normally: the results it handed to the model (its
     /// foreground children and its recovery block) are delivered.
     pub fn mark_delivered(&self) {
+        if self.recovering.swap(false, Ordering::SeqCst) {
+            self.failed_recoveries.store(0, Ordering::SeqCst);
+        }
         let Some(session) = self.cfg.parent_session_id.as_deref() else {
             return;
         };

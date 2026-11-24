@@ -403,3 +403,53 @@ async fn a_background_result_its_callback_received_is_delivered() {
     let delivered = read(home.path(), &id);
     assert_eq!((delivered.delivered, delivered.result), (Some(true), None));
 }
+
+#[tokio::test]
+async fn results_stop_riding_along_after_two_failed_runs_and_stay_pending() {
+    let home = tempfile::tempdir().unwrap();
+    write_lineage(
+        home.path(),
+        &record("stuck", "s", SubAgentStatus::Completed),
+    );
+    let provider = Arc::new(Recording::default());
+    let agent = parent("s", home.path(), provider.clone());
+
+    provider.failing.store(true, Ordering::SeqCst);
+    for words in ["one", "two"] {
+        assert!(agent.run(vec![Message::user(words)], None).await.is_err());
+    }
+    provider.failing.store(false, Ordering::SeqCst);
+    agent.run(vec![Message::user("three")], None).await.unwrap();
+
+    let seen = provider.seen.lock().unwrap().clone();
+    let notes: Vec<usize> = seen.iter().map(|sent| notes_in(sent)).collect();
+    assert_eq!(notes.first(), Some(&1));
+    assert_eq!(notes.last(), Some(&0), "the third run went without them");
+    assert_eq!(read(home.path(), "stuck").delivered, Some(false));
+
+    // A new process tries again.
+    let fresh = parent("s", home.path(), provider.clone());
+    let before = provider.seen.lock().unwrap().len();
+    fresh.run(vec![Message::user("four")], None).await.unwrap();
+    assert_eq!(notes_in(&provider.seen.lock().unwrap()[before]), 1);
+    assert_eq!(read(home.path(), "stuck").delivered, Some(true));
+}
+
+#[tokio::test]
+async fn a_run_without_a_new_user_message_leaves_results_pending() {
+    let home = tempfile::tempdir().unwrap();
+    write_lineage(
+        home.path(),
+        &record("later", "s", SubAgentStatus::Completed),
+    );
+    let provider = Arc::new(Recording::default());
+    let agent = parent("s", home.path(), provider.clone());
+
+    agent
+        .run(vec![Message::system("no user here")], None)
+        .await
+        .unwrap();
+
+    assert_eq!(notes_in(&provider.seen.lock().unwrap()[0]), 0);
+    assert_eq!(read(home.path(), "later").delivered, Some(false));
+}
