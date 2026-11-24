@@ -1322,6 +1322,48 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
     assert!(after_kill, "the group was not seen as ended");
 }
 
+/// A group member that refuses the signal (here one running as another
+/// user) leaves the group alive, so `kill_process` must not report it
+/// killed. Needs passwordless `sudo`; skipped without it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[tokio::test]
+async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed() {
+    let sudo_ok = std::process::Command::new("sudo")
+        .args(["-n", "-u", "nobody", "true"])
+        .status()
+        .is_ok_and(|status| status.success());
+    if !sudo_ok {
+        eprintln!("skipped: passwordless sudo to nobody is not available");
+        return;
+    }
+    let dir = tempdir().unwrap();
+    let marker = dir.path().join("member");
+    let shell_marker = marker.to_string_lossy().replace('\\', "/");
+    // `sudo` runs as root and its child as nobody: neither accepts a signal
+    // from this user, whilst the shell does.
+    let command =
+        format!("sudo -n -u nobody sleep 31.4159 & echo > \"{shell_marker}.ready\"; wait");
+    let backend = LocalBackend::new(60, 1_048_576);
+    let started = backend
+        .execute_command(&command, None, None, true, false)
+        .await
+        .unwrap();
+    let payload: Value = serde_json::from_str(&started.stdout).expect("valid start payload");
+    let session_id = payload["session_id"].as_str().expect("session_id");
+    wait_until_ready(&marker).await;
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+    let killed = backend.kill_process(session_id).await;
+    let _ = std::process::Command::new("sudo")
+        .args(["-n", "pkill", "-f", "sleep 31.4159"])
+        .status();
+
+    assert!(
+        !matches!(&killed, Ok(value) if value["status"] == "killed"),
+        "a group with a live member was reported killed: {killed:?}"
+    );
+}
+
 #[tokio::test]
 async fn test_finished_command_leaves_its_background_child_running() {
     let dir = tempdir().unwrap();
