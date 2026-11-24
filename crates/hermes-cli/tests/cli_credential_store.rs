@@ -120,13 +120,30 @@ async fn auth_pool_adds_lists_and_removes_synthetic_credentials() {
     .await;
     assert!(remaining.contains("primary"), "{remaining}");
     assert!(!remaining.contains("secondary"), "{remaining}");
+    let pool_path = home.join("hermes/auth/pool.json");
+    let mut pool: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&pool_path).unwrap()).unwrap();
+    let entry = &mut pool["providers"][PROVIDER][0];
+    assert_eq!(entry["label"], "primary");
+    entry["last_status"] = serde_json::json!("exhausted");
+    entry["last_status_at"] = serde_json::json!(1.0);
+    entry["last_error_code"] = serde_json::json!(429);
+    std::fs::write(&pool_path, serde_json::to_vec(&pool).unwrap()).unwrap();
+
     credential_cli(
         home,
         &["auth", "reset", PROVIDER],
         true,
-        "Reset status on 0 pooled credential(s)",
+        "Reset status on 1 pooled credential(s)",
     )
     .await;
+    let saved: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&pool_path).unwrap()).unwrap();
+    let entry = saved["providers"][PROVIDER][0].as_object().unwrap();
+    assert_eq!(entry["label"], "primary");
+    for cleared in ["last_status", "last_status_at", "last_error_code"] {
+        assert!(!entry.contains_key(cleared), "{cleared} survived reset");
+    }
     credential_cli(
         home,
         &["auth", "remove", PROVIDER, "1"],
@@ -186,6 +203,20 @@ async fn secret_vault_masks_and_removes_the_isolated_fixture() {
     )
     .await;
     assert!(!refused.contains(VALUE));
+
+    let revealed = tokio::time::timeout(
+        Duration::from_secs(20),
+        isolated_hermes::isolated_hermes(home)
+            .stdin(Stdio::null())
+            .env("HERMES_ALLOW_SECRET_STDOUT", "1")
+            .args(["secrets", "get", PROVIDER, "--show"])
+            .output(),
+    )
+    .await
+    .expect("credential CLI timeout")
+    .expect("read the synthetic vault value");
+    assert!(revealed.status.success());
+    assert!(String::from_utf8(revealed.stdout).unwrap().trim() == VALUE);
     credential_cli(
         home,
         &["secrets", "remove", PROVIDER],
