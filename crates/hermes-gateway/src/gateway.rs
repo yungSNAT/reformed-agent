@@ -435,6 +435,9 @@ pub struct Gateway {
     message_deduplicator: RwLock<MessageDeduplicator>,
     /// Active gateway sessions plus queued/steered busy follow-ups.
     busy_sessions: Arc<RwLock<BusySessionCoordinator>>,
+    /// Where turns in flight are recorded for recovery after a restart.
+    reply_records: std::sync::OnceLock<PathBuf>,
+    reply_writer_alive: std::sync::OnceLock<fn(u32) -> bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -472,6 +475,7 @@ include!("gateway/routing_methods.rs");
 include!("gateway/slash_command_methods.rs");
 
 include!("gateway/routing_send.rs");
+include!("gateway/reply_recovery_methods.rs");
 
 #[cfg(test)]
 mod tests;

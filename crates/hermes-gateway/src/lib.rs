@@ -26,6 +26,7 @@ pub mod mirror;
 pub mod pairing;
 pub mod platforms;
 pub mod relay;
+pub mod reply_recovery;
 pub mod session;
 pub mod session_control;
 pub mod sticker_cache;
