@@ -48,7 +48,30 @@ Environment variables:
                          Refuse to install unless cosign verifies SHA256SUMS (default: false)
   HERMES_NO_MODIFY_PATH  Set to 1/true to skip modifying user PATH
   INSTALL_LEGACY_ALIAS   Set to 1/true to also install hermes.exe
+  RUN_SETUP_MODE         auto|always|never for post-install setup (default: auto)
 '@
+}
+
+function Invoke-NativeCaptured {
+    param(
+        [Parameter(Mandatory = $true)][string]$FilePath,
+        [string[]]$ArgumentList = @()
+    )
+    $prevEap = $ErrorActionPreference
+    # Windows PowerShell 5.1 converts native stderr under 2>&1 into terminating errors when
+    # ErrorActionPreference is 'Stop', even on exit 0 (e.g. cosign writing "Verified OK" to stderr).
+    $ErrorActionPreference = 'Continue'
+    try {
+        $raw = & $FilePath @ArgumentList 2>&1
+        $code = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $prevEap
+    }
+    $lines = @($raw | ForEach-Object { if ($null -ne $_) { $_.ToString() } })
+    return [pscustomobject]@{
+        ExitCode = $code
+        Lines    = $lines
+    }
 }
 
 function Test-Truthy {
@@ -127,7 +150,7 @@ function Get-ExpectedAssetHash {
         [Parameter(Mandatory = $true)][string]$AssetName
     )
     $expected = $null
-    $lines = (Get-Content -Path $SumsPath -Raw) -split "`r?`n"
+    $lines = (Get-Content -LiteralPath $SumsPath -Raw) -split "`r?`n"
     foreach ($line in $lines) {
         if ([string]::IsNullOrWhiteSpace($line)) { continue }
         if ($line -notmatch '^\s*([0-9a-fA-F]{64})\s+\*?([^\s]+)\s*$') {
@@ -170,11 +193,11 @@ function Install-BinariesWithRollback {
     $replaced = @()
     try {
         foreach ($name in $Targets) {
-            Copy-Item -Path $StagedExe -Destination (Join-Path $DestDir "$name.new") -Force
+            Copy-Item -LiteralPath $StagedExe -Destination (Join-Path $DestDir "$name.new") -Force
         }
         foreach ($name in $Targets) {
             $target = Join-Path $DestDir $name
-            Get-ChildItem -Path $DestDir -Filter "$name.*.old" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
+            Get-ChildItem -LiteralPath $DestDir -Filter "$name.*.old" -ErrorAction SilentlyContinue | Remove-Item -Force -ErrorAction SilentlyContinue
             $old = if (Test-Path -LiteralPath $target) { "$target.$([Guid]::NewGuid().ToString('N')).old" } else { $null }
             $replaced += , @($target, $old)
             if ($old) {
@@ -217,12 +240,12 @@ function Install-BinariesWithRollback {
 
 function Add-ToUserPath {
     param([Parameter(Mandatory = $true)][string]$Dir)
-    $normDir = $Dir.TrimEnd('\')
+    $normDir = $Dir.TrimEnd('\', '/')
     $key = [Microsoft.Win32.Registry]::CurrentUser.CreateSubKey('Environment')
     try {
         $userPath = $key.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
         $entries = @($userPath -split ';' | Where-Object { $_ })
-        $alreadyPresent = $entries | Where-Object { $_.TrimEnd('\') -ieq $normDir }
+        $alreadyPresent = $entries | Where-Object { $_.TrimEnd('\', '/') -ieq $normDir }
         if (-not $alreadyPresent) {
             $kind = if ($key.GetValueNames() -contains 'Path') { $key.GetValueKind('Path') } else { 'ExpandString' }
             $key.SetValue('Path', (($entries + $Dir) -join ';'), $kind)
@@ -376,13 +399,19 @@ if ($MyInvocation.InvocationName -ne '.') {
             $bundlePath = Join-Path $tmp 'SHA256SUMS.sigstore.json'
             Invoke-VerifiedDownload -Url "$baseUrl/SHA256SUMS.sigstore.json" -OutFile $bundlePath -LoopbackBase $loopbackBase
             $identityRegex = "^https://github\.com/$([regex]::Escape($Repo))/\.github/workflows/release\.yml@refs/tags/$([regex]::Escape($resolvedVersion))`$"
-            $cosignOut = & $cosign.Source verify-blob `
-                --bundle $bundlePath `
-                --certificate-identity-regexp $identityRegex `
-                --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' `
-                $sumsPath 2>&1
-            if ($LASTEXITCODE -ne 0) {
-                $cosignOut | ForEach-Object { Write-Error $_ }
+            $cosignRes = Invoke-NativeCaptured -FilePath $cosign.Source -ArgumentList @(
+                'verify-blob',
+                '--bundle', $bundlePath,
+                '--certificate-identity-regexp', $identityRegex,
+                '--certificate-oidc-issuer', 'https://token.actions.githubusercontent.com',
+                $sumsPath
+            )
+            if ($cosignRes.ExitCode -ne 0) {
+                foreach ($line in $cosignRes.Lines) {
+                    if (-not [string]::IsNullOrWhiteSpace($line)) {
+                        [Console]::Error.WriteLine($line)
+                    }
+                }
                 throw "Refusing to install: SHA256SUMS is not signed by $Repo's release workflow for $resolvedVersion."
             }
             Write-Output 'Verified the signature on SHA256SUMS.'
@@ -430,10 +459,16 @@ if ($MyInvocation.InvocationName -ne '.') {
             $archive.Dispose()
         }
 
-        $versionOut = & $stagedExe --version 2>&1
-        if ($LASTEXITCODE -ne 0) {
+        $versionRes = Invoke-NativeCaptured -FilePath $stagedExe -ArgumentList @('--version')
+        if ($versionRes.ExitCode -ne 0) {
+            foreach ($line in $versionRes.Lines) {
+                if (-not [string]::IsNullOrWhiteSpace($line)) {
+                    [Console]::Error.WriteLine($line)
+                }
+            }
             throw "Refusing to install: extracted binary failed '--version' check."
         }
+        $versionOut = ($versionRes.Lines -join ' ').Trim()
 
         $targets = @('hermes-agent-ultra.exe', 'hermes-ultra.exe')
         if ($installLegacy) {
@@ -453,7 +488,7 @@ if ($MyInvocation.InvocationName -ne '.') {
         }
 
         if ($skipPathUpdate) {
-            $onPath = ($env:Path -split ';' | Where-Object { $_.TrimEnd('\') -ieq $resolvedInstallDir.TrimEnd('\') })
+            $onPath = ($env:Path -split ';' | Where-Object { $_.TrimEnd('\', '/') -ieq $resolvedInstallDir.TrimEnd('\', '/') })
             if (-not $onPath) {
                 Write-Output "PATH left unmodified; add $resolvedInstallDir to run hermes-ultra from any terminal."
             }
