@@ -1477,3 +1477,5 @@ async fn runs_endpoints_require_bearer_auth_when_configured() {
     assert!(response.starts_with("HTTP/1.1 401 Unauthorized"));
     assert!(state.run_store.read().await.records.is_empty());
 }
+
+include!("job_contract_tests.rs");
