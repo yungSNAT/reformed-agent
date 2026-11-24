@@ -406,10 +406,14 @@ impl Drop for CacheUse {
     }
 }
 
-/// How long `model`'s provider keeps a cached prefix after its last use.
-pub fn cache_ttl_for_model(model: &str) -> Duration {
+/// How long `model`'s provider keeps a cached prefix after its last use,
+/// with `ttl` the configured tier for models that take explicit markers.
+pub fn cache_ttl_for_model(model: &str, ttl: hermes_config::PromptCacheTtl) -> Duration {
     if model.to_ascii_lowercase().contains("claude") {
-        ANTHROPIC_CACHE_TTL
+        match ttl {
+            hermes_config::PromptCacheTtl::FiveMinutes => ANTHROPIC_CACHE_TTL,
+            hermes_config::PromptCacheTtl::OneHour => Duration::from_secs(ttl.seconds()),
+        }
     } else {
         AUTOMATIC_CACHE_TTL
     }

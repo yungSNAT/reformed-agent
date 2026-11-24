@@ -338,7 +338,7 @@ impl GenericProvider {
     }
 
     fn is_local_request_control_key(key: &str) -> bool {
-        matches!(key, "strict_tool_calls" | "strict_api" | "provider_strict")
+        crate::provider::is_local_control_key(key)
             || provider_profiles::local_control_key_for_profile(None, key)
     }
 
