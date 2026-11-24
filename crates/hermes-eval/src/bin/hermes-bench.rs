@@ -93,12 +93,12 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> EvalResult<()> {
     let args = Args::parse();
-    use_config_dir_as_home(args.config_dir.as_deref());
+    let config_dir = use_config_dir_as_home(args.config_dir.as_deref());
     // Before anything writes to the home; see check_implicit_home for the limit.
     hermes_config::check_implicit_home().map_err(EvalError::Other)?;
     let benchmark_path = args.benchmark.clone();
 
-    let cfg = load_gateway_config(args.config_dir.as_deref())?;
+    let cfg = load_gateway_config(config_dir.as_deref())?;
     let model = resolve_model(&args, &cfg);
     let output_path = args
         .output
@@ -224,20 +224,25 @@ fn bench_skills_dir() -> PathBuf {
     hermes_config::skills_dir()
 }
 
-/// `--config-dir` chooses the Hermes home, as it does for `hermes`.
-fn use_config_dir_as_home(config_dir: Option<&Path>) {
+/// `--config-dir` chooses the Hermes home, as it does for `hermes`. Returns
+/// the configuration folder its later readers get.
+fn use_config_dir_as_home(config_dir: Option<&Path>) -> Option<PathBuf> {
     if let Some(dir) = config_dir {
         std::env::set_var("HERMES_HOME", dir);
     }
     hermes_config::normalize_hermes_home_env();
+    config_dir.map(Path::to_path_buf)
 }
 
 #[cfg(all(test, feature = "agent-loop"))]
 mod tests {
     #[test]
-    fn config_dir_sets_the_home_the_bench_skills_come_from() {
+    fn config_dir_sets_one_home_for_the_bench_skills_and_configuration() {
         let dir = tempfile::tempdir().expect("tempdir");
-        super::use_config_dir_as_home(Some(dir.path()));
+        // Padded, as a quoted shell argument can be; the home is normalised.
+        let padded = std::path::PathBuf::from(format!(" {} ", dir.path().display()));
+        let config_dir = super::use_config_dir_as_home(Some(&padded));
         assert_eq!(super::bench_skills_dir(), dir.path().join("skills"));
+        assert_eq!(config_dir.as_deref(), Some(dir.path()));
     }
 }
