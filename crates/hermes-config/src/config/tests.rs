@@ -593,5 +593,8 @@ terminal:
             serde_yaml::from_str("mcp_tool_mode: gateway\n").expect("mode should deserialize");
         assert_eq!(cfg.mcp_tool_mode, McpToolMode::Gateway);
         assert!(serde_yaml::from_str::<GatewayConfig>("mcp_tool_mode: lazy\n").is_err());
+        let saved = |cfg: &GatewayConfig| serde_yaml::to_string(cfg).expect("serialize");
+        assert!(!saved(&GatewayConfig::default()).contains("mcp_tool_mode"));
+        assert!(saved(&cfg).contains("mcp_tool_mode: gateway"));
     }
 }

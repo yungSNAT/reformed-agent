@@ -163,7 +163,8 @@ pub struct GatewayConfig {
     pub mcp_servers: Vec<McpServerEntry>,
 
     /// Whether the model sees each MCP tool or one `mcp` gateway tool.
-    #[serde(default)]
+    /// Saved only when set, so a save leaves the user's file as it was.
+    #[serde(default, skip_serializing_if = "McpToolMode::is_direct")]
     pub mcp_tool_mode: McpToolMode,
 
     /// Profile system: selected profile and named profile files.

@@ -465,6 +465,12 @@ pub enum McpToolMode {
     Gateway,
 }
 
+impl McpToolMode {
+    fn is_direct(&self) -> bool {
+        *self == Self::Direct
+    }
+}
+
 /// Active profile info.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ProfileConfig {
