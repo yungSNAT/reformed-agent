@@ -378,6 +378,25 @@ fn is_git_directory(dir: &Path, root: &Path) -> Option<bool> {
     Some(has_objects && common.join("refs").is_dir())
 }
 
+fn simplify_windows_verbatim(path: PathBuf) -> PathBuf {
+    #[cfg(windows)]
+    {
+        if let Some(s) = path.to_str() {
+            if let Some(rest) = s.strip_prefix(r"\\?\UNC\") {
+                return PathBuf::from(format!(r"\\{rest}"));
+            }
+            if let Some(rest) = s.strip_prefix(r"\\?\") {
+                return PathBuf::from(rest);
+            }
+        }
+    }
+    path
+}
+
+fn canonicalize_clean(path: &Path) -> std::io::Result<PathBuf> {
+    std::fs::canonicalize(path).map(simplify_windows_verbatim)
+}
+
 fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
     if !paths.contains(&candidate) {
         paths.push(candidate);
@@ -386,7 +405,7 @@ fn push_unique_path(paths: &mut Vec<PathBuf>, candidate: PathBuf) {
 
 /// The git and common folders that git's discovery finds from `root`.
 fn find_git_dirs(root: &Path) -> Option<Option<GitDirs>> {
-    let root = std::fs::canonicalize(root).ok()?;
+    let root = canonicalize_clean(root).ok()?;
     let mut candidates = Vec::new();
     let git_dir = if let Some(env_dir) = std::env::var_os("GIT_DIR").filter(|d| !d.is_empty()) {
         let path = root.join(env_dir);
@@ -443,7 +462,7 @@ fn find_git_dirs(root: &Path) -> Option<Option<GitDirs>> {
             None => return Some(None),
         }
     };
-    if let Ok(canon) = std::fs::canonicalize(&git_dir) {
+    if let Ok(canon) = canonicalize_clean(&git_dir) {
         push_unique_path(&mut candidates, canon);
     }
     let common_dir = if let Some(gcd) = std::env::var_os("GIT_COMMON_DIR").filter(|d| !d.is_empty())
@@ -533,9 +552,7 @@ fn wildmatch_segment(pat: &[u8], text: &[u8], icase: bool) -> bool {
                 next[j] = seen;
             }
         } else if pat[i] == b'?' {
-            for j in 0..text.len() {
-                next[j + 1] = dp[j];
-            }
+            next[1..=text.len()].copy_from_slice(&dp[..text.len()]);
         } else if pat[i] == b'\\' {
             if i + 1 >= pat.len() {
                 return false;
@@ -612,24 +629,26 @@ fn gitdir_condition_matches(
     candidates: &[PathBuf],
     icase: bool,
 ) -> bool {
-    let mut pat = Vec::new();
+    let pat;
     let pat_ref: &[u8] = if let Some(rest) = raw_pat.strip_prefix(b"~/") {
         let Some(home) = std::env::home_dir() else {
             return true;
         };
-        pat = path_to_slash_bytes(&home);
-        if !pat.ends_with(b"/") {
-            pat.push(b'/');
+        let mut expanded = path_to_slash_bytes(&home);
+        if !expanded.ends_with(b"/") {
+            expanded.push(b'/');
         }
-        pat.extend_from_slice(rest);
+        expanded.extend_from_slice(rest);
+        pat = expanded;
         &pat
     } else if let Some(rest) = raw_pat.strip_prefix(b"./") {
         let base = config_file.parent().unwrap_or(Path::new(""));
-        pat = path_to_slash_bytes(base);
-        if !pat.ends_with(b"/") {
-            pat.push(b'/');
+        let mut expanded = path_to_slash_bytes(base);
+        if !expanded.ends_with(b"/") {
+            expanded.push(b'/');
         }
-        pat.extend_from_slice(rest);
+        expanded.extend_from_slice(rest);
+        pat = expanded;
         &pat
     } else {
         raw_pat
@@ -667,7 +686,7 @@ fn canonical_parent(file: &Path) -> PathBuf {
     if parent.as_os_str().is_empty() {
         PathBuf::new()
     } else {
-        std::fs::canonicalize(parent).unwrap_or_else(|_| parent.to_path_buf())
+        canonicalize_clean(parent).unwrap_or_else(|_| parent.to_path_buf())
     }
 }
 
@@ -681,7 +700,7 @@ fn list_config_file<'a>(
         let no_repo_git_dir = PathBuf::from("/dev/null/no-repository");
         #[cfg(not(unix))]
         let no_repo_git_dir = std::env::current_exe()
-            .map(|exe| exe.join("no-repository"))
+            .map(|exe| simplify_windows_verbatim(exe).join("no-repository"))
             .unwrap_or_else(|_| real.join("no-repository"));
         let listed = output_within_timeout(
             Command::new(git)
@@ -746,7 +765,7 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
         Err(_) => return None,
         Ok(meta) if !meta.is_file() => return None,
         Ok(_) => {
-            let real = std::fs::canonicalize(&common_config).ok()?;
+            let real = canonicalize_clean(&common_config).ok()?;
             let entries = list_config_file(git, &real, &mut cache)?;
             for (key, value) in entries {
                 if key == b"extensions.worktreeconfig" {
@@ -760,95 +779,63 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
     if worktree_config {
         pending.push((dirs.git_dir.join("config.worktree"), 0));
     }
-    let mut remote_urls: Vec<Vec<u8>> = Vec::new();
-    let mut deferred_hasconfig: Vec<(Vec<u8>, PathBuf, usize)> = Vec::new();
 
-    loop {
-        while let Some((file, depth)) = pending.pop() {
-            match std::fs::metadata(&file) {
-                Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(_) => return None,
-                Ok(meta) if !meta.is_file() => return None,
-                Ok(_) => {}
+    while let Some((file, depth)) = pending.pop() {
+        match std::fs::metadata(&file) {
+            Err(err) if err.kind() == std::io::ErrorKind::NotFound => continue,
+            Err(_) => return None,
+            Ok(meta) if !meta.is_file() => return None,
+            Ok(_) => {}
+        }
+        if depth > MAX_INCLUDE_DEPTH {
+            return None;
+        }
+        let Ok(real) = canonicalize_clean(&file) else {
+            return None;
+        };
+        let parent = canonical_parent(&file);
+        if !visited.insert((real.clone(), parent)) {
+            continue;
+        }
+        let entries: Vec<ConfigEntry> = list_config_file(git, &real, &mut cache)?.to_vec();
+        for (key, value) in entries {
+            if names_a_user(&key, value.as_deref()) {
+                return Some(true);
             }
-            if depth > MAX_INCLUDE_DEPTH {
-                return None;
-            }
-            let Ok(real) = std::fs::canonicalize(&file) else {
-                return None;
-            };
-            let parent = canonical_parent(&file);
-            if !visited.insert((real.clone(), parent)) {
-                continue;
-            }
-            let entries: Vec<ConfigEntry> = list_config_file(git, &real, &mut cache)?.to_vec();
-            for (key, value) in entries {
-                if names_a_user(&key, value.as_deref()) {
-                    return Some(true);
+            if key == b"include.path" {
+                let value = value.as_deref()?;
+                pending.push((include_path(&file, value)?, depth + 1));
+            } else if let Some((cond, var)) = includeif_condition(&key) {
+                if var != b"path" {
+                    continue;
                 }
-                if let Some(first) = key.iter().position(|b| *b == b'.') {
-                    let last = key.iter().rposition(|b| *b == b'.').unwrap_or(first);
-                    if (&key[..first], &key[last + 1..]) == (b"remote", b"url") && first < last {
-                        if let Some(url) = &value {
-                            remote_urls.push(url.clone());
-                        }
-                    }
-                }
-                if key == b"include.path" {
-                    let value = value.as_deref()?;
-                    pending.push((include_path(&file, value)?, depth + 1));
-                } else if let Some((cond, var)) = includeif_condition(&key) {
-                    if var != b"path" {
-                        continue;
-                    }
-                    let value = value.as_deref()?;
-                    let target = include_path(&file, value)?;
-                    if let Some(pat) = cond.strip_prefix(b"gitdir:") {
-                        if gitdir_condition_matches(pat, &file, &dirs.git_dir_candidates, false) {
-                            pending.push((target, depth + 1));
-                        }
-                    } else if let Some(pat) = cond.strip_prefix(b"gitdir/i:") {
-                        if gitdir_condition_matches(pat, &file, &dirs.git_dir_candidates, true) {
-                            pending.push((target, depth + 1));
-                        }
-                    } else if let Some(pat) = cond.strip_prefix(b"onbranch:") {
-                        if let Some(branch) = &head_branch {
-                            let mut full_pat = pat.to_vec();
-                            if full_pat.ends_with(b"/") {
-                                full_pat.extend_from_slice(b"**");
-                            }
-                            if wildmatch_pathname(&full_pat, branch, false) {
-                                pending.push((target, depth + 1));
-                            }
-                        }
-                    } else if let Some(pat) = cond.strip_prefix(b"hasconfig:remote.*.url:") {
-                        deferred_hasconfig.push((pat.to_vec(), target, depth + 1));
-                    } else {
-                        // Unknown condition: follow conservatively.
+                let value = value.as_deref()?;
+                let target = include_path(&file, value)?;
+                if let Some(pat) = cond.strip_prefix(b"gitdir:") {
+                    if gitdir_condition_matches(pat, &file, &dirs.git_dir_candidates, false) {
                         pending.push((target, depth + 1));
                     }
+                } else if let Some(pat) = cond.strip_prefix(b"gitdir/i:") {
+                    if gitdir_condition_matches(pat, &file, &dirs.git_dir_candidates, true) {
+                        pending.push((target, depth + 1));
+                    }
+                } else if let Some(pat) = cond.strip_prefix(b"onbranch:") {
+                    if let Some(branch) = &head_branch {
+                        let mut full_pat = pat.to_vec();
+                        if full_pat.ends_with(b"/") {
+                            full_pat.extend_from_slice(b"**");
+                        }
+                        if wildmatch_pathname(&full_pat, branch, false) {
+                            pending.push((target, depth + 1));
+                        }
+                    }
+                } else {
+                    // Git speculatively parses `hasconfig:remote.*.url:` targets
+                    // (expanding their nested includes and `~name`) even when
+                    // unmatched, and future conditions must also fail closed.
+                    pending.push((target, depth + 1));
                 }
             }
-        }
-        if deferred_hasconfig.is_empty() {
-            break;
-        }
-        let mut remaining = Vec::new();
-        let mut progressed = false;
-        for (pat, target, depth) in deferred_hasconfig.drain(..) {
-            if remote_urls
-                .iter()
-                .any(|url| wildmatch_pathname(&pat, url, false))
-            {
-                pending.push((target, depth));
-                progressed = true;
-            } else {
-                remaining.push((pat, target, depth));
-            }
-        }
-        deferred_hasconfig = remaining;
-        if !progressed {
-            break;
         }
     }
     Some(false)
@@ -1751,14 +1738,6 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
             &repo,
             &["config", "includeIf.onbranch:other/.path", "../deep_0.conf"],
         );
-        git(
-            &repo,
-            &[
-                "config",
-                "includeIf.hasconfig:remote.*.url:https://other.invalid/**.path",
-                "../deep_0.conf",
-            ],
-        );
         assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some());
 
         // S12: 70 clean distinct sibling includes succeed and git runs
@@ -1783,23 +1762,20 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
             .status
             .success());
 
-        // Active deferred hasconfig before remote.origin.url catches ~USER
+        // Unmatched `hasconfig:remote.*.url:` still causes Git to parse nested
+        // includes in its target, so `~USER` there must still be refused.
         std::fs::write(
             repo.join("hc_bad.conf"),
-            format!("[core]\n\texcludesFile = ~{USER}/hc\n"),
+            format!("[include]\n\tpath = ~{USER}/hc\n"),
         )
         .unwrap();
         git(
             &repo,
             &[
                 "config",
-                "includeIf.hasconfig:remote.*.url:https://example.com/**.path",
+                "includeIf.hasconfig:remote.*.url:https://never.invalid/**.path",
                 "../hc_bad.conf",
             ],
-        );
-        git(
-            &repo,
-            &["config", "remote.origin.url", "https://example.com/a/b"],
         );
         assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_none());
     }
