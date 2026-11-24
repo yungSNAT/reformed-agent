@@ -80,3 +80,10 @@ pub struct PromptCachingConfig {
     #[serde(default)]
     pub compact_when_cold: bool,
 }
+
+impl PromptCachingConfig {
+    /// True when every setting is its default; a saved config then omits it.
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}

@@ -171,7 +171,7 @@ pub struct GatewayConfig {
     pub agent: AgentLoopBehaviorConfig,
 
     /// Prompt-cache lifetime, keep-alive and cold-return compaction.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "PromptCachingConfig::is_default")]
     pub prompt_caching: PromptCachingConfig,
 
     /// Override for the hermes home directory.
