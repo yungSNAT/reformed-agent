@@ -948,6 +948,11 @@ impl TerminalBackend for LocalBackend {
                 {
                     tokio::time::sleep(PROCESS_TREE_TERM_GRACE).await;
                     let _ = tree.kill();
+                    if !tree.has_ended().await {
+                        return Err(std::io::Error::other(
+                            "a process in its group refused the signal and is still running",
+                        ));
+                    }
                 }
                 Ok::<_, std::io::Error>(true)
             })
