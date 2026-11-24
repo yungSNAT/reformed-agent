@@ -9,7 +9,7 @@ fn run_in_test_home(case: &str, boot_profile: Option<&str>) {
     let test_name = format!("{module}::isolated_catalog_readiness_case");
 
     // Re-exec the test harness so home and profile overrides cannot race other tests.
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--ignored", "--exact", &test_name, "--nocapture"])
         .env(CHILD_CASE, case)

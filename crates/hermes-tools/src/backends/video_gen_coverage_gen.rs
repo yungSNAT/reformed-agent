@@ -46,6 +46,13 @@ fn isolated_home(test_name: &str, settings: &[(&str, &str)]) -> Option<PathBuf> 
             child.env(key, value);
         }
     }
+    // Resolve relative profile paths against the parent working directory.
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        child.env(
+            "LLVM_PROFILE_FILE",
+            std::env::current_dir().unwrap().join(profile),
+        );
+    }
     let output = child
         .args([
             "--exact",

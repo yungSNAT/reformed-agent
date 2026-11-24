@@ -7,7 +7,7 @@ const CHILD_OK: &str = "media coverage fixture assertions passed";
 fn child_test(name: &str, fixture: &Path) -> Command {
     // libtest names omit the crate-name component of module_path!().
     let (_, module) = module_path!().split_once("::").unwrap();
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--exact", "--nocapture"])
         .arg(format!("{module}::{name}"))
@@ -554,7 +554,7 @@ fn run_isolated(test: &str) -> bool {
     let name = path
         .split_once("::")
         .map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()

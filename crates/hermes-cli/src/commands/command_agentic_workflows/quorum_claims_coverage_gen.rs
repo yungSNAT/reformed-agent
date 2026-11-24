@@ -46,7 +46,7 @@ fn swarm_pass_cap_handles_aliases_defaults_and_bounds() {
     }
 
     // Each input gets its own environment so parallel tests cannot see the override.
-    let executable = std::env::current_exe().expect("locate the test executable");
+    let executable = std::env::current_exe().expect("locate the test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let (_, test_name) = concat!(
         module_path!(),
         "::swarm_pass_cap_handles_aliases_defaults_and_bounds"

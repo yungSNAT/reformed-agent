@@ -225,7 +225,7 @@ fn dependency_deduplication_keeps_first_spelling_and_order() {
 fn run_contextlattice_case(case: &str, vars: &[(&str, &str)]) {
     // Configure a child test process so other tests never see these settings.
     let home = tempfile::tempdir().expect("temporary home");
-    let executable = env::current_exe().expect("test executable");
+    let executable = env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let (_, module) = module_path!().split_once("::").expect("child module path");
     let test_name = format!("{module}::contextlattice_configuration_and_invalid_url");
     let mut command = Command::new(executable);

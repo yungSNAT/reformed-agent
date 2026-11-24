@@ -139,7 +139,7 @@ fn route_state_paths_follow_the_hermes_home_override() {
     let home = dir.path().join("hermes");
     std::fs::create_dir(&home).expect("create Hermes home");
     let test = harness_test_name("route_state_paths_follow_the_hermes_home_override");
-    let output = std::process::Command::new(std::env::current_exe().expect("locate test binary"))
+    let output = std::process::Command::new(std::env::current_exe().expect("locate test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args(["--exact", test.as_str(), "--nocapture", "--test-threads=1"])
         .current_dir(dir.path())
         .env("HOME", dir.path())

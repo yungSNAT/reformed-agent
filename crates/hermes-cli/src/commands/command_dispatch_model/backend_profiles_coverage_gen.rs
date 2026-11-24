@@ -91,7 +91,7 @@ fn backend_profile_persistence_with_isolated_home() {
     let (_, module) = module_path!()
         .split_once("::")
         .expect("test module path includes the crate name");
-    let output = Command::new(std::env::current_exe().expect("locate test binary"))
+    let output = Command::new(std::env::current_exe().expect("locate test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .arg("--exact")
         .arg(format!(
             "{module}::backend_profile_persistence_with_isolated_home"

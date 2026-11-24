@@ -270,7 +270,7 @@ fn status_reports_discovered_planes_and_project_precedence() {
 
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let test_name = format!("{module}::status_reports_discovered_planes_and_project_precedence");
-    let exe = std::env::current_exe().expect("locate unit-test executable");
+    let exe = std::env::current_exe().expect("locate unit-test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
 
     for (scenario, cwd) in [
         ("outside", root.join("outside")),

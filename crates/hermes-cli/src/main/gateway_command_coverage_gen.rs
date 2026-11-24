@@ -77,7 +77,7 @@ async fn configure_platform_basic_prompts_unknown_key_preserves_existing_fields(
     let mut disk = hermes_config::GatewayConfig::default();
     let mut existing = PlatformConfig {
         enabled: false,
-        token: Some("keep-me".to_string()),
+        token: Some("keep-me".to_string()), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         ..Default::default()
     };
     existing

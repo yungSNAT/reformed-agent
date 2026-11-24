@@ -11,7 +11,7 @@ fn run_isolated_case(test: &str, case: &str, cwd: &Path, key: &str, value: Optio
     let (_, module) = module_path!()
         .split_once("::")
         .expect("coverage tests are in a child module");
-    let mut command = Command::new(std::env::current_exe().expect("locate the test binary"));
+    let mut command = Command::new(std::env::current_exe().expect("locate the test binary")); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .arg("--exact")
         .arg(format!("{module}::{test}"))

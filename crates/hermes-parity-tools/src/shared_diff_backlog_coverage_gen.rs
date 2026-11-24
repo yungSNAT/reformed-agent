@@ -279,7 +279,7 @@ fn run_validates_registry_and_writes_reports_using_only_local_git() {
     let home = tempfile::tempdir().unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
     let name = format!("{module}::run_validates_registry_and_writes_reports_using_only_local_git");
-    let mut child = Command::new(env::current_exe().unwrap());
+    let mut child = Command::new(env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     for (key, _) in env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             child.env_remove(key);

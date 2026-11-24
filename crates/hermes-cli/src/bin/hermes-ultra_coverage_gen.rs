@@ -53,7 +53,7 @@ fn candidate_targets_always_ends_with_bare_binary_name() {
         let explicit = explicit.trim();
         if !explicit.is_empty() && candidates.len() > 1 {
             let first = candidates[0].to_string_lossy().to_string();
-            let current = std::env::current_exe()
+            let current = std::env::current_exe() // nosemgrep: rust.lang.security.current-exe.current-exe
                 .ok()
                 .and_then(|p| p.canonicalize().ok());
             let explicit_canon = std::path::PathBuf::from(explicit).canonicalize().ok();

@@ -157,7 +157,7 @@ fn strict_language_setting_accepts_trimmed_case_insensitive_opt_outs() {
     let (_, test_name) = qualified_name
         .split_once("::")
         .expect("test module path includes the crate name");
-    let executable = std::env::current_exe().expect("locate the current test binary");
+    let executable = std::env::current_exe().expect("locate the current test binary"); // nosemgrep: rust.lang.security.current-exe.current-exe
 
     for (raw, expected) in [
         (None, true),

@@ -224,6 +224,13 @@ fn run_env_case(case: &str, home: &Path, overrides: &[(&str, &str)]) {
         command.env("SystemRoot", system_root);
     }
 
+    // Resolve relative profile paths against the parent working directory.
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env(
+            "LLVM_PROFILE_FILE",
+            std::env::current_dir().unwrap().join(profile),
+        );
+    }
     let output = command.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(

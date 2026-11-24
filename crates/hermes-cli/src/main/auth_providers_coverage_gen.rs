@@ -27,7 +27,7 @@ fn pool_entry(id: &str, label: &str) -> AuthPoolEntry {
         label: label.to_string(),
         auth_type: "api_key".to_string(),
         source: "manual".to_string(),
-        access_token: format!("tok-{id}"),
+        access_token: format!("tok-{id}"), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         last_status: None,
         last_status_at: None,
         last_error_code: None,

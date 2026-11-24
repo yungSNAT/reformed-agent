@@ -19,7 +19,7 @@ fn run_child(test: &str, case: &str, overrides: &[(&str, &str)]) {
     // from the rest of the test harness.
     let module = module_path!().split_once("::").unwrap().1;
     let test_name = format!("{module}::{test}");
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--exact", test_name.as_str(), "--nocapture"])
         .env(CHILD_CASE, case);

@@ -18,8 +18,8 @@ const WAIT: Duration = Duration::from_secs(15);
 fn isolated_command(test: &str, case: &str, root: &Path) -> Command {
     let (_, module) = module_path!().split_once("::").unwrap();
     let test_name = format!("{module}::{test}");
-    let mut command = Command::new(env::current_exe().unwrap());
-    // Set overrides before the child starts, so parallel tests never see them.
+    let mut command = Command::new(env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
+                                                                 // Set overrides before the child starts, so parallel tests never see them.
     command
         .args(["--exact", test_name.as_str(), "--nocapture"])
         .env_clear()

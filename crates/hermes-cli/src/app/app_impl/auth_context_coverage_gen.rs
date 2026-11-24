@@ -11,31 +11,22 @@ struct EnvGuard {
 impl EnvGuard {
     fn set(key: &'static str, value: &str) -> Self {
         let previous = std::env::var(key).ok();
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::env::set_var(key, value);
-        }
+        std::env::set_var(key, value);
         EnvGuard { key, previous }
     }
 
     fn unset(key: &'static str) -> Self {
         let previous = std::env::var(key).ok();
-        #[allow(unused_unsafe)]
-        unsafe {
-            std::env::remove_var(key);
-        }
+        std::env::remove_var(key);
         EnvGuard { key, previous }
     }
 }
 
 impl Drop for EnvGuard {
     fn drop(&mut self) {
-        #[allow(unused_unsafe)]
-        unsafe {
-            match &self.previous {
-                Some(v) => std::env::set_var(self.key, v),
-                None => std::env::remove_var(self.key),
-            }
+        match &self.previous {
+            Some(v) => std::env::set_var(self.key, v),
+            None => std::env::remove_var(self.key),
         }
     }
 }
@@ -156,7 +147,7 @@ fn run_isolated(test: &str) -> bool {
     }
     let path = format!("{}::{test}", module_path!());
     let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()

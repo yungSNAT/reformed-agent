@@ -398,7 +398,7 @@ fn requirement_issues_report_missing_credentials() {
     let mut ok = hermes_config::GatewayConfig::default();
     let mut slack = PlatformConfig {
         enabled: true,
-        token: Some("xoxb-test".to_string()),
+        token: Some("xoxb-test".to_string()), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         ..Default::default()
     };
     slack

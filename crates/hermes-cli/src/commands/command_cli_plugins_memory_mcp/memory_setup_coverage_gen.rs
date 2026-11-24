@@ -172,7 +172,7 @@ fn run_setup_case(case: &str, input: &str, env: &[(&str, &str)]) -> String {
     let temp = tempfile::tempdir().expect("temporary Hermes home");
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let test_name = format!("{module}::isolated_setup_worker");
-    let mut command = Command::new(std::env::current_exe().expect("test executable"));
+    let mut command = Command::new(std::env::current_exe().expect("test executable")); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--exact", "--ignored", "--nocapture", test_name.as_str()])
         .env(CHILD_CASE, case)

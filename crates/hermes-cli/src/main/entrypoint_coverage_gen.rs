@@ -54,7 +54,7 @@ fn test_probe(full_name: &str, mode: &str, root: &std::path::Path) -> std::proce
     let (_, test_name) = full_name
         .split_once("::")
         .expect("test name starts with the crate name");
-    let executable = std::env::current_exe().expect("locate unit-test executable");
+    let executable = std::env::current_exe().expect("locate unit-test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let mut command = sandboxed_command(&executable, root);
     command
         .args(["--exact", test_name, "--nocapture"])

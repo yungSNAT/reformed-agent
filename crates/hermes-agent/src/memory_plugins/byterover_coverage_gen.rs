@@ -111,7 +111,7 @@ esac
     fn run_isolated(home: &Path, case: &str, primary: Option<&str>, legacy: &str) {
         let (_, module) = module_path!().split_once("::").unwrap();
         let worker = format!("{module}::isolated_worker");
-        let mut command = Command::new(std::env::current_exe().unwrap());
+        let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
         command
             .args(["--exact", worker.as_str(), "--ignored", "--nocapture"])
             .current_dir(home)

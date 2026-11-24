@@ -40,20 +40,20 @@ fn available_disk_space_bytes_nonexistent_path_is_none() {
 #[test]
 fn merge_usage_stats_sums_costs_when_both_present() {
     let prev = UsageStats {
-        prompt_tokens: 10,
-        completion_tokens: 5,
-        total_tokens: 15,
+        prompt_tokens: 10, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        completion_tokens: 5, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        total_tokens: 15, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: Some(0.5),
-        cache_read_tokens: 1,
-        cache_write_tokens: 2,
+        cache_read_tokens: 1, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        cache_write_tokens: 2, // nosemgrep: codacy.yaml.security.hard-coded-tokens
     };
     let new = UsageStats {
-        prompt_tokens: 3,
-        completion_tokens: 4,
-        total_tokens: 7,
+        prompt_tokens: 3, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        completion_tokens: 4, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        total_tokens: 7, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: Some(0.25),
-        cache_read_tokens: 3,
-        cache_write_tokens: 4,
+        cache_read_tokens: 3, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        cache_write_tokens: 4, // nosemgrep: codacy.yaml.security.hard-coded-tokens
     };
     let merged = merge_usage_stats(Some(prev), &new);
     assert_eq!(merged.prompt_tokens, 13);
@@ -67,17 +67,17 @@ fn merge_usage_stats_sums_costs_when_both_present() {
 #[test]
 fn merge_usage_stats_takes_new_cost_when_previous_missing() {
     let prev = UsageStats {
-        prompt_tokens: 1,
-        completion_tokens: 1,
-        total_tokens: 2,
+        prompt_tokens: 1, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        completion_tokens: 1, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        total_tokens: 2, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: None,
-        cache_read_tokens: 0,
-        cache_write_tokens: 0,
+        cache_read_tokens: 0, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        cache_write_tokens: 0, // nosemgrep: codacy.yaml.security.hard-coded-tokens
     };
     let new = UsageStats {
-        prompt_tokens: 2,
-        completion_tokens: 2,
-        total_tokens: 4,
+        prompt_tokens: 2, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        completion_tokens: 2, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        total_tokens: 4, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: Some(1.5),
         cache_read_tokens: 0,
         cache_write_tokens: 0,
@@ -91,8 +91,8 @@ fn merge_usage_stats_takes_new_cost_when_previous_missing() {
 fn merge_usage_stats_keeps_none_when_both_costs_missing() {
     let prev = UsageStats {
         prompt_tokens: 1,
-        completion_tokens: 0,
-        total_tokens: 1,
+        completion_tokens: 0, // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        total_tokens: 1, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: None,
         cache_read_tokens: 0,
         cache_write_tokens: 0,
@@ -113,9 +113,9 @@ fn merge_usage_stats_keeps_none_when_both_costs_missing() {
 #[test]
 fn merge_usage_stats_keeps_previous_cost_when_new_missing() {
     let prev = UsageStats {
-        prompt_tokens: 0,
+        prompt_tokens: 0, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         completion_tokens: 0,
-        total_tokens: 0,
+        total_tokens: 0, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         estimated_cost: Some(2.0),
         cache_read_tokens: 0,
         cache_write_tokens: 0,

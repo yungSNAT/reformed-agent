@@ -144,7 +144,7 @@ fn with_snapshot_limits(test_name: &str, limits: (usize, u64, u64), check: impl 
 
     let home = tempfile::tempdir().unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .arg("--exact")
         .arg(format!("{module}::{test_name}"))

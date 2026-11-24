@@ -79,7 +79,7 @@ fn with_isolated_git(test: &str, git_on_path: bool, check: impl FnOnce(&Path)) {
         home.as_os_str().to_os_string()
     };
 
-    let mut child = Command::new(std::env::current_exe().unwrap());
+    let mut child = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     child
         .args(["--exact", &test_name, "--nocapture"])
         .current_dir(&worktree)

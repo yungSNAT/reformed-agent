@@ -104,8 +104,8 @@ fn nous_fixture(token: &str) -> NousAuthState {
         client_id: " \t ".to_owned(),
         scope: Some(" \t ".to_owned()),
         token_type: "Bearer".to_owned(),
-        access_token: token.to_owned(),
-        refresh_token: None,
+        access_token: token.to_owned(), // nosemgrep: codacy.yaml.security.hard-coded-tokens
+        refresh_token: None,            // nosemgrep: codacy.yaml.security.hard-coded-tokens
         obtained_at: "2020-01-01T00:00:00Z".to_owned(),
         expires_at: None,
         expires_in: None,
@@ -407,7 +407,7 @@ async fn auth_discovery_and_resolution_use_only_isolated_fixtures() {
     fs::create_dir(root.join("bin")).unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
     let test = format!("{module}::auth_discovery_and_resolution_use_only_isolated_fixtures");
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .arg("--exact")
         .arg(test)

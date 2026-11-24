@@ -4,7 +4,7 @@ fn sample_credential(provider: &str, refresh_token: Option<&str>) -> OAuthCreden
     OAuthCredential {
         provider: provider.to_string(),
         access_token: "access-token-value".to_string(),
-        refresh_token: refresh_token.map(str::to_string),
+        refresh_token: refresh_token.map(str::to_string), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         token_type: "bearer".to_string(),
         scope: None,
         expires_at: None,

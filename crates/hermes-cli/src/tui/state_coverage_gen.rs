@@ -139,7 +139,7 @@ fn finishing_a_degraded_cycle_reports_fallback_and_releases_processing_state() {
         degraded_notes: vec!["local fallback".to_string(), "retry succeeded".to_string()],
         stream_chunk_count: 2,
         stream_char_count: 11,
-        saw_first_token: true,
+        saw_first_token: true, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         processing_phase: "stream".to_string(),
         processing_phase_label: "streaming".to_string(),
         processing_phase_progress: 90,

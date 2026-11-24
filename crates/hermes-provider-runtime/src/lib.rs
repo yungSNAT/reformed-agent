@@ -643,10 +643,13 @@ pub fn resolve_provider_and_model(config: &GatewayConfig, model: &str) -> (Strin
         return (provider.to_string(), trimmed.to_string());
     }
 
-    if config.llm_providers.len() == 1 {
-        if let Some((provider, _)) = config.llm_providers.iter().next() {
-            return (provider.to_string(), trimmed.to_string());
-        }
+    if let Some((provider, _)) = config
+        .llm_providers
+        .iter()
+        .next()
+        .filter(|_| config.llm_providers.len() == 1)
+    {
+        return (provider.to_string(), trimmed.to_string());
     }
 
     ("openai".to_string(), trimmed.to_string())

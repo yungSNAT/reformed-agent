@@ -73,7 +73,7 @@ mod tests {
         let home = tempfile::tempdir().expect("create temporary home");
         let (_, module) = module_path!().split_once("::").expect("child module path");
         let test_name = format!("{module}::{test}");
-        let mut command = Command::new(env::current_exe().expect("locate test executable"));
+        let mut command = Command::new(env::current_exe().expect("locate test executable")); // nosemgrep: rust.lang.security.current-exe.current-exe
         command
             .args(["--exact", &test_name])
             .current_dir(home.path())

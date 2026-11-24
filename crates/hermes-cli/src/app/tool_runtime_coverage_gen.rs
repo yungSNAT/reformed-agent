@@ -178,34 +178,32 @@ fn persist_pet_settings_reports_io_failures() {
     let file = tempfile::NamedTempFile::new().expect("temp file");
     let bad_home = file.path().join("sub");
     std::env::set_var("HERMES_HOME", &bad_home);
-    if pet_settings_path().starts_with(&bad_home) {
-        let err = persist_pet_settings(&PetSettings::default()).expect_err("must fail");
-        match err {
-            AgentError::Io(msg) => {
-                assert!(
-                    msg.contains("Failed to create pet settings directory"),
-                    "unexpected message: {msg}"
-                );
-            }
-            other => panic!("unexpected error: {other:?}"),
+    assert_eq!(pet_settings_path(), bad_home.join("pet.json"));
+    let err = persist_pet_settings(&PetSettings::default()).expect_err("must fail");
+    match err {
+        AgentError::Io(msg) => {
+            assert!(
+                msg.contains("Failed to create pet settings directory"),
+                "unexpected message: {msg}"
+            );
         }
+        other => panic!("unexpected error: {other:?}"),
     }
 
     // Write failure: pet.json is a directory.
     let dir = tempfile::tempdir().expect("temp dir");
     std::fs::create_dir_all(dir.path().join("pet.json")).expect("create pet.json dir");
     std::env::set_var("HERMES_HOME", dir.path());
-    if pet_settings_path().starts_with(dir.path()) {
-        let err = persist_pet_settings(&PetSettings::default()).expect_err("must fail");
-        match err {
-            AgentError::Io(msg) => {
-                assert!(
-                    msg.contains("Failed to persist pet settings"),
-                    "unexpected message: {msg}"
-                );
-            }
-            other => panic!("unexpected error: {other:?}"),
+    assert_eq!(pet_settings_path(), dir.path().join("pet.json"));
+    let err = persist_pet_settings(&PetSettings::default()).expect_err("must fail");
+    match err {
+        AgentError::Io(msg) => {
+            assert!(
+                msg.contains("Failed to persist pet settings"),
+                "unexpected message: {msg}"
+            );
         }
+        other => panic!("unexpected error: {other:?}"),
     }
 }
 
@@ -217,8 +215,10 @@ fn run_isolated(test: &str) -> bool {
         return false;
     }
     let path = format!("{}::{test}", module_path!());
-    let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let name = path
+        .split_once("::")
+        .map_or(path.as_str(), |(_, rest)| rest);
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()

@@ -18,7 +18,7 @@ fn candidate_targets_search_order_and_self_guard() {
         }
         if case != "fallback" {
             expected.push(
-                std::env::current_exe()
+                std::env::current_exe() // nosemgrep: rust.lang.security.current-exe.current-exe
                     .expect("locate the running probe")
                     .with_file_name("hermes-agent-ultra")
                     .into_os_string(),
@@ -42,7 +42,7 @@ fn candidate_targets_search_order_and_self_guard() {
     let probe_name = format!("hermes-coverage-probe{}", std::env::consts::EXE_SUFFIX);
     let probe = root.join(&probe_name);
     fs::copy(
-        std::env::current_exe().expect("locate the test executable"),
+        std::env::current_exe().expect("locate the test executable"), // nosemgrep: rust.lang.security.current-exe.current-exe
         &probe,
     )
     .expect("copy the test executable");

@@ -112,7 +112,7 @@ fn codex_version_probe_uses_stdout_then_stderr_and_reports_failures() {
     use std::os::unix::fs::PermissionsExt;
     use std::os::unix::process::ExitStatusExt;
 
-    let executable = std::env::current_exe().expect("locate the test executable");
+    let executable = std::env::current_exe().expect("locate the test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let (_, test_module) = module_path!().split_once("::").expect("nested test module");
     let child_test = format!("{test_module}::isolated_codex_version_probe");
     let failure_status = std::process::ExitStatus::from_raw(1 << 8);

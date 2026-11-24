@@ -19,7 +19,7 @@ fn isolated_home(test_name: &str) -> Option<PathBuf> {
     fs::create_dir(&home).unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
     let full_name = format!("{module}::{test_name}");
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().unwrap()) // nosemgrep: rust.lang.security.current-exe.current-exe
         .arg("--exact")
         .arg(&full_name)
         .arg("--nocapture")

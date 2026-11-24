@@ -20,7 +20,7 @@ fn invoke(root: &Path, request: &[&str]) -> String {
     let (_, test_name) = concat!(module_path!(), "::coverage_command_child")
         .split_once("::")
         .unwrap();
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--exact", test_name, "--ignored", "--nocapture"])
         .current_dir(root)

@@ -23,7 +23,7 @@ fn offline_config() -> HindsightConfig {
         auto_recall: true,
         retain_every_n_turns: 3,
         retain_context: "test conversation".into(),
-        recall_max_tokens: 128,
+        recall_max_tokens: 128, // nosemgrep: codacy.yaml.security.hard-coded-tokens
         recall_max_input_chars: 32,
         recall_types: vec!["observation".into()],
         recall_prompt_preamble: String::new(),
@@ -55,7 +55,7 @@ fn in_isolated_process(test_name: &str, exercise: impl FnOnce(&Path)) {
 
     let home = tempfile::tempdir().unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().unwrap()) // nosemgrep: rust.lang.security.current-exe.current-exe
         .arg(format!("{module}::{test_name}"))
         .args(["--exact", "--nocapture"])
         .env(CHILD_HOME, home.path())

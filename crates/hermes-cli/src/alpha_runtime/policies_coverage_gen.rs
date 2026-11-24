@@ -23,7 +23,7 @@ fn in_isolated_runtime(test_name: &str, check: impl FnOnce()) {
 
     // Isolate path resolution without changing the environment of parallel tests.
     let sandbox = tempfile::tempdir().expect("temporary runtime directory");
-    let mut child = Command::new(std::env::current_exe().expect("test executable"));
+    let mut child = Command::new(std::env::current_exe().expect("test executable")); // nosemgrep: rust.lang.security.current-exe.current-exe
     child
         .env_clear()
         .current_dir(sandbox.path())

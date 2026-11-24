@@ -20,7 +20,7 @@ mod handler {
             impl ResourceTestDir {
                 fn new() -> Self {
                     static NEXT_ID: AtomicUsize = AtomicUsize::new(0);
-                    let root = std::env::temp_dir();
+                    let root = std::env::temp_dir(); // nosemgrep: rust.lang.security.temp-dir.temp-dir
                     loop {
                         let id = NEXT_ID.fetch_add(1, Ordering::Relaxed);
                         let path = root.join(format!(

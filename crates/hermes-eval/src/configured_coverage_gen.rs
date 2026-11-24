@@ -321,7 +321,7 @@ async fn judge_configuration_without_network() {
             // Isolate judge settings from the other tests running in the parent.
             let (_, module) = module_path!().split_once("::").expect("test module path");
             let test_name = format!("{module}::judge_configuration_without_network");
-            let executable = std::env::current_exe().expect("test executable");
+            let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
             let home = tempfile::tempdir().expect("create temporary home");
             for case in ["missing-key", "malformed-url"] {
                 let mut command = std::process::Command::new(&executable);

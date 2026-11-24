@@ -19,11 +19,6 @@ fn assert_real_backend(p: &Arc<dyn LlmProvider>) {
     assert_ne!(size_of_val(&**p), size_of::<NoBackendProvider>());
 }
 
-fn fallback_env_present() -> bool {
-    std::env::var_os("HERMES_FALLBACK_MODELS").is_some()
-        || std::env::var_os("HERMES_FALLBACK_MODEL").is_some()
-}
-
 #[test]
 fn local_backend_resolved_base_url_prefers_trimmed_config_value() {
     let spec = &local_backend_specs()[0];
@@ -133,10 +128,94 @@ fn api_key_source_uses_resolver_for_runtime_provider() {
 }
 
 #[test]
-fn fallback_chain_dedupes_and_appends_single_fallback() {
-    if fallback_env_present() {
+fn isolated_fallback_and_provider_env_cases() {
+    const CASE: &str = "HERMES_TEST_PROVIDER_RUNTIME_CASE";
+    if let Ok(case) = std::env::var(CASE) {
+        match case.as_str() {
+            "list" => {
+                let chain = configured_model_fallback_chain(&GatewayConfig::default());
+                assert_eq!(chain, ["openai:a", "anthropic:b"]);
+            }
+            "single" => {
+                let chain = configured_model_fallback_chain(&GatewayConfig::default());
+                assert_eq!(chain, ["custom:fallback"]);
+            }
+            "startup" => {
+                assert_default_startup_selection();
+                assert_configured_fallback_chain();
+                assert_skip_duplicate_startup_fallback();
+            }
+            _ => {
+                assert_eq!(
+                    provider_runtime_api_key_source(None, "openai", "custom", None),
+                    (true, Some("provider_env:openai".into()))
+                );
+                assert_eq!(
+                    provider_runtime_api_key_source(None, "custom", "openai", None),
+                    (true, Some("provider_env:openai".into()))
+                );
+            }
+        }
         return;
     }
+
+    let (_, module) = module_path!().split_once("::").unwrap();
+    let test_name = format!("{module}::isolated_fallback_and_provider_env_cases");
+    let cases: &[(&str, &[(&str, &str)])] = &[
+        (
+            "list",
+            &[
+                (
+                    "HERMES_FALLBACK_MODELS",
+                    " openai:a, OPENAI:A, ,anthropic:b ",
+                ),
+                ("HERMES_FALLBACK_MODEL", "ignored:fallback"),
+            ],
+        ),
+        (
+            "single",
+            &[
+                ("HERMES_FALLBACK_MODELS", ", "),
+                ("HERMES_FALLBACK_MODEL", " custom:fallback "),
+            ],
+        ),
+        ("startup", &[]),
+        ("provider", &[("OPENAI_API_KEY", "runtime-test-fixture")]),
+    ];
+    for (case, environment) in cases {
+        // Execute only this test binary in a controlled child environment.
+        let executable = std::env::current_exe().unwrap(); // nosemgrep: rust.lang.security.current-exe.current-exe
+        let mut command = std::process::Command::new(executable);
+        command
+            .env_clear()
+            .env(CASE, case)
+            .envs(environment.iter().copied())
+            .args(["--exact", &test_name]);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                command.env(key, value);
+            }
+        }
+        let output = command.output().expect("run isolated provider test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "{case}:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+}
+
+#[test]
+fn unqualified_model_uses_the_sole_configured_provider() {
+    let config = config_with_key("fixture-provider", None);
+    assert_eq!(
+        resolve_provider_and_model(&config, "  catalogue-model  "),
+        ("fixture-provider".into(), "catalogue-model".into())
+    );
+}
+
+fn assert_configured_fallback_chain() {
     let config = GatewayConfig {
         fallback_models: vec![
             "alpha".to_string(),
@@ -153,21 +232,15 @@ fn fallback_chain_dedupes_and_appends_single_fallback() {
     );
 }
 
-#[test]
-fn startup_selection_defaults_empty_request_to_gpt55() {
+fn assert_default_startup_selection() {
     let selection = select_startup_model_with_fallback(&GatewayConfig::default(), "   ");
     assert_eq!(selection.requested_model, "gpt-5.5");
-    assert!(!selection.selected_model.is_empty());
-    if let Some(first) = selection.skipped_unavailable_models.first() {
-        assert_eq!(first, "gpt-5.5");
-    }
+    assert_eq!(selection.selected_model, "gpt-5.5");
+    assert!(!selection.fallback_used);
+    assert_eq!(selection.skipped_unavailable_models, ["gpt-5.5"]);
 }
 
-#[test]
-fn startup_selection_skips_fallback_equal_to_request() {
-    if fallback_env_present() {
-        return;
-    }
+fn assert_skip_duplicate_startup_fallback() {
     let config = GatewayConfig {
         fallback_models: vec!["ZZ-COV-NONE:MODEL".to_string(), "moa:default".to_string()],
         ..GatewayConfig::default()

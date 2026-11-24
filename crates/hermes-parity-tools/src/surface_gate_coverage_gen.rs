@@ -268,7 +268,7 @@ fn gate_writes_and_prints_guard_ref_and_worktree_reports() {
     let home = sandbox.join("home");
     fs::create_dir(&home).unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
-    let mut child = Command::new(std::env::current_exe().unwrap());
+    let mut child = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     for (key, _) in std::env::vars_os() {
         if key.to_string_lossy().starts_with("GIT_") {
             child.env_remove(key);

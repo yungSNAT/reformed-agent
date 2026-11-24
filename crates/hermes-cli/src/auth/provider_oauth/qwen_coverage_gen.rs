@@ -14,16 +14,12 @@ const MANAGED_VARS: [&str; 4] = [
     "HERMES_QWEN_BASE_URL",
 ];
 
-#[allow(unused_unsafe)]
 fn set_env(key: &str, value: &str) {
-    // SAFETY: access to these variables is serialized through ENV_LOCK.
-    unsafe { std::env::set_var(key, value) }
+    std::env::set_var(key, value)
 }
 
-#[allow(unused_unsafe)]
 fn remove_env(key: &str) {
-    // SAFETY: access to these variables is serialized through ENV_LOCK.
-    unsafe { std::env::remove_var(key) }
+    std::env::remove_var(key)
 }
 
 struct EnvGuard {
@@ -88,7 +84,7 @@ fn config_msg(err: AgentError) -> String {
 fn sample_tokens(refresh: Option<&str>) -> QwenCliTokens {
     QwenCliTokens {
         access_token: "old-access".to_string(),
-        refresh_token: refresh.map(str::to_string),
+        refresh_token: refresh.map(str::to_string), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         token_type: "Bearer".to_string(),
         resource_url: "portal.example.test".to_string(),
         expiry_date: Some(1_000),
@@ -163,7 +159,7 @@ fn save_tokens_writes_file_that_reads_back() {
 
     let tokens = QwenCliTokens {
         access_token: "acc-123".to_string(),
-        refresh_token: Some("ref-456".to_string()),
+        refresh_token: Some("ref-456".to_string()), // nosemgrep: codacy.yaml.security.hard-coded-tokens
         token_type: "Custom".to_string(),
         resource_url: "res.example.test".to_string(),
         expiry_date: Some(987_654_321),
@@ -386,7 +382,7 @@ fn run_isolated(test: &str) -> bool {
     }
     let path = format!("{}::{test}", module_path!());
     let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()

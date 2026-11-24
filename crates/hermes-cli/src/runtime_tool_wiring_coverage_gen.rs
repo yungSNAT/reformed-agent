@@ -16,7 +16,7 @@ fn run_clarify_child(test_name: &str, stdin: Stdio) -> String {
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let full_name = format!("{module}::{test_name}");
     // Isolate stdin and the auto-answer override from the rest of the test suite.
-    let mut child = Command::new(std::env::current_exe().expect("test executable"))
+    let mut child = Command::new(std::env::current_exe().expect("test executable")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args(["--exact", full_name.as_str(), "--nocapture"])
         .env(CLARIFY_CHILD_TEST, test_name)
         .env_remove("HERMES_CLARIFY_AUTO_ANSWER")
@@ -120,6 +120,7 @@ fn private_clarify_pty() -> (std::fs::File, std::fs::File) {
     // SAFETY: The fd outputs are valid writable pointers. Null optional
     // pointers request the default terminal settings and no device name.
     let result = unsafe {
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         libc::openpty(
             &mut master,
             &mut slave,
@@ -137,6 +138,7 @@ fn private_clarify_pty() -> (std::fs::File, std::fs::File) {
 
     // SAFETY: openpty succeeded and returned two distinct, owned descriptors.
     let (master, slave) = unsafe {
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         (
             std::fs::File::from_raw_fd(master),
             std::fs::File::from_raw_fd(slave),
@@ -144,7 +146,7 @@ fn private_clarify_pty() -> (std::fs::File, std::fs::File) {
     };
     for fd in [master.as_raw_fd(), slave.as_raw_fd()] {
         // SAFETY: Each fd is kept open by its File and F_SETFD takes an integer.
-        let result = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) };
+        let result = unsafe { libc::fcntl(fd, libc::F_SETFD, libc::FD_CLOEXEC) }; // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage
         assert_eq!(
             result,
             0,

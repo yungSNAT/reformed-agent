@@ -62,7 +62,7 @@ fn detached_stream_events_respect_lifecycle_stdout_opt_in() {
 
     // Isolate the stdout capture and environment from the other unit tests.
     let home = tempfile::tempdir().expect("temporary child home");
-    let executable = std::env::current_exe().expect("test executable");
+    let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let test_name = format!("{module}::detached_stream_events_respect_lifecycle_stdout_opt_in");
 

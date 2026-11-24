@@ -19,7 +19,7 @@ fn current_policy_profile_maps_presets_in_isolated_processes() {
     let (_, test_name) = qualified_name
         .split_once("::")
         .expect("the test name should include a crate prefix");
-    let executable = std::env::current_exe().expect("locate the unit test harness");
+    let executable = std::env::current_exe().expect("locate the unit test harness"); // nosemgrep: rust.lang.security.current-exe.current-exe
 
     // Set presets only in the child so other tests never see these values.
     for (preset, expected) in [

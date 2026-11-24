@@ -199,7 +199,7 @@ fn quorum_output_cap_uses_environment_overrides() {
     // Run each case in a child test harness so parallel tests never see its environment.
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let test_name = format!("{module}::quorum_output_cap_uses_environment_overrides");
-    let executable = std::env::current_exe().expect("test executable");
+    let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     for (case, raw) in cases
         .into_iter()
         .chain(unbounded.map(|raw| ("unbounded", Some(raw))))

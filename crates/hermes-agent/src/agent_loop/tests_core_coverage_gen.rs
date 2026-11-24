@@ -21,7 +21,7 @@ fn check_spill_threshold_restoration(test_name: &str) {
     // The spill test does not take the environment lock. Run it in a separate
     // process so its normal test invocation cannot race this restoration check.
     let home = tempfile::tempdir().expect("isolated child home");
-    let output = std::process::Command::new(std::env::current_exe().expect("test executable"))
+    let output = std::process::Command::new(std::env::current_exe().expect("test executable")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args(["--exact", test_name])
         .current_dir(home.path())
         .env("HOME", home.path())

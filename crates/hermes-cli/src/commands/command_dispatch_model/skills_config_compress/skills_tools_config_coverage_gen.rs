@@ -116,7 +116,7 @@ async fn skills_cli_passes_extra_arguments_and_combines_output() {
     .split_once("::")
     .expect("the test is in a child module");
 
-    let args: Vec<_> = std::env::args().skip(1).collect();
+    let args: Vec<_> = std::env::args().skip(1).collect(); // nosemgrep: rust.lang.security.args.args
     if args.first().is_some_and(|arg| arg == "skills") {
         if args.get(1).is_some_and(|arg| arg == "opt-in") {
             assert_eq!(

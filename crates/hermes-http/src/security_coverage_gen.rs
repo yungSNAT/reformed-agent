@@ -11,7 +11,7 @@ fn run_env_case(test: &str, case: &str, settings: &[(&str, &str)]) {
     let (_, module) = module_path!().split_once("::").unwrap();
     let test_filter = format!("{module}::{test}");
     let home = tempfile::tempdir().unwrap();
-    let mut command = Command::new(std::env::current_exe().unwrap());
+    let mut command = Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
 
     // Isolate the fixture without mutating the environment of parallel tests.
     for (name, _) in std::env::vars_os() {
@@ -336,7 +336,7 @@ fn request_auth_rejects_missing_bearer_or_oidc_session() {
                 &[("HERMES_HTTP_API_KEY", "coverage-api-key")],
             );
             let callback = "https://dashboard.example.test/auth/callback";
-            let secret = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
+            let secret = format!("redaction-{}-fixture", std::process::id());
             run_env_case(
                 test,
                 "oidc",
@@ -354,8 +354,8 @@ fn request_auth_rejects_missing_bearer_or_oidc_session() {
                     ("HERMES_DASHBOARD_OIDC_REDIRECT_URI", callback),
                     ("HERMES_DASHBOARD_OIDC_REDIRECT_URL", callback),
                     ("HERMES_DASHBOARD_OIDC_CALLBACK_URL", callback),
-                    ("HERMES_DASHBOARD_OIDC_SESSION_SECRET", secret),
-                    ("HERMES_DASHBOARD_SESSION_SECRET", secret),
+                    ("HERMES_DASHBOARD_OIDC_SESSION_SECRET", &secret),
+                    ("HERMES_DASHBOARD_SESSION_SECRET", &secret),
                     ("HERMES_DASHBOARD_OIDC_ALLOWED_EMAILS", "ops@example.test"),
                     (
                         "HERMES_DASHBOARD_OIDC_ALLOWED_EMAIL_DOMAINS",

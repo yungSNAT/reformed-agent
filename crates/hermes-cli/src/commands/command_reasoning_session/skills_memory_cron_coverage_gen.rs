@@ -363,7 +363,7 @@ fn with_isolated_home(test: &str, home_is_file: bool, check: impl FnOnce(&Path))
     }
     let (_, module) = module_path!().split_once("::").unwrap();
     let filter = format!("{module}::{test}");
-    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap()); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .args(["--exact", filter.as_str(), "--nocapture"])
         .env_clear()
@@ -377,6 +377,13 @@ fn with_isolated_home(test: &str, home_is_file: bool, check: impl FnOnce(&Path))
     #[cfg(windows)]
     if let Some(system_root) = std::env::var_os("SystemRoot") {
         command.env("SystemRoot", system_root);
+    }
+    // Resolve relative profile paths against the parent working directory.
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env(
+            "LLVM_PROFILE_FILE",
+            std::env::current_dir().unwrap().join(profile),
+        );
     }
     let output = command.output().unwrap();
     let stdout = String::from_utf8_lossy(&output.stdout);

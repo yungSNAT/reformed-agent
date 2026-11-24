@@ -18,7 +18,7 @@ fn model_auto_remediation_environment_setting() {
     }
 
     // Run each case in isolation so parallel tests never see a changed setting.
-    let executable = std::env::current_exe().expect("locate the test executable");
+    let executable = std::env::current_exe().expect("locate the test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
     let (_, module) = module_path!().split_once("::").expect("test module path");
     let test_name = format!("{module}::model_auto_remediation_environment_setting");
 

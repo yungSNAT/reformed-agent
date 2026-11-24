@@ -41,7 +41,7 @@ fn smoke_reports_selected_and_default_models() {
     ] {
         let sandbox = tempfile::tempdir().expect("create smoke sandbox");
         // Re-run just this test so the environment overrides are local to the child.
-        let mut command = Command::new(std::env::current_exe().expect("locate test executable"));
+        let mut command = Command::new(std::env::current_exe().expect("locate test executable")); // nosemgrep: rust.lang.security.current-exe.current-exe
         command
             .args([
                 "--exact",

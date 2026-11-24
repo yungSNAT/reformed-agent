@@ -8,7 +8,7 @@ fn probe_command(test_name: &str) -> std::process::Command {
         .split_once("::")
         .expect("the coverage tests are in a child module");
     let mut command =
-        std::process::Command::new(std::env::current_exe().expect("locate the test executable"));
+        std::process::Command::new(std::env::current_exe().expect("locate the test executable")); // nosemgrep: rust.lang.security.current-exe.current-exe
     command
         .arg("--exact")
         .arg(format!("{module}::{test_name}"))

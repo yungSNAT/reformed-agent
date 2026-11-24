@@ -10,11 +10,10 @@ const BOOTSTRAP_ENV_KEYS: [&str; 3] = [
     "HERMES_SKILL_BOOTSTRAP_FORCE",
 ];
 
-#[allow(unused_unsafe)]
 fn set_env(key: &str, value: Option<&str>) {
     match value {
-        Some(v) => unsafe { std::env::set_var(key, v) },
-        None => unsafe { std::env::remove_var(key) },
+        Some(v) => std::env::set_var(key, v),
+        None => std::env::remove_var(key),
     }
 }
 
@@ -464,7 +463,7 @@ fn run_isolated(test: &str) -> bool {
     }
     let path = format!("{}::{test}", module_path!());
     let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()

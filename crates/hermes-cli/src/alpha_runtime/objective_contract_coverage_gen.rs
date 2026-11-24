@@ -191,7 +191,7 @@ fn objective_contract_disk_operations() {
 
     let sandbox = tempfile::tempdir().unwrap();
     let (_, module) = module_path!().split_once("::").unwrap();
-    let output = Command::new(std::env::current_exe().unwrap())
+    let output = Command::new(std::env::current_exe().unwrap()) // nosemgrep: rust.lang.security.current-exe.current-exe
         .arg("--exact")
         .arg(format!("{module}::objective_contract_disk_operations"))
         .current_dir(sandbox.path())

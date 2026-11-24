@@ -10,20 +10,13 @@ use super::*;
 // Provider names that no lookup table recognises.
 const UNKNOWN_PROVIDERS: [&str; 3] = ["definitely-not-a-provider", "", "   "];
 
-#[allow(unused_unsafe)]
 fn set_env(name: &str, value: &str) {
-    // `set_var` is unsafe in edition 2024 and safe in earlier editions.
-    unsafe {
-        std::env::set_var(name, value);
-    }
+    std::env::set_var(name, value);
 }
 
-#[allow(unused_unsafe)]
 fn remove_env(name: &str) {
     // `remove_var` is unsafe in edition 2024 and safe in earlier editions.
-    unsafe {
-        std::env::remove_var(name);
-    }
+    std::env::remove_var(name);
 }
 
 fn restore_env(name: &str, previous: Option<String>) {
@@ -170,7 +163,7 @@ fn run_isolated(test: &str) -> bool {
     }
     let path = format!("{}::{test}", module_path!());
     let name = path.split_once("::").map_or(path.as_str(), |(_, rest)| rest);
-    let out = std::process::Command::new(std::env::current_exe().expect("test binary"))
+    let out = std::process::Command::new(std::env::current_exe().expect("test binary")) // nosemgrep: rust.lang.security.current-exe.current-exe
         .args([name, "--exact", "--test-threads=1", "--nocapture"])
         .env("HERMES_COVERAGE_GEN_ISOLATED", "1")
         .output()
