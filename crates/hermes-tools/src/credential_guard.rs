@@ -104,7 +104,7 @@ const HOME_TOKEN_SOURCES: &[&str] = &[
 /// writes `<name>.env` here with the LLM key and base URL its local daemon
 /// starts with. Matched as stores are.
 const HOME_TOKEN_FOLDERS: &[&str] = &[".hindsight/profiles"];
-/// Memory plugin configs under the active Hermes home, matched as
+/// Memory plugin configs under each profile's Hermes home, matched as
 /// `HOME_TOKEN_SOURCES` are. The plugins and `hermes memory setup` write them
 /// without the file tools.
 const HERMES_HOME_TOKEN_SOURCES: &[&str] = &[
@@ -160,7 +160,7 @@ fn store_key(path: &Path) -> PathBuf {
         .collect()
 }
 
-/// Credential stores under the active Hermes home, each denied with
+/// Credential stores under each profile's Hermes home, each denied with
 /// everything below it: provider keys (`.env`); the Nous OAuth token
 /// (`auth.json`); the token store, credential pool, provenance key and Gemini
 /// OAuth file (`auth/`); MCP server tokens (`mcp_auth.json`) and the skills
@@ -522,16 +522,73 @@ pub fn is_write_denied_with_roots_and_safe_root(
     }
 }
 
-/// The credential stores and token sources under these roots, each with
-/// `true` for a token source (one file) or `false` for a store (denied with
-/// everything below it), and each one's link target as well, including a
-/// target that does not exist yet.
+/// `hermes_home` and every other profile home `--profile` can select: the
+/// root home (the grandparent when `hermes_home` is itself a profile's
+/// folder) and each folder in `<root>/profiles/` that a profile name selects.
+/// As `--profile default` resolves it, any parent of a folder named
+/// `profiles` counts as the root. The second value is `<root>/profiles/`
+/// when it exists but cannot be listed in full, so a profile in it may be
+/// missing from the list; the caller protects it whole.
+fn profile_homes(hermes_home: &Path) -> (Vec<PathBuf>, Option<PathBuf>) {
+    let root = match hermes_home.parent() {
+        Some(parent) if parent.file_name() == Some("profiles".as_ref()) => {
+            parent.parent().unwrap_or(parent)
+        }
+        _ => hermes_home,
+    };
+    let folder = root.join("profiles");
+    let mut homes = vec![hermes_home.to_path_buf()];
+    let mut add = |home: PathBuf| {
+        if !homes.contains(&home) {
+            homes.push(home);
+        }
+    };
+    add(root.to_path_buf());
+    let mut listed = true;
+    match std::fs::read_dir(&folder) {
+        Ok(entries) => {
+            for entry in entries {
+                let Ok(entry) = entry else {
+                    listed = false;
+                    continue;
+                };
+                let selectable = entry
+                    .file_name()
+                    .to_str()
+                    .is_some_and(|name| is_profile_name(&name.to_ascii_lowercase()));
+                if selectable && entry.path().is_dir() {
+                    add(entry.path());
+                }
+            }
+        }
+        Err(_) => listed = !folder.is_dir(),
+    }
+    (homes, (!listed).then_some(folder))
+}
+
+/// A name `--profile` accepts (upstream's `PROFILE_ID_RE`,
+/// `^[a-z0-9][a-z0-9_-]{0,63}$`), after it folds the name to lower case.
+fn is_profile_name(name: &str) -> bool {
+    name.len() <= 64
+        && name.starts_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-')
+}
+
+/// The credential stores and token sources under these roots, and under
+/// every other profile home beside `hermes_home`, each with `true` for a
+/// token source (one file) or `false` for a store (denied with everything
+/// below it), and each one's link target as well, including a target that
+/// does not exist yet. A profiles folder that cannot be listed counts as a
+/// store.
 fn credential_stores(
     home: Option<&Path>,
     hermes_home: Option<&Path>,
     auth_override: Option<&Path>,
 ) -> Vec<(PathBuf, bool)> {
-    let profile_stores = hermes_home.into_iter().flat_map(|hermes_home| {
+    let (hermes_homes, unlisted_profiles) = hermes_home.map(profile_homes).unwrap_or_default();
+    let profile_stores = hermes_homes.iter().flat_map(|hermes_home| {
         // Include known stores even when the directory cannot be listed.
         let auth = hermes_home.join("auth");
         WRITE_DENY_HERMES_HOME_PREFIX
@@ -561,6 +618,7 @@ fn credential_stores(
         .into_iter()
         .chain(profile_stores)
         .chain(home_folders)
+        .chain(unlisted_profiles)
         .flat_map(with_link)
         .map(|store| (store, false));
     let sources = home
@@ -570,7 +628,7 @@ fn credential_stores(
                 .iter()
                 .map(move |source| home.join(source))
         })
-        .chain(hermes_home.into_iter().flat_map(|hermes_home| {
+        .chain(hermes_homes.iter().flat_map(|hermes_home| {
             HERMES_HOME_TOKEN_SOURCES
                 .iter()
                 .map(move |source| hermes_home.join(source))
@@ -1194,6 +1252,81 @@ mod tests {
         std::os::unix::fs::symlink(hermes_home.join(".env"), other.join("env")).unwrap();
         std::os::unix::fs::symlink(&hermes_home, other.join("profile")).unwrap();
         assert_eq!(protected.removed_by(&other), None);
+    }
+
+    #[test]
+    fn write_deny_covers_every_profile_home_beside_the_active_one() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let work = root.join("profiles/work");
+        let play = root.join("profiles/play");
+        // Not a name `--profile` can select.
+        let backup = root.join("profiles/Work.bak");
+        for dir in [&home, &work, &play, &backup] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        std::fs::write(root.join("profiles/default.yaml"), "").unwrap();
+
+        for active in [&root, &work] {
+            let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(active));
+            assert!(!denied(&backup.join(".env")));
+            for profile in [&root, &work, &play] {
+                for store in [
+                    ".env",
+                    "auth.json",
+                    "auth/tokens.json",
+                    "mem0.json",
+                    "honcho.json",
+                ] {
+                    let path = profile.join(store);
+                    assert!(
+                        denied(&path),
+                        "{} writable from {}",
+                        path.display(),
+                        active.display()
+                    );
+                }
+                assert!(!denied(&profile.join("notes.txt")));
+            }
+            assert!(!denied(&root.join("profiles/default.yaml")));
+
+            let protected = ProtectedPaths::with_roots(Some(&home), Some(active));
+            assert!(protected.removed_by(&root.join("profiles")).is_some());
+            assert!(protected.contains(&play.join(".env")));
+            assert_eq!(protected.removed_by(&play.join("cache")), None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_covers_profiles_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let profiles = root.join("profiles");
+        let work = profiles.join("work");
+        for dir in [&home, &work] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        // Searchable but not readable: `--profile work` still finds the
+        // folder, but it cannot be listed.
+        let set_mode = |mode| {
+            std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set_mode(0o100);
+        let listed = std::fs::read_dir(&profiles).is_ok();
+        let denied = is_write_denied_with_roots(&work.join(".env"), Some(&home), Some(&root));
+        let removed = ProtectedPaths::with_roots(Some(&home), Some(&root)).removed_by(&work);
+        set_mode(0o700);
+
+        // Root can list any folder, so the case cannot arise.
+        if !listed {
+            assert!(denied, "an unlisted profile's .env is writable");
+            assert!(removed.is_some());
+        }
     }
 
     #[test]

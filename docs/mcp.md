@@ -49,12 +49,22 @@ Validation rules:
 
 ### Local stdio framing
 
-Set `stdio_mode: standard_stdio` on a local server to use newline-delimited
-JSON and discover support for MCP 2026-07-28. If discovery is unsupported or the
-server stays silent, Hermes tries the older initialize handshake on the same
-process. Use `standard_legacy` to start with initialize for an older server that
-already uses newline-delimited JSON. Existing entries default to
-`legacy_framed`, which uses Content-Length and initialize.
+A local server entry without `stdio_mode` uses `standard_legacy`: one JSON
+message per line, as the MCP specification's stdio transport frames it, then the
+initialize handshake. Set `stdio_mode: standard_stdio` to also discover support
+for MCP 2026-07-28 first; if discovery is unsupported or the server stays silent,
+Hermes tries initialize on the same process. Set `stdio_mode: legacy_framed` for
+a server that only reads Content-Length headers, such as `hermes-ultra mcp serve`
+(also run as `hermes mcp serve`) built before 24 November 2026. Until then the
+default was `legacy_framed`, so an entry for such a server now needs that line.
+
+A framing mismatch fails at once when the server answers in the other framing,
+with an error naming the `stdio_mode` to set. A server that stays silent instead
+fails at the connect timeout, and that error names the setting too. Blank lines
+between messages are skipped.
+
+`hermes-ultra mcp serve` answers either framing: it judges the client's framing
+from its first message and replies in kind.
 
 ```yaml
 mcp_servers:

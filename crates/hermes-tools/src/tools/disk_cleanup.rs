@@ -1143,6 +1143,31 @@ mod tests {
     }
 
     #[test]
+    fn cleanup_keeps_another_profiles_stores() {
+        let tmp = TempDir::new().unwrap();
+        let cleaner = cleaner(&tmp);
+        let profiles = cleaner.hermes_home().join("profiles");
+        let other = profiles.join("work");
+        fs::create_dir_all(other.join("auth")).unwrap();
+        fs::write(other.join(".env"), "KEY=1").unwrap();
+        fs::write(other.join("auth/tokens.json"), "{}").unwrap();
+        fs::write(other.join("mem0.json"), "{}").unwrap();
+        fs::write(other.join("cache.txt"), "x").unwrap();
+
+        assert!(!cleaner.track(&profiles, "test").unwrap());
+        // As a tracked list written by hand would hold it.
+        cleaner
+            .save_tracked(&[stale_item(&profiles, "test", 1)])
+            .unwrap();
+        cleaner.quick();
+
+        for kept in [".env", "auth/tokens.json", "mem0.json"] {
+            assert!(other.join(kept).exists(), "{kept} deleted");
+        }
+        assert!(!other.join("cache.txt").exists());
+    }
+
+    #[test]
     fn quick_keeps_a_credential_path_in_a_tracked_folder() {
         let tmp = TempDir::new().unwrap();
         let cleaner = cleaner(&tmp);
