@@ -1328,9 +1328,10 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 #[tokio::test]
 async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed() {
-    let sudo_ok = std::process::Command::new("sudo")
+    let sudo_ok = tokio::process::Command::new("sudo")
         .args(["-n", "-u", "nobody", "true"])
         .status()
+        .await
         .is_ok_and(|status| status.success());
     if !sudo_ok {
         eprintln!("skipped: passwordless sudo to nobody is not available");
@@ -1354,9 +1355,10 @@ async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_k
     tokio::time::sleep(std::time::Duration::from_millis(300)).await;
 
     let killed = backend.kill_process(session_id).await;
-    let _ = std::process::Command::new("sudo")
+    let _ = tokio::process::Command::new("sudo")
         .args(["-n", "pkill", "-f", "sleep 31.4159"])
-        .status();
+        .status()
+        .await;
 
     assert!(
         !matches!(&killed, Ok(value) if value["status"] == "killed"),
