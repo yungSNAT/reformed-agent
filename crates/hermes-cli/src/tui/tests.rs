@@ -103,13 +103,17 @@ mod tests {
         }
     }
 
-    fn rendered_activity_lane(state: &TuiState, area: Rect) -> String {
-        let backend = ratatui::backend::TestBackend::new(80, 16);
+    fn rendered_frame(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut Frame<'_>, &crate::theme::RatatuiColors),
+    ) -> String {
+        let backend = ratatui::backend::TestBackend::new(width, height);
         let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
         let colors = Theme::default_theme().colors.to_ratatui_colors();
         terminal
-            .draw(|frame| render_live_details(frame, "fixture-model", state, area, &colors))
-            .expect("draw activity lane");
+            .draw(|frame| draw(frame, &colors))
+            .expect("draw test frame");
         terminal
             .backend()
             .buffer()
@@ -117,6 +121,12 @@ mod tests {
             .iter()
             .map(|cell| cell.symbol())
             .collect()
+    }
+
+    fn rendered_activity_lane(state: &TuiState, area: Rect) -> String {
+        rendered_frame(80, 16, |frame, colors| {
+            render_live_details(frame, "fixture-model", state, area, colors);
+        })
     }
 
     #[test]
@@ -148,7 +158,10 @@ mod tests {
             assert!(waiting.contains(text), "missing {text:?} from {waiting}");
         }
         assert!(!waiting.contains("activity-00"));
-        state.live_thinking = format!("Beginning of preview {} full-thinking-marker", "x ".repeat(75));
+        state.live_thinking = format!(
+            "Beginning of preview {} full-thinking-marker",
+            "x ".repeat(75)
+        );
         let preview = rendered_activity_lane(&state, area);
         assert!(preview.contains("Beginning of preview"));
         assert!(!preview.contains("full-thinking-marker"));
@@ -190,6 +203,117 @@ mod tests {
         assert!(rendered_activity_lane(&empty, area).contains("waiting for activity"));
         let collapsed = rendered_activity_lane(&empty, Rect::new(0, 0, 0, 16));
         assert!(collapsed.trim().is_empty());
+    }
+
+    #[test]
+    fn picker_renders_search_results_and_multi_selection() {
+        let mut modal = PickerModal::new(
+            PickerKind::ModelProvider,
+            "Select fixture provider",
+            vec![
+                PickerItem {
+                    label: "Fixture One".into(),
+                    detail: "Local model".into(),
+                    value: "one".into(),
+                },
+                PickerItem {
+                    label: "Fixture Two".into(),
+                    detail: String::new(),
+                    value: "two".into(),
+                },
+            ],
+        );
+        let render = |modal: &PickerModal| {
+            rendered_frame(92, 20, |frame, colors| {
+                render_picker_modal(frame, modal, colors);
+            })
+        };
+        let initial = render(&modal);
+        for text in [
+            "Select fixture provider",
+            "Fixture One",
+            "Local model",
+            "Fixture Two",
+            "Search: (type to filter)",
+            "d disconnect",
+        ] {
+            assert!(initial.contains(text), "missing {text:?}: {initial}");
+        }
+
+        modal.allow_multi = true;
+        modal.toggle_selected();
+        modal.move_selection(1);
+        let multi = render(&modal);
+        assert!(multi.contains("■ Fixture One"));
+        assert!(multi.contains("□ Fixture Two"));
+        assert!(multi.contains("Space toggle"));
+
+        modal.query = "missing fixture".into();
+        modal.refresh_filter();
+        let empty = render(&modal);
+        assert!(empty.contains("No matches for current search query."));
+        assert!(empty.contains("Search: missing fixture"));
+        assert!(!empty.contains("Fixture Two"));
+    }
+
+    #[test]
+    fn picker_renders_question_prompt_and_respects_small_terminal() {
+        let mut modal = PickerModal::new(
+            PickerKind::InteractiveQuestion {
+                prompt: "Which fixture is ready?".into(),
+            },
+            "Fixture question",
+            vec![PickerItem {
+                label: "First fixture".into(),
+                detail: String::new(),
+                value: "first".into(),
+            }],
+        );
+        let text = rendered_frame(80, 16, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(text.contains("Question: Which fixture is ready?"));
+        assert!(text.contains("Enter insert answer"));
+        assert!(text.contains("First fixture"));
+
+        modal.kind = PickerKind::Skin;
+        let text = rendered_frame(80, 16, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(text.contains("quick-pick"));
+        let narrow = rendered_frame(16, 7, |frame, colors| {
+            render_picker_modal(frame, &modal, colors);
+        });
+        assert!(narrow.trim().is_empty());
+    }
+
+    #[test]
+    fn completions_popup_scrolls_to_the_current_match() {
+        let commands = (0..12)
+            .map(|n| format!("/fixture-{n:02}"))
+            .collect::<Vec<_>>();
+        let render = |commands: &[String], selected| {
+            rendered_frame(92, 23, |frame, colors| {
+                render_completions_popup(
+                    frame,
+                    commands,
+                    selected,
+                    Rect::new(0, 0, 92, 20),
+                    Rect::new(0, 19, 92, 3),
+                    colors,
+                );
+            })
+        };
+        assert!(render(&[], None).trim().is_empty());
+        let single = render(&["/help".into()], Some(0));
+        assert!(single.contains("Slash Commands"));
+        assert!(single.contains("/help"));
+
+        let scrolled = render(&commands, Some(11));
+        assert!(scrolled.contains("Slash Commands (12/12)"));
+        assert!(scrolled.contains("/fixture-02"));
+        assert!(scrolled.contains("/fixture-11"));
+        assert!(!scrolled.contains("/fixture-00"));
     }
 
     #[test]
