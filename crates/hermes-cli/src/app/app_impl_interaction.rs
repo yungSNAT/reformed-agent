@@ -442,6 +442,13 @@ impl App {
         build_model_switch_preflight_warning(Some(&self.current_model), provider_model, estimate)
     }
 
+    /// Continue `session_id`: the agent and its sub-agent orchestrator are
+    /// rebuilt for it, so they read and write that session's records.
+    pub fn resume_session_id(&mut self, session_id: String) {
+        self.session_id = session_id;
+        self.rebuild_agent_for_active_session();
+    }
+
     fn rebuild_agent_for_active_session(&mut self) {
         match self.build_agent_for_model(&self.current_model) {
             Ok(agent) => {

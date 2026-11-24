@@ -1049,6 +1049,7 @@ impl SessionPersistence {
         if let Some(home) = self.sessions_dir.parent() {
             let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
             for sid in &session_ids {
+                crate::sub_agent_orchestrator::forget_session_results(home, sid);
                 crate::context::tool_result_prune::remove_session_archives(&archives, sid);
             }
         }
@@ -1098,6 +1099,7 @@ impl SessionPersistence {
             }
         }
         if let Some(home) = self.sessions_dir.parent() {
+            crate::sub_agent_orchestrator::forget_session_results(home, session_id);
             let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
             crate::context::tool_result_prune::remove_session_archives(&archives, session_id);
         }
