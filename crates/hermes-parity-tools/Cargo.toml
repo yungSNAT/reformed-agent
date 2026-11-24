@@ -13,6 +13,7 @@ clap = { workspace = true }
 fancy-regex = "0.11"
 regex = { workspace = true }
 hermes-py = { workspace = true }
+serde_yaml = { workspace = true }
 syn = { version = "2", features = ["full"] }
 
 [dev-dependencies]
