@@ -92,7 +92,10 @@ async fn main() -> ExitCode {
         .and_then(|()| stdout.flush());
     drop(stdout);
     if let Err(err) = announced {
-        eprintln!("cannot write the readiness lines: {err}");
+        if args.exit_when_stdin_closes && err.kind() == std::io::ErrorKind::BrokenPipe {
+            return ExitCode::SUCCESS;
+        }
+        let _ = writeln!(std::io::stderr(), "cannot write the readiness lines: {err}");
         return ExitCode::FAILURE;
     }
     let stdin_closed = stdin_closed(args.exit_when_stdin_closes);
@@ -100,7 +103,7 @@ async fn main() -> ExitCode {
         served = serve(listener, token, Chat::new(config)) => match served {
             Ok(()) => ExitCode::SUCCESS,
             Err(err) => {
-                eprintln!("server stopped: {err}");
+                let _ = writeln!(std::io::stderr(), "server stopped: {err}");
                 ExitCode::FAILURE
             }
         },
