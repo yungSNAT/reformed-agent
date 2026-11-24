@@ -1,3 +1,9 @@
+#[derive(Default)]
+struct RecoverPassOutcome {
+    sent: usize,
+    write_failed: bool,
+}
+
 impl Gateway {
     /// Keep a record of each turn in flight under `hermes_home`, so a
     /// restart can send what it would otherwise lose (see
@@ -56,43 +62,52 @@ impl Gateway {
             .await;
     }
 
-    /// After a restart: send each taken-over reply an earlier process
-    /// answered but did not send, and a notice for each turn it cut off.
-    /// One pass; returns the number sent. Call once the adapters have
-    /// started.
-    pub async fn recover_pending_replies(&self) -> usize {
+    async fn recover_pending_replies_outcome(&self) -> RecoverPassOutcome {
         let Some(dir) = self.reply_records.get().cloned() else {
-            return 0;
+            return RecoverPassOutcome::default();
         };
         let dir_list = dir.clone();
         let records =
             tokio::task::spawn_blocking(move || crate::reply_recovery::recovering(&dir_list))
                 .await
                 .unwrap_or_default();
-        let mut sent = 0;
+        let mut out = RecoverPassOutcome::default();
         for (path, record) in records {
             let dir_count = dir.clone();
             let path_count = path.clone();
             let mut record_for_attempt = record;
-            let Ok((allowed, updated)) = tokio::task::spawn_blocking(move || {
-                let allowed = crate::reply_recovery::count_attempt(
+            let Ok((attempt, updated)) = tokio::task::spawn_blocking(move || {
+                let attempt = crate::reply_recovery::count_attempt(
                     &dir_count,
                     &path_count,
                     &mut record_for_attempt,
                 );
-                (allowed, record_for_attempt)
+                (attempt, record_for_attempt)
             })
             .await
             else {
+                out.write_failed = true;
                 continue;
             };
-            if !allowed {
-                warn!(
-                    session = %updated.session_key,
-                    "dropping a recovered reply after {} recorded attempts",
-                    crate::reply_recovery::MAX_SEND_ATTEMPTS
-                );
-                continue;
+            match attempt {
+                crate::reply_recovery::AttemptOutcome::Reserved => {}
+                crate::reply_recovery::AttemptOutcome::Exhausted => {
+                    warn!(
+                        session = %updated.session_key,
+                        "dropping a recovered reply after {} recorded attempts",
+                        crate::reply_recovery::MAX_SEND_ATTEMPTS
+                    );
+                    continue;
+                }
+                crate::reply_recovery::AttemptOutcome::Missing => continue,
+                crate::reply_recovery::AttemptOutcome::WriteFailed => {
+                    warn!(
+                        session = %updated.session_key,
+                        "skipping recovered reply: could not persist attempt count"
+                    );
+                    out.write_failed = true;
+                    continue;
+                }
             }
             match self
                 .send_notify_message_threaded(
@@ -111,7 +126,7 @@ impl Gateway {
                         crate::reply_recovery::mark_delivered(&dir_done, &path_done);
                     })
                     .await;
-                    sent += 1;
+                    out.sent += 1;
                 }
                 Err(e) => warn!(
                     session = %updated.session_key,
@@ -120,12 +135,21 @@ impl Gateway {
                 ),
             }
         }
-        sent
+        out
+    }
+
+    /// After a restart: send each taken-over reply an earlier process
+    /// answered but did not send, and a notice for each turn it cut off.
+    /// One pass; returns the number sent. Call once the adapters have
+    /// started.
+    pub async fn recover_pending_replies(&self) -> usize {
+        self.recover_pending_replies_outcome().await.sent
     }
 
     /// [`Self::recover_pending_replies`], then again every `retry_after`
     /// whilst taken-over records or records held by another running process
-    /// remain; each record stops at its own attempt cap.
+    /// remain; each record stops at its own attempt cap. Stops cleanly on
+    /// unrecoverable storage errors.
     pub async fn recover_pending_replies_with_retries(
         &self,
         retry_after: std::time::Duration,
@@ -136,14 +160,26 @@ impl Gateway {
         let alive = self.reply_writer_alive.get().copied();
         let mut sent = 0;
         loop {
-            if let Some(alive) = alive {
+            let takeover = if let Some(alive) = alive {
                 let dir_take = dir.clone();
-                let _ = tokio::task::spawn_blocking(move || {
-                    crate::reply_recovery::take_over(&dir_take, alive)
+                tokio::task::spawn_blocking(move || {
+                    crate::reply_recovery::take_over_report(&dir_take, alive)
                 })
-                .await;
+                .await
+                .unwrap_or(crate::reply_recovery::TakeOverReport {
+                    moved: 0,
+                    unmovable_stopped: true,
+                })
+            } else {
+                crate::reply_recovery::TakeOverReport::default()
+            };
+            let pass = self.recover_pending_replies_outcome().await;
+            sent += pass.sent;
+            let io_blocked = pass.write_failed || takeover.unmovable_stopped;
+            if io_blocked && pass.sent == 0 && takeover.moved == 0 {
+                warn!("stopping reply recovery retries after unrecoverable storage error");
+                break;
             }
-            sent += self.recover_pending_replies().await;
             let dir_left = dir.clone();
             let left = tokio::task::spawn_blocking(move || {
                 crate::reply_recovery::pending_count(&dir_left)

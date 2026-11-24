@@ -693,7 +693,10 @@ async fn three_recorded_attempts_without_sends_exhaust_record() {
     assert_eq!(crate::reply_recovery::take_over(&dir, |_| false), 1);
     let (path, mut rec) = crate::reply_recovery::recovering(&dir).remove(0);
     for _ in 0..crate::reply_recovery::MAX_SEND_ATTEMPTS {
-        assert!(crate::reply_recovery::count_attempt(&dir, &path, &mut rec));
+        assert_eq!(
+            crate::reply_recovery::count_attempt(&dir, &path, &mut rec),
+            crate::reply_recovery::AttemptOutcome::Reserved
+        );
     }
 
     let calls = Arc::new(Mutex::new(Vec::new()));
@@ -841,4 +844,124 @@ async fn streaming_turns_record_recover_and_count_live_sends() {
         crate::reply_recovery::MAX_SEND_ATTEMPTS as usize
     );
     assert!(record_files(fail_home.path()).is_empty());
+}
+
+#[tokio::test]
+async fn retry_loop_terminates_when_stopped_record_cannot_be_taken_over() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = crate::reply_recovery::records_dir(tmp.path());
+    let path = crate::reply_recovery::write(
+        &dir,
+        &crate::reply_recovery::PendingReply {
+            session_key: "test:unmovable".to_string(),
+            platform: "test".to_string(),
+            chat_id: "chat-unmovable".to_string(),
+            thread_id: None,
+            process: "4242-1".to_string(),
+            reply: Some("blocked takeover".to_string()),
+            attempts: 0,
+        },
+    )
+    .expect("write");
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap();
+    let blocker = crate::reply_recovery::recovering_dir(&dir).join(format!("{stem}-42421.json"));
+    std::fs::create_dir_all(blocker.join("keep-non-empty")).expect("blocker dir");
+
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+
+    let recovered = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        gw.recover_pending_replies_with_retries(std::time::Duration::from_millis(5)),
+    )
+    .await
+    .expect("retry loop must terminate rather than spin forever when take_over fails");
+    assert_eq!(recovered, 0);
+    assert!(sent.lock().unwrap().is_empty());
+    assert!(path.exists(), "unmovable record must remain preserved");
+}
+
+#[cfg(unix)]
+#[tokio::test]
+async fn retry_loop_terminates_when_recovering_dir_is_symlinked() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = crate::reply_recovery::records_dir(tmp.path());
+    let outside = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside).expect("outside");
+    std::fs::write(
+        outside.join("leak.json"),
+        serde_json::to_vec(&crate::reply_recovery::PendingReply {
+            session_key: "test:symlink-dir".to_string(),
+            platform: "test".to_string(),
+            chat_id: "chat-sym".to_string(),
+            thread_id: None,
+            process: "4242-1".to_string(),
+            reply: Some("should not leak".to_string()),
+            attempts: 0,
+        })
+        .unwrap(),
+    )
+    .expect("write outside");
+    std::fs::create_dir_all(&dir).expect("records dir");
+    std::os::unix::fs::symlink(&outside, crate::reply_recovery::recovering_dir(&dir))
+        .expect("symlink");
+
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let recovered = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        gw.recover_pending_replies_with_retries(std::time::Duration::from_millis(5)),
+    )
+    .await
+    .expect("symlinked recovering/ must not cause infinite loop");
+    assert_eq!(recovered, 0);
+    assert!(sent.lock().unwrap().is_empty());
+}
+
+#[cfg(windows)]
+#[tokio::test]
+async fn retry_loop_terminates_when_recovered_record_is_readonly() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    left_by_an_earlier_process(tmp.path(), "test:readonly", Some("cannot persist count"));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    let (path, _) = crate::reply_recovery::recovering(&crate::reply_recovery::records_dir(tmp.path()))
+        .remove(0);
+    let mut perms = std::fs::metadata(&path).expect("meta").permissions();
+    perms.set_readonly(true);
+    std::fs::set_permissions(&path, perms).expect("readonly");
+
+    let recovered = tokio::time::timeout(
+        std::time::Duration::from_millis(250),
+        gw.recover_pending_replies_with_retries(std::time::Duration::from_millis(5)),
+    )
+    .await
+    .expect("readonly recovered record must terminate retry loop instead of hanging");
+    assert_eq!(recovered, 0);
+    assert!(sent.lock().unwrap().is_empty());
+    assert!(path.exists(), "record stays intact when WriteFailed");
+    #[allow(clippy::permissions_set_readonly_false)]
+    {
+        let mut perms = std::fs::metadata(&path).expect("meta").permissions();
+        perms.set_readonly(false);
+        let _ = std::fs::set_permissions(&path, perms);
+    }
 }

@@ -34,6 +34,26 @@ use sha2::{Digest, Sha256};
 /// Recorded send attempts for one record before it is dropped.
 pub const MAX_SEND_ATTEMPTS: u32 = 3;
 
+/// Result of reserving one recovery send attempt for a taken-over record.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AttemptOutcome {
+    /// Attempt reserved on disk; caller may send now.
+    Reserved,
+    /// Record already reached [`MAX_SEND_ATTEMPTS`] and was removed.
+    Exhausted,
+    /// Record was already removed, unreadable, or a symlink.
+    Missing,
+    /// Locking or persisting the attempt count failed; record stays on disk.
+    WriteFailed,
+}
+
+/// Summary of one [`take_over_report`] pass.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct TakeOverReport {
+    pub moved: usize,
+    pub unmovable_stopped: bool,
+}
+
 /// What a user gets for a turn the restart cut off before it answered.
 pub const INTERRUPTED_NOTICE: &str = "The gateway restarted before it answered your last \
      message, so nothing was done with it after that point. Send it again to retry.";
@@ -121,6 +141,14 @@ fn set_unix_mode(path: &Path, mode: u32) -> std::io::Result<()> {
     }
 }
 
+fn is_regular_file(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_file())
+}
+
+fn is_real_dir(path: &Path) -> bool {
+    std::fs::symlink_metadata(path).is_ok_and(|m| m.is_dir())
+}
+
 fn private_dir_with(dir: &Path, chmod: fn(&Path, u32) -> std::io::Result<()>) -> bool {
     if let Err(e) = std::fs::symlink_metadata(dir) {
         if e.kind() != std::io::ErrorKind::NotFound {
@@ -133,6 +161,7 @@ fn private_dir_with(dir: &Path, chmod: fn(&Path, u32) -> std::io::Result<()>) ->
                 return false;
             }
         }
+        #[cfg_attr(not(unix), allow(unused_mut))]
         let mut builder = std::fs::DirBuilder::new();
         #[cfg(unix)]
         {
@@ -148,10 +177,7 @@ fn private_dir_with(dir: &Path, chmod: fn(&Path, u32) -> std::io::Result<()>) ->
             }
         }
     }
-    let Ok(meta) = std::fs::symlink_metadata(dir) else {
-        return false;
-    };
-    if !meta.is_dir() {
+    if !is_real_dir(dir) {
         tracing::debug!(path = %dir.display(), "pending reply dir is not a directory");
         return false;
     }
@@ -177,6 +203,18 @@ fn lock_dir_with(
         return None;
     }
     let path = lock_path(dir);
+    match std::fs::symlink_metadata(&path) {
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+        Ok(meta) if meta.is_file() => {}
+        Ok(_) => {
+            tracing::warn!(path = %path.display(), "refusing non-regular pending reply lock");
+            return None;
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "pending reply lock stat failed");
+            return None;
+        }
+    }
     let mut options = std::fs::OpenOptions::new();
     options.create(true).read(true).write(true);
     #[cfg(unix)]
@@ -218,6 +256,12 @@ fn write_at_with(
     };
     if !private_dir_with(parent, chmod) {
         return false;
+    }
+    if let Ok(meta) = std::fs::symlink_metadata(path) {
+        if !meta.is_file() {
+            tracing::warn!(path = %path.display(), "refusing to overwrite non-regular pending reply");
+            return false;
+        }
     }
     let body = match serde_json::to_vec_pretty(record) {
         Ok(body) => body,
@@ -324,8 +368,11 @@ pub fn mark_delivered(dir: &Path, path: &Path) {
 }
 
 /// The record at `path`. One that does not parse is deleted, so its text
-/// does not stay on disk.
+/// does not stay on disk. Symlinks and non-regular files are refused.
 fn read(path: &Path) -> Option<PendingReply> {
+    if !is_regular_file(path) {
+        return None;
+    }
     let bytes = std::fs::read(path).ok()?;
     match serde_json::from_slice(&bytes) {
         Ok(record) => Some(record),
@@ -338,13 +385,16 @@ fn read(path: &Path) -> Option<PendingReply> {
 }
 
 fn json_files(dir: &Path) -> Vec<PathBuf> {
+    if !is_real_dir(dir) {
+        return Vec::new();
+    }
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
     entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "json"))
+        .filter(|p| is_regular_file(p) && p.extension().is_some_and(|x| x == "json"))
         .collect()
 }
 
@@ -378,6 +428,12 @@ pub fn boot_time() -> Option<std::time::SystemTime> {
 /// host booted has stopped, whatever process its pid now names. Returns
 /// the number moved.
 pub fn take_over(dir: &Path, process_alive: fn(u32) -> bool) -> usize {
+    take_over_report(dir, process_alive).moved
+}
+
+/// Move stopped-process records into [`recovering_dir`], reporting both the
+/// moved count and whether any stopped record or lock error prevented recovery.
+pub fn take_over_report(dir: &Path, process_alive: fn(u32) -> bool) -> TakeOverReport {
     take_over_since_with_hook(dir, process_alive, boot_time(), || {})
 }
 
@@ -386,13 +442,17 @@ fn take_over_since_with_hook(
     process_alive: fn(u32) -> bool,
     booted_at: Option<std::time::SystemTime>,
     mut before_move: impl FnMut(),
-) -> usize {
+) -> TakeOverReport {
     let Some(_lock) = lock_dir(dir) else {
-        return 0;
+        return TakeOverReport {
+            moved: 0,
+            unmovable_stopped: true,
+        };
     };
     let me = this_process();
     let to = recovering_dir(dir);
     let mut moved = 0;
+    let mut unmovable_stopped = false;
     let files = json_files(dir);
     before_move();
     for path in files {
@@ -421,14 +481,23 @@ fn take_over_since_with_hook(
             .filter(char::is_ascii_alphanumeric)
             .collect();
         if !private_dir_with(&to, set_unix_mode) {
-            return moved;
+            return TakeOverReport {
+                moved,
+                unmovable_stopped: true,
+            };
         }
         match std::fs::rename(&path, to.join(format!("{stem}-{writer}.json"))) {
             Ok(()) => moved += 1,
-            Err(e) => tracing::warn!(error = %e, "pending reply not taken over"),
+            Err(e) => {
+                tracing::warn!(error = %e, "pending reply not taken over");
+                unmovable_stopped = true;
+            }
         }
     }
-    moved
+    TakeOverReport {
+        moved,
+        unmovable_stopped,
+    }
 }
 
 fn recovering_unlocked(dir: &Path) -> Vec<(PathBuf, PendingReply)> {
@@ -468,41 +537,45 @@ pub fn pending_count(dir: &Path) -> usize {
         return 0;
     };
     let in_recovering = recovering_unlocked(dir).len();
-    let to = recovering_dir(dir);
-    let can_take_over = match std::fs::symlink_metadata(&to) {
-        Ok(meta) => meta.is_dir(),
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => true,
-        Err(_) => false,
-    };
-    let held = if can_take_over {
-        held_for_others_unlocked(dir)
+    let held = held_for_others_unlocked(dir);
+    let can_take_over = if held > 0 {
+        private_dir_with(&recovering_dir(dir), set_unix_mode)
     } else {
-        0
+        true
     };
-    in_recovering + held
+    in_recovering + if can_take_over { held } else { 0 }
+}
+
+fn count_attempt_with(
+    dir: &Path,
+    path: &Path,
+    record: &mut PendingReply,
+    chmod: fn(&Path, u32) -> std::io::Result<()>,
+) -> AttemptOutcome {
+    let Some(_lock) = lock_dir_with(dir, chmod) else {
+        return AttemptOutcome::WriteFailed;
+    };
+    let Some(mut current) = read(path) else {
+        return AttemptOutcome::Missing;
+    };
+    if current.attempts >= MAX_SEND_ATTEMPTS {
+        let _ = std::fs::remove_file(path);
+        *record = current;
+        return AttemptOutcome::Exhausted;
+    }
+    current.attempts += 1;
+    if !write_at_with(path, &current, chmod) {
+        return AttemptOutcome::WriteFailed;
+    }
+    *record = current;
+    AttemptOutcome::Reserved
 }
 
 /// Count a send attempt of the taken-over `record` at `path` under the
 /// cross-process lock before the send is made. Re-reads from disk so stale
 /// snapshots never overshoot [`MAX_SEND_ATTEMPTS`].
-pub fn count_attempt(dir: &Path, path: &Path, record: &mut PendingReply) -> bool {
-    let Some(_lock) = lock_dir(dir) else {
-        return false;
-    };
-    let Some(mut current) = read(path) else {
-        return false;
-    };
-    if current.attempts >= MAX_SEND_ATTEMPTS {
-        let _ = std::fs::remove_file(path);
-        *record = current;
-        return false;
-    }
-    current.attempts += 1;
-    if !write_at_with(path, &current, set_unix_mode) {
-        return false;
-    }
-    *record = current;
-    true
+pub fn count_attempt(dir: &Path, path: &Path, record: &mut PendingReply) -> AttemptOutcome {
+    count_attempt_with(dir, path, record, set_unix_mode)
 }
 
 #[cfg(test)]

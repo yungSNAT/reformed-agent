@@ -79,12 +79,12 @@ fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
     // Written by pid 7, started at 1,000 s; pid 7 is alive now.
     write(&dir, &record("rebooted", "7-1000000000000")).expect("rebooted");
     assert_eq!(
-        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(500)), || {}),
+        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(500)), || {}).moved,
         0,
         "same boot"
     );
     assert_eq!(
-        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(2_000)), || {}),
+        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(2_000)), || {}).moved,
         1,
         "booted since"
     );
@@ -99,10 +99,16 @@ fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     assert_eq!(take_over(&dir, never_alive), 1);
     let (path, mut stuck) = recovering(&dir).remove(0);
     for n in 1..=MAX_SEND_ATTEMPTS {
-        assert!(count_attempt(&dir, &path, &mut stuck));
+        assert_eq!(
+            count_attempt(&dir, &path, &mut stuck),
+            AttemptOutcome::Reserved
+        );
         assert_eq!(recovering(&dir)[0].1.attempts, n, "written before the send");
     }
-    assert!(!count_attempt(&dir, &path, &mut stuck));
+    assert_eq!(
+        count_attempt(&dir, &path, &mut stuck),
+        AttemptOutcome::Exhausted
+    );
     assert!(recovering(&dir).is_empty());
 }
 
@@ -119,13 +125,15 @@ fn concurrent_snapshots_at_two_authorize_at_most_one_third_attempt() {
     let (path2, mut snap2) = recovering(&dir).remove(0);
     assert_eq!(path1, path2);
 
-    assert!(
+    assert_eq!(
         count_attempt(&dir, &path1, &mut snap1),
+        AttemptOutcome::Reserved,
         "first snapshot reserves attempt 3"
     );
     assert_eq!(snap1.attempts, MAX_SEND_ATTEMPTS);
-    assert!(
-        !count_attempt(&dir, &path2, &mut snap2),
+    assert_eq!(
+        count_attempt(&dir, &path2, &mut snap2),
+        AttemptOutcome::Exhausted,
         "second stale snapshot must see attempt 3 on disk and refuse send"
     );
     assert!(recovering(&dir).is_empty(), "exhausted record dropped");
@@ -194,7 +202,7 @@ fn takeover_and_record_creation_serialize_under_cross_handle_lock() {
     );
 
     go_tx.send(()).expect("release A");
-    assert_eq!(thread_a.join().expect("join A"), 1);
+    assert_eq!(thread_a.join().expect("join A").moved, 1);
     assert!(w_done_rx.recv().expect("w result"));
     let _ = b_done_rx.recv().expect("b result");
     thread_w.join().expect("join W");
@@ -219,11 +227,51 @@ fn no_send_is_made_when_its_count_cannot_be_written() {
     write(&dir, &record("stuck", "1-1")).expect("write");
     take_over(&dir, never_alive);
     let (path, mut stuck) = recovering(&dir).remove(0);
+    // Removed/missing record reports Missing (no false exhaustion warning).
+    let missing_path = path.with_file_name("gone.json");
+    assert_eq!(
+        count_attempt(&dir, &missing_path, &mut stuck),
+        AttemptOutcome::Missing
+    );
     // A file where the folder was: the count cannot be written.
     let taken = recovering_dir(&dir);
     std::fs::remove_dir_all(&taken).expect("remove");
     std::fs::write(&taken, b"").expect("block");
-    assert!(!count_attempt(&dir, &path, &mut stuck));
+    assert_eq!(
+        count_attempt(&dir, &path, &mut stuck),
+        AttemptOutcome::Missing
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn count_attempt_write_failure_preserves_record_and_reports_write_failed() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    write(&dir, &record("stuck", "1-1")).expect("write");
+    assert_eq!(take_over(&dir, never_alive), 1);
+    let (path, mut stuck) = recovering(&dir).remove(0);
+
+    let fail_file_chmod = |p: &Path, m: u32| -> std::io::Result<()> {
+        if m == 0o600
+            && p.file_name()
+                .is_some_and(|n| n.to_string_lossy().contains(".tmp."))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected attempt write failure",
+            ));
+        }
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m))
+    };
+    assert_eq!(
+        count_attempt_with(&dir, &path, &mut stuck, fail_file_chmod),
+        AttemptOutcome::WriteFailed
+    );
+    let kept = recovering(&dir);
+    assert_eq!(kept.len(), 1, "record must stay intact after WriteFailed");
+    assert_eq!(kept[0].1.attempts, 0, "attempts must stay unchanged");
 }
 
 #[cfg(unix)]
@@ -283,4 +331,47 @@ fn records_are_readable_by_their_owner_only_and_chmod_failures_fail_closed() {
     ));
     assert!(!perm_path.exists());
     assert!(std::fs::read_dir(&perm_dir).expect("dir").next().is_none());
+}
+
+#[cfg(unix)]
+#[test]
+fn symlinks_for_lock_records_and_recovering_dir_are_refused() {
+    use std::os::unix::fs::symlink;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    private_dir_with(&dir, set_unix_mode);
+
+    let outside_dir = tmp.path().join("outside");
+    std::fs::create_dir_all(&outside_dir).expect("outside dir");
+    let outside_json = outside_dir.join("leak.json");
+    assert!(write_at_with(
+        &outside_json,
+        &record("sym", "1-1"),
+        set_unix_mode
+    ));
+
+    // Symlinked json file in dir/ must be ignored by take_over.
+    symlink(&outside_json, dir.join("linked.json")).expect("symlink json");
+    assert_eq!(take_over(&dir, never_alive), 0);
+    assert!(outside_json.exists(), "symlink target must not be moved");
+    std::fs::remove_file(dir.join("linked.json")).expect("remove link");
+
+    // Symlinked recovering/ dir must be ignored by recovering().
+    symlink(&outside_dir, recovering_dir(&dir)).expect("symlink recovering");
+    assert!(
+        recovering(&dir).is_empty(),
+        "recovering() must refuse a symlinked recovering/ directory"
+    );
+    std::fs::remove_file(recovering_dir(&dir)).expect("remove recovering link");
+
+    // Symlinked .lock must cause write() to fail closed.
+    let symlink_lock_dir = tmp.path().join("symlink-lock-dir");
+    private_dir_with(&symlink_lock_dir, set_unix_mode);
+    let outside_lock = tmp.path().join("outside.lock");
+    std::fs::write(&outside_lock, b"").expect("outside lock");
+    symlink(&outside_lock, lock_path(&symlink_lock_dir)).expect("symlink lock");
+    assert!(
+        write(&symlink_lock_dir, &record("blocked-by-symlink-lock", "1-1")).is_none(),
+        "symlinked .lock must be refused"
+    );
 }
