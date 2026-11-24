@@ -362,3 +362,81 @@
         .await;
         assert_eq!(*calls.lock().unwrap(), Vec::<String>::new());
     }
+
+    /// Registers one server tool, `mcp_docs_page`, and an MCP gateway whose
+    /// scope holds it until `/tools` or `/reload` rescopes the gateway.
+    fn gateway_over_a_docs_page(app: &App) {
+        let schema = hermes_core::tool_schema(
+            "mcp_docs_page",
+            "CLI noop",
+            hermes_core::JsonSchema::new("object"),
+        );
+        app.tool_registry.register(
+            "mcp_docs_page",
+            "mcp-docs",
+            schema.clone(),
+            Arc::new(CliNoopTool { schema }),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "CLI noop",
+            "mcp",
+            None,
+        );
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            &app.tool_registry,
+            &["docs".to_string()],
+            Arc::new(|_: &hermes_tools::ToolRegistry| ["mcp_docs_page".to_string()].into()),
+        );
+    }
+
+    /// Whether the gateway lets the model call `mcp_docs_page`.
+    async fn gateway_calls_docs_page(app: &App) -> bool {
+        let out = app
+            .tool_registry
+            .dispatch_async(
+                "mcp",
+                serde_json::json!({"action": "call", "tool": "mcp_docs_page"}),
+            )
+            .await;
+        !out.contains("not an MCP tool this session can call")
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn tools_disable_and_enable_rescope_the_mcp_gateway() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app).await);
+
+        handle_slash_command(&mut app, "/tools", &["disable", "mcp_docs_page"])
+            .await
+            .expect("disable");
+        assert!(!gateway_calls_docs_page(&app).await);
+
+        handle_slash_command(&mut app, "/tools", &["enable", "mcp_docs_page"])
+            .await
+            .expect("enable");
+        assert!(gateway_calls_docs_page(&app).await);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn reload_rescopes_the_mcp_gateway() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app).await);
+        std::fs::write(
+            app.state_root.join("config.yaml"),
+            "tools_config:\n  disabled: [mcp_docs_page]\n",
+        )
+        .expect("write config");
+
+        handle_slash_command(&mut app, "/reload", &[]).await.expect("reload");
+
+        assert!(!gateway_calls_docs_page(&app).await);
+    }

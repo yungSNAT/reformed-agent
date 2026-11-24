@@ -986,6 +986,46 @@ mod tests {
         assert!(out.contains("found: gmail"), "{out}");
     }
 
+    /// The agent's tools, built as the CLI builds them in gateway mode, hold
+    /// the `mcp` tool and no server tool, and a call through them reaches the
+    /// server from a multi-threaded runtime, as the agent loop makes it.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_agent_reaches_a_gateway_server_tool_through_its_bridge() {
+        let _env = crate::test_env_lock::lock_async().await;
+        let (url, _requests) = streamable_mcp_stub().await;
+        let home = TempDir::new().expect("home");
+        std::fs::write(
+            home.path().join("config.yaml"),
+            format!(
+                "mcp_tool_mode: gateway\nmcp_servers:\n  - name: composio\n    url: \"{url}\"\n"
+            ),
+        )
+        .expect("write config");
+        let config = hermes_config::load_config(Some(home.path().to_str().expect("utf-8 path")))
+            .expect("config loads");
+        let registry = Arc::new(ToolRegistry::new());
+        connect_configured_mcp_servers(&config, home.path(), &registry).await;
+        let schemas =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry);
+        let agent_tools = crate::app::bridge_offered_tools(&registry, &schemas);
+        assert_eq!(agent_tools.names(), ["mcp"]);
+
+        let gateway = agent_tools
+            .get("mcp")
+            .expect("gateway bridged")
+            .handler
+            .clone();
+        let found = gateway(json!({"action": "search", "query": "search tools"})).expect("search");
+        let found: serde_json::Value = serde_json::from_str(&found).expect("search JSON");
+        let tool = found["tools"][0]["name"]
+            .as_str()
+            .expect("the server's tool is found")
+            .to_string();
+        let out = gateway(json!({"action": "call", "tool": tool, "arguments": {"query": "gmail"}}))
+            .expect("call");
+        assert!(out.contains("found: gmail"), "{out}");
+    }
+
     /// `/tools disable` and `/reload` narrow the gateway's reach as they
     /// narrow the tool list, and leave its schema alone.
     #[tokio::test]
