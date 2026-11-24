@@ -103,6 +103,95 @@ mod tests {
         }
     }
 
+    fn rendered_activity_lane(state: &TuiState, area: Rect) -> String {
+        let backend = ratatui::backend::TestBackend::new(80, 16);
+        let mut terminal = ratatui::Terminal::new(backend).expect("terminal");
+        let colors = Theme::default_theme().colors.to_ratatui_colors();
+        terminal
+            .draw(|frame| render_live_details(frame, "fixture-model", state, area, &colors))
+            .expect("draw activity lane");
+        terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(|cell| cell.symbol())
+            .collect()
+    }
+
+    #[test]
+    fn activity_lane_shows_processing_fallback_usage_and_recent_events() {
+        let _guard = env_test_lock();
+        let _reasoning = ReasoningFullGuard::set(false);
+        let area = Rect::new(0, 0, 80, 16);
+        let mut state = TuiState {
+            processing: true,
+            processing_degraded: true,
+            degraded_notes: vec!["using alternate provider".into()],
+            processing_phase: "route".into(),
+            processing_phase_progress: 35,
+            stream_chunk_count: 3,
+            stream_char_count: 25,
+            last_usage: Some((10, 5, 15)),
+            recent_activity: (0..20).map(|n| format!("activity-{n:02}")).collect(),
+            ..TuiState::default()
+        };
+        let waiting = rendered_activity_lane(&state, area);
+        for text in [
+            "Activity Lane",
+            "chunks:3 chars:25 phase:35% route",
+            "fallback active: using alternate provider",
+            "tools: awaiting tool events",
+            "usage: in=10 out=5 total=15",
+            "activity-19",
+        ] {
+            assert!(waiting.contains(text), "missing {text:?} from {waiting}");
+        }
+        assert!(!waiting.contains("activity-00"));
+        state.live_thinking = format!("Beginning of preview {} full-thinking-marker", "x ".repeat(75));
+        let preview = rendered_activity_lane(&state, area);
+        assert!(preview.contains("Beginning of preview"));
+        assert!(!preview.contains("full-thinking-marker"));
+
+        state.active_tools = vec!["file_read".into(), "search".into()];
+        state.processing_phase_label = "routing fixture".into();
+        crate::commands::set_reasoning_full(true);
+        let active = rendered_activity_lane(&state, area);
+        assert!(active.contains("tools: file_read, search"));
+        assert!(active.contains("phase:35% routing fixture"));
+        assert!(active.contains("full-thinking-marker"));
+    }
+
+    #[test]
+    fn activity_lane_cockpit_shows_model_status_and_usage() {
+        let area = Rect::new(0, 0, 80, 16);
+        let mut state = TuiState {
+            activity_lane_mode: ActivityLaneMode::Cockpit,
+            ..TuiState::default()
+        };
+        let idle = rendered_activity_lane(&state, area);
+        for text in [
+            "Ops Cockpit",
+            "mode: idle",
+            "model: fixture-model",
+            "policy:",
+            "Ctrl+O live lane",
+        ] {
+            assert!(idle.contains(text), "missing {text:?} from {idle}");
+        }
+
+        state.processing = true;
+        state.last_usage = Some((7, 2, 9));
+        let active = rendered_activity_lane(&state, area);
+        assert!(active.contains("mode: processing"));
+        assert!(active.contains("usage: in=7 out=2 total=9"));
+
+        let empty = TuiState::default();
+        assert!(rendered_activity_lane(&empty, area).contains("waiting for activity"));
+        let collapsed = rendered_activity_lane(&empty, Rect::new(0, 0, 0, 16));
+        assert!(collapsed.trim().is_empty());
+    }
+
     #[test]
     fn test_spinner_char() {
         let mut state = TuiState::default();

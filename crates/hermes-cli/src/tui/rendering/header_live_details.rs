@@ -36,7 +36,7 @@ fn render_header(frame: &mut Frame, app: &App, area: Rect, colors: &crate::theme
 
 fn render_live_details(
     frame: &mut Frame,
-    app: &App,
+    current_model: &str,
     state: &TuiState,
     area: Rect,
     colors: &crate::theme::RatatuiColors,
@@ -86,7 +86,7 @@ fn render_live_details(
                     .bg(colors.background),
             ),
             Span::styled(
-                truncate_chars(&app.current_model, area.width.saturating_sub(10) as usize),
+                truncate_chars(current_model, area.width.saturating_sub(10) as usize),
                 Style::default()
                     .fg(colors.status_bar_text)
                     .bg(colors.background),
