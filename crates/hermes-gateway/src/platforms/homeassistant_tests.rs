@@ -160,6 +160,54 @@ async fn a_silent_peer_is_dropped_half_a_heartbeat_after_the_ping() {
     server.abort();
 }
 
+#[tokio::test]
+async fn non_pong_frame_after_ping_resets_heartbeat() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let mut cfg = config(serde_json::json!({"watch_all": true}));
+    cfg.base_url = format!("http://{}", listener.local_addr().expect("addr"));
+    let (mut adapter, _rx) = adapter_with_inbox(cfg).await;
+    Arc::get_mut(&mut adapter.inner)
+        .expect("sole owner")
+        .heartbeat = Duration::from_millis(200);
+    let saw_second_ping = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let saw_flag = Arc::clone(&saw_second_ping);
+    // Answer the first ping with a non-Pong frame so reply_due clears, confirm
+    // a second ping fires on the renewed idle timer, then stay silent.
+    let server = tokio::spawn(async move {
+        let mut ws = accept_handshake(&listener, true).await.expect("handshake");
+        while let Some(Ok(frame)) = ws.next().await {
+            if matches!(frame, Message::Ping(_)) {
+                break;
+            }
+        }
+        send_text(&mut ws, serde_json::json!({"type": "pong"})).await;
+        while let Some(Ok(frame)) = ws.next().await {
+            if matches!(frame, Message::Ping(_)) {
+                saw_flag.store(true, Ordering::SeqCst);
+                break;
+            }
+        }
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        drop(ws);
+    });
+    let mut ws = adapter.inner.connect().await.expect("connect");
+    let started = std::time::Instant::now();
+    let Err(err) = adapter.inner.listen(&mut ws).await else {
+        panic!("silent peer after reset was kept");
+    };
+    let waited = started.elapsed();
+    assert!(err.to_string().contains("heartbeat lost"), "{err}");
+    assert!(
+        saw_second_ping.load(Ordering::SeqCst),
+        "listener did not renew the idle heartbeat"
+    );
+    assert!(
+        waited >= Duration::from_millis(480) && waited < Duration::from_secs(3),
+        "{waited:?}"
+    );
+    server.abort();
+}
+
 #[test]
 fn floats_render_as_python_repr() {
     // Expected strings from CPython's repr().
@@ -172,7 +220,16 @@ fn floats_render_as_python_repr() {
         (-2.5e-7, "-2.5e-07"),
         (1.5e20, "1.5e+20"),
         (0.0, "0.0"),
+        (-0.0, "-0.0"),
         (9999999999999998.0, "9999999999999998.0"),
+        (112171935477118.125, "112171935477118.12"),
+        (112171935477118.375, "112171935477118.38"),
+        (112171935477118.625, "112171935477118.62"),
+        (112171935477118.875, "112171935477118.88"),
+        (0.00009999999999999999, "9.999999999999999e-05"),
+        (9999999999999999.0, "1e+16"),
+        (5e-324, "5e-324"),
+        (1.7976931348623157e+308, "1.7976931348623157e+308"),
     ] {
         assert_eq!(py_str(&serde_json::json!(value)), want);
     }
