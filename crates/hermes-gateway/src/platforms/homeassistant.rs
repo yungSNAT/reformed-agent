@@ -483,7 +483,6 @@ impl HaInner {
                     ws.send(Message::Ping(Vec::new().into())).await.map_err(ws_err)?;
                 }
                 frame = ws.next() => {
-                    last_seen = Instant::now();
                     match frame {
                         Some(Ok(Message::Text(text))) => match serde_json::from_str::<Value>(text.as_str()) {
                             Ok(msg) if msg["type"] == "event" => {
