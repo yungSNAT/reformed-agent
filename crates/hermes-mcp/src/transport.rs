@@ -199,7 +199,7 @@ fn program_name(command: &str) -> Option<String> {
             part => parts.push(part.trim_end_matches(['.', ' '])),
         }
     }
-    let last = parts.last()?;
+    let last = parts.last().filter(|last| !last.is_empty())?;
     // A drive-relative name (`C:cmd.exe`) runs the file after the drive.
     let last = match last.as_bytes() {
         [drive, b':', ..] if drive.is_ascii_alphabetic() => &last[2..],
@@ -2220,6 +2220,8 @@ mod tests {
             "busybox",
             "rbash",
             "C:cmd.exe",
+            r"C:\Windows\System32\cmd.exe\. .",
+            r"C:\Windows\System32\cmd.exe\ .",
             "POWERS~1.EXE",
             // A case-insensitive file system folds the long s to `s`.
             "ba\u{17f}h",
