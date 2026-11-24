@@ -2221,7 +2221,6 @@ mod tests {
             "wsl.exe",
             "busybox",
             "rbash",
-            "POWERS~1.EXE",
             // A case-insensitive file system folds the long s to `s`.
             "ba\u{17f}h",
         ] {
@@ -2232,6 +2231,7 @@ mod tests {
         }
         #[cfg(windows)]
         for command in [
+            "POWERS~1.EXE",
             "cmd.exe.",
             r"C:\Windows\System32\cmd.exe",
             "C:/Windows/System32/cmd.exe",
@@ -2279,6 +2279,11 @@ mod tests {
             assert!(command_allowed_by_profile(
                 McpSandboxProfile::Balanced,
                 "/tmp/.../node",
+                &[]
+            ));
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/worker~1",
                 &[]
             ));
             assert!(!command_allowed_by_profile(
