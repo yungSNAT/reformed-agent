@@ -1020,7 +1020,7 @@ mod tests {
             "x",
             None,
         );
-        let mut config = GatewayConfig::default();
+        let mut config = hermes_config::GatewayConfig::default();
         hermes_tools::mcp_gateway::register_mcp_gateway(
             &registry,
             &["docs".to_string()],
