@@ -58,7 +58,9 @@ impl AgentLoop {
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
         let _cache_use = tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
-        Self::complete_memory_flush(self.run_inner(messages, tools)).await
+        let result = Self::complete_memory_flush(self.run_inner(messages, tools)).await;
+        self.note_sub_agent_results_delivered(&result);
+        result
     }
 
     async fn run_inner(
@@ -152,6 +154,8 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
+        // Before the turn's user message is recorded, as the pair goes ahead of it.
+        self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas, prefill_end);
         let mut steers = TurnSteers::new(ctx.get_messages());
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
