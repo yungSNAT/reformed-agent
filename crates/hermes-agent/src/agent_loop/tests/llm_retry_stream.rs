@@ -860,6 +860,8 @@
 
     #[derive(Clone, Copy)]
     enum StreamRetryScenario {
+        CostLimit,
+        UnknownTool,
         RecoverOnSecondAttempt,
         AlwaysFailMidToolCall,
         TextOnlyDrop,
@@ -911,6 +913,28 @@
             let attempt = *calls;
 
             let events: Vec<Result<StreamChunk, AgentError>> = match self.scenario {
+                StreamRetryScenario::CostLimit => vec![
+                    Ok(stream_chunk_content("Fixture draft")),
+                    Ok(StreamChunk {
+                        usage: Some(hermes_core::UsageStats {
+                            prompt_tokens: 3,
+                            completion_tokens: 2,
+                            total_tokens: 5,
+                            estimated_cost: Some(0.5),
+                            ..Default::default()
+                        }),
+                        ..stream_chunk_finish("stop")
+                    }),
+                ],
+                StreamRetryScenario::UnknownTool => vec![
+                    Ok(stream_chunk_tool_name(
+                        0,
+                        &format!("missing-fixture-{attempt}"),
+                        "missing_fixture_tool",
+                    )),
+                    Ok(stream_chunk_tool_args(0, "{}")),
+                    Ok(stream_chunk_finish("tool_calls")),
+                ],
                 StreamRetryScenario::SlowStream => vec![
                     Ok(stream_chunk_content("first ")),
                     Ok(stream_chunk_content("second ")),
@@ -988,6 +1012,106 @@
             }
             events.boxed()
         }
+    }
+
+    #[tokio::test]
+    async fn streamed_usage_stops_the_turn_at_the_session_cost_limit() {
+        let home = tempfile::tempdir().expect("fixture home");
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::CostLimit));
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                max_cost_usd: Some(0.25),
+                cost_guard_degrade_model: Some("openai:fixture-small".into()),
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            provider.clone(),
+        );
+        let result = agent
+            .run_stream(
+                vec![Message::user("Fixture question")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .expect("cost guard returns the session state");
+        assert!(!result.finished_naturally);
+        assert!(!result.interrupted);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(result.session_cost_usd, Some(0.5));
+        assert_eq!(result.usage.expect("stream usage").total_tokens, 5);
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 1);
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::System
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Cost guard tripped"))
+        }));
+        assert!(!result
+            .messages
+            .iter()
+            .any(|row| row.role == MessageRole::Assistant));
+    }
+
+    #[tokio::test]
+    async fn streamed_unknown_tool_calls_are_rejected_then_capped() {
+        let home = tempfile::tempdir().expect("fixture home");
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::UnknownTool));
+        let agent = AgentLoop::new(
+            AgentConfig {
+                model: "openai:fixture-model".into(),
+                hermes_home: Some(home.path().to_string_lossy().into_owned()),
+                max_turns: 5,
+                invalid_tool_call_max_retries: 2,
+                skip_memory: true,
+                skip_context_files: true,
+                code_index_enabled: false,
+                ..AgentConfig::default()
+            },
+            Arc::new(ToolRegistry::new()),
+            provider.clone(),
+        );
+        let result = agent
+            .run_stream(
+                vec![Message::user("Fixture question")],
+                None,
+                Some(Box::new(|_| {})),
+            )
+            .await
+            .expect("unknown tool is reported to the agent");
+        assert!(!result.finished_naturally);
+        assert!(!result.interrupted);
+        assert_eq!(result.total_turns, 2);
+        assert_eq!(*provider.calls.lock().expect("calls lock"), 2);
+        assert!(result.tool_errors.is_empty());
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::Tool
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Tool 'missing_fixture_tool' does not exist."))
+        }));
+        assert!(result.messages.iter().any(|row| {
+            row.role == MessageRole::System
+                && row
+                    .content
+                    .as_deref()
+                    .is_some_and(|text| text.contains("Max invalid tool retries reached (2)"))
+        }));
+        assert!(result.messages.iter().all(|row| {
+            row.tool_call_id.as_deref() != Some("missing-fixture-2")
+                && row
+                    .tool_calls
+                    .iter()
+                    .flatten()
+                    .all(|call| call.id != "missing-fixture-2")
+        }));
     }
 
     #[tokio::test(start_paused = true)]
