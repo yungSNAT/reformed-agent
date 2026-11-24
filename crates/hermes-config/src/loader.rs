@@ -84,6 +84,10 @@ pub fn resolve_symlink_target(path: &Path) -> PathBuf {
 /// folder is missing, as when the link points into a file system that is not
 /// mounted. Creating the folder would put the credential on the file system
 /// below the mount point. A path that is not a link is returned as it is.
+///
+/// shortcut: a link to a file directly in an unmounted mount point passes,
+/// as that folder exists on the file system below; telling it apart needs
+/// the mount table.
 pub fn resolve_credential_link_target(path: &Path) -> std::io::Result<PathBuf> {
     let target = resolve_symlink_target(path);
     if target != path {
