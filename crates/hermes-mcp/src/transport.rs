@@ -145,12 +145,39 @@ fn command_allowed_by_profile(
 
     match profile {
         McpSandboxProfile::Strict => false,
-        McpSandboxProfile::Balanced => {
-            // Block direct shell launches in balanced mode unless explicitly allowlisted.
-            !matches!(base.as_str(), "sh" | "bash" | "zsh" | "fish")
-        }
+        // Block direct shell launches in balanced mode unless explicitly allowlisted.
+        McpSandboxProfile::Balanced => !is_direct_shell(command),
         McpSandboxProfile::Relaxed => true,
     }
+}
+
+/// Shells the balanced profile refuses to launch directly.
+const DIRECT_SHELLS: &[&str] = &[
+    "sh",
+    "bash",
+    "zsh",
+    "fish",
+    "dash",
+    "ksh",
+    "csh",
+    "tcsh",
+    "cmd",
+    "powershell",
+    "pwsh",
+];
+
+/// Whether `command` names a shell, by its last path component under either
+/// separator, ignoring case, trailing dots and spaces (Windows drops them) and
+/// a `.exe` suffix. A shell reached under another name is not detected.
+fn is_direct_shell(command: &str) -> bool {
+    let name = command
+        .rsplit(['/', '\\'])
+        .next()
+        .unwrap_or(command)
+        .trim_end_matches(['.', ' '])
+        .to_ascii_lowercase();
+    let name = name.strip_suffix(".exe").unwrap_or(&name);
+    DIRECT_SHELLS.contains(&name)
 }
 
 fn default_allowlist() -> Vec<String> {
@@ -2135,7 +2162,12 @@ mod tests {
                 "{command} should be blocked"
             );
         }
-        for command in ["node", "node.exe", r"C:\Program Files\nodejs\node.exe", "uvx"] {
+        for command in [
+            "node",
+            "node.exe",
+            r"C:\Program Files\nodejs\node.exe",
+            "uvx",
+        ] {
             assert!(
                 command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
                 "{command} should be allowed"
