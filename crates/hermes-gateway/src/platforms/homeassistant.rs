@@ -159,7 +159,31 @@ fn py_str(v: &Value) -> String {
         Value::Bool(true) => "True".into(),
         Value::Bool(false) => "False".into(),
         Value::Null => "None".into(),
+        Value::Number(n) if n.is_f64() => n.as_f64().map_or_else(|| n.to_string(), py_float),
         other => other.to_string(),
+    }
+}
+
+/// Python's `repr(float)`: shortest digits, exponent form below 1e-4 and from 1e16.
+fn py_float(f: f64) -> String {
+    if f.is_nan() {
+        return "nan".into();
+    }
+    if f.is_infinite() {
+        return if f > 0.0 { "inf" } else { "-inf" }.into();
+    }
+    let sci = format!("{f:e}");
+    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
+    let exp: i32 = exp.parse().unwrap_or(0);
+    if f != 0.0 && !(-4..16).contains(&exp) {
+        let sign = if exp < 0 { '-' } else { '+' };
+        return format!("{mantissa}e{sign}{:02}", exp.abs());
+    }
+    let plain = format!("{f}");
+    if plain.contains('.') {
+        plain
+    } else {
+        format!("{plain}.0")
     }
 }
 
@@ -246,6 +270,7 @@ struct HaInner {
     inbound_tx: RwLock<Option<mpsc::Sender<IncomingMessage>>>,
     msg_id: AtomicU64,
     backoff: Vec<Duration>,
+    heartbeat: Duration,
 }
 
 pub struct HomeAssistantAdapter {
@@ -274,6 +299,7 @@ impl HomeAssistantAdapter {
                 .iter()
                 .map(|s| Duration::from_secs(*s))
                 .collect(),
+            heartbeat: HEARTBEAT,
         };
         Ok(Self {
             inner: Arc::new(inner),
@@ -469,18 +495,21 @@ impl HaInner {
             })?
     }
 
-    /// Read events until the socket closes, fails or misses 2 heartbeats.
+    /// Read events until the socket closes, fails or misses a heartbeat reply.
     async fn listen(&self, ws: &mut WsStream) -> Result<(), GatewayError> {
-        let mut heartbeat = tokio::time::interval(HEARTBEAT);
-        heartbeat.tick().await;
-        let mut last_seen = Instant::now();
+        // As aiohttp's heartbeat: ping after `heartbeat` without a frame, then
+        // give up if nothing arrives within half of it.
+        let mut last_seen = tokio::time::Instant::now();
+        let mut reply_due: Option<tokio::time::Instant> = None;
         loop {
+            let wake = reply_due.unwrap_or(last_seen + self.heartbeat);
             tokio::select! {
-                _ = heartbeat.tick() => {
-                    if last_seen.elapsed() > HEARTBEAT * 2 {
+                _ = tokio::time::sleep_until(wake) => {
+                    if reply_due.is_some() {
                         return Err(GatewayError::ConnectionFailed("HA WebSocket heartbeat lost".into()));
                     }
                     ws.send(Message::Ping(Vec::new().into())).await.map_err(ws_err)?;
+                    reply_due = Some(tokio::time::Instant::now() + self.heartbeat / 2);
                 }
                 frame = ws.next() => {
                     match frame {
@@ -498,7 +527,8 @@ impl HaInner {
                         Some(Err(e)) => return Err(ws_err(e)),
                     }
                     // A slow inbound queue is not a lost connection.
-                    last_seen = Instant::now();
+                    last_seen = tokio::time::Instant::now();
+                    reply_due = None;
                 }
             }
         }
@@ -572,14 +602,11 @@ impl PlatformAdapter for HomeAssistantAdapter {
                  every state_changed event will be dropped"
             );
         }
+        // The lock covers the flag and the handle together, so a concurrent
+        // stop either precedes the spawn or finds the handle to abort.
+        let mut run_task = self.run_task.lock().unwrap_or_else(|e| e.into_inner());
         self.inner.base.mark_running();
-        let task = tokio::spawn(self.inner.clone().run());
-        if let Some(old) = self
-            .run_task
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .replace(task)
-        {
+        if let Some(old) = run_task.replace(tokio::spawn(self.inner.clone().run())) {
             old.abort();
         }
         Ok(())
@@ -587,13 +614,9 @@ impl PlatformAdapter for HomeAssistantAdapter {
 
     async fn stop(&self) -> Result<(), GatewayError> {
         info!("HomeAssistant adapter stopping");
+        let mut run_task = self.run_task.lock().unwrap_or_else(|e| e.into_inner());
         self.inner.base.mark_stopped();
-        if let Some(task) = self
-            .run_task
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .take()
-        {
+        if let Some(task) = run_task.take() {
             task.abort();
         }
         Ok(())

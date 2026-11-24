@@ -51,6 +51,11 @@ async fn state_changed_events_match_the_recorded_python_cases() {
         let start = Instant::now();
         let events = case["events"].as_array().expect("events");
         let expected = case["expected"].as_array().expect("expected");
+        assert_eq!(
+            events.len(),
+            expected.len(),
+            "{name}: fixture lengths differ"
+        );
         for (i, (pair, want)) in events.iter().zip(expected).enumerate() {
             let at = start + Duration::from_secs_f64(pair[0].as_f64().expect("time"));
             let forwarded = adapter
@@ -124,6 +129,54 @@ fn config_reads_filters_cooldown_and_fallbacks() {
         config(serde_json::json!({"cooldown_seconds": -4})).cooldown_seconds,
         0
     );
+}
+
+#[tokio::test]
+async fn a_silent_peer_is_dropped_half_a_heartbeat_after_the_ping() {
+    let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
+    let mut cfg = config(serde_json::json!({"watch_all": true}));
+    cfg.base_url = format!("http://{}", listener.local_addr().expect("addr"));
+    let (mut adapter, _rx) = adapter_with_inbox(cfg).await;
+    Arc::get_mut(&mut adapter.inner)
+        .expect("sole owner")
+        .heartbeat = Duration::from_millis(200);
+    // The server never reads after the handshake, so it never answers a ping.
+    let server = tokio::spawn(async move {
+        let ws = accept_handshake(&listener, true).await;
+        tokio::time::sleep(Duration::from_secs(3)).await;
+        drop(ws);
+    });
+    let mut ws = adapter.inner.connect().await.expect("connect");
+    let started = std::time::Instant::now();
+    let Err(err) = adapter.inner.listen(&mut ws).await else {
+        panic!("a silent peer was kept");
+    };
+    let waited = started.elapsed();
+    assert!(err.to_string().contains("heartbeat lost"), "{err}");
+    assert!(
+        waited >= Duration::from_millis(280) && waited < Duration::from_secs(2),
+        "{waited:?}"
+    );
+    server.abort();
+}
+
+#[test]
+fn floats_render_as_python_repr() {
+    // Expected strings from CPython's repr().
+    for (value, want) in [
+        (1e-05, "1e-05"),
+        (21.0, "21.0"),
+        (0.0001, "0.0001"),
+        (1e16, "1e+16"),
+        (123.456, "123.456"),
+        (-2.5e-7, "-2.5e-07"),
+        (1.5e20, "1.5e+20"),
+        (0.0, "0.0"),
+        (9999999999999998.0, "9999999999999998.0"),
+    ] {
+        assert_eq!(py_str(&serde_json::json!(value)), want);
+    }
+    assert_eq!(py_str(&serde_json::json!(21)), "21");
 }
 
 #[test]
