@@ -571,6 +571,182 @@ async fn responses_endpoint_accepts_input_and_quoted_false_without_storing() {
 }
 
 #[tokio::test]
+async fn responses_endpoint_stores_streams_and_deletes_conversation_replies() {
+    let (tx, mut rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    let mailbox = Arc::clone(&state.mailbox);
+    let respond = async {
+        for (request, reply) in [
+            ("First fixture question", "First fixture reply"),
+            ("Follow-up fixture question", "Follow-up fixture reply"),
+        ] {
+            let inbound = rx.recv().await.expect("inbound response request");
+            assert_eq!(inbound.session_id, "fixture-thread");
+            assert!(inbound.prompt.contains(request), "{}", inbound.prompt);
+            if request == "Follow-up fixture question" {
+                assert!(inbound.prompt.contains("First fixture question"));
+                assert!(inbound.prompt.contains("First fixture reply"));
+            }
+            let sender = mailbox
+                .read()
+                .await
+                .pending
+                .get(&inbound.session_id)
+                .cloned()
+                .expect("pending response sender");
+            sender.send(reply.to_string()).await.expect("fixture reply");
+        }
+    };
+
+    let requests = async {
+        let first = state
+            .roundtrip(
+                json_request(
+                    "POST",
+                    "/v1/responses",
+                    serde_json::json!({
+                        "conversation": "fixture-thread",
+                        "input": "First fixture question",
+                        "store": true,
+                    }),
+                ),
+                None,
+            )
+            .await;
+        assert!(first.starts_with("HTTP/1.1 200 OK"), "{first}");
+        let first = json_body(&first);
+        let first_id = first["id"].as_str().expect("first response id");
+
+        let follow_up = state
+            .roundtrip(
+                json_request(
+                    "POST",
+                    "/v1/responses",
+                    serde_json::json!({
+                        "conversation": "fixture-thread",
+                        "input": "Follow-up fixture question",
+                        "store": true,
+                        "stream": true,
+                    }),
+                ),
+                None,
+            )
+            .await;
+        assert!(follow_up.contains("text/event-stream"), "{follow_up}");
+        assert!(follow_up.lines().any(|line| line == "data: [DONE]"));
+        let event = follow_up
+            .lines()
+            .find_map(|line| line.strip_prefix("data: "))
+            .expect("response event");
+        let second: serde_json::Value = serde_json::from_str(event).expect("response event JSON");
+        assert_eq!(second["previous_response_id"], first_id);
+        assert!(event.contains("Follow-up fixture reply"));
+        let second_id = second["id"].as_str().expect("second response id");
+        let path = format!("/v1/responses/{second_id}");
+
+        let fetched = state.roundtrip(empty_request("GET", &path), None).await;
+        assert!(fetched.starts_with("HTTP/1.1 200 OK"), "{fetched}");
+        assert_eq!(json_body(&fetched), second);
+        let deleted = state.roundtrip(empty_request("DELETE", &path), None).await;
+        assert!(deleted.starts_with("HTTP/1.1 200 OK"), "{deleted}");
+        assert_eq!(json_body(&deleted)["deleted"], true);
+        assert_eq!(json_body(&deleted)["id"], second_id);
+        for method in ["GET", "DELETE"] {
+            let missing = state.roundtrip(empty_request(method, &path), None).await;
+            assert!(missing.starts_with("HTTP/1.1 404"), "{missing}");
+        }
+
+        let missing_previous = state
+            .roundtrip(
+                json_request(
+                    "POST",
+                    "/v1/responses",
+                    serde_json::json!({
+                        "input": "Fixture with missing previous response",
+                        "previous_response_id": second_id,
+                    }),
+                ),
+                None,
+            )
+            .await;
+        assert!(
+            missing_previous.starts_with("HTTP/1.1 404"),
+            "{missing_previous}"
+        );
+        assert!(missing_previous.contains("Previous response not found"));
+    };
+    tokio::time::timeout(Duration::from_secs(10), async {
+        tokio::join!(requests, respond);
+    })
+    .await
+    .expect("complete response lifecycle");
+}
+
+#[tokio::test]
+async fn completion_endpoints_validate_input_and_clean_up_when_inbound_is_unavailable() {
+    let (tx, rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    drop(rx);
+    for (path, invalid, valid) in [
+        (
+            "/v1/responses",
+            serde_json::json!({"input": " "}),
+            serde_json::json!({"input": "Fixture response request"}),
+        ),
+        (
+            "/v1/chat/completions",
+            serde_json::json!({"messages": [{"role": "system", "content": "Fixture notes"}]}),
+            serde_json::json!({"messages": [{"role": "user", "content": "Fixture chat request"}]}),
+        ),
+    ] {
+        let invalid = state
+            .roundtrip(json_request("POST", path, invalid), None)
+            .await;
+        assert!(invalid.starts_with("HTTP/1.1 400"), "{invalid}");
+        assert_eq!(
+            json_body(&invalid)["error"]["type"],
+            "invalid_request_error"
+        );
+
+        let missing = state
+            .roundtrip(json_request("POST", path, valid), None)
+            .await;
+        assert!(missing.starts_with("HTTP/1.1 503"), "{missing}");
+        assert!(missing.contains("Gateway inbound queue is unavailable"));
+        assert!(state.mailbox.read().await.pending.is_empty());
+        assert!(state.run_cancels.read().await.pending.is_empty());
+    }
+}
+
+#[tokio::test]
+async fn http_discovery_serves_health_and_model_catalogue() {
+    let (tx, _rx) = mpsc::channel(1);
+    let state = ApiTestState::new(tx);
+    for path in ["/", "/health", "/health/detailed", "/v1/health"] {
+        let response = state.roundtrip(empty_request("GET", path), None).await;
+        assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+        let body = json_body(&response);
+        assert_eq!(body["status"], "ok");
+        assert_eq!(body["adapter"], "api-server");
+        if matches!(path, "/health/detailed" | "/v1/health") {
+            assert_eq!(body["features"]["responses"], true);
+        }
+    }
+
+    let response = state
+        .roundtrip(empty_request("GET", "/v1/models"), None)
+        .await;
+    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
+    let body = json_body(&response);
+    assert_eq!(body["object"], "list");
+    assert!(body["data"]
+        .as_array()
+        .expect("model catalogue")
+        .iter()
+        .any(|model| model["id"] == "hermes-agent"));
+}
+
+#[tokio::test]
 async fn streamed_chat_completion_deltas_preserve_multibyte_reply() {
     let reply = "Done 🎉🎉 文件已经整理好了，共有十二个文件。✅ 好的";
     let (tx, mut rx) = mpsc::channel(1);
