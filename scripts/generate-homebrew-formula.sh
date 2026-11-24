@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-VERSION="${1:-v0.13.0}"
+VERSION="${1:-v0.22.0}"
 REPO="https://github.com/yungSNAT/reformed-agent"
 FORMULA_DIR="Formula"
 FORMULA_FILE="${FORMULA_DIR}/hermes-agent-ultra.rb"

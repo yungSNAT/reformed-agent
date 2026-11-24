@@ -679,3 +679,56 @@ fn default_home_is_this_agents_own_not_upstreams() {
     );
     assert!(!fixture.home_dir.join(".hermes").exists(), "{text}");
 }
+
+#[test]
+fn powershell_installer_enforces_security_and_coexistence_contracts() {
+    let text = fs::read_to_string(repo_root().join("scripts/install.ps1"))
+        .expect("read scripts/install.ps1");
+
+    for required in [
+        "yungSNAT/reformed-agent",
+        "hermes-windows-x86_64.zip",
+        "SHA256SUMS",
+        "[string]$Version",
+        "[string]$InstallDir",
+        "SecurityProtocolType]::Tls12",
+        "Test-TrustedUri",
+        "AllowAutoRedirect = $false",
+        "Resolve-LocalPath",
+        "GetUnresolvedProviderPathFromPSPath",
+        "Invoke-NativeCaptured",
+        "$ErrorActionPreference = 'Continue'",
+        "-LiteralPath",
+        "Confirm-InteractiveStep",
+        "^[-/]noni",
+        "& `\"$BinPath`\" setup",
+        "HERMES_REQUIRE_SIGNATURE",
+        "cosign",
+        "release\\.yml@refs/tags/",
+        ".hermes-agent-ultra",
+        "hermes-agent-ultra.exe",
+        "hermes-ultra.exe",
+        "Legacy hermes.exe alias not installed by default",
+    ] {
+        assert!(
+            text.contains(required),
+            "scripts/install.ps1 missing required contract marker: {required}"
+        );
+    }
+
+    assert!(
+        !text.contains("*.old"),
+        "scripts/install.ps1 must not sweep unrelated *.old recovery backups before replacement succeeds"
+    );
+
+    let hash_pos = text
+        .find("if ($actualHash -cne $expectedHash)")
+        .expect("hash check before extraction");
+    let extract_pos = text
+        .find("[IO.Compression.ZipFile]::OpenRead")
+        .expect("zip extraction");
+    assert!(
+        hash_pos < extract_pos,
+        "scripts/install.ps1 must verify SHA256SUMS before opening the zip archive"
+    );
+}
