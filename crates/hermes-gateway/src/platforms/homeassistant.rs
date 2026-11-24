@@ -172,18 +172,51 @@ fn py_float(f: f64) -> String {
     if f.is_infinite() {
         return if f > 0.0 { "inf" } else { "-inf" }.into();
     }
-    let sci = format!("{f:e}");
-    let (mantissa, exp) = sci.split_once('e').unwrap_or((&sci, "0"));
-    let exp: i32 = exp.parse().unwrap_or(0);
-    if f != 0.0 && !(-4..16).contains(&exp) {
-        let sign = if exp < 0 { '-' } else { '+' };
-        return format!("{mantissa}e{sign}{:02}", exp.abs());
+    if f == 0.0 {
+        return if f.is_sign_negative() { "-0.0" } else { "0.0" }.into();
     }
-    let plain = format!("{f}");
-    if plain.contains('.') {
-        plain
+    // Reuse serde_json's shortest digits (ryu), whose midpoint tie-breaking
+    // matches CPython's dtoa where std Display diverges.
+    let raw = serde_json::to_string(&f).unwrap_or_else(|_| f.to_string());
+    let (neg, unsigned) = match raw.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", raw.as_str()),
+    };
+    let (mant, explicit_exp) = match unsigned.split_once('e') {
+        Some((m, e)) => (m, e.parse::<i32>().unwrap_or(0)),
+        None => (unsigned, 0),
+    };
+    let int_len = mant.find('.').unwrap_or(mant.len());
+    let all_digits: String = mant
+        .bytes()
+        .filter(u8::is_ascii_digit)
+        .map(char::from)
+        .collect();
+    let first = all_digits.bytes().position(|b| b != b'0').unwrap_or(0);
+    let exp = explicit_exp + int_len as i32 - 1 - first as i32;
+    let digits = all_digits[first..].trim_end_matches('0');
+    if !(-4..16).contains(&exp) {
+        let sign = if exp < 0 { '-' } else { '+' };
+        if digits.len() == 1 {
+            format!("{neg}{digits}e{sign}{:02}", exp.abs())
+        } else {
+            format!(
+                "{neg}{}.{}e{sign}{:02}",
+                &digits[..1],
+                &digits[1..],
+                exp.abs()
+            )
+        }
+    } else if exp < 0 {
+        let zeros = (-exp - 1) as usize;
+        format!("{neg}0.{}{digits}", "0".repeat(zeros))
     } else {
-        format!("{plain}.0")
+        let int_digits = (exp as usize) + 1;
+        if int_digits >= digits.len() {
+            format!("{neg}{digits}{}.0", "0".repeat(int_digits - digits.len()))
+        } else {
+            format!("{neg}{}.{}", &digits[..int_digits], &digits[int_digits..])
+        }
     }
 }
 
