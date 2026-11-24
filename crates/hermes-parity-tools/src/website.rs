@@ -81,38 +81,73 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// `yaml.safe_load` of a frontmatter block, as the values the generators read.
+/// A repeated mapping key keeps its last value, as PyYAML does. Plain scalars
+/// resolve by the YAML 1.2 core schema, not PyYAML's YAML 1.1 rules (`yes`,
+/// `on`, `010`, `1_000`, `1:30` and `1e3` differ); no skill in the tree uses
+/// such a scalar where the generators read it.
 pub(crate) fn load_yaml(text: &str) -> Option<Py> {
-    serde_yaml::from_str::<serde_yaml::Value>(text)
-        .ok()
-        .map(yaml_to_py)
+    serde_yaml::from_str::<YamlPy>(text).ok().map(|v| v.0)
 }
 
-fn yaml_to_py(value: serde_yaml::Value) -> Py {
-    use serde_yaml::Value;
-    match value {
-        Value::Null => Py::Null,
-        Value::Bool(b) => Py::Bool(b),
-        Value::Number(n) => match (n.as_i64(), n.as_u64()) {
-            (Some(i), _) => Py::Int(i128::from(i)),
-            (_, Some(u)) => Py::Int(i128::from(u)),
-            _ => Py::Float(n.as_f64().unwrap_or(f64::NAN)),
-        },
-        Value::String(s) => Py::Str(s),
-        Value::Sequence(items) => Py::List(items.into_iter().map(yaml_to_py).collect()),
-        Value::Mapping(map) => {
-            let mut dict = Py::Dict(Vec::new());
-            for (key, value) in map {
-                let key = match yaml_to_py(key) {
-                    Py::Str(s) => s,
-                    Py::Bool(b) => b.to_string(),
-                    Py::Null => "null".to_string(),
-                    other => py::str_of(&other),
-                };
-                dict.set(&key, yaml_to_py(value));
-            }
-            dict
+struct YamlPy(Py);
+
+impl<'de> serde::Deserialize<'de> for YamlPy {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        deserializer.deserialize_any(YamlVisitor).map(YamlPy)
+    }
+}
+
+struct YamlVisitor;
+
+impl<'de> serde::de::Visitor<'de> for YamlVisitor {
+    type Value = Py;
+
+    fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("a YAML value")
+    }
+    fn visit_unit<E>(self) -> Result<Py, E> {
+        Ok(Py::Null)
+    }
+    fn visit_none<E>(self) -> Result<Py, E> {
+        Ok(Py::Null)
+    }
+    fn visit_bool<E>(self, v: bool) -> Result<Py, E> {
+        Ok(Py::Bool(v))
+    }
+    fn visit_i64<E>(self, v: i64) -> Result<Py, E> {
+        Ok(Py::Int(i128::from(v)))
+    }
+    fn visit_u64<E>(self, v: u64) -> Result<Py, E> {
+        Ok(Py::Int(i128::from(v)))
+    }
+    fn visit_f64<E>(self, v: f64) -> Result<Py, E> {
+        Ok(Py::Float(v))
+    }
+    fn visit_str<E>(self, v: &str) -> Result<Py, E> {
+        Ok(Py::Str(v.to_string()))
+    }
+    fn visit_string<E>(self, v: String) -> Result<Py, E> {
+        Ok(Py::Str(v))
+    }
+    fn visit_seq<A: serde::de::SeqAccess<'de>>(self, mut seq: A) -> Result<Py, A::Error> {
+        let mut items = Vec::new();
+        while let Some(YamlPy(item)) = seq.next_element()? {
+            items.push(item);
         }
-        Value::Tagged(tagged) => yaml_to_py(tagged.value),
+        Ok(Py::List(items))
+    }
+    fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Py, A::Error> {
+        let mut dict = Py::Dict(Vec::new());
+        while let Some((YamlPy(key), YamlPy(value))) = map.next_entry()? {
+            let key = match key {
+                Py::Str(s) => s,
+                Py::Bool(b) => b.to_string(),
+                Py::Null => "null".to_string(),
+                other => py::str_of(&other),
+            };
+            dict.set(&key, value);
+        }
+        Ok(dict)
     }
 }
 
@@ -427,12 +462,23 @@ fn extract_local_skills(root: &Path) -> Result<Vec<Py>, String> {
     Ok(skills)
 }
 
-fn guess_category(tags: &[Py]) -> String {
+/// The tags Python's `for tag in tags` yields: a list's items, or a string's
+/// characters.
+fn tag_items(tags: &Py) -> Vec<String> {
+    match tags {
+        Py::List(items) => items.iter().map(|t| as_str(t).to_string()).collect(),
+        Py::Str(s) => s.chars().map(String::from).collect(),
+        _ => Vec::new(),
+    }
+}
+
+fn guess_category(tags: &Py) -> String {
+    let tags = tag_items(tags);
     let Some(first) = tags.first() else {
         return "uncategorized".to_string();
     };
-    for tag in tags {
-        let lower = as_str(tag).to_lowercase();
+    for tag in &tags {
+        let lower = tag.to_lowercase();
         if let Some((category, _)) = TAG_CATEGORIES
             .iter()
             .find(|(_, t)| t.contains(&lower.as_str()))
@@ -440,7 +486,7 @@ fn guess_category(tags: &[Py]) -> String {
             return (*category).to_string();
         }
     }
-    as_str(first).to_lowercase().replace(' ', "-")
+    first.to_lowercase().replace(' ', "-")
 }
 
 fn list_of(value: &Py) -> &[Py] {
@@ -489,7 +535,7 @@ fn extract_cached_index_skills(root: &Path) -> Vec<Py> {
                 skills.push(Py::dict([
                     ("name", name),
                     ("description", description.into()),
-                    ("category", guess_category(list_of(&tags)).into()),
+                    ("category", guess_category(&tags).into()),
                     ("categoryLabel", "".into()),
                     ("source", source.into()),
                     ("tags", tags),
@@ -631,7 +677,7 @@ fn extract_unified_index_skills(root: &Path) -> Option<(Vec<Py>, Py)> {
             ("name", name),
             ("description", description.into()),
             ("overview", "".into()),
-            ("category", guess_category(list_of(&tags)).into()),
+            ("category", guess_category(&tags).into()),
             ("categoryLabel", "".into()),
             ("source", source.into()),
             ("tags", tags),
