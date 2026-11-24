@@ -79,6 +79,29 @@ pub fn resolve_symlink_target(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+/// `resolve_symlink_target` for a credential write, which must not create
+/// the folder a link names: an error when `path` links to a file whose
+/// folder is missing, as when the link points into a file system that is not
+/// mounted. Creating the folder would put the credential on the file system
+/// below the mount point. A path that is not a link is returned as it is.
+pub fn resolve_credential_link_target(path: &Path) -> std::io::Result<PathBuf> {
+    let target = resolve_symlink_target(path);
+    if target != path {
+        let folder = target_parent(&target);
+        if !folder.is_dir() {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!(
+                    "{} links to {}, whose folder does not exist",
+                    path.display(),
+                    target.display()
+                ),
+            ));
+        }
+    }
+    Ok(target)
+}
+
 /// Atomically write bytes to a path by writing a sibling temp file then renaming.
 ///
 /// A symlinked `path` keeps its link: the temp file is staged beside the

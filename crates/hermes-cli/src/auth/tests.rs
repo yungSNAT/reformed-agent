@@ -1303,7 +1303,6 @@ fn owner_only_credential_write_refuses_a_link_whose_target_folder_is_missing() {
     let link = tmp.path().join("google_oauth.json");
     std::os::unix::fs::symlink(missing.join("google_oauth.json"), &link).expect("link");
 
-    assert!(write_owner_only_atomic(&link, "{}
-").is_err());
+    assert!(write_owner_only_atomic(&link, "{}\n").is_err());
     assert!(!missing.exists(), "the link's target folder was created");
 }
