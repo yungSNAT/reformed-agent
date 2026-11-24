@@ -80,8 +80,9 @@ fn merge_object_values(existing: &mut Map<String, Value>, incoming: &Map<String,
 }
 
 pub(crate) fn write_owner_only_atomic(path: &Path, value: &Value) -> Result<(), String> {
-    // A symlinked config keeps its link: the target is replaced.
-    let path = &hermes_config::resolve_symlink_target(path);
+    // A symlinked config keeps its link: the target is replaced. A link whose
+    // folder is missing is refused, not given a new folder.
+    let path = &hermes_config::resolve_credential_link_target(path).map_err(|e| e.to_string())?;
     let parent = path
         .parent()
         .ok_or_else(|| format!("config path {} has no parent directory", path.display()))?;
@@ -216,6 +217,19 @@ mod tests {
         assert!(fs::read_to_string(&real).expect("read").contains("new"));
         let mode = fs::metadata(&real).expect("metadata").permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn owner_only_atomic_write_refuses_a_link_whose_target_folder_is_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // As a link into a file system that is not mounted leaves it.
+        let missing = tmp.path().join("unmounted");
+        let link = tmp.path().join("honcho.json");
+        std::os::unix::fs::symlink(missing.join("honcho.json"), &link).expect("link");
+
+        assert!(write_owner_only_atomic(&link, &json!({"api_key": "new"})).is_err());
+        assert!(!missing.exists(), "the link's target folder was created");
     }
 
     #[test]

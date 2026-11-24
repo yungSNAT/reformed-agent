@@ -367,5 +367,7 @@ fn save_env_key_value(path: &Path, key: &str, value: &str) -> Result<(), ConfigE
 
     let mut out = lines.join("\n");
     out.push('\n');
+    // `.env` holds provider keys: a link whose folder is missing is refused.
+    resolve_credential_link_target(path).map_err(io_to_config_error)?;
     atomic_write_bytes(path, out.as_bytes())
 }

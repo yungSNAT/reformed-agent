@@ -244,8 +244,10 @@ fn decode_store_key(encoded: &str) -> Result<[u8; TOKEN_STORE_KEY_BYTES], AgentE
 /// On Unix the staged file is created with owner-only permissions.
 pub async fn write_file_private(path: &Path, content: &[u8]) -> Result<(), AgentError> {
     // A symlinked store keeps its link: the temp file is staged beside the
-    // link's target and renamed over it.
-    let path = &hermes_config::resolve_symlink_target(path);
+    // link's target and renamed over it. A link whose folder is missing is
+    // refused, not given a new folder.
+    let path = &hermes_config::resolve_credential_link_target(path)
+        .map_err(|e| AgentError::Io(e.to_string()))?;
     if let Some(parent) = path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
@@ -717,6 +719,20 @@ mod tests {
         assert!(serde_json::from_str::<TokenStoreEnvelope>(&raw).is_ok());
         let mode = std::fs::metadata(&real).unwrap().permissions().mode();
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn private_write_refuses_a_link_whose_target_folder_is_missing() {
+        let dir = tempdir().unwrap();
+        // As a link into a file system that is not mounted leaves it.
+        let missing = dir.path().join("unmounted");
+        let link = dir.path().join("tokens.json");
+        std::os::unix::fs::symlink(missing.join("tokens.json"), &link).unwrap();
+
+        assert!(write_file_private(&link, b"secret").await.is_err());
+        assert!(!missing.exists(), "the link's target folder was created");
+        assert!(link.is_symlink());
     }
 
     #[tokio::test]
