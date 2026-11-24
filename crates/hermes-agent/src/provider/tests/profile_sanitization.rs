@@ -820,3 +820,35 @@ fn test_xiaomi_profile_flattens_multimodal_tool_messages_only() {
         .unwrap()
         .contains("[Attached image]"));
 }
+
+#[test]
+fn test_sanitize_drops_empty_reasoning_except_for_providers_that_echo_it() {
+    let mut call = Message::assistant_with_tool_calls(
+        None,
+        vec![ToolCall {
+            id: "call_r".to_string(),
+            function: FunctionCall {
+                name: "delegate_task".to_string(),
+                arguments: "{}".to_string(),
+            },
+            extra_content: None,
+        }],
+    );
+    call.reasoning_content = Some(String::new());
+    let field = |profile: Option<&str>, model: &str| {
+        let messages = [call.clone()];
+        GenericProvider::sanitize_messages_for_api(&messages, true, model, profile, None)[0]
+            .get("reasoning_content")
+            .cloned()
+    };
+    assert_eq!(field(None, "gpt-4o"), None);
+    assert_eq!(field(Some("deepseek"), "deepseek-chat"), None);
+    assert_eq!(field(Some("deepseek"), "deepseek-v4"), Some("".into()));
+    assert_eq!(field(Some("openrouter"), "deepseek/deepseek-reasoner"), Some("".into()));
+    assert_eq!(field(Some("kimi"), "k2"), Some("".into()));
+
+    call.reasoning_content = Some("thought".to_string());
+    let messages = [call];
+    let kept = GenericProvider::sanitize_messages_for_api(&messages, true, "gpt-4o", None, None);
+    assert_eq!(kept[0]["reasoning_content"], "thought");
+}

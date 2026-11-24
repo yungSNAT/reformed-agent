@@ -435,12 +435,21 @@
             .await
             .expect("bare resume");
         assert_eq!(app.session_id, interactive_id);
+        assert_eq!(
+            app.agent.config.session_id.as_deref(),
+            Some(interactive_id),
+            "the agent follows the resumed session"
+        );
 
         handle_slash_command(&mut app, "/resume", &[oneshot_id])
             .await
             .expect("resume one-shot");
         assert_eq!(app.messages.len(), 1);
         assert_ne!(app.session_id, oneshot_id);
+        assert_eq!(
+            app.agent.config.session_id.as_deref(),
+            Some(app.session_id.as_str())
+        );
         let saved = std::fs::read(&oneshot).expect("read one-shot");
         app.persist_session_snapshot(None)
             .expect("the resumed one-shot saves as a new session");

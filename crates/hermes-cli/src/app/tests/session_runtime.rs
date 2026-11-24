@@ -116,6 +116,19 @@
     }
 
     #[test]
+    fn test_resume_session_id_rebuilds_the_agent_for_that_session() {
+        let _guard = env_test_lock();
+        let mut app = build_minimal_test_app();
+        app.resume_session_id("resumed-session".to_string());
+        assert_eq!(app.session_id, "resumed-session");
+        assert_eq!(
+            app.agent.config.session_id.as_deref(),
+            Some("resumed-session"),
+            "the agent and its sub-agent orchestrator follow the resumed session"
+        );
+    }
+
+    #[test]
     fn test_apply_agent_result_and_persist_writes_updated_messages() {
         let _guard = env_test_lock();
         let tmp = tempfile::tempdir().expect("tempdir");
