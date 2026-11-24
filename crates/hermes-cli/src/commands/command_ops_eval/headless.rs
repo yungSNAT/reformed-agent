@@ -152,6 +152,7 @@ mod headless_report_tests {
 
     #[tokio::test]
     async fn slo_rollback_reports_pass_violation_and_dry_run() {
+        let _lock = crate::test_env_lock::lock_async().await;
         let repo = tempfile::tempdir().expect("repo");
         let marker = repo.path().join("rolled-back");
         let rollback = format!("touch '{}'", marker.display());
@@ -283,7 +284,10 @@ mod headless_report_tests {
         let written: serde_json::Value =
             serde_json::from_str(&std::fs::read_to_string(&report).expect("report")).expect("json");
         assert_eq!(written["violated"], true);
+        assert_eq!(written["check"]["command"], "false");
+        assert_eq!(written["rollback"]["command"], "false");
         assert_eq!(written["rollback"]["ok"], false);
+        assert_eq!(written["rollback"]["exit_code"], 1);
     }
 
     #[test]
@@ -336,6 +340,7 @@ mod headless_report_tests {
 
     #[test]
     fn tilde_names_the_home_folder() {
+        let _lock = crate::test_env_lock::lock();
         let home = hermes_config::user_home_dir();
         assert_eq!(expand_cli_path(Path::new("~")), home);
         assert_eq!(expand_cli_path(Path::new("~/x")), home.join("x"));
