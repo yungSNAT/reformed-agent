@@ -297,6 +297,8 @@ mod tests {
 
     #[test]
     fn test_processing_cycle_tracks_and_resets_stats() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         assert!(state.processing);
@@ -324,7 +326,8 @@ mod tests {
 
     #[test]
     fn test_processing_cycle_yields_flash_credit_notice() {
-        // The credits state is process-wide; the usage command tests clear it.
+        // The credits state is process-wide: the usage command tests clear it and
+        // every begin_processing_cycle test yields its notice, all under this lock.
         let _guard = env_test_lock();
         hermes_core::credits::clear_last_nous_credits_state();
         hermes_core::credits::capture_nous_credits_from_pairs([
@@ -357,6 +360,8 @@ mod tests {
 
     #[test]
     fn test_progress_pulse_emits_activity_row() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         state.processing_started_at = Some(Instant::now() - Duration::from_secs(2));
@@ -372,6 +377,8 @@ mod tests {
 
     #[test]
     fn test_processing_stage_labels() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         assert_eq!(state.processing_stage_label(), "idle");
         state.begin_processing_cycle("nous:test-model");
@@ -387,6 +394,8 @@ mod tests {
 
     #[test]
     fn test_phase_updates_set_progress_and_activity() {
+        // begin_processing_cycle yields the process-wide credits notice.
+        let _guard = env_test_lock();
         let mut state = TuiState::default();
         state.begin_processing_cycle("nous:test-model");
         state.update_processing_phase("retrieval", "collecting evidence", Some(42));
