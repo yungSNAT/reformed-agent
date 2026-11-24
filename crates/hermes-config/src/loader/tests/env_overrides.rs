@@ -94,6 +94,19 @@ fn save_env_key_value_replaces_an_export_line() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn save_env_key_value_refuses_a_link_whose_target_folder_is_missing() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    // As a link into a file system that is not mounted leaves it.
+    let missing = dir.path().join("unmounted");
+    let env = dir.path().join(".env");
+    std::os::unix::fs::symlink(missing.join(".env"), &env).expect("link");
+
+    assert!(save_env_key_value(&env, "GLM_API_KEY", "fake-new").is_err());
+    assert!(!missing.exists(), "the link's target folder was created");
+}
+
 #[test]
 fn project_env_only_fills_missing_when_user_env_loaded() {
     use tempfile::tempdir;

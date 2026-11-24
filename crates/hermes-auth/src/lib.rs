@@ -719,6 +719,20 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn private_write_refuses_a_link_whose_target_folder_is_missing() {
+        let dir = tempdir().unwrap();
+        // As a link into a file system that is not mounted leaves it.
+        let missing = dir.path().join("unmounted");
+        let link = dir.path().join("tokens.json");
+        std::os::unix::fs::symlink(missing.join("tokens.json"), &link).unwrap();
+
+        assert!(write_file_private(&link, b"secret").await.is_err());
+        assert!(!missing.exists(), "the link's target folder was created");
+        assert!(link.is_symlink());
+    }
+
     #[tokio::test]
     async fn file_token_store_encrypts_and_roundtrips() {
         let dir = tempdir().unwrap();

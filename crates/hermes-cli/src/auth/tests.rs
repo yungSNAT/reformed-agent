@@ -1293,3 +1293,17 @@ fn owner_only_credential_write_keeps_a_symlinked_store() {
         .mode();
     assert_eq!(mode & 0o777, 0o600);
 }
+
+#[cfg(unix)]
+#[test]
+fn owner_only_credential_write_refuses_a_link_whose_target_folder_is_missing() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    // As a link into a file system that is not mounted leaves it.
+    let missing = tmp.path().join("unmounted");
+    let link = tmp.path().join("google_oauth.json");
+    std::os::unix::fs::symlink(missing.join("google_oauth.json"), &link).expect("link");
+
+    assert!(write_owner_only_atomic(&link, "{}
+").is_err());
+    assert!(!missing.exists(), "the link's target folder was created");
+}

@@ -218,6 +218,19 @@ mod tests {
         assert_eq!(mode & 0o777, 0o600);
     }
 
+    #[cfg(unix)]
+    #[test]
+    fn owner_only_atomic_write_refuses_a_link_whose_target_folder_is_missing() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        // As a link into a file system that is not mounted leaves it.
+        let missing = tmp.path().join("unmounted");
+        let link = tmp.path().join("honcho.json");
+        std::os::unix::fs::symlink(missing.join("honcho.json"), &link).expect("link");
+
+        assert!(write_owner_only_atomic(&link, &json!({"api_key": "new"})).is_err());
+        assert!(!missing.exists(), "the link's target folder was created");
+    }
+
     #[test]
     fn default_home_matches_ultra_home_precedence() {
         let _guard = TEST_ENV_LOCK.lock().expect("env lock");
