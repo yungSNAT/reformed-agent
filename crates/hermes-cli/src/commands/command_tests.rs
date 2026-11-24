@@ -1218,9 +1218,26 @@ note the fixtures"));
     include!("tests/tool_scope.rs");
 
     #[cfg(unix)]
+    async fn command_output(app: &mut App, command: &str, args: &[&str]) -> String {
+        app.ui_messages.clear();
+        assert_eq!(
+            handle_slash_command(app, command, args).await.unwrap(),
+            CommandResult::Handled,
+            "{command} {args:?}",
+        );
+        let output = latest_ui_assistant_text(app);
+        assert!(!output.is_empty(), "no output for {command} {args:?}");
+        output
+    }
+
+    #[cfg(unix)]
     mod objective_contract;
     #[cfg(unix)]
+    mod policy_context_contract;
+    #[cfg(unix)]
     mod replay_command_contract;
+    #[cfg(unix)]
+    mod session_mission_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 
