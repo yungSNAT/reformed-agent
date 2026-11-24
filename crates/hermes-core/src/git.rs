@@ -224,14 +224,17 @@ fn names_a_user(key: &[u8], value: Option<&[u8]>) -> bool {
 
 /// Git's limit on nested includes.
 const MAX_INCLUDE_DEPTH: usize = 10;
+/// How many distinct config files the check lists before it gives up.
+const MAX_CONFIG_FILES: usize = 64;
 
 /// Whether the config of the repository git would find from `root`, or a
 /// file it includes, names a user (see [`names_a_user`]). Each file is listed
 /// by `git config --file --no-includes`, which neither follows nor expands an
 /// include, with no repository to read; the includes are followed here, under
 /// every condition. `Some(false)` outside a repository; `None` when a file
-/// cannot be listed, an include path cannot be resolved or the includes nest
-/// deeper than git allows.
+/// cannot be listed, an include path cannot be resolved, the includes nest
+/// deeper than git allows or name more than 64 files. Each file is listed
+/// once, however often it is included.
 fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<bool> {
     let Some(git_dir) = find_git_dir(root)? else {
         return Some(false);
@@ -245,12 +248,19 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
         (common_dir.join("config"), 0),
         (git_dir.join("config.worktree"), 0),
     ];
+    let mut listed = std::collections::HashSet::new();
     while let Some((file, depth)) = pending.pop() {
         // Git passes over an include that is missing.
-        if !file.exists() {
+        let Ok(real) = std::fs::canonicalize(&file) else {
+            continue;
+        };
+        if depth > MAX_INCLUDE_DEPTH {
+            return None;
+        }
+        if !listed.insert(real) {
             continue;
         }
-        if depth > MAX_INCLUDE_DEPTH {
+        if listed.len() > MAX_CONFIG_FILES {
             return None;
         }
         let listed = output_within_timeout(
