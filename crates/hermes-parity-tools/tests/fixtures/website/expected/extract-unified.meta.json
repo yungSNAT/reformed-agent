@@ -1,7 +1,7 @@
 {
-  "extractedAt": "2026-11-24T09:05:20.726422+00:00",
+  "extractedAt": "2026-11-24T12:06:34.923876+00:00",
   "indexGeneratedAt": "2026-11-23T18:35:11.712384+00:00",
-  "totalSkills": 15,
+  "totalSkills": 17,
   "externalSource": "unified-index",
   "indexHealth": {
     "status": "ok",
@@ -11,7 +11,7 @@
     "ClawHub": 2,
     "GitHub": 1,
     "OpenAI": 1,
-    "built-in": 6,
+    "built-in": 8,
     "community": 1,
     "mystery": 1,
     "optional": 2,

@@ -10,6 +10,7 @@ use clap::Args;
 
 use crate::py::{self, Py};
 use crate::report_io::resolve_argument;
+pub(crate) use crate::report_io::truth as truthy;
 
 #[derive(Args, Debug)]
 pub struct WebsiteArgs {
@@ -56,19 +57,6 @@ pub(crate) fn take_chars(s: &str, n: usize) -> &str {
     s.char_indices().nth(n).map_or(s, |(i, _)| &s[..i])
 }
 
-/// Python's truth value of a parsed value.
-pub(crate) fn truthy(value: &Py) -> bool {
-    match value {
-        Py::Null => false,
-        Py::Bool(b) => *b,
-        Py::Int(i) => *i != 0,
-        Py::Float(f) => *f != 0.0,
-        Py::Str(s) => !s.is_empty(),
-        Py::List(items) => !items.is_empty(),
-        Py::Dict(pairs) => !pairs.is_empty(),
-    }
-}
-
 /// `path.read_text(encoding="utf-8")` with universal newlines.
 pub(crate) fn read_text(path: &Path) -> Result<String, String> {
     fs::read_to_string(path)
@@ -81,10 +69,11 @@ pub(crate) fn write_text(path: &Path, text: &str) -> Result<(), String> {
 }
 
 /// `yaml.safe_load` of a frontmatter block, as the values the generators read.
-/// A repeated mapping key keeps its last value, as PyYAML does. Plain scalars
-/// resolve by the YAML 1.2 core schema, not PyYAML's YAML 1.1 rules (`yes`,
-/// `on`, `010`, `1_000`, `1:30` and `1e3` differ); no skill in the tree uses
-/// such a scalar where the generators read it.
+/// A repeated mapping key keeps its last value and `<<` merges mappings (explicit
+/// keys win; earlier entries in a merge list win), as PyYAML does (quoted `"<<"`
+/// keys also merge). Plain scalars resolve by the YAML 1.2 core schema, not
+/// PyYAML's YAML 1.1 rules (`yes`, `on`, `010`, `1_000`, `1:30` and `1e3` differ);
+/// no skill in the tree uses such a scalar where the generators read it.
 pub(crate) fn load_yaml(text: &str) -> Option<Py> {
     serde_yaml::from_str::<YamlPy>(text).ok().map(|v| v.0)
 }
@@ -120,6 +109,12 @@ impl<'de> serde::de::Visitor<'de> for YamlVisitor {
     fn visit_u64<E>(self, v: u64) -> Result<Py, E> {
         Ok(Py::Int(i128::from(v)))
     }
+    fn visit_i128<E>(self, v: i128) -> Result<Py, E> {
+        Ok(Py::Int(v))
+    }
+    fn visit_u128<E>(self, v: u128) -> Result<Py, E> {
+        Ok(i128::try_from(v).map_or_else(|_| Py::Float(v as f64), Py::Int))
+    }
     fn visit_f64<E>(self, v: f64) -> Result<Py, E> {
         Ok(Py::Float(v))
     }
@@ -137,15 +132,46 @@ impl<'de> serde::de::Visitor<'de> for YamlVisitor {
         Ok(Py::List(items))
     }
     fn visit_map<A: serde::de::MapAccess<'de>>(self, mut map: A) -> Result<Py, A::Error> {
-        let mut dict = Py::Dict(Vec::new());
+        let mut merged = Vec::new();
+        let mut explicit = Vec::new();
         while let Some((YamlPy(key), YamlPy(value))) = map.next_entry()? {
+            if matches!(&key, Py::Str(s) if s == "<<") {
+                match value {
+                    Py::Dict(pairs) => merged.extend(pairs),
+                    Py::List(items) => {
+                        if !items.iter().all(Py::is_dict) {
+                            return Err(serde::de::Error::custom(
+                                "expected mapping in YAML merge sequence",
+                            ));
+                        }
+                        for item in items.into_iter().rev() {
+                            if let Py::Dict(pairs) = item {
+                                merged.extend(pairs);
+                            }
+                        }
+                    }
+                    _ => {
+                        return Err(serde::de::Error::custom(
+                            "expected mapping or sequence of mappings for YAML merge",
+                        ));
+                    }
+                }
+                continue;
+            }
             let key = match key {
                 Py::Str(s) => s,
                 Py::Bool(b) => b.to_string(),
                 Py::Null => "null".to_string(),
                 other => py::str_of(&other),
             };
-            dict.set(&key, value);
+            explicit.push((key, value));
+        }
+        let mut dict = Py::Dict(Vec::new());
+        for (k, v) in merged {
+            dict.set(&k, v);
+        }
+        for (k, v) in explicit {
+            dict.set(&k, v);
         }
         Ok(dict)
     }
