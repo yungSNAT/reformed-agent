@@ -2112,6 +2112,44 @@ mod tests {
     }
 
     #[test]
+    fn balanced_profile_blocks_windows_and_posix_shells_by_any_spelling() {
+        for command in [
+            "cmd",
+            "CMD.EXE",
+            "cmd.exe.",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            "powershell",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe",
+            "pwsh",
+            "pwsh.exe",
+            "/usr/bin/pwsh",
+            "Bash.exe",
+            "/bin/dash",
+            "ksh",
+            "tcsh",
+            "csh",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        for command in ["node", "node.exe", r"C:\Program Files\nodejs\node.exe", "uvx"] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        let allowlist = vec!["pwsh".to_string()];
+        assert!(command_allowed_by_profile(
+            McpSandboxProfile::Balanced,
+            "pwsh",
+            &allowlist
+        ));
+    }
+
+    #[test]
     fn test_sanitize_child_env_balanced_removes_secrets() {
         let mut env = HashMap::new();
         env.insert("PATH".to_string(), "/usr/bin".to_string());
