@@ -44,6 +44,22 @@
     "docsPath": "bundled/apple/apple-reminders"
   },
   {
+    "name": "bigint",
+    "description": "Large integer version",
+    "overview": "Integer above u64::MAX.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": 99999999999999999999,
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-bigint"
+  },
+  {
     "name": "dup-key",
     "description": "Last value wins",
     "overview": "Duplicate keys keep the last value.",
@@ -92,6 +108,22 @@
     "envVars": [],
     "commands": [],
     "docsPath": "bundled/apple/apple-imessage"
+  },
+  {
+    "name": "merge",
+    "description": "YAML merge key",
+    "overview": "Merged frontmatter keeps explicit keys and earlier merge sources.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "anchored",
+    "version": 2.0,
+    "license": "Apache-2.0",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-merge"
   },
   {
     "name": "axolotl",

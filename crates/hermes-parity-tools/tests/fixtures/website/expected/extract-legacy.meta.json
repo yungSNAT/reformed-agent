@@ -1,7 +1,7 @@
 {
-  "extractedAt": "2026-11-24T09:05:21.018155+00:00",
+  "extractedAt": "2026-11-24T12:06:35.210602+00:00",
   "indexGeneratedAt": "",
-  "totalSkills": 19,
+  "totalSkills": 21,
   "externalSource": "legacy-cache",
   "indexHealth": {
     "status": "degraded",
@@ -10,7 +10,7 @@
   "bySource": {
     "LobeHub": 3,
     "OpenAI": 4,
-    "built-in": 6,
+    "built-in": 8,
     "community": 4,
     "optional": 2
   }
