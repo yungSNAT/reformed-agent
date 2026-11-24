@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use hermes_core::{BudgetConfig, Message, MessageRole};
 
+pub mod cache_keep_alive;
 pub mod tool_result_prune;
 
 /// Number of recent messages to preserve during compression.
@@ -491,7 +492,12 @@ impl ContextManager {
             threshold,
             "Compressing conversation history (exceeds 80% budget)"
         );
+        self.compress_now();
+    }
 
+    /// Compress whatever the size: summarise the middle of the history and
+    /// keep the replaced messages as a compressed transcript.
+    pub fn compress_now(&mut self) {
         let head = self.protected_head.min(self.messages.len());
         let tail = self.compressor.compress(&self.messages[head..]);
         if tail != self.messages[head..] {
