@@ -86,12 +86,19 @@ pub fn remember(session_id: &str, request: CachedRequest) {
     if session_id.is_empty() {
         return;
     }
-    let evicted = match LAST_REQUEST.lock() {
-        Ok(mut last) => remember_in(&mut last, session_id, request, SESSIONS_MAX),
-        Err(_) => return,
+    // Lock order everywhere: ARMED, then LAST_REQUEST. Both are held whilst
+    // the evicted session's handle is detached, so a session remembered and
+    // armed again meanwhile keeps its new task.
+    let Ok(mut armed) = ARMED.lock() else {
+        return;
     };
-    if let Some(evicted) = evicted {
-        cancel(&evicted);
+    let Ok(mut last) = LAST_REQUEST.lock() else {
+        return;
+    };
+    if let Some(evicted) = remember_in(&mut last, session_id, request, SESSIONS_MAX) {
+        if let Some((_, handle)) = armed.remove(&evicted) {
+            handle.abort();
+        }
     }
 }
 
@@ -160,8 +167,7 @@ fn warmable(request: &CachedRequest) -> bool {
 /// request cannot be warmed.
 pub fn arm(session_id: &str, plan: KeepAlivePlan) {
     // Held until the new task is registered: a `cancel` cannot fall between
-    // the spawn and the insert. `remember` never holds `LAST_REQUEST` whilst
-    // taking this lock.
+    // the spawn and the insert. Taken before `LAST_REQUEST`, as in `remember`.
     let Ok(mut armed) = ARMED.lock() else {
         return;
     };
