@@ -6,7 +6,6 @@ import sys
 import types
 
 import pytest
-
 import ws_monitor
 
 
