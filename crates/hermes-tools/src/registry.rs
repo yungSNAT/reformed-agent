@@ -77,8 +77,10 @@ pub struct ToolRegistryInner {
     /// One-shot raw pass-through for the next tool call only.
     pub rtk_raw_once: bool,
     /// The handler whose dispatch passes its result through untouched (the
-    /// MCP gateway's), by address; see [`ToolRegistry::set_passthrough_handler`].
-    passthrough_handler: Option<usize>,
+    /// MCP gateway's); see [`ToolRegistry::set_passthrough_handler`]. Weak,
+    /// so a dropped gateway's allocation stays reserved and cannot match a
+    /// later handler.
+    passthrough_handler: Option<Weak<dyn ToolHandler>>,
 }
 
 /// Thread-safe wrapper around `ToolRegistryInner`.
@@ -260,7 +262,7 @@ impl ToolRegistry {
     /// Let `handler`'s dispatch pass its result through: no raw-mode use,
     /// rewriting or filtering. Only the MCP gateway uses this.
     pub(crate) fn set_passthrough_handler(&self, handler: &Arc<dyn ToolHandler>) {
-        self.inner.lock().unwrap().passthrough_handler = Some(handler_address(handler));
+        self.inner.lock().unwrap().passthrough_handler = Some(Arc::downgrade(handler));
     }
 
     /// Deregister a tool by name.
@@ -620,16 +622,13 @@ impl ToolRegistry {
 /// raw request before the inner tool could use it. Matched by handler, so
 /// another tool registered under the same name gets no pass-through.
 fn passes_through(inner: &ToolRegistryInner, name: &str) -> bool {
-    inner.passthrough_handler.is_some_and(|marked| {
+    let marked = inner.passthrough_handler.as_ref().and_then(Weak::upgrade);
+    marked.is_some_and(|marked| {
         inner
             .tools
             .get(name)
-            .is_some_and(|entry| handler_address(&entry.handler) == marked)
+            .is_some_and(|entry| Arc::ptr_eq(&entry.handler, &marked))
     })
-}
-
-fn handler_address(handler: &Arc<dyn ToolHandler>) -> usize {
-    Arc::as_ptr(handler).cast::<()>() as usize
 }
 
 fn evaluate_dispatch_policy(

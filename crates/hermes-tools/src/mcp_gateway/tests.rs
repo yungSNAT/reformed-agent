@@ -340,3 +340,34 @@ async fn another_tool_named_mcp_gets_no_pass_through() {
             .expect("JSON");
     assert_eq!(out["result"], "red", "filtered as any other tool");
 }
+
+#[tokio::test]
+async fn a_tool_registered_after_the_gateway_is_removed_gets_no_pass_through() {
+    let registry = text_registry(ToolRegistry::new(), "page");
+    // Repeat so a freed gateway allocation has chances to be reused.
+    for _ in 0..32 {
+        register_mcp_gateway(
+            &registry,
+            &["docs".to_string()],
+            Arc::new(|_: &ToolRegistry| ["mcp_docs_page".to_string()].into()),
+        );
+        assert!(registry.deregister(MCP_GATEWAY_TOOL));
+        registry.register(
+            MCP_GATEWAY_TOOL,
+            MCP_GATEWAY_TOOLSET,
+            tool_schema(MCP_GATEWAY_TOOL, "ordinary", JsonSchema::new("object")),
+            Arc::new(TextTool("\u{1b}[31mred\u{1b}[0m".to_string())),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "ordinary",
+            "x",
+            None,
+        );
+        let out: Value =
+            serde_json::from_str(&registry.dispatch_async(MCP_GATEWAY_TOOL, json!({})).await)
+                .expect("JSON");
+        assert_eq!(out["result"], "red", "filtered as any other tool");
+        assert!(registry.deregister(MCP_GATEWAY_TOOL));
+    }
+}
