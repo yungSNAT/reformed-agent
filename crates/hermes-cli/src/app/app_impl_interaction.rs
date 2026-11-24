@@ -576,7 +576,7 @@ impl App {
             .await
     }
 
-    async fn run_messages_with_current_agent_tools(
+    pub(crate) async fn run_messages_with_current_agent_tools(
         &self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,

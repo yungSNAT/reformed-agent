@@ -1274,6 +1274,165 @@ mod tests {
 
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn live_cron_scheduler_background_review_only_reaches_planned_cron_tools() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, Respond, ResponseTemplate};
+
+        struct LiveCronResponder {
+            main_calls: AtomicUsize,
+            review_offered: Arc<Mutex<Vec<Vec<String>>>>,
+            review_done: Arc<tokio::sync::Notify>,
+            marker_path: PathBuf,
+        }
+
+        impl Respond for LiveCronResponder {
+            fn respond(&self, req: &wiremock::Request) -> ResponseTemplate {
+                let body: serde_json::Value =
+                    serde_json::from_slice(&req.body).unwrap_or_else(|_| serde_json::json!({}));
+                let messages = body["messages"].as_array().cloned().unwrap_or_default();
+                let mut offered: Vec<String> = body["tools"]
+                    .as_array()
+                    .map(|tools| {
+                        tools
+                            .iter()
+                            .filter_map(|t| t["function"]["name"].as_str().map(str::to_string))
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                offered.sort();
+                let is_review = messages.iter().any(|m| {
+                    m["role"].as_str() == Some("user")
+                        && m["content"]
+                            .as_str()
+                            .is_some_and(|c| c.contains("saving or updating a skill"))
+                });
+                let last_is_tool = messages
+                    .last()
+                    .is_some_and(|m| m["role"].as_str() == Some("tool"));
+
+                let message = if is_review {
+                    self.review_offered.lock().unwrap().push(offered);
+                    if last_is_tool {
+                        self.review_done.notify_one();
+                        serde_json::json!({"role": "assistant", "content": "review-done"})
+                    } else {
+                        let cmd = format!("touch {}", self.marker_path.display());
+                        serde_json::json!({
+                            "role": "assistant",
+                            "content": serde_json::Value::Null,
+                            "tool_calls": [{
+                                "id": "rev-term",
+                                "type": "function",
+                                "function": {"name": "terminal", "arguments": serde_json::json!({"command": cmd}).to_string()}
+                            }]
+                        })
+                    }
+                } else {
+                    let n = self.main_calls.fetch_add(1, Ordering::SeqCst);
+                    if n < 10 {
+                        serde_json::json!({
+                            "role": "assistant",
+                            "content": serde_json::Value::Null,
+                            "tool_calls": [{
+                                "id": format!("main-{n}"),
+                                "type": "function",
+                                "function": {"name": "skills_list", "arguments": "{}"}
+                            }]
+                        })
+                    } else {
+                        serde_json::json!({"role": "assistant", "content": "live-done"})
+                    }
+                };
+                let finish = if message.get("tool_calls").is_some() {
+                    "tool_calls"
+                } else {
+                    "stop"
+                };
+                ResponseTemplate::new(200).set_body_json(serde_json::json!({
+                    "id": "chatcmpl-live-cron-scope",
+                    "object": "chat.completion",
+                    "created": 0,
+                    "model": "gpt-live-cron-scope",
+                    "choices": [{
+                        "index": 0,
+                        "message": message,
+                        "finish_reason": finish
+                    }]
+                }))
+            }
+        }
+
+        let _lock = env_lock_async().await;
+        let dir = tempfile::tempdir().expect("tempdir");
+        let prev_home = std::env::var("HERMES_HOME").ok();
+        let prev_ignore = std::env::var("HERMES_IGNORE_USER_CONFIG").ok();
+        std::env::set_var("HERMES_HOME", dir.path());
+        std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+
+        let server = MockServer::start().await;
+        let review_offered = Arc::new(Mutex::new(Vec::new()));
+        let review_done = Arc::new(tokio::sync::Notify::new());
+        let marker = dir.path().join("unplanned_terminal_ran");
+        Mock::given(method("POST"))
+            .and(path("/chat/completions"))
+            .respond_with(LiveCronResponder {
+                main_calls: AtomicUsize::new(0),
+                review_offered: review_offered.clone(),
+                review_done: review_done.clone(),
+                marker_path: marker.clone(),
+            })
+            .mount(&server)
+            .await;
+
+        std::fs::write(
+            dir.path().join("config.yaml"),
+            format!(
+                "model: openai:gpt-live-cron-scope\nllm_providers:\n  openai:\n    api_key: test-key\n    base_url: {}\n    model: gpt-live-cron-scope\nplatform_toolsets:\n  cron: [skills]\n",
+                server.uri()
+            ),
+        )
+        .expect("write config");
+
+        let cli = cli_for_temp_state_root(dir.path());
+        let data_dir = dir.path().join("cron");
+        std::fs::create_dir_all(&data_dir).expect("cron dir");
+        let scheduler = build_live_cron_scheduler(&cli, &data_dir).expect("live cron scheduler");
+        let job_id = scheduler
+            .create_job(hermes_cron::CronJob::new("0 * * * *", "live cron scope"))
+            .await
+            .expect("create job");
+        scheduler.run_job(&job_id).await.expect("run job");
+        tokio::time::timeout(std::time::Duration::from_secs(10), review_done.notified())
+            .await
+            .expect("background review finished");
+
+        match prev_home {
+            Some(v) => std::env::set_var("HERMES_HOME", v),
+            None => std::env::remove_var("HERMES_HOME"),
+        }
+        match prev_ignore {
+            Some(v) => std::env::set_var("HERMES_IGNORE_USER_CONFIG", v),
+            None => std::env::remove_var("HERMES_IGNORE_USER_CONFIG"),
+        }
+
+        let offered = review_offered.lock().unwrap().clone();
+        assert_eq!(
+            offered.first(),
+            Some(&vec![
+                "skill_manage".to_string(),
+                "skill_view".to_string(),
+                "skills_list".to_string()
+            ]),
+            "live cron background review offered: {offered:?}"
+        );
+        assert!(
+            !marker.exists(),
+            "excluded terminal tool ran during live cron background review"
+        );
+    }
+
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");

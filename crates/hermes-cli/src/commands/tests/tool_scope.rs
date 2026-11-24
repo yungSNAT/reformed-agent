@@ -305,3 +305,60 @@
         assert!(!schema_names(&app.tool_schemas).contains("probe_visible"));
         assert_eq!(agent_tool_names(&app), schema_names(&app.tool_schemas));
     }
+
+    #[tokio::test]
+    async fn enable_rebuild_failure_fails_closed_without_advertising_unbridged_tool() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        scope_probe_session(&mut app);
+        assert!(!schema_names(&app.tool_schemas).contains("probe_disabled"));
+        assert!(app.agent.tool_registry.get("probe_disabled").is_none());
+
+        app.force_model_rebuild_failure_for_test(&app.current_model.clone());
+        let err = handle_slash_command(&mut app, "/tools", &["enable", "probe_disabled"])
+            .await
+            .expect_err("enable rebuild failure must fail closed");
+        assert!(err.to_string().contains("rebuild failed"), "{err}");
+        assert!(!schema_names(&app.tool_schemas).contains("probe_disabled"));
+        assert!(app.agent.tool_registry.get("probe_disabled").is_none());
+
+        let run_err = app
+            .run_messages_with_current_agent_tools(vec![hermes_core::Message::user("hi")], false, true)
+            .await
+            .expect_err("out-of-sync snapshot must not execute");
+        assert!(run_err.to_string().contains("rebuild failed"), "{run_err}");
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disable_rebuild_failure_fails_closed_and_prevents_execution() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let calls = scope_probe_session(&mut app);
+        assert!(schema_names(&app.tool_schemas).contains("probe_visible"));
+        assert!(app.agent.tool_registry.get("probe_visible").is_some());
+
+        app.force_model_rebuild_failure_for_test(&app.current_model.clone());
+        let err = handle_slash_command(&mut app, "/tools", &["disable", "probe_visible"])
+            .await
+            .expect_err("disable rebuild failure must fail closed");
+        assert!(err.to_string().contains("rebuild failed"), "{err}");
+        assert!(!schema_names(&app.tool_schemas).contains("probe_visible"));
+        assert!(app.agent.tool_registry.get("probe_visible").is_none());
+
+        let run_err = app
+            .run_messages_with_current_agent_tools(vec![hermes_core::Message::user("hi")], false, true)
+            .await
+            .expect_err("failed rebuild must not execute");
+        assert!(run_err.to_string().contains("rebuild failed"), "{run_err}");
+
+        run_scope_turn(
+            &app,
+            vec![scope_tool_call("p1", "probe_visible", serde_json::json!({}))],
+        )
+        .await;
+        assert_eq!(*calls.lock().unwrap(), Vec::<String>::new());
+    }
