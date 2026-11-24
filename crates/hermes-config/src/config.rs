@@ -175,6 +175,10 @@ pub struct GatewayConfig {
     #[serde(default)]
     pub agent: AgentLoopBehaviorConfig,
 
+    /// Prompt-cache lifetime, keep-alive and cold-return compaction.
+    #[serde(default, skip_serializing_if = "PromptCachingConfig::is_default")]
+    pub prompt_caching: PromptCachingConfig,
+
     /// Override for the hermes home directory.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub home_dir: Option<String>,
@@ -219,6 +223,7 @@ impl Default for GatewayConfig {
             mcp_tool_mode: McpToolMode::default(),
             profile: ProfileConfig::default(),
             agent: AgentLoopBehaviorConfig::default(),
+            prompt_caching: PromptCachingConfig::default(),
             home_dir: None,
         }
     }
@@ -819,6 +824,7 @@ pub fn default_platform_toolsets() -> HashMap<String, Vec<String>> {
 }
 
 include!("config/agent_loop_behavior.rs");
+include!("config/prompt_caching.rs");
 // ---------------------------------------------------------------------------
 // LlmProviderConfig
 // ---------------------------------------------------------------------------
