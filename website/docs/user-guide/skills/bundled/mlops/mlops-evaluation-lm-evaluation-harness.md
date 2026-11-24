@@ -4,7 +4,7 @@ sidebar_label: "Evaluating Llms Harness"
 description: "lm-eval-harness: benchmark LLMs (MMLU, GSM8K, etc"
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # Evaluating Llms Harness
 
