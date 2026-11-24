@@ -329,9 +329,19 @@ pub fn write(dir: &Path, record: &PendingReply) -> Option<PathBuf> {
 }
 
 /// Keep `reply` and reserve the live turn's first send attempt on this
-/// process's record at `path`. Returns true if the attempt was recorded.
+/// process's record at `path`. Returns true if the attempt was recorded; on
+/// failure the existing record is left on disk.
 pub fn begin_send(dir: &Path, path: &Path, reply: &str) -> bool {
-    let Some(_lock) = lock_dir(dir) else {
+    begin_send_with(dir, path, reply, set_unix_mode)
+}
+
+fn begin_send_with(
+    dir: &Path,
+    path: &Path,
+    reply: &str,
+    chmod: fn(&Path, u32) -> std::io::Result<()>,
+) -> bool {
+    let Some(_lock) = lock_dir_with(dir, chmod) else {
         return false;
     };
     let Some(mut record) = read(path) else {
@@ -342,11 +352,7 @@ pub fn begin_send(dir: &Path, path: &Path, reply: &str) -> bool {
     }
     record.reply = Some(reply.to_string());
     record.attempts += 1;
-    if write_at_with(path, &record, set_unix_mode) {
-        return true;
-    }
-    let _ = std::fs::remove_file(path);
-    false
+    write_at_with(path, &record, chmod)
 }
 
 /// The turn's reply was sent, or the turn failed: drop this process's record.

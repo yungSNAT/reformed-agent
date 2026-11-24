@@ -276,6 +276,37 @@ fn count_attempt_write_failure_preserves_record_and_reports_write_failed() {
 
 #[cfg(unix)]
 #[test]
+fn begin_send_write_failure_preserves_existing_record() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let path = write(&dir, &record("live-s1", &this_process())).expect("write");
+
+    let fail_file_chmod = |p: &Path, m: u32| -> std::io::Result<()> {
+        if m == 0o600
+            && p.file_name()
+                .is_some_and(|n| n.to_string_lossy().contains(".tmp."))
+        {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected begin_send write failure",
+            ));
+        }
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m))
+    };
+    assert!(!begin_send_with(
+        &dir,
+        &path,
+        "must not send",
+        fail_file_chmod
+    ));
+    let kept = read(&path).expect("record must stay on disk when begin_send write fails");
+    assert_eq!(kept.reply, None);
+    assert_eq!(kept.attempts, 0);
+}
+
+#[cfg(unix)]
+#[test]
 fn records_are_readable_by_their_owner_only_and_chmod_failures_fail_closed() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("tempdir");

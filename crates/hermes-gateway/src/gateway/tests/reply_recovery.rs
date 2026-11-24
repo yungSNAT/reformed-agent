@@ -965,3 +965,149 @@ async fn retry_loop_terminates_when_recovered_record_is_readonly() {
         let _ = std::fs::set_permissions(&path, perms);
     }
 }
+
+#[tokio::test]
+async fn enabled_turns_refuse_to_run_or_send_when_reply_begin_fails() {
+    for streaming in [false, true] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let dir = crate::reply_recovery::records_dir(tmp.path());
+        std::fs::create_dir_all(dir.parent().unwrap()).expect("gateway dir");
+        std::fs::write(&dir, b"block pending-replies dir").expect("block dir");
+
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut dm_manager = DmManager::with_pair_behavior();
+        dm_manager.authorize_user("user1");
+        let gw = Gateway::new(
+            Arc::new(SessionManager::new(SessionConfig::default())),
+            dm_manager,
+            GatewayConfig {
+                streaming_enabled: streaming,
+                ..Default::default()
+            },
+        );
+        gw.register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: sent.clone(),
+            }),
+        )
+        .await;
+        gw.enable_reply_recovery(tmp.path(), |_| false);
+
+        let ran = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        if streaming {
+            let ran_c = ran.clone();
+            gw.set_streaming_handler(Arc::new(move |_, _| {
+                ran_c.store(true, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async { Ok("unrecorded stream reply".to_string()) })
+            }))
+            .await;
+        } else {
+            let ran_c = ran.clone();
+            gw.set_message_handler(Arc::new(move |_| {
+                ran_c.store(true, std::sync::atomic::Ordering::SeqCst);
+                Box::pin(async { Ok("unrecorded reply".to_string()) })
+            }))
+            .await;
+        }
+
+        let res = gw.route_message(&incoming("hello")).await;
+        assert!(res.is_err(), "streaming={streaming} must fail closed when reply_begin fails");
+        assert!(
+            !ran.load(std::sync::atomic::Ordering::SeqCst),
+            "streaming={streaming} must not run handler without durable record"
+        );
+        let messages = sent.lock().unwrap().clone();
+        assert!(
+            !messages
+                .iter()
+                .any(|(_, t)| t == "..." || t.contains("unrecorded")),
+            "streaming={streaming} must not emit anchor or unrecorded reply: {messages:?}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn enabled_turns_refuse_to_send_and_keep_record_when_begin_send_fails() {
+    for streaming in [false, true] {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let sent = Arc::new(Mutex::new(Vec::new()));
+        let mut dm_manager = DmManager::with_pair_behavior();
+        dm_manager.authorize_user("user1");
+        let gw = Gateway::new(
+            Arc::new(SessionManager::new(SessionConfig::default())),
+            dm_manager,
+            GatewayConfig {
+                streaming_enabled: streaming,
+                ..Default::default()
+            },
+        );
+        gw.register_adapter(
+            "test",
+            Arc::new(TestAdapter {
+                messages: sent.clone(),
+            }),
+        )
+        .await;
+        gw.enable_reply_recovery(tmp.path(), |_| false);
+
+        let dir = crate::reply_recovery::records_dir(tmp.path());
+        let dir_hook = dir.clone();
+        let block_lock = move || {
+            let lock = dir_hook.join(".lock");
+            std::fs::remove_file(&lock).expect("remove lock file");
+            std::fs::create_dir(&lock).expect("replace lock with dir");
+        };
+        if streaming {
+            gw.set_streaming_handler(Arc::new(move |_, _| {
+                block_lock();
+                Box::pin(async { Ok("unreserved stream reply".to_string()) })
+            }))
+            .await;
+        } else {
+            gw.set_message_handler(Arc::new(move |_| {
+                block_lock();
+                Box::pin(async { Ok("unreserved reply".to_string()) })
+            }))
+            .await;
+        }
+
+        let res = gw.route_message(&incoming("hello")).await;
+        assert!(res.is_err(), "streaming={streaming} must fail when begin_send fails");
+        let messages = sent.lock().unwrap().clone();
+        assert!(
+            !messages.iter().any(|(_, t)| t.contains("unreserved")),
+            "streaming={streaming} must never send an unreserved reply: {messages:?}"
+        );
+
+        let files = json_in(&dir);
+        assert_eq!(
+            files.len(),
+            1,
+            "streaming={streaming} must preserve pending record on begin_send failure"
+        );
+        let kept: crate::reply_recovery::PendingReply =
+            serde_json::from_slice(&std::fs::read(&files[0]).unwrap()).unwrap();
+        assert_eq!(kept.reply, None);
+        assert_eq!(kept.attempts, 0);
+
+        std::fs::remove_dir(dir.join(".lock")).expect("unblock lock");
+        assert_eq!(simulate_restart(tmp.path()), 1);
+        let recovered_sent = Arc::new(Mutex::new(Vec::new()));
+        let gw_next = recovery_gateway(
+            tmp.path(),
+            Arc::new(TestAdapter {
+                messages: recovered_sent.clone(),
+            }),
+        )
+        .await;
+        assert_eq!(gw_next.recover_pending_replies().await, 1);
+        assert_eq!(
+            recovered_sent.lock().unwrap().as_slice(),
+            &[(
+                "chat1".to_string(),
+                crate::reply_recovery::INTERRUPTED_NOTICE.to_string()
+            )]
+        );
+    }
+}

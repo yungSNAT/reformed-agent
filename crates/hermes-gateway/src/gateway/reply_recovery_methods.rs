@@ -26,8 +26,14 @@ impl Gateway {
         }
     }
 
-    async fn reply_begin(&self, incoming: &IncomingMessage, session_key: &str) -> Option<PathBuf> {
-        let dir = self.reply_records.get()?.clone();
+    async fn reply_begin(
+        &self,
+        incoming: &IncomingMessage,
+        session_key: &str,
+    ) -> Result<Option<PathBuf>, GatewayError> {
+        let Some(dir) = self.reply_records.get().cloned() else {
+            return Ok(None);
+        };
         let record = crate::reply_recovery::PendingReply {
             session_key: session_key.to_string(),
             platform: incoming.platform.clone(),
@@ -37,21 +43,39 @@ impl Gateway {
             reply: None,
             attempts: 0,
         };
-        tokio::task::spawn_blocking(move || crate::reply_recovery::write(&dir, &record))
+        let path = tokio::task::spawn_blocking(move || crate::reply_recovery::write(&dir, &record))
             .await
-            .ok()
-            .flatten()
+            .map_err(|e| GatewayError::Platform(format!("reply recovery task failed: {e}")))?;
+        path.map(Some).ok_or_else(|| {
+            GatewayError::Platform("failed to persist reply recovery record".into())
+        })
     }
 
-    async fn reply_begin_send(&self, pending: Option<&PathBuf>, reply: &str) {
-        let (Some(dir), Some(path)) = (self.reply_records.get().cloned(), pending.cloned()) else {
-            return;
+    async fn reply_begin_send(
+        &self,
+        pending: Option<&PathBuf>,
+        reply: &str,
+    ) -> Result<(), GatewayError> {
+        let Some(dir) = self.reply_records.get().cloned() else {
+            return Ok(());
+        };
+        let Some(path) = pending.cloned() else {
+            return Err(GatewayError::Platform(
+                "missing reply recovery record for enabled gateway turn".into(),
+            ));
         };
         let reply = reply.to_string();
-        let _ = tokio::task::spawn_blocking(move || {
+        let reserved = tokio::task::spawn_blocking(move || {
             crate::reply_recovery::begin_send(&dir, &path, &reply)
         })
-        .await;
+        .await
+        .map_err(|e| GatewayError::Platform(format!("reply recovery task failed: {e}")))?;
+        if !reserved {
+            return Err(GatewayError::Platform(
+                "failed to reserve reply recovery send attempt".into(),
+            ));
+        }
+        Ok(())
     }
 
     async fn reply_finish(&self, pending: Option<PathBuf>) {
