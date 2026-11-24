@@ -184,6 +184,7 @@ fn gateway_config(
         skills: SkillsSettings::default(),
         tools_config: ToolsSettings::default(),
         mcp_servers: Vec::new(),
+        mcp_tool_mode: Default::default(),
         profile: ProfileConfig::default(),
         agent: AgentLoopBehaviorConfig::default(),
         prompt_caching: Default::default(),

@@ -587,6 +587,18 @@ terminal:
     }
 
     #[test]
+    fn mcp_tool_mode_defaults_to_direct_and_reads_gateway() {
+        assert_eq!(GatewayConfig::default().mcp_tool_mode, McpToolMode::Direct);
+        let cfg: GatewayConfig =
+            serde_yaml::from_str("mcp_tool_mode: gateway\n").expect("mode should deserialize");
+        assert_eq!(cfg.mcp_tool_mode, McpToolMode::Gateway);
+        assert!(serde_yaml::from_str::<GatewayConfig>("mcp_tool_mode: lazy\n").is_err());
+        let saved = |cfg: &GatewayConfig| serde_yaml::to_string(cfg).expect("serialize");
+        assert!(!saved(&GatewayConfig::default()).contains("mcp_tool_mode"));
+        assert!(saved(&cfg).contains("mcp_tool_mode: gateway"));
+    }
+
+    #[test]
     fn prompt_caching_reads_the_documented_keys_and_defaults_to_spending_nothing() {
         let cfg = GatewayConfig::default();
         assert_eq!(cfg.prompt_caching.cache_ttl, PromptCacheTtl::FiveMinutes);
@@ -614,5 +626,15 @@ prompt_caching:
             serde_yaml::from_str("prompt_caching:\n  cache_ttl: \"5m\"\n").expect("5m");
         assert_eq!(cfg.prompt_caching.keep_alive.max_idle_seconds(), 60 * 60);
         assert!(serde_yaml::from_str::<GatewayConfig>("prompt_caching:\n  cache_ttl: 2h\n").is_err());
+        let saved = |cfg: &GatewayConfig| serde_yaml::to_string(cfg).expect("serialize");
+        assert!(!saved(&GatewayConfig::default()).contains("prompt_caching"));
+        let hour = GatewayConfig {
+            prompt_caching: PromptCachingConfig {
+                cache_ttl: PromptCacheTtl::OneHour,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        assert!(saved(&hour).contains("prompt_caching:") && saved(&hour).contains("1h"));
     }
 }

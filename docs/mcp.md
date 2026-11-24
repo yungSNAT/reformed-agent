@@ -105,6 +105,21 @@ mcp_servers:
 
 Set `COMPOSIO_CONSUMER_KEY` to the consumer key from Composio's dashboard (an account with Composio is needed). Its search, schema, execute and connection tools then appear as MCP tools, and the first use of an app returns an OAuth link to approve in a browser. The same shape works for any catalogue that takes an API key header. `hermes_cli`'s `hosted_catalogue_preset_reaches_a_streamable_http_server` test runs this preset against a local Streamable HTTP server.
 
+### Gateway tool mode
+
+By default (`mcp_tool_mode: direct`) every MCP tool is its own tool in the model's tool list. With many servers, set:
+
+```yaml
+mcp_tool_mode: gateway
+```
+
+The model then sees one `mcp` tool in their place:
+
+- `{"action": "search", "query": "create issue", "limit": 10}` returns the matching tools' names, descriptions and input schemas (an empty query lists them all; `limit` defaults to 10, at most 50);
+- `{"action": "call", "tool": "mcp_github_create_issue", "arguments": {...}}` runs that tool through the same dispatch as a direct call, so tool policy, secret refusal, masking, raw-output requests and the tool's size limit apply as before.
+
+The tool list then stays byte-identical whichever servers connect in time, fail or send `tools/list_changed`, so the provider's prompt cache keeps hitting. The gateway reaches only the MCP tools direct mode would list for the CLI: `tools_config.disabled`, `agent.disabled_toolsets` and custom `platform_toolsets` apply, `/tools enable|disable` and `/reload` update its reach, and disabling `mcp` itself leaves it nothing to reach. A tool policy allowlist must allow `mcp` as well as the MCP tools. The mode covers the servers in `config.yaml`; servers an ACP client passes keep direct mode. Hooks and progress lines name the `mcp` tool, not the MCP tool it calls.
+
 ## Runtime Behavior
 
 `crates/hermes-mcp` provides:

@@ -563,6 +563,10 @@ fn handle_reload_command(app: &mut App, cmd: &str) -> Result<CommandResult, Agen
         match hermes_config::load_config(app.state_root.to_str()) {
             Ok(cfg) => {
                 app.config = Arc::new(cfg);
+                crate::runtime_tool_wiring::rescope_cli_mcp_gateway(
+                    &app.config,
+                    &app.tool_registry,
+                );
                 emit_command_output(
                     app,
                     "Reload complete: env + config rehydrated for this session.",

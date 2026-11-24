@@ -24,13 +24,13 @@ pub mod tool_guard;
 pub use config::{
     default_auxiliary_task_configs, normalize_service_tier, AgentLoopBehaviorConfig,
     ApprovalConfig, AuxiliaryTaskConfig, CheapModelRouteConfig, DelegationConfig, DisplayConfig,
-    GatewayConfig, LlmProviderConfig, McpServerEntry, ModelSwitchConfig, PlatformDisplayConfig,
-    ProfileConfig, PromptCacheKeepAliveConfig, PromptCacheTtl, PromptCachingConfig, ProxyConfig,
-    QuickCommandConfig, SecurityConfig, SessionsMaintenanceConfig, SkillsSettings,
-    SmartModelRoutingConfig, StaleAuxiliaryAssignment, TerminalBackendType, TerminalConfig,
-    TerminalHomeMode, ToolGuardConfig, ToolOutputConfig, ToolsSettings, VertexConfig, WebConfig,
-    WebsiteBlocklistConfig, DEFAULT_TOOL_OUTPUT_MAX_BYTES, DEFAULT_TOOL_OUTPUT_MAX_LINES,
-    DEFAULT_TOOL_OUTPUT_MAX_LINE_LENGTH,
+    GatewayConfig, LlmProviderConfig, McpServerEntry, McpToolMode, ModelSwitchConfig,
+    PlatformDisplayConfig, ProfileConfig, PromptCacheKeepAliveConfig, PromptCacheTtl,
+    PromptCachingConfig, ProxyConfig, QuickCommandConfig, SecurityConfig,
+    SessionsMaintenanceConfig, SkillsSettings, SmartModelRoutingConfig, StaleAuxiliaryAssignment,
+    TerminalBackendType, TerminalConfig, TerminalHomeMode, ToolGuardConfig, ToolOutputConfig,
+    ToolsSettings, VertexConfig, WebConfig, WebsiteBlocklistConfig, DEFAULT_TOOL_OUTPUT_MAX_BYTES,
+    DEFAULT_TOOL_OUTPUT_MAX_LINES, DEFAULT_TOOL_OUTPUT_MAX_LINE_LENGTH,
 };
 pub use loader::{
     apply_user_config_patch, atomic_json_write, atomic_json_write_pretty, atomic_write_bytes,
