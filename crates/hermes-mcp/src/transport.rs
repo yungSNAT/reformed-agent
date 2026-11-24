@@ -150,7 +150,7 @@ fn command_allowed_by_profile(
     match profile {
         McpSandboxProfile::Strict => false,
         // Block direct shell launches in balanced mode unless explicitly allowlisted.
-        McpSandboxProfile::Balanced => !is_direct_shell(command),
+        McpSandboxProfile::Balanced => !is_direct_shell(name.as_deref()),
         McpSandboxProfile::Relaxed => true,
     }
 }
@@ -181,30 +181,42 @@ const DIRECT_SHELLS: &[&str] = &[
     "wsl",
 ];
 
-/// The name of the program `command` runs, as Windows resolves the path:
-/// split on either separator, `.` dropped and `..` stepping back, trailing
-/// dots and spaces trimmed from each part, folded to lower case (Unicode, as
-/// a case-insensitive file system folds it) and a `.exe` suffix dropped. None
-/// when no name is left or a part is 3 or more dots.
-fn program_name(command: &str) -> Option<String> {
+#[cfg(windows)]
+fn raw_program_name(command: &str) -> Option<&str> {
     let mut parts: Vec<&str> = Vec::new();
     for part in command.split(['/', '\\']) {
-        match part.trim_end_matches(' ') {
+        // Windows only treats exact "." and ".." as dot-components before
+        // stripping trailing spaces and dots from the final component.
+        match part {
             "" | "." => {}
             ".." => {
                 parts.pop();
             }
-            // Only dots: how Windows reads it is not settled here.
-            dots if dots.bytes().all(|byte| byte == b'.') => return None,
-            part => parts.push(part.trim_end_matches(['.', ' '])),
+            part => parts.push(part),
         }
     }
-    let last = parts.last().filter(|last| !last.is_empty())?;
+    let last = parts.last()?.trim_end_matches(['.', ' ']);
     // A drive-relative name (`C:cmd.exe`) runs the file after the drive.
     let last = match last.as_bytes() {
-        [drive, b':', ..] if drive.is_ascii_alphabetic() => &last[2..],
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => last[2..].trim_end_matches(['.', ' ']),
         _ => last,
     };
+    (!last.is_empty()).then_some(last)
+}
+
+#[cfg(not(windows))]
+fn raw_program_name(command: &str) -> Option<&str> {
+    // Native Unix basename: backslash is a filename byte and `...` is a valid directory.
+    let last = std::path::Path::new(command).file_name()?.to_str()?;
+    (!last.is_empty()).then_some(last)
+}
+
+/// The name of the program `command` runs, using Windows path normalisation
+/// on Windows and the native basename on Unix, folded to lower case (Unicode,
+/// as a case-insensitive file system folds it) with `.exe` stripped. None when
+/// no name is left.
+fn program_name(command: &str) -> Option<String> {
+    let last = raw_program_name(command)?;
     let name: String = last
         .chars()
         .flat_map(char::to_uppercase)
@@ -217,18 +229,17 @@ fn program_name(command: &str) -> Option<String> {
     )
 }
 
-/// Whether `command` runs a listed shell (see [`program_name`]). A command
-/// that leaves no name, or whose name looks like an 8.3 short name
-/// (`POWERS~1.EXE`), is refused too. A shell copied or linked under another
-/// name is not detected.
-fn is_direct_shell(command: &str) -> bool {
-    let Some(name) = program_name(command) else {
+/// Whether `name` runs a listed shell (see [`program_name`]). A command that
+/// leaves no name, or whose name looks like an 8.3 short name (`POWERS~1.EXE`),
+/// is refused too. A shell copied or linked under another name is not detected.
+fn is_direct_shell(name: Option<&str>) -> bool {
+    let Some(name) = name else {
         return true;
     };
     let short_name = name
         .split_once('~')
         .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
-    short_name || DIRECT_SHELLS.contains(&name.as_str())
+    short_name || DIRECT_SHELLS.contains(&name)
 }
 
 fn default_allowlist() -> Vec<String> {
