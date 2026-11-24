@@ -1144,6 +1144,18 @@ mod tests {
     }
 
     #[test]
+    fn build_agent_config_maps_prompt_caching() {
+        let mut config = GatewayConfig::default();
+        config.prompt_caching.cache_ttl = hermes_config::PromptCacheTtl::OneHour;
+        config.prompt_caching.keep_alive.max_pings = 3;
+        config.prompt_caching.compact_when_cold = true;
+
+        let agent_config = build_agent_config(&config, "anthropic:claude-test");
+
+        assert_eq!(agent_config.prompt_caching, config.prompt_caching);
+    }
+
+    #[test]
     fn build_agent_config_maps_preflight_context_compress() {
         let mut config = GatewayConfig::default();
         config.agent.preflight_context_compress = false;
