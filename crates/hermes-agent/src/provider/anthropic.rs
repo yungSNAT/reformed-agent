@@ -80,6 +80,44 @@ fn mark_last_cacheable_block(blocks: &mut [Value]) -> bool {
     false
 }
 
+/// With the 1-hour tier requested in `extra_body`, put `ttl: "1h"` on every
+/// marker without a `ttl`. All markers share the tier, so no 1-hour entry
+/// follows a 5-minute one. A body whose markers the caller supplied (through
+/// `extra_body`) is left alone.
+fn apply_anthropic_cache_ttl(body: &mut Value, extra_body: Option<&Value>) {
+    let one_hour = extra_body
+        .and_then(|extra| extra.get(PROMPT_CACHE_TTL_KEY))
+        .and_then(Value::as_str)
+        == Some("1h");
+    let caller_markers = extra_body.is_some_and(|extra| {
+        extra.get("cache_control").is_some()
+            || extra.get("messages").is_some()
+            || extra.get("system").is_some()
+    });
+    if !one_hour || caller_markers {
+        return;
+    }
+    fn walk(value: &mut Value) {
+        match value {
+            Value::Object(map) => {
+                if let Some(Value::Object(marker)) = map.get_mut("cache_control") {
+                    marker
+                        .entry("ttl")
+                        .or_insert_with(|| Value::String("1h".to_string()));
+                }
+                map.values_mut().for_each(walk);
+            }
+            Value::Array(items) => items.iter_mut().for_each(walk),
+            _ => {}
+        }
+    }
+    for key in ["system", "tools", "messages"] {
+        if let Some(part) = body.get_mut(key) {
+            walk(part);
+        }
+    }
+}
+
 fn add_anthropic_cache_breakpoints(
     body: &mut Value,
     messages: &[Message],
@@ -734,6 +772,7 @@ impl LlmProvider for AnthropicProvider {
         GenericProvider::merge_extra_body_fields(&mut body, extra_body);
         if cache {
             add_anthropic_cache_breakpoints(&mut body, messages, extra_body);
+            apply_anthropic_cache_ttl(&mut body, extra_body);
         }
         Self::strip_unsupported_anthropic_controls(&mut body, effective_model);
 
@@ -811,6 +850,7 @@ impl LlmProvider for AnthropicProvider {
             GenericProvider::merge_extra_body_fields(&mut body, extra_body.as_ref());
             if cache {
                 add_anthropic_cache_breakpoints(&mut body, &messages, extra_body.as_ref());
+                apply_anthropic_cache_ttl(&mut body, extra_body.as_ref());
             }
             AnthropicProvider::strip_unsupported_anthropic_controls(&mut body, effective_model);
 
