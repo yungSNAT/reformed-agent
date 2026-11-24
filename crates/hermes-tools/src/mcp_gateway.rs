@@ -87,6 +87,27 @@ pub fn rescope_mcp_gateway(registry: &ToolRegistry, scope: McpGatewayScope) -> b
     true
 }
 
+/// Build an MCP gateway handler for `registry` enforcing `scope`, without
+/// mutating the registered gateway entry. Used so cron bridges can scope `"mcp"`
+/// to the cron platform without disturbing the interactive CLI gateway.
+pub fn scoped_mcp_gateway_handler(
+    registry: &ToolRegistry,
+    scope: McpGatewayScope,
+) -> Option<Arc<dyn ToolHandler>> {
+    if !is_mcp_gateway_registered(registry) {
+        return None;
+    }
+    let schema = registry
+        .get_definitions()
+        .into_iter()
+        .find(|schema| schema.name == MCP_GATEWAY_TOOL)?;
+    Some(Arc::new(McpGateway {
+        registry: registry.downgrade(),
+        scope,
+        schema,
+    }))
+}
+
 fn register_handler(registry: &ToolRegistry, schema: ToolSchema, scope: McpGatewayScope) {
     let description = schema.description.clone();
     let handler: Arc<dyn ToolHandler> = Arc::new(McpGateway {
