@@ -6,7 +6,7 @@
 //! numbered text fallback for non-TTY terminals.
 
 use std::collections::HashSet;
-use std::io::{self, Write};
+use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyEventKind};
@@ -135,11 +135,9 @@ pub fn curses_select_embedded(title: &str, items: &[String], initial_index: usiz
     }
 }
 
-/// Check if stdin is a TTY (best-effort).
+/// Check that the prompt has interactive input and output.
 fn atty_is_tty() -> bool {
-    // crossterm's is_raw_mode_enabled is not what we want;
-    // use a simple heuristic: try to get terminal size
-    terminal::size().is_ok()
+    io::stdin().is_terminal() && io::stdout().is_terminal() && terminal::size().is_ok()
 }
 
 fn truncate_for_terminal(text: &str, max_chars: usize) -> String {

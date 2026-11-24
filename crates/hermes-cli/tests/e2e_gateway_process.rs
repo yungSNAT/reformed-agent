@@ -106,4 +106,113 @@ mod unix {
             "gateway.pid should be removed after graceful shutdown"
         );
     }
+
+    fn isolated_gateway_cli(home: &std::path::Path, args: &[&str]) -> assert_cmd::Command {
+        let managed = home.join("managed");
+        std::fs::create_dir_all(&managed).expect("create empty managed config directory");
+        let mut cmd = assert_cmd::Command::new(assert_cmd::cargo::cargo_bin!("hermes"));
+        cmd.env_clear()
+            .current_dir(home)
+            .env("HOME", home)
+            .env("USERPROFILE", home)
+            .env("HERMES_HOME", home)
+            .env("HERMES_MANAGED_DIR", managed)
+            .timeout(std::time::Duration::from_secs(15))
+            .args(args);
+        for key in ["LLVM_PROFILE_FILE", "SystemRoot"] {
+            if let Some(value) = std::env::var_os(key) {
+                cmd.env(key, value);
+            }
+        }
+        cmd
+    }
+
+    #[test]
+    fn gateway_cli_rejects_missing_requirements_before_starting_adapters() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        std::fs::write(
+            home.join("config.yaml"),
+            "platforms:\n  discord:\n    enabled: true\n  ntfy:\n    enabled: true\n",
+        )
+        .unwrap();
+
+        let mut command = isolated_gateway_cli(home, &["gateway", "run"]);
+        let assertion = command.assert().failure();
+        let output = assertion.get_output();
+        let error = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            error.contains("Gateway requirement check failed"),
+            "{error}"
+        );
+        assert!(error.contains("discord.enabled=true"), "{error}");
+        assert!(
+            error.contains("ntfy.enabled=true but topic is missing"),
+            "{error}"
+        );
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            stdout.contains("no gateway user allowlist configured"),
+            "{stdout}"
+        );
+        assert!(!home.join("gateway.pid").exists());
+        assert!(!home.join("gateway.lock").exists());
+    }
+
+    #[test]
+    fn gateway_cli_status_cleans_invalid_pid_without_unlinking_owner_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let pid_file = home.join("gateway.pid");
+        let lock_file = home.join("gateway.lock");
+        std::fs::write(&pid_file, "historical metadata").unwrap();
+        std::fs::write(&lock_file, "owner marker").unwrap();
+
+        let mut command = isolated_gateway_cli(home, &["gateway", "status"]);
+        let assertion = command.assert().success();
+        let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+        assert!(stdout.contains("invalid PID file"), "{stdout}");
+        assert!(!pid_file.exists());
+        assert_eq!(std::fs::read_to_string(&lock_file).unwrap(), "owner marker");
+    }
+
+    #[test]
+    fn gateway_cli_setup_saves_only_selected_platform_choices() {
+        let dir = tempfile::tempdir().unwrap();
+        let home = dir.path();
+        let config_path = home.join("config.yaml");
+
+        let mut empty = isolated_gateway_cli(home, &["gateway", "setup"]);
+        let assertion = empty.write_stdin("\n").assert().success();
+        let stdout = String::from_utf8_lossy(&assertion.get_output().stdout);
+        assert!(stdout.contains("No valid platforms selected"), "{stdout}");
+        assert!(!config_path.exists());
+
+        // Choose Webhook and API Server in the numbered fallback. Prompts are
+        // presented in alphabetical order after the selection is confirmed.
+        let mut configure = isolated_gateway_cli(home, &["gateway", "setup"]);
+        configure
+            .write_stdin("19\n20\n\n127.0.0.1\n18090\n\n\n19000\n/fixture-hook\n")
+            .assert()
+            .success();
+
+        let raw = std::fs::read_to_string(config_path).unwrap();
+        let config: hermes_config::GatewayConfig = serde_yaml::from_str(&raw).unwrap();
+        let api = &config.platforms["api_server"];
+        assert!(api.enabled);
+        assert_eq!(api.extra["host"], "127.0.0.1");
+        assert_eq!(api.extra["port"], 18090);
+        let hook = &config.platforms["webhook"];
+        assert!(hook.enabled);
+        assert_eq!(hook.extra["port"], 19000);
+        assert_eq!(hook.extra["path"], "/fixture-hook");
+        assert_eq!(
+            config
+                .platforms
+                .values()
+                .filter(|platform| platform.enabled)
+                .count(),
+            2
+        );
+    }
 }
