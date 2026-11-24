@@ -738,3 +738,21 @@
         assert_eq!(stored_anthropic_token(&home).0, "new-access");
         assert!(primary.sent_keys().is_empty());
     }
+
+    /// A token request still in flight when its test ends, as in
+    /// `token_endpoint_that_never_answers_ends_the_refresh`, must not be
+    /// counted by a later test, so a finished fixture's token endpoint closes
+    /// rather than going back to a pool other tests draw from.
+    #[tokio::test]
+    async fn finished_fixture_token_endpoint_stops_listening() {
+        let (_home, server, _cfg) = anthropic_oauth_fixture("old-access").await;
+        let address = *server.address();
+        drop(server);
+        for _ in 0..100 {
+            if std::net::TcpStream::connect(address).is_err() {
+                return;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+        panic!("the token endpoint at {address} still accepts connections after its test ended");
+    }
