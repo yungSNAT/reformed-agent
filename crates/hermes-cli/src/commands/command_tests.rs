@@ -1217,7 +1217,12 @@ note the fixtures"));
     include!("tests/surface_and_compression.rs");
     include!("tests/tool_scope.rs");
 
+    #[cfg(unix)]
+    mod isolated_profile;
+    #[cfg(unix)]
     mod objective_contract;
+    #[cfg(unix)]
+    mod replay_command_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 

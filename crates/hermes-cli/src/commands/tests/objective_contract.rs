@@ -1,7 +1,8 @@
 use super::*;
 use crate::alpha_runtime::{
-    append_objective_eval_sample, load_contextlattice_policy, load_objective_contract, load_objective_dag,
-    load_objective_ensemble_policy, load_objective_learning_ledger, load_objective_simulation_policy,
+    append_objective_eval_sample, load_contextlattice_policy, load_objective_contract,
+    load_objective_dag, load_objective_ensemble_policy, load_objective_learning_ledger,
+    load_objective_simulation_policy,
 };
 
 async fn assert_objective_output(app: &mut App, args: &[&str], expected: &str) {
@@ -13,7 +14,8 @@ async fn assert_objective_output(app: &mut App, args: &[&str], expected: &str) {
             .unwrap_or_else(|error| panic!("{args:?}: {error}")),
         CommandResult::Handled
     );
-    let output = app.ui_messages
+    let output = app
+        .ui_messages
         .iter()
         .rev()
         .find(|row| row.message.role == hermes_core::MessageRole::Assistant)
@@ -27,6 +29,11 @@ async fn assert_objective_output(app: &mut App, args: &[&str], expected: &str) {
 
 #[tokio::test]
 async fn objective_lifecycle_persists_state_and_controls_prompt_injection() {
+    if !isolated_profile::enter(
+        "objective_contract::objective_lifecycle_persists_state_and_controls_prompt_injection",
+    ) {
+        return;
+    }
     let _guard = test_env_lock::lock_async().await;
     let home = tempdir().expect("create temporary home");
     let _home = TempHomeGuard::new(home.path());
@@ -71,6 +78,9 @@ async fn objective_lifecycle_persists_state_and_controls_prompt_injection() {
 
 #[tokio::test]
 async fn objective_wait_replaces_the_previous_target_and_records_each_transition() {
+    if !isolated_profile::enter("objective_contract::objective_wait_replaces_the_previous_target_and_records_each_transition") {
+        return;
+    }
     let _guard = test_env_lock::lock_async().await;
     let home = tempdir().expect("create temporary home");
     let _home = TempHomeGuard::new(home.path());
@@ -91,7 +101,10 @@ async fn objective_wait_replaces_the_previous_target_and_records_each_transition
     .await;
     let session = load_objective_contract().unwrap().unwrap();
     assert_eq!(session.waiting_on_pid, None);
-    assert_eq!(session.waiting_on_session.as_deref(), Some("fixture-session"));
+    assert_eq!(
+        session.waiting_on_session.as_deref(),
+        Some("fixture-session")
+    );
     assert_eq!(session.waiting_reason, "rehearsal");
 
     assert_objective_output(
@@ -110,7 +123,11 @@ async fn objective_wait_replaces_the_previous_target_and_records_each_transition
     assert_eq!(cleared.waiting_until_unix_ms, 0);
     assert!(cleared.waiting_reason.is_empty());
     let ledger = load_objective_learning_ledger().unwrap();
-    let decisions: Vec<_> = ledger.entries.iter().map(|entry| entry.decision.as_str()).collect();
+    let decisions: Vec<_> = ledger
+        .entries
+        .iter()
+        .map(|entry| entry.decision.as_str())
+        .collect();
     assert_eq!(
         decisions,
         [
@@ -122,18 +139,38 @@ async fn objective_wait_replaces_the_previous_target_and_records_each_transition
         ]
     );
     assert_objective_output(&mut app, &["ledger", "status"], "entries=5").await;
-    assert_objective_output(&mut app, &["ledger", "tail", "1"], "decision=objective_unwait").await;
-    assert_objective_output(&mut app, &["ledger", "clear"], "Objective learning ledger cleared.").await;
+    assert_objective_output(
+        &mut app,
+        &["ledger", "tail", "1"],
+        "decision=objective_unwait",
+    )
+    .await;
+    assert_objective_output(
+        &mut app,
+        &["ledger", "clear"],
+        "Objective learning ledger cleared.",
+    )
+    .await;
     assert_objective_output(&mut app, &["ledger", "tail"], "(empty)").await;
 }
 
 #[tokio::test]
 async fn objective_commands_persist_policy_and_workspace_records() {
+    if !isolated_profile::enter(
+        "objective_contract::objective_commands_persist_policy_and_workspace_records",
+    ) {
+        return;
+    }
     let _guard = test_env_lock::lock_async().await;
     let home = tempdir().expect("create temporary home");
     let _home = TempHomeGuard::new(home.path());
     let mut app = build_test_app_with_stream(home.path()).await;
-    assert_objective_output(&mut app, &["Document the market data format"], "Session objective set:").await;
+    assert_objective_output(
+        &mut app,
+        &["Document the market data format"],
+        "Session objective set:",
+    )
+    .await;
     let contract = load_objective_contract().unwrap().unwrap();
     assert!(contract.trading_sensitive);
     assert_objective_output(&mut app, &["dag", "rebuild"], "Objective DAG rebuilt.").await;
@@ -170,13 +207,23 @@ async fn objective_commands_persist_policy_and_workspace_records() {
     )
     .await;
     let updated = load_objective_contract().unwrap().unwrap();
-    assert_eq!(updated.counterfactual_journal[0].scenario, "Reuse the glossary");
-    assert_eq!(updated.counterfactual_journal[0].expected_delta, "less editing");
+    assert_eq!(
+        updated.counterfactual_journal[0].scenario,
+        "Reuse the glossary"
+    );
+    assert_eq!(
+        updated.counterfactual_journal[0].expected_delta,
+        "less editing"
+    );
 }
-
 
 #[tokio::test]
 async fn objective_verifier_checks_trend_and_deduplicates_evidence_paths() {
+    if !isolated_profile::enter(
+        "objective_contract::objective_verifier_checks_trend_and_deduplicates_evidence_paths",
+    ) {
+        return;
+    }
     let _guard = test_env_lock::lock_async().await;
     let home = tempdir().expect("create temporary home");
     let _home = TempHomeGuard::new(home.path());
@@ -191,10 +238,9 @@ async fn objective_verifier_checks_trend_and_deduplicates_evidence_paths() {
     assert_objective_output(&mut app, &["eval", "tail"], "(empty)").await;
     assert_objective_output(&mut app, &["verify"], "verified_files_total=0").await;
 
-    assert!(std::path::Path::new("Cargo.toml").is_file());
-    assert!(!std::path::Path::new("missing-objective-evidence.txt").exists());
+    std::fs::write("verified-evidence.txt", "fixture evidence\n").unwrap();
     app.messages.push(hermes_core::Message::assistant(
-        "PATCH_VERIFIED path=Cargo.toml path=Cargo.toml path=missing-objective-evidence.txt",
+        "PATCH_VERIFIED path=verified-evidence.txt path=verified-evidence.txt path=missing-objective-evidence.txt",
     ));
     for (sample, expected) in [
         ("active", "unproven"),
