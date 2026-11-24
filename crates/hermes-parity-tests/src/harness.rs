@@ -351,6 +351,13 @@ mod tests {
     }
 
     #[test]
+    fn fixture_directory_ignores_documentation() {
+        let path = fixtures_dir().join("pending/send_message");
+        assert!(path.join("README.txt").is_file());
+        run_fixtures_in_dir(&path).expect("documentation is not a JSON fixture");
+    }
+
+    #[test]
     fn reports_unsupported_fixture_version() {
         let path = fixtures_dir().join("../tests/fixtures/harness_unsupported_version.json");
         assert!(matches!(

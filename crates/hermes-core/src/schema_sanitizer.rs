@@ -128,15 +128,8 @@ where
 }
 
 fn sanitize_schema_node(node: &mut Value, top_level: bool) {
-    match node {
-        Value::String(kind) => {
-            *node = schema_for_type(kind);
-        }
-        Value::Object(_) => {}
-        _ if top_level => {
-            *node = default_object_schema();
-        }
-        _ => return,
+    if let Value::String(kind) = node {
+        *node = schema_for_type(kind);
     }
 
     let Some(obj) = node.as_object_mut() else {
@@ -583,7 +576,9 @@ mod tests {
         assert_eq!(sanitize_tool_schemas(Some(&json!({}))), Some(json!({})));
 
         let schema = json!({
-            "properties": {"name": "string"},
+            "properties": {
+                "name": {"type": ["null", 42, "string", "number"]}
+            },
             "required": ["name", null],
             "$defs": {"nested": "object", "boolean_schema": false}
         });
@@ -591,7 +586,7 @@ mod tests {
             sanitize_tool_parameters(&schema),
             json!({
                 "type": "object",
-                "properties": {"name": {"type": "string"}},
+                "properties": {"name": {"type": "string", "nullable": true}},
                 "required": ["name"],
                 "$defs": {"nested": {"type": "object", "properties": {}}, "boolean_schema": false}
             })
