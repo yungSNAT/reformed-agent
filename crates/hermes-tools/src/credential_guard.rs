@@ -770,8 +770,8 @@ const PROTECTED_TREE_ENTRIES: usize = 4096;
 /// name the path rules cannot see, and a write through it changes the file in
 /// place; so can another spelling of the same file (a Windows loopback share,
 /// a bind mount). A file with one link is compared with the named files and
-/// stores only; one with more links with everything up to 4 levels inside
-/// each protected folder too.
+/// stores and the files directly in each protected folder; one with more links
+/// with everything up to 4 levels inside each protected folder.
 fn is_hard_link_to_protected_file(
     path: &Path,
     home: Option<&Path>,
@@ -801,7 +801,7 @@ fn is_hard_link_to_protected_file(
         if hermes_config::file_identity(&protected).is_some_and(|id| id.same_file(&target)) {
             return true;
         }
-        if target.links < 2 || depth == PROTECTED_TREE_DEPTH {
+        if (target.links < 2 && depth > 0) || depth == PROTECTED_TREE_DEPTH {
             continue;
         }
         // A folder's entries, links not followed; a file has none.
@@ -1782,20 +1782,31 @@ mod tests {
     #[test]
     fn write_deny_refuses_a_protected_file_through_the_loopback_share() {
         let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
         let hermes_home = tmp.path().join("profile");
-        std::fs::create_dir_all(&hermes_home).expect("home");
+        std::fs::create_dir_all(home.join(".ssh")).expect("ssh");
+        std::fs::create_dir_all(&hermes_home).expect("profile");
         std::fs::write(hermes_home.join(".env"), "x").expect("env");
-        let local = hermes_home.join(".env").to_string_lossy().to_string();
-        let Some((drive, rest)) = local.split_once(":\\") else {
-            return;
-        };
-        let share = PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"));
-        if hermes_config::file_identity(&share).is_none() {
-            eprintln!("skipped: the loopback share is not reachable");
-            return;
+        std::fs::write(home.join(".ssh").join("authorized_keys"), "x").expect("keys");
+        for local in [
+            hermes_home.join(".env"),
+            home.join(".ssh").join("authorized_keys"),
+        ] {
+            let local = local.to_string_lossy().to_string();
+            let Some((drive, rest)) = local.split_once(":\\") else {
+                return;
+            };
+            let share = PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"));
+            if hermes_config::file_identity(&share).is_none() {
+                eprintln!("skipped: the loopback share is not reachable");
+                return;
+            }
+            assert!(
+                is_write_denied_with_roots(&share, Some(&home), Some(&hermes_home)),
+                "{}",
+                share.display()
+            );
         }
-
-        assert!(is_write_denied_with_roots(&share, None, Some(&hermes_home)));
     }
 
     #[test]
