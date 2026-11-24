@@ -142,6 +142,23 @@ async fn a_full_map_evicts_the_session_sent_first() {
         tokio::time::advance(Duration::from_secs(1)).await;
     }
     assert_eq!(oldest_session(&last).as_deref(), Some("b"));
+    let evicted = remember_in(
+        &mut last,
+        "d",
+        request(provider.clone(), "claude-test", None),
+        3,
+    );
+    assert_eq!(
+        evicted.as_deref(),
+        Some("b"),
+        "the caller cancels its keep-alive"
+    );
+    assert!(!last.contains_key("b"));
+    assert_eq!(
+        remember_in(&mut last, "d", request(provider, "claude-test", None), 3),
+        None,
+        "a known session replaces its own entry"
+    );
 }
 
 #[tokio::test(start_paused = true)]

@@ -80,20 +80,38 @@ static ARM_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU
 /// Sessions whose last request is kept; the oldest entry goes beyond this.
 const SESSIONS_MAX: usize = 64;
 
-/// Keep `request` as `session_id`'s last successful request.
+/// Keep `request` as `session_id`'s last successful request. A full map
+/// drops the session sent first, and its keep-alive with it.
 pub fn remember(session_id: &str, request: CachedRequest) {
     if session_id.is_empty() {
         return;
     }
-    let Ok(mut last) = LAST_REQUEST.lock() else {
-        return;
+    let evicted = match LAST_REQUEST.lock() {
+        Ok(mut last) => remember_in(&mut last, session_id, request, SESSIONS_MAX),
+        Err(_) => return,
     };
-    if last.len() >= SESSIONS_MAX && !last.contains_key(session_id) {
-        if let Some(oldest) = oldest_session(&last) {
-            last.remove(&oldest);
-        }
+    if let Some(evicted) = evicted {
+        cancel(&evicted);
     }
+}
+
+/// Insert into `last`, holding at most `max` sessions. Returns the session
+/// dropped to make room.
+fn remember_in(
+    last: &mut HashMap<String, CachedRequest>,
+    session_id: &str,
+    request: CachedRequest,
+    max: usize,
+) -> Option<String> {
+    let evicted = if last.len() >= max && !last.contains_key(session_id) {
+        oldest_session(last).inspect(|oldest| {
+            last.remove(oldest);
+        })
+    } else {
+        None
+    };
     last.insert(session_id.to_string(), request);
+    evicted
 }
 
 /// The session whose last request was sent first.
@@ -141,7 +159,15 @@ fn warmable(request: &CachedRequest) -> bool {
 /// runtime; does nothing when `plan.max_pings` is 0 or the session's last
 /// request cannot be warmed.
 pub fn arm(session_id: &str, plan: KeepAlivePlan) {
-    cancel(session_id);
+    // Held until the new task is registered: a `cancel` cannot fall between
+    // the spawn and the insert. `remember` never holds `LAST_REQUEST` whilst
+    // taking this lock.
+    let Ok(mut armed) = ARMED.lock() else {
+        return;
+    };
+    if let Some((_, handle)) = armed.remove(session_id) {
+        handle.abort();
+    }
     if plan.max_pings == 0 || session_id.is_empty() {
         return;
     }
@@ -170,9 +196,7 @@ pub fn arm(session_id: &str, plan: KeepAlivePlan) {
         }
         stop
     });
-    if let Ok(mut armed) = ARMED.lock() {
-        armed.insert(session_id.to_string(), (generation, task.abort_handle()));
-    }
+    armed.insert(session_id.to_string(), (generation, task.abort_handle()));
 }
 
 /// The keep-alive loop for one idle stretch.
