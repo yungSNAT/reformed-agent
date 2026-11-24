@@ -775,7 +775,7 @@ pub struct McpClient {
     modern_stdio: bool,
     modern_http: bool,
     /// Bound on `connect`, from building the transport to tool discovery.
-    connect_timeout: Duration,
+    pub(crate) connect_timeout: Duration,
 }
 
 include!("client/client_impl.rs");
