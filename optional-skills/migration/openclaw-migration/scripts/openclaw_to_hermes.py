@@ -3139,9 +3139,9 @@ def main() -> int:
 
     print()
 
-    # Also dump JSON for programmatic use
+    # Also dump JSON for programmatic use, redacted as --json and report.json are
     if os.environ.get("MIGRATION_JSON_OUTPUT"):
-        print(json.dumps(report, indent=2, ensure_ascii=False))
+        print(json.dumps(redact_migration_value(report), indent=2, ensure_ascii=False))
 
     return 0 if s.get("error", 0) == 0 else 1
 
