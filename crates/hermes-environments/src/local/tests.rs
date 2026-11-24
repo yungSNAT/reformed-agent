@@ -1375,6 +1375,13 @@ impl Drop for NobodySleepGuard {
 
 #[cfg(any(target_os = "linux", target_os = "macos"))]
 async fn kill_process_with_live_refusing_member() {
+    let required = std::env::var_os("REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER").is_some();
+    let skip_or_fail = |reason: &str| {
+        if required {
+            panic!("REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER set: {reason}");
+        }
+        eprintln!("skipped: {reason}");
+    };
     let probe = tokio::process::Command::new("sudo")
         .args([
             "-n",
@@ -1387,14 +1394,14 @@ async fn kill_process_with_live_refusing_member() {
         .output()
         .await;
     let Some(probe) = probe.ok().filter(|output| output.status.success()) else {
-        eprintln!("skipped: passwordless sudo to nobody is not available");
+        skip_or_fail("passwordless sudo to nobody is not available");
         return;
     };
     let Ok(probe_pid) = String::from_utf8_lossy(&probe.stdout)
         .trim()
         .parse::<libc::pid_t>()
     else {
-        eprintln!("skipped: sudo nobody probe did not report a pid");
+        skip_or_fail("sudo nobody probe did not report a pid");
         return;
     };
     // SAFETY: signal 0 checks permission without delivering a signal.
@@ -1405,7 +1412,7 @@ async fn kill_process_with_live_refusing_member() {
         .status()
         .await;
     if can_signal_nobody {
-        eprintln!("skipped: caller can signal processes owned by nobody");
+        skip_or_fail("caller can signal processes owned by nobody");
         return;
     }
     let dir = tempdir().unwrap();
