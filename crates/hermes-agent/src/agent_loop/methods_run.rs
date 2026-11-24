@@ -57,6 +57,7 @@ impl AgentLoop {
         messages: Vec<Message>,
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
+        let _cache_use = tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
         Self::complete_memory_flush(self.run_inner(messages, tools)).await
     }
 
@@ -188,6 +189,7 @@ impl AgentLoop {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
 
+        self.prune_tool_results_on_cold_cache(&mut ctx, &tool_schemas);
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);
         }

@@ -3224,3 +3224,26 @@ async fn isolated_cdp_backends_on_a_real_chrome_keep_apart_and_clean_up() {
         "contexts left after drop: {remaining:?}"
     );
 }
+
+#[cfg(unix)]
+#[tokio::test]
+async fn pruning_screenshots_keeps_a_file_a_credential_store_links_to() {
+    let _scope = EnvScope::new();
+    let home = tempfile::tempdir().expect("temp hermes home");
+    std::env::set_var("HERMES_HOME", home.path());
+    let dir = home.path().join("cache").join("screenshots");
+    std::fs::create_dir_all(&dir).expect("screenshot dir");
+    let old = std::time::SystemTime::now() - Duration::from_secs(3 * 24 * 3600);
+    let linked = dir.join("browser_screenshot_linked.png");
+    let stale = dir.join("browser_screenshot_stale.png");
+    for path in [&linked, &stale] {
+        let file = std::fs::File::create(path).expect("screenshot");
+        file.set_modified(old).expect("age the screenshot");
+    }
+    std::os::unix::fs::symlink(&linked, home.path().join("mem0.json")).expect("store link");
+
+    prune_old_screenshots(&dir).await;
+
+    assert!(linked.exists(), "the store's target was deleted");
+    assert!(!stale.exists(), "an old screenshot was kept");
+}
