@@ -1027,19 +1027,37 @@ fn not_utf8(prefix: &str) -> std::ffi::OsString {
     }
 }
 
+fn child_test_command(
+    test: &str,
+    envs: &[(std::ffi::OsString, std::ffi::OsString)],
+) -> std::process::Command {
+    let mut cmd = std::process::Command::new(std::env::current_exe().unwrap());
+    cmd.args(["--exact", test, "--test-threads=1"])
+        .env("REFORMED_TEST_CHILD", "1")
+        .envs(envs.iter().map(|(k, v)| (k, v)));
+    cmd
+}
+
+fn child_passed(mut cmd: std::process::Command) -> bool {
+    let output = cmd.output().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let ok = output.status.success() && stdout.contains("1 passed");
+    if !ok {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        eprintln!(
+            "child test failed ({}):\nstdout:\n{stdout}\nstderr:\n{stderr}",
+            output.status
+        );
+    }
+    ok
+}
+
 /// Runs `test` (its full path) in a child copy of this test binary with
 /// `envs` added, so a variable that is not UTF-8 never enters this process,
 /// whose other tests read the environment. True when the child ran it and it
 /// passed.
 fn passes_in_child(test: &str, envs: &[(std::ffi::OsString, std::ffi::OsString)]) -> bool {
-    let output = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", test, "--test-threads=1"])
-        .env("REFORMED_TEST_CHILD", "1")
-        .envs(envs.iter().map(|(k, v)| (k, v)))
-        .output()
-        .unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    output.status.success() && stdout.contains("1 passed")
+    child_passed(child_test_command(test, envs))
 }
 
 #[test]
@@ -1322,12 +1340,41 @@ async fn test_a_live_member_is_not_taken_for_a_zombie() {
     assert!(after_kill, "the group was not seen as ended");
 }
 
-/// A group member that refuses the signal (here one running as another
-/// user) leaves the group alive, so `kill_process` must not report it
-/// killed. Needs passwordless `sudo`; skipped without it.
 #[cfg(any(target_os = "linux", target_os = "macos"))]
-#[tokio::test]
-async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed() {
+struct NobodySleepGuard {
+    pattern: String,
+    active: bool,
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl NobodySleepGuard {
+    fn disarm(&mut self) {
+        self.active = false;
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+impl Drop for NobodySleepGuard {
+    fn drop(&mut self) {
+        if self.active {
+            let _ = std::process::Command::new("sudo")
+                .args([
+                    "-n",
+                    "-u",
+                    "nobody",
+                    "pkill",
+                    "-u",
+                    "nobody",
+                    "-f",
+                    &self.pattern,
+                ])
+                .status();
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+async fn kill_process_with_live_refusing_member() {
     let sudo_ok = tokio::process::Command::new("sudo")
         .args(["-n", "-u", "nobody", "true"])
         .status()
@@ -1340,13 +1387,19 @@ async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_k
     let dir = tempdir().unwrap();
     let marker = dir.path().join("member");
     let shell_marker = marker.to_string_lossy().replace('\\', "/");
+    let sleep_secs = format!("31.{:06}", 100_000 + (std::process::id() % 900_000));
+    let pattern = format!("sleep {sleep_secs}");
     // Fork `sleep` from a short-lived `nobody` subshell so `sudo` (whose real
     // uid is the caller's and would forward SIGTERM) exits before the kill,
     // leaving an unkillable `nobody` child in the shell's process group.
     let command = format!(
-        "sudo -n -u nobody sh -c 'sleep 31.4159 </dev/null >/dev/null 2>&1 &' && echo > \"{shell_marker}.ready\"; sleep 30 & wait"
+        "sudo -n -u nobody sh -c '{pattern} </dev/null >/dev/null 2>&1 &' && {{ echo > \"{shell_marker}.ready\"; sleep 30 & wait; }}"
     );
     let backend = LocalBackend::new(60, 1_048_576);
+    let mut guard = NobodySleepGuard {
+        pattern: pattern.clone(),
+        active: true,
+    };
     let started = backend
         .execute_command(&command, None, None, true, false)
         .await
@@ -1358,14 +1411,48 @@ async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_k
 
     let killed = backend.kill_process(session_id).await;
     let _ = tokio::process::Command::new("sudo")
-        .args(["-n", "pkill", "-u", "nobody", "-f", "sleep 31.4159"])
+        .args([
+            "-n", "-u", "nobody", "pkill", "-u", "nobody", "-f", &pattern,
+        ])
         .status()
         .await;
+    guard.disarm();
 
     assert!(
         !matches!(&killed, Ok(value) if value["status"] == "killed"),
         "a group with a live member was reported killed: {killed:?}"
     );
+}
+
+/// A group member that refuses the signal (here one running as another
+/// user) leaves the group alive, so `kill_process` must not report it
+/// killed. Runs in a `setsid()` child so `/dev/tty` is detached even when
+/// `cargo test` runs from a terminal (avoiding `sudo` `use_pty`). Needs
+/// passwordless `sudo -u nobody`; skipped without it.
+#[cfg(any(target_os = "linux", target_os = "macos"))]
+#[test]
+fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed() {
+    if std::env::var_os("REFORMED_TEST_CHILD").is_some() {
+        block_on(kill_process_with_live_refusing_member());
+        return;
+    }
+    let mut cmd = child_test_command(
+        "local::tests::test_kill_process_does_not_report_a_group_with_a_live_refusing_member_killed",
+        &[],
+    );
+    use std::os::unix::process::CommandExt;
+    // SAFETY: `setsid` is async-signal-safe and detaches `/dev/tty` before
+    // `exec` so `sudo` `use_pty` never moves the `nobody` sleeper to a new
+    // session and process group.
+    unsafe {
+        cmd.pre_exec(|| {
+            if libc::setsid() == -1 {
+                return Err(std::io::Error::last_os_error());
+            }
+            Ok(())
+        });
+    }
+    assert!(child_passed(cmd));
 }
 
 #[tokio::test]
