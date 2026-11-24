@@ -1,3 +1,5 @@
+use hermes_cron::{FileJobPersistence, JobPersistence};
+
 #[tokio::test]
 async fn api_job_invalid_creates_do_not_leave_a_job_record() {
     let (tx, _rx) = mpsc::channel(1);
@@ -58,6 +60,8 @@ async fn api_job_invalid_creates_do_not_leave_a_job_record() {
         .roundtrip(empty_request("GET", "/api/jobs?include_disabled=yes"), None)
         .await;
     assert_eq!(json_body(&response)["jobs"], serde_json::json!([]));
+    let store = FileJobPersistence::with_dir(state._cron_dir.path().join("cron"));
+    assert!(store.load_jobs().await.unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -143,6 +147,12 @@ async fn api_job_rejected_updates_leave_the_saved_configuration_intact() {
     }
     let saved = state.roundtrip(empty_request("GET", &path), None).await;
     assert_eq!(json_body(&saved)["job"], *job);
+    let store = FileJobPersistence::with_dir(state._cron_dir.path().join("cron"));
+    let persisted = store.load_jobs().await.unwrap();
+    let [saved_job] = persisted.as_slice() else {
+        panic!("expected one persisted job");
+    };
+    assert_eq!(api_cron_job_body(saved_job), *job);
 
     let response = state
         .roundtrip(
