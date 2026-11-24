@@ -2028,6 +2028,7 @@ dependencies = [
  "serde_json",
  "syn 2.0.117",
  "tempfile",
+ "yaml_serde",
 ]
 
 [[package]]
