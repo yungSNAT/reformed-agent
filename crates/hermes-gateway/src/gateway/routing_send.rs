@@ -32,9 +32,12 @@ impl Gateway {
             handler(messages, runtime_context).await
         } else {
             let handler = self.message_handler.read().await;
-            let handler = handler
-                .as_ref()
-                .ok_or_else(|| GatewayError::Platform("No message handler configured".into()))?;
+            let Some(handler) = handler.as_ref() else {
+                self.reply_finish(session_key);
+                return Err(GatewayError::Platform(
+                    "No message handler configured".into(),
+                ));
+            };
             let messages = self.inject_runtime_hints(session_key, messages).await;
             handler(messages).await
         };

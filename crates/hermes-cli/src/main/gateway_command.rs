@@ -965,6 +965,7 @@ async fn run_gateway(
                 run_cron_webhook_delivery_loop(cron_rx, webhooks_path_clone).await;
             }));
 
+            gateway.enable_reply_recovery(&hermes_state_root(&cli), process_pid_is_alive);
             register_gateway_adapters(&config, gateway.clone(), &mut sidecar_tasks).await?;
 
             if gateway.adapter_names().await.is_empty() {
@@ -978,11 +979,17 @@ async fn run_gateway(
                 }
             }
 
-            gateway.enable_reply_recovery(&hermes_state_root(&cli));
             gateway.start_all().await?;
-            let recovered = gateway.recover_pending_replies().await;
-            if recovered > 0 {
-                tracing::info!(recovered, "Sent replies a gateway restart had cut off");
+            {
+                let gw_recovery = gateway.clone();
+                sidecar_tasks.push(tokio::spawn(async move {
+                    let recovered = gw_recovery
+                        .recover_pending_replies_with_retries(std::time::Duration::from_secs(60))
+                        .await;
+                    if recovered > 0 {
+                        tracing::info!(recovered, "Sent replies a gateway restart had cut off");
+                    }
+                }));
             }
             {
                 let gw_cron_delivery = gateway.clone();

@@ -234,18 +234,7 @@ fn build_agent_for_gateway_context(
             Path::new(h),
         );
     }
-    let state_root = home
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(hermes_config::hermes_home);
-    let agent =
-        hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider));
-    // Runs `delegate_task` here (no handler took its signal before) and keeps
-    // each child's answer until a turn of this session receives it, across
-    // gateway restarts.
-    let orchestrator = Arc::new(hermes_agent::SubAgentOrchestrator::from_parent(
-        &agent, state_root,
-    ));
-    agent.with_sub_agent_orchestrator(orchestrator)
+    hermes_agent::attach_discovered_memory(AgentLoop::new(agent_config, agent_tools, provider))
 }
 
 fn extract_last_assistant_reply(messages: &[hermes_core::Message]) -> String {

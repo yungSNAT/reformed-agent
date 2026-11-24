@@ -12,47 +12,74 @@ fn record(session: &str, process: &str) -> PendingReply {
     }
 }
 
+fn never_alive(_pid: u32) -> bool {
+    false
+}
+
 #[test]
-fn a_process_updates_and_clears_only_its_own_records() {
+fn a_start_takes_over_only_records_that_stopped_processes_left() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
     write(&dir, &record("mine", &this_process()));
-    write(&dir, &record("theirs", "1-1"));
+    write(&dir, &record("stopped", "1-1"));
+    write(&dir, &record("running", "7-1"));
+    std::fs::write(dir.join("broken.json"), b"{ not json").expect("write");
 
     answered(&dir, "mine", "done");
-    answered(&dir, "theirs", "not mine to write");
-    let left = left_by_others(&dir);
-    assert_eq!(left.len(), 1, "a process never recovers its own turns");
-    assert_eq!(left[0].session_key, "theirs");
-    assert_eq!(left[0].reply, None);
-    assert_eq!(left[0].thread_id.as_deref(), Some("7"));
+    answered(&dir, "stopped", "not mine to write");
+    assert_eq!(take_over(&dir, |pid| pid == 7), 1);
+    let taken = recovering(&dir);
+    assert_eq!(taken.len(), 1, "own and live writers' records stay");
+    assert_eq!(taken[0].1.session_key, "stopped");
+    assert_eq!(taken[0].1.reply, None);
+    assert_eq!(taken[0].1.thread_id.as_deref(), Some("7"));
+    assert!(
+        !dir.join("broken.json").exists(),
+        "an unreadable record is deleted"
+    );
 
-    finish(&dir, "theirs");
+    // A new turn of the same session writes its own record beside it.
+    write(&dir, &record("stopped", &this_process()));
+    assert_eq!(recovering(&dir).len(), 1);
+    finish(&dir, "stopped");
     finish(&dir, "mine");
     assert_eq!(
-        left_by_others(&dir).len(),
+        recovering(&dir).len(),
         1,
-        "finish leaves another's record"
+        "finish leaves taken-over records"
     );
-    assert_eq!(std::fs::read_dir(&dir).expect("dir").count(), 1);
+    assert_eq!(json_files(&dir).len(), 1, "the running writer's record");
 }
 
 #[test]
 fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
-    let mut stuck = record("stuck", "1-1");
-    write(&dir, &stuck);
+    write(&dir, &record("stuck", "1-1"));
+    assert_eq!(take_over(&dir, never_alive), 1);
+    let (path, mut stuck) = recovering(&dir).remove(0);
     for n in 1..=MAX_SEND_ATTEMPTS {
-        assert!(count_attempt(&dir, &mut stuck));
-        assert_eq!(
-            left_by_others(&dir)[0].attempts,
-            n,
-            "written before the send"
-        );
+        assert!(count_attempt(&path, &mut stuck));
+        assert_eq!(recovering(&dir)[0].1.attempts, n, "written before the send");
     }
-    assert!(!count_attempt(&dir, &mut stuck));
-    assert!(left_by_others(&dir).is_empty());
+    assert!(!count_attempt(&path, &mut stuck));
+    assert!(recovering(&dir).is_empty());
+}
+
+#[cfg(unix)]
+#[test]
+fn no_send_is_made_when_its_count_cannot_be_written() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    write(&dir, &record("stuck", "1-1"));
+    take_over(&dir, never_alive);
+    let (path, mut stuck) = recovering(&dir).remove(0);
+    let taken = recovering_dir(&dir);
+    std::fs::set_permissions(&taken, std::fs::Permissions::from_mode(0o500)).expect("chmod");
+    let counted = count_attempt(&path, &mut stuck);
+    std::fs::set_permissions(&taken, std::fs::Permissions::from_mode(0o700)).expect("chmod");
+    assert!(!counted);
 }
 
 #[cfg(unix)]

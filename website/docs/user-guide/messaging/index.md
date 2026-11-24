@@ -325,14 +325,14 @@ Background tasks on messaging platforms are fire-and-forget — you don't need t
 
 ## Restarts
 
-A gateway restart does not lose a reply. Before a turn runs, the gateway writes a record for its session under `~/.hermes/gateway/pending-replies/`; the record keeps the reply once the agent answers, and goes once the reply is sent. On the next start the gateway handles each record an earlier process left:
+A gateway restart does not lose a reply, short of the send cap below. Before a turn runs, the gateway writes a record for its session under `~/.hermes/gateway/pending-replies/`; the record keeps the reply once the agent answers, and goes once the reply is sent. On the next start, before any chat is read, the gateway sets aside each record a stopped process left, so new messages in the same chat cannot write over it, and then handles each one:
 
 - a reply that was ready but not sent is sent, headed 'Reply recovered after a gateway restart:';
 - a turn the restart cut off before it answered gets one notice asking you to send the message again. The turn is not run again, as that could repeat its commands, file writes or messages.
 
-Each send is counted before it is made, and a record is dropped after 3 sends that fail. Delivery is at least once: a gateway that stops after a send but before deleting the record sends it again on the next start. A turn that fails deletes its record, as you already got the error.
+Each send is counted before it is made. A send that fails is tried again a minute later, and a record is dropped after 3 sends that fail. Delivery is at least once: a gateway that stops after a send but before deleting the record sends it again on the next start. A turn that fails deletes its record, as you already got the error. A reply whose own send failed during the turn keeps its record until the session's next turn, so a restart before then sends it.
 
-A sub-agent's answer that an earlier process lost (a failed run or a stopped gateway) is handed to the session's next turn, as in the CLI.
+On Linux and macOS a record whose gateway process is still running (another gateway on the same home, or an old one still finishing a turn) is left to that process. On Windows the gateway cannot tell, so it takes over every record a different process wrote.
 
 On Linux and macOS the records and their folder are readable by their owner only. On Windows they take the permissions of the folder they are in (the user profile's by default).
 

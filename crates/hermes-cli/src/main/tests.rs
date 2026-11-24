@@ -1277,7 +1277,6 @@ mod tests {
     include!("tests/provider_setup.rs");
 
     include!("tests/uninstall.rs");
-    include!("tests/gateway_recovery.rs");
 
     mod env_profile_diagnostics;
 }

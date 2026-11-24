@@ -4,13 +4,16 @@
 //! `<hermes home>/gateway/pending-replies/`; when the agent answers, the
 //! record keeps the reply; once the reply is sent, the record goes. A turn
 //! that fails deletes its record: the user already gets the error notice.
-//! After a restart the gateway handles each record another process left:
-//! a stored reply is sent, and a turn that never answered gets one notice
-//! asking the user to send the message again. The turn is not run again,
+//! At start, before any adapter routes a turn, the gateway moves the
+//! records a stopped process left into `recovering/`, so this process's
+//! turns never write over them. It then handles each: a stored reply is
+//! sent, and a turn that never answered gets one notice asking the user
+//! to send the message again. The turn is not run again,
 //! as that could repeat its tool calls (commands, file writes, messages).
 //!
-//! Each send is counted in the record before it is made, and a record is
-//! dropped after [`MAX_SEND_ATTEMPTS`]. Delivery is at least once, never
+//! Each send is counted in the record before it is made, failed sends are
+//! retried in the same process, and a record is dropped after
+//! [`MAX_SEND_ATTEMPTS`]. Delivery is at least once, never
 //! exactly once: a process that stops after a send but before the record is
 //! deleted sends it again on the next start. None is lost short of the cap.
 //!
@@ -86,34 +89,53 @@ fn record_path(dir: &Path, session_key: &str) -> PathBuf {
     dir.join(format!("{name}.json"))
 }
 
-/// Write `record` whole or not at all; owner-only on Unix.
-pub fn write(dir: &Path, record: &PendingReply) {
+/// Where a start moves the records earlier processes left, so turns of this
+/// process never write over them.
+pub fn recovering_dir(dir: &Path) -> PathBuf {
+    dir.join("recovering")
+}
+
+fn private_dir(dir: &Path) -> bool {
     if let Err(e) = std::fs::create_dir_all(dir) {
         tracing::debug!(error = %e, "pending reply dir create failed");
-        return;
+        return false;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o700));
     }
-    let path = record_path(dir, &record.session_key);
+    true
+}
+
+/// Write `record` to `path` whole or not at all; owner-only on Unix.
+fn write_at(path: &Path, record: &PendingReply) -> bool {
+    if !path.parent().is_some_and(private_dir) {
+        return false;
+    }
     let body = match serde_json::to_vec_pretty(record) {
         Ok(body) => body,
         Err(e) => {
             tracing::debug!(error = %e, "pending reply serialize failed");
-            return;
+            return false;
         }
     };
-    if let Err(e) = hermes_config::atomic_write_bytes(&path, &body) {
+    if let Err(e) = hermes_config::atomic_write_bytes(path, &body) {
         tracing::warn!(error = %e, path = %path.display(), "pending reply write failed");
-        return;
+        return false;
     }
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
     }
+    true
+}
+
+/// Write `record` as its session's turn in flight. False when it could not be
+/// written.
+pub fn write(dir: &Path, record: &PendingReply) -> bool {
+    write_at(&record_path(dir, &record.session_key), record)
 }
 
 /// Keep `reply` in this process's record for `session_key`.
@@ -136,41 +158,94 @@ pub fn finish(dir: &Path, session_key: &str) {
     }
 }
 
+/// The record at `path`. One that does not parse is deleted, so its text
+/// does not stay on disk.
 fn read(path: &Path) -> Option<PendingReply> {
-    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+    let bytes = std::fs::read(path).ok()?;
+    match serde_json::from_slice(&bytes) {
+        Ok(record) => Some(record),
+        Err(e) => {
+            tracing::warn!(error = %e, path = %path.display(), "deleting an unreadable pending reply");
+            let _ = std::fs::remove_file(path);
+            None
+        }
+    }
 }
 
-/// Records other processes left, oldest name first.
-pub fn left_by_others(dir: &Path) -> Vec<PendingReply> {
+fn json_files(dir: &Path) -> Vec<PathBuf> {
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Vec::new();
     };
-    let me = this_process();
-    let mut records: Vec<PendingReply> = entries
+    entries
         .flatten()
-        .filter(|e| e.path().extension().is_some_and(|x| x == "json"))
-        .filter_map(|e| read(&e.path()))
-        .filter(|r| r.process != me)
+        .map(|e| e.path())
+        .filter(|p| p.is_file() && p.extension().is_some_and(|x| x == "json"))
+        .collect()
+}
+
+/// The process id a record's writer had.
+fn writer_pid(record: &PendingReply) -> Option<u32> {
+    record.process.split('-').next()?.parse().ok()
+}
+
+/// At start, before any turn runs: move each record a stopped process left
+/// into [`recovering_dir`]. Records this process wrote, and records whose
+/// writer `process_alive` says is still running (another gateway, or an old
+/// one still finishing a turn), stay. Returns the number moved.
+pub fn take_over(dir: &Path, process_alive: fn(u32) -> bool) -> usize {
+    let me = this_process();
+    let to = recovering_dir(dir);
+    let mut moved = 0;
+    for path in json_files(dir) {
+        let Some(record) = read(&path) else {
+            continue;
+        };
+        if record.process == me {
+            continue;
+        }
+        // A writer with this process's id ran before it (a container's pid 1).
+        if writer_pid(&record).is_some_and(|pid| pid != std::process::id() && process_alive(pid)) {
+            continue;
+        }
+        let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+            continue;
+        };
+        let writer: String = record
+            .process
+            .chars()
+            .filter(char::is_ascii_alphanumeric)
+            .collect();
+        if !private_dir(&to) {
+            return moved;
+        }
+        match std::fs::rename(&path, to.join(format!("{stem}-{writer}.json"))) {
+            Ok(()) => moved += 1,
+            Err(e) => tracing::warn!(error = %e, "pending reply not taken over"),
+        }
+    }
+    moved
+}
+
+/// Records taken over at start and not yet sent, by session key.
+pub fn recovering(dir: &Path) -> Vec<(PathBuf, PendingReply)> {
+    let mut records: Vec<(PathBuf, PendingReply)> = json_files(&recovering_dir(dir))
+        .into_iter()
+        .filter_map(|path| read(&path).map(|record| (path, record)))
         .collect();
-    records.sort_by(|a, b| a.session_key.cmp(&b.session_key));
+    records.sort_by(|a, b| a.1.session_key.cmp(&b.1.session_key));
     records
 }
 
-/// Count a send of `record` before it is made. Returns false (and drops the
-/// record) once the cap is reached.
-pub fn count_attempt(dir: &Path, record: &mut PendingReply) -> bool {
+/// Count a send of the taken-over `record` at `path` before it is made.
+/// Returns false, and the send must not be made, once the cap is reached (the
+/// record is then dropped) or when the count could not be written.
+pub fn count_attempt(path: &Path, record: &mut PendingReply) -> bool {
     if record.attempts >= MAX_SEND_ATTEMPTS {
-        remove(dir, &record.session_key);
+        let _ = std::fs::remove_file(path);
         return false;
     }
     record.attempts += 1;
-    write(dir, record);
-    true
-}
-
-/// Drop the record for `session_key`, whoever wrote it.
-pub fn remove(dir: &Path, session_key: &str) {
-    let _ = std::fs::remove_file(record_path(dir, session_key));
+    write_at(path, record)
 }
 
 #[cfg(test)]

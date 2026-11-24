@@ -7,14 +7,28 @@ async fn recovery_gateway(home: &Path, adapter: Arc<dyn PlatformAdapter>) -> Gat
         GatewayConfig::default(),
     );
     gw.register_adapter("test", adapter).await;
-    gw.enable_reply_recovery(home);
+    gw.enable_reply_recovery(home, |_| false);
     gw
 }
 
-fn record_files(home: &Path) -> Vec<PathBuf> {
-    std::fs::read_dir(crate::reply_recovery::records_dir(home))
-        .map(|entries| entries.flatten().map(|e| e.path()).collect())
+fn json_in(dir: &Path) -> Vec<PathBuf> {
+    std::fs::read_dir(dir)
+        .map(|entries| {
+            entries
+                .flatten()
+                .map(|e| e.path())
+                .filter(|p| p.extension().is_some_and(|x| x == "json"))
+                .collect()
+        })
         .unwrap_or_default()
+}
+
+/// Records of turns in flight, and records taken over at start.
+fn record_files(home: &Path) -> Vec<PathBuf> {
+    let dir = crate::reply_recovery::records_dir(home);
+    let mut files = json_in(&dir);
+    files.extend(json_in(&crate::reply_recovery::recovering_dir(&dir)));
+    files
 }
 
 fn left_by_an_earlier_process(home: &Path, session: &str, reply: Option<&str>) {
@@ -121,6 +135,99 @@ async fn a_restart_sends_each_lost_reply_once_and_reports_each_cut_off_turn() {
             ),
         ]
     );
+}
+
+#[tokio::test]
+async fn a_turn_during_recovery_keeps_its_own_record_and_the_lost_reply_is_sent() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    // Learn the session key a turn from chat1 records.
+    let first = recovery_gateway(tmp.path(), adapter.clone()).await;
+    let home = tmp.path().to_path_buf();
+    let key = Arc::new(Mutex::new(String::new()));
+    let seen = key.clone();
+    first
+        .set_message_handler(Arc::new(move |_| {
+            let (home, seen) = (home.clone(), seen.clone());
+            Box::pin(async move {
+                let file = record_files(&home).remove(0);
+                let record: crate::reply_recovery::PendingReply =
+                    serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+                *seen.lock().unwrap() = record.session_key;
+                Ok("first".to_string())
+            })
+        }))
+        .await;
+    first.route_message(&incoming("hello")).await.expect("route");
+    let key = key.lock().unwrap().clone();
+    assert!(!key.is_empty());
+
+    // An earlier process answered that session and stopped before sending.
+    left_by_an_earlier_process(tmp.path(), &key, Some("the lost answer"));
+    let gw = recovery_gateway(tmp.path(), adapter).await;
+    let home = tmp.path().to_path_buf();
+    let during = Arc::new(Mutex::new(0));
+    let count = during.clone();
+    gw.set_message_handler(Arc::new(move |_| {
+        let (home, count) = (home.clone(), count.clone());
+        Box::pin(async move {
+            *count.lock().unwrap() = record_files(&home).len();
+            Ok("new answer".to_string())
+        })
+    }))
+    .await;
+    // The turn routes before recovery runs.
+    gw.route_message(&incoming("hello?")).await.expect("route");
+    assert_eq!(*during.lock().unwrap(), 2, "its own record beside the taken-over one");
+    assert_eq!(gw.recover_pending_replies().await, 1);
+    assert!(record_files(tmp.path()).is_empty());
+    let sent = sent.lock().unwrap().clone();
+    assert!(
+        sent.iter().any(|(_, text)| text.ends_with("the lost answer")),
+        "{sent:?}"
+    );
+    assert!(sent.iter().any(|(_, text)| text == "new answer"), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_turn_with_no_handler_leaves_no_record() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: Arc::new(Mutex::new(Vec::new())),
+        }),
+    )
+    .await;
+    assert!(gw.route_message(&incoming("hello")).await.is_err());
+    assert!(record_files(tmp.path()).is_empty());
+}
+
+#[tokio::test]
+async fn a_reply_that_cannot_be_sent_is_retried_in_the_same_process_up_to_the_cap() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    left_by_an_earlier_process(tmp.path(), "test:stuck", Some("stuck answer"));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(FailingSendAdapter {
+            messages: attempts.clone(),
+            error: "platform offline",
+        }),
+    )
+    .await;
+    let sent = gw
+        .recover_pending_replies_with_retries(std::time::Duration::from_millis(5))
+        .await;
+    assert_eq!(sent, 0);
+    assert_eq!(
+        attempts.lock().unwrap().len(),
+        crate::reply_recovery::MAX_SEND_ATTEMPTS as usize
+    );
+    assert!(record_files(tmp.path()).is_empty(), "dropped at the cap");
 }
 
 #[tokio::test]
