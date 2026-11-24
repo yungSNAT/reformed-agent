@@ -139,7 +139,11 @@ fn command_allowed_by_profile(
         return true;
     }
     let base = command_basename(command);
-    if !allowlist.is_empty() && allowlist.iter().any(|entry| entry == &base) {
+    let name = program_name(command);
+    if allowlist
+        .iter()
+        .any(|entry| entry == &base || name.as_deref() == Some(entry.as_str()))
+    {
         return true;
     }
 
@@ -151,33 +155,75 @@ fn command_allowed_by_profile(
     }
 }
 
-/// Shells the balanced profile refuses to launch directly.
+/// Shells, and launchers that start one, the balanced profile refuses to
+/// launch directly.
 const DIRECT_SHELLS: &[&str] = &[
     "sh",
     "bash",
+    "rbash",
     "zsh",
     "fish",
     "dash",
+    "ash",
     "ksh",
+    "mksh",
+    "yash",
     "csh",
     "tcsh",
+    "nu",
+    "elvish",
+    "xonsh",
+    "busybox",
+    "toybox",
     "cmd",
     "powershell",
     "pwsh",
+    "wsl",
 ];
 
-/// Whether `command` names a shell, by its last path component under either
-/// separator, ignoring case, trailing dots and spaces (Windows drops them) and
-/// a `.exe` suffix. A shell reached under another name is not detected.
+/// The name of the program `command` runs, as Windows resolves the path:
+/// split on either separator, `.` dropped and `..` stepping back, trailing
+/// dots and spaces trimmed from each part, folded to lower case (Unicode, as
+/// a case-insensitive file system folds it) and a `.exe` suffix dropped. None
+/// when no name is left or a part is 3 or more dots.
+fn program_name(command: &str) -> Option<String> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in command.split(['/', '\\']) {
+        match part.trim_end_matches(' ') {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            // Only dots: how Windows reads it is not settled here.
+            dots if dots.bytes().all(|byte| byte == b'.') => return None,
+            part => parts.push(part.trim_end_matches(['.', ' '])),
+        }
+    }
+    let name: String = parts
+        .last()?
+        .chars()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(
+        name.strip_suffix(".exe")
+            .map(str::to_string)
+            .unwrap_or(name),
+    )
+}
+
+/// Whether `command` runs a listed shell (see [`program_name`]). A command
+/// that leaves no name, or whose name looks like an 8.3 short name
+/// (`POWERS~1.EXE`), is refused too. A shell copied or linked under another
+/// name is not detected.
 fn is_direct_shell(command: &str) -> bool {
-    let name = command
-        .rsplit(['/', '\\'])
-        .next()
-        .unwrap_or(command)
-        .trim_end_matches(['.', ' '])
-        .to_ascii_lowercase();
-    let name = name.strip_suffix(".exe").unwrap_or(&name);
-    DIRECT_SHELLS.contains(&name)
+    let Some(name) = program_name(command) else {
+        return true;
+    };
+    let short_name = name
+        .split_once('~')
+        .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
+    short_name || DIRECT_SHELLS.contains(&name.as_str())
 }
 
 fn default_allowlist() -> Vec<String> {
