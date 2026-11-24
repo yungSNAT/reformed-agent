@@ -2194,11 +2194,7 @@ mod tests {
         for command in [
             "cmd",
             "CMD.EXE",
-            "cmd.exe.",
-            r"C:\Windows\System32\cmd.exe",
-            "C:/Windows/System32/cmd.exe",
             "powershell",
-            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe",
             "pwsh",
             "pwsh.exe",
             "/usr/bin/pwsh",
@@ -2207,21 +2203,13 @@ mod tests {
             "ksh",
             "tcsh",
             "csh",
-            // Windows drops `.` and resolves `..` after a file name.
-            r"C:\Windows\System32\cmd.exe\.",
-            r"C:\Windows\System32\cmd.exe\x\..",
-            r"C:\Windows\System32\cmd.exe\..\cmd.exe\.",
             "C:/Windows/System32/cmd.exe/.",
-            r"C:\Program Files\PowerShell\7\pwsh.exe\x\..",
-            r"C:\Windows\System32\cmd.exe\...",
             "..",
             "",
-            r"C:\Windows\System32\wsl.exe",
+            "wsl",
+            "wsl.exe",
             "busybox",
             "rbash",
-            "C:cmd.exe",
-            r"C:\Windows\System32\cmd.exe\. .",
-            r"C:\Windows\System32\cmd.exe\ .",
             "POWERS~1.EXE",
             // A case-insensitive file system folds the long s to `s`.
             "ba\u{17f}h",
@@ -2231,22 +2219,71 @@ mod tests {
                 "{command} should be blocked"
             );
         }
+        #[cfg(windows)]
         for command in [
-            "node",
-            "node.exe",
+            "cmd.exe.",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe",
+            // Windows drops `.` and resolves `..` after a file name.
+            r"C:\Windows\System32\cmd.exe\.",
+            r"C:\Windows\System32\cmd.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\..\cmd.exe\.",
+            r"C:\Program Files\PowerShell\7\pwsh.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\...",
+            r"C:\Windows\System32\wsl.exe",
+            "C:cmd.exe",
+            "C:",
+            r"tools\C:",
+            r"C:\Windows\System32\cmd.exe\. .",
+            r"C:\Windows\System32\cmd.exe\ .",
+            r"C:\Windows\System32\cmd.exe\. \..",
+            r"C:\Windows\System32\cmd.exe\.. \..",
+            r"C:\Windows\System32\cmd.exe\ . \..",
+            r"C:\Windows\System32\cmd.exe\...\..",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        for command in ["node", "node.exe", "uvx"] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        #[cfg(windows)]
+        for command in [
             r"C:\Program Files\nodejs\node.exe",
-            "uvx",
+            r"C:\Windows\System32\...\..\Windows\System32\node.exe",
         ] {
             assert!(
                 command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
                 "{command} should be allowed"
             );
         }
+        #[cfg(not(windows))]
+        {
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/.../node",
+                &[]
+            ));
+            assert!(!command_allowed_by_profile(
+                McpSandboxProfile::Strict,
+                r"/tmp/other\node",
+                &["node".to_string()]
+            ));
+        }
         let allowlist = vec!["pwsh".to_string()];
         for command in [
             "pwsh",
             "pwsh.exe",
+            #[cfg(windows)]
             r"C:\Program Files\PowerShell\7\pwsh.exe",
+            #[cfg(not(windows))]
+            "/usr/local/bin/pwsh.exe",
         ] {
             assert!(
                 command_allowed_by_profile(McpSandboxProfile::Balanced, command, &allowlist),
