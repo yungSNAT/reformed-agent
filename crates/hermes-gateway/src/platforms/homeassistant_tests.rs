@@ -1,6 +1,7 @@
 use super::*;
 
 use futures::{SinkExt, StreamExt};
+use tokio::io::AsyncReadExt;
 use tokio::net::{TcpListener, TcpStream};
 use tokio_tungstenite::WebSocketStream;
 use wiremock::matchers::{body_json, header, method, path};
@@ -160,6 +161,22 @@ async fn a_silent_peer_is_dropped_half_a_heartbeat_after_the_ping() {
     server.abort();
 }
 
+async fn read_ping_frame(tcp: &mut TcpStream) {
+    let mut header = [0u8; 2];
+    tcp.read_exact(&mut header).await.expect("ping header");
+    assert_eq!(
+        header[0] & 0x0f,
+        0x9,
+        "expected ping frame, got {:02x}",
+        header[0]
+    );
+    let masked = (header[1] & 0x80) != 0;
+    let len = usize::from(header[1] & 0x7f);
+    assert!(len < 126, "unexpected extended ping length {len}");
+    let mut rest = vec![0u8; usize::from(masked) * 4 + len];
+    tcp.read_exact(&mut rest).await.expect("ping payload");
+}
+
 #[tokio::test]
 async fn non_pong_frame_after_ping_resets_heartbeat() {
     let listener = TcpListener::bind("127.0.0.1:0").await.expect("bind");
@@ -171,24 +188,19 @@ async fn non_pong_frame_after_ping_resets_heartbeat() {
         .heartbeat = Duration::from_millis(200);
     let saw_second_ping = Arc::new(std::sync::atomic::AtomicBool::new(false));
     let saw_flag = Arc::clone(&saw_second_ping);
-    // Answer the first ping with a non-Pong frame so reply_due clears, confirm
-    // a second ping fires on the renewed idle timer, then stay silent.
+    // Peek for ping 1 and unwrap the TcpStream after send_text so tungstenite
+    // never queues or flushes an automatic Frame::pong back to the listener.
     let server = tokio::spawn(async move {
         let mut ws = accept_handshake(&listener, true).await.expect("handshake");
-        while let Some(Ok(frame)) = ws.next().await {
-            if matches!(frame, Message::Ping(_)) {
-                break;
-            }
-        }
+        let n = ws.get_ref().peek(&mut [0u8; 1]).await.expect("peek ping");
+        assert!(n > 0, "peer closed before first ping");
         send_text(&mut ws, serde_json::json!({"type": "pong"})).await;
-        while let Some(Ok(frame)) = ws.next().await {
-            if matches!(frame, Message::Ping(_)) {
-                saw_flag.store(true, Ordering::SeqCst);
-                break;
-            }
-        }
-        tokio::time::sleep(Duration::from_secs(3)).await;
-        drop(ws);
+        let mut tcp = ws.into_inner();
+        read_ping_frame(&mut tcp).await;
+        read_ping_frame(&mut tcp).await;
+        saw_flag.store(true, Ordering::SeqCst);
+        tokio::time::sleep(Duration::from_secs(4)).await;
+        drop(tcp);
     });
     let mut ws = adapter.inner.connect().await.expect("connect");
     let started = std::time::Instant::now();

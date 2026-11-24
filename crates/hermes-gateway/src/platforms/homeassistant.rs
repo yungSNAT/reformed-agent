@@ -175,7 +175,7 @@ fn py_float(f: f64) -> String {
     if f == 0.0 {
         return if f.is_sign_negative() { "-0.0" } else { "0.0" }.into();
     }
-    // Reuse serde_json's shortest digits (ryu), whose midpoint tie-breaking
+    // Reuse serde_json's shortest digits (zmij), whose midpoint tie-breaking
     // matches CPython's dtoa where std Display diverges.
     let raw = serde_json::to_string(&f).unwrap_or_else(|_| f.to_string());
     let (neg, unsigned) = match raw.strip_prefix('-') {
