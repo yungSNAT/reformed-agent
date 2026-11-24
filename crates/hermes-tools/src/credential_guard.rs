@@ -1689,6 +1689,51 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_refuses_a_hard_link_to_a_protected_file_under_another_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = home.join(".hermes");
+        let elsewhere = tmp.path().join("work");
+        for dir in [
+            hermes_home.join("auth"),
+            home.join(".ssh"),
+            home.join(".claude"),
+            elsewhere.clone(),
+        ] {
+            std::fs::create_dir_all(dir).expect("dir");
+        }
+        for (index, protected) in [
+            hermes_home.join(".env"),
+            hermes_home.join("auth").join("tokens.json"),
+            home.join(".ssh").join("id_ed25519"),
+            home.join(".bashrc"),
+            home.join(".claude").join(".credentials.json"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            std::fs::write(protected, "x").expect("protected file");
+            let alias = elsewhere.join(format!("notes-{index}.txt"));
+            std::fs::hard_link(protected, &alias).expect("hard link");
+            assert!(
+                is_write_denied_with_roots(&alias, Some(&home), Some(&hermes_home)),
+                "a hard link to {} was writable",
+                protected.display()
+            );
+        }
+
+        // A multiply-linked file that is no protected file stays writable.
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
     fn write_deny_expands_tilde_against_home_root() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
