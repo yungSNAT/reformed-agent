@@ -1238,6 +1238,12 @@ note the fixtures"));
     mod replay_command_contract;
     #[cfg(unix)]
     mod session_mission_contract;
+    #[cfg(unix)]
+    mod session_steering_contract;
+    #[cfg(unix)]
+    mod browser_command_contract;
+    #[cfg(unix)]
+    mod triage_contract;
     mod runtime_parity_ops;
     mod skill_model_policy;
 
