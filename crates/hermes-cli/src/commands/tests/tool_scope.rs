@@ -205,7 +205,8 @@
         assert_eq!(agent_tool_names(&app), planned);
     }
 
-    #[tokio::test]
+    // Multi-threaded, as the CLI runs: a tool call blocks in place.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_sub_agent_given_its_own_toolset_cannot_call_a_hidden_tool() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
@@ -224,7 +225,24 @@
         assert_eq!(*calls.lock().unwrap(), Vec::<String>::new());
     }
 
-    #[tokio::test]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_planned_tool_called_by_name_runs() {
+        let _guard = test_env_lock::lock_async().await;
+        let tmp = tempdir().expect("tempdir");
+        let _home_guard = TempHomeGuard::new(tmp.path());
+        let mut app = build_test_app_with_stream(tmp.path()).await;
+        let calls = scope_probe_session(&mut app);
+
+        run_scope_turn(
+            &app,
+            vec![scope_tool_call("p1", "probe_visible", serde_json::json!({}))],
+        )
+        .await;
+
+        assert_eq!(*calls.lock().unwrap(), ["probe_visible"]);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn a_hidden_tool_called_by_name_does_not_run() {
         let _guard = test_env_lock::lock_async().await;
         let tmp = tempdir().expect("tempdir");
