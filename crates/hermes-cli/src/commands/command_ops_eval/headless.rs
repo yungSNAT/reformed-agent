@@ -198,15 +198,115 @@ mod headless_report_tests {
         );
     }
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: &str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value);
+            Self { key, previous }
+        }
+
+        fn remove(key: &'static str) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::remove_var(key);
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.take() {
+                Some(v) => std::env::set_var(self.key, v),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[test]
     fn flags_win_over_environment_and_blanks_count_as_unset() {
-        let var = "HERMES_HEADLESS_REPORT_TEST_UNSET_VAR";
-        assert_eq!(
-            flag_or_env(Some("flag".into()), var).as_deref(),
-            Some("flag")
-        );
-        assert_eq!(flag_or_env(Some("  ".into()), var), None);
-        assert_eq!(flag_or_env(None, var), None);
+        let _lock = crate::test_env_lock::lock();
+        let var = "HERMES_HEADLESS_REPORT_TEST_VAR";
+        {
+            let _unset = ScopedEnvVar::remove(var);
+            assert_eq!(
+                flag_or_env(Some("flag".into()), var).as_deref(),
+                Some("flag")
+            );
+            assert_eq!(flag_or_env(Some("  ".into()), var), None);
+            assert_eq!(flag_or_env(None, var), None);
+        }
+        {
+            let _populated = ScopedEnvVar::set(var, "env");
+            assert_eq!(
+                flag_or_env(Some("flag".into()), var).as_deref(),
+                Some("flag")
+            );
+            assert_eq!(
+                flag_or_env(Some("  ".into()), var).as_deref(),
+                Some("env")
+            );
+            assert_eq!(flag_or_env(None, var).as_deref(), Some("env"));
+        }
+        {
+            let _blank_env = ScopedEnvVar::set(var, "   ");
+            assert_eq!(
+                flag_or_env(Some("flag".into()), var).as_deref(),
+                Some("flag")
+            );
+            assert_eq!(flag_or_env(Some("  ".into()), var), None);
+            assert_eq!(flag_or_env(None, var), None);
+        }
+    }
+
+    #[tokio::test]
+    async fn slo_rollback_uses_env_on_blank_flags_and_reports_rollback_failure() {
+        let _lock = crate::test_env_lock::lock_async().await;
+        let _check = ScopedEnvVar::set("HERMES_SLO_CHECK_CMD", "false");
+        let _rollback = ScopedEnvVar::set("HERMES_SLO_ROLLBACK_CMD", "false");
+        let repo = tempfile::tempdir().expect("repo");
+        let report = repo.path().join("out/slo-env.json");
+        let violated = run_slo_rollback_cli(SloRollbackOptions {
+            repo_root: Some(repo.path().to_path_buf()),
+            check_cmd: Some("  ".into()),
+            rollback_cmd: None,
+            dry_run: false,
+            report_path: Some(report.clone()),
+            json: false,
+        })
+        .await
+        .expect("env rollback failure");
+        assert!(violated);
+        let written: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&report).expect("report")).expect("json");
+        assert_eq!(written["violated"], true);
+        assert_eq!(written["rollback"]["ok"], false);
+    }
+
+    #[test]
+    fn session_eval_empty_dir_writes_fail_report() {
+        let dir = tempfile::tempdir().expect("dir");
+        let sessions = dir.path().join("empty-sessions");
+        std::fs::create_dir_all(&sessions).expect("sessions");
+        let out = dir.path().join("reports/empty-eval.json");
+        run_session_eval_cli(SessionEvalOptions {
+            sessions_dir: Some(sessions),
+            max_sessions: 5,
+            out_json: Some(out.clone()),
+            json: false,
+        })
+        .expect("empty eval succeeds");
+        let report: serde_json::Value =
+            serde_json::from_str(&std::fs::read_to_string(&out).expect("report")).expect("json");
+        assert_eq!(report["ok"], false);
+        assert!(report["reasons"]
+            .as_array()
+            .expect("reasons")
+            .iter()
+            .any(|r| r == "no_saved_sessions"));
     }
 
     #[test]
