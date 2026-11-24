@@ -162,6 +162,14 @@ mod tests {
         }
     }
 
+    #[test]
+    fn core_trait_contract_provider_has_no_replaceable_credential_by_default() {
+        let provider = FailingProvider;
+        assert!(provider.active_credential().is_none());
+        assert!(!provider.replace_credential("replacement fixture"));
+        assert!(provider.active_credential().is_none());
+    }
+
     /// LLM provider that returns a scripted sequence of outcomes.
     struct SequencedProvider {
         outcomes: Mutex<VecDeque<Result<String, AgentError>>>,
