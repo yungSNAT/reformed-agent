@@ -2156,6 +2156,21 @@ mod tests {
             "ksh",
             "tcsh",
             "csh",
+            // Windows drops `.` and resolves `..` after a file name.
+            r"C:\Windows\System32\cmd.exe\.",
+            r"C:\Windows\System32\cmd.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\..\cmd.exe\.",
+            "C:/Windows/System32/cmd.exe/.",
+            r"C:\Program Files\PowerShell\7\pwsh.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\...",
+            "..",
+            "",
+            r"C:\Windows\System32\wsl.exe",
+            "busybox",
+            "rbash",
+            "POWERS~1.EXE",
+            // A case-insensitive file system folds the long s to `s`.
+            "ba\u{17f}h",
         ] {
             assert!(
                 !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
@@ -2174,11 +2189,16 @@ mod tests {
             );
         }
         let allowlist = vec!["pwsh".to_string()];
-        assert!(command_allowed_by_profile(
-            McpSandboxProfile::Balanced,
+        for command in [
             "pwsh",
-            &allowlist
-        ));
+            "pwsh.exe",
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+        ] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &allowlist),
+                "{command} should be allowlisted"
+            );
+        }
     }
 
     #[test]
