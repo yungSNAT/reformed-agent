@@ -150,7 +150,7 @@ pub async fn handle_cli_chat(
     } else {
         Vec::new()
     };
-    let agent_tool_registry = Arc::new(crate::app::bridge_tool_registry(&tool_registry));
+    let agent_tool_registry = Arc::new(crate::app::bridge_offered_tools(&tool_registry, &tool_schemas));
 
     let build_query_callbacks = || {
         let on_tool_start: ToolStartCallback = Box::new(move |name: &str, args: &serde_json::Value| {

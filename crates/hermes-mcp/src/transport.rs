@@ -139,18 +139,108 @@ fn command_allowed_by_profile(
         return true;
     }
     let base = command_basename(command);
-    if !allowlist.is_empty() && allowlist.iter().any(|entry| entry == &base) {
+    let name = program_name(command);
+    if allowlist
+        .iter()
+        .any(|entry| entry == &base || name.as_deref() == Some(entry.as_str()))
+    {
         return true;
     }
 
     match profile {
         McpSandboxProfile::Strict => false,
-        McpSandboxProfile::Balanced => {
-            // Block direct shell launches in balanced mode unless explicitly allowlisted.
-            !matches!(base.as_str(), "sh" | "bash" | "zsh" | "fish")
-        }
+        // Block direct shell launches in balanced mode unless explicitly allowlisted.
+        McpSandboxProfile::Balanced => !is_direct_shell(name.as_deref()),
         McpSandboxProfile::Relaxed => true,
     }
+}
+
+/// Shells, and launchers that start one, the balanced profile refuses to
+/// launch directly.
+const DIRECT_SHELLS: &[&str] = &[
+    "sh",
+    "bash",
+    "rbash",
+    "zsh",
+    "fish",
+    "dash",
+    "ash",
+    "ksh",
+    "mksh",
+    "yash",
+    "csh",
+    "tcsh",
+    "nu",
+    "elvish",
+    "xonsh",
+    "busybox",
+    "toybox",
+    "cmd",
+    "powershell",
+    "pwsh",
+    "wsl",
+];
+
+#[cfg(windows)]
+fn raw_program_name(command: &str) -> Option<&str> {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in command.split(['/', '\\']) {
+        // Windows only treats exact "." and ".." as dot-components before
+        // stripping trailing spaces and dots from the final component.
+        match part {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            part => parts.push(part),
+        }
+    }
+    let last = parts.last()?.trim_end_matches(['.', ' ']);
+    // A drive-relative name (`C:cmd.exe`) runs the file after the drive.
+    let last = match last.as_bytes() {
+        [drive, b':', ..] if drive.is_ascii_alphabetic() => last[2..].trim_end_matches(['.', ' ']),
+        _ => last,
+    };
+    (!last.is_empty()).then_some(last)
+}
+
+#[cfg(not(windows))]
+fn raw_program_name(command: &str) -> Option<&str> {
+    // Native Unix basename: backslash is a filename byte and `...` is a valid directory.
+    let last = std::path::Path::new(command).file_name()?.to_str()?;
+    (!last.is_empty()).then_some(last)
+}
+
+/// The name of the program `command` runs, using Windows path normalisation
+/// on Windows and the native basename on Unix, folded to lower case (Unicode,
+/// as a case-insensitive file system folds it) with `.exe` stripped. None when
+/// no name is left.
+fn program_name(command: &str) -> Option<String> {
+    let last = raw_program_name(command)?;
+    let name: String = last
+        .chars()
+        .flat_map(char::to_uppercase)
+        .flat_map(char::to_lowercase)
+        .collect();
+    Some(
+        name.strip_suffix(".exe")
+            .map(str::to_string)
+            .unwrap_or(name),
+    )
+}
+
+/// Whether `name` runs a listed shell (see [`program_name`]). A command that
+/// leaves no name, or on Windows has an 8.3 short name (`POWERS~1.EXE`),
+/// is refused too. A shell copied or linked under another name is not detected.
+fn is_direct_shell(name: Option<&str>) -> bool {
+    let Some(name) = name else {
+        return true;
+    };
+    let short_name = cfg!(windows)
+        && name
+            .split_once('~')
+            .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
+    short_name || DIRECT_SHELLS.contains(&name)
 }
 
 fn default_allowlist() -> Vec<String> {
@@ -2109,6 +2199,114 @@ mod tests {
             "node",
             &[]
         ));
+    }
+
+    #[test]
+    fn balanced_profile_blocks_windows_and_posix_shells_by_any_spelling() {
+        for command in [
+            "cmd",
+            "CMD.EXE",
+            "powershell",
+            "pwsh",
+            "pwsh.exe",
+            "/usr/bin/pwsh",
+            "Bash.exe",
+            "/bin/dash",
+            "ksh",
+            "tcsh",
+            "csh",
+            "C:/Windows/System32/cmd.exe/.",
+            "..",
+            "",
+            "wsl",
+            "wsl.exe",
+            "busybox",
+            "rbash",
+            // A case-insensitive file system folds the long s to `s`.
+            "ba\u{17f}h",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        #[cfg(windows)]
+        for command in [
+            "POWERS~1.EXE",
+            "cmd.exe.",
+            r"C:\Windows\System32\cmd.exe",
+            "C:/Windows/System32/cmd.exe",
+            r"C:\Windows\System32\WindowsPowerShell\v1.0\PowerShell.exe",
+            // Windows drops `.` and resolves `..` after a file name.
+            r"C:\Windows\System32\cmd.exe\.",
+            r"C:\Windows\System32\cmd.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\..\cmd.exe\.",
+            r"C:\Program Files\PowerShell\7\pwsh.exe\x\..",
+            r"C:\Windows\System32\cmd.exe\...",
+            r"C:\Windows\System32\wsl.exe",
+            "C:cmd.exe",
+            "C:",
+            r"tools\C:",
+            r"C:\Windows\System32\cmd.exe\. .",
+            r"C:\Windows\System32\cmd.exe\ .",
+            r"C:\Windows\System32\cmd.exe\. \..",
+            r"C:\Windows\System32\cmd.exe\.. \..",
+            r"C:\Windows\System32\cmd.exe\ . \..",
+            r"C:\Windows\System32\cmd.exe\...\..",
+        ] {
+            assert!(
+                !command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be blocked"
+            );
+        }
+        for command in ["node", "node.exe", "uvx"] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        #[cfg(windows)]
+        for command in [
+            r"C:\Program Files\nodejs\node.exe",
+            r"C:\Windows\System32\...\..\Windows\System32\node.exe",
+        ] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &[]),
+                "{command} should be allowed"
+            );
+        }
+        #[cfg(not(windows))]
+        {
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/.../node",
+                &[]
+            ));
+            assert!(command_allowed_by_profile(
+                McpSandboxProfile::Balanced,
+                "/tmp/worker~1",
+                &[]
+            ));
+            assert!(!command_allowed_by_profile(
+                McpSandboxProfile::Strict,
+                r"/tmp/other\node",
+                &["node".to_string()]
+            ));
+        }
+        let allowlist = vec!["pwsh".to_string()];
+        for command in [
+            "pwsh",
+            "pwsh.exe",
+            #[cfg(windows)]
+            r"C:\Program Files\PowerShell\7\pwsh.exe",
+            #[cfg(not(windows))]
+            "/usr/local/bin/pwsh.exe",
+        ] {
+            assert!(
+                command_allowed_by_profile(McpSandboxProfile::Balanced, command, &allowlist),
+                "{command} should be allowlisted"
+            );
+        }
     }
 
     #[test]
