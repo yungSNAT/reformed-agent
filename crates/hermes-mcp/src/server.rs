@@ -491,6 +491,107 @@ mod tests {
     use serde_json::{json, Value};
     use std::sync::Arc;
 
+    #[tokio::test]
+    async fn stdio_server_routes_requests_and_recovers_after_a_malformed_record() {
+        use crate::transport::ServerStdioTransport;
+        use tokio::io::AsyncReadExt;
+
+        let root = tempfile::tempdir().unwrap();
+        let file = root.path().join("fixture.txt");
+        std::fs::write(&file, "fixture resource contents").unwrap();
+        let local_uri = format!("file://{}", file.display());
+        let mut server = McpServer::new(Arc::new(ToolRegistry::new())).with_capability_policy(
+            McpCapabilityPolicy {
+                allow_prompt_read: false,
+                ..Default::default()
+            },
+        );
+        for uri in [local_uri.as_str(), "fixture://unconfigured"] {
+            server.add_resource(ResourceInfo {
+                uri: uri.to_string(),
+                name: "fixture resource".into(),
+                description: None,
+                mime_type: None,
+            });
+        }
+
+        let mut input = br#"{"jsonrpc":"2.0","method":"ping","id":"first"}
+{"jsonrpc":"2.0","method":"notifications/initialized"}
+{invalid json}
+"#
+        .to_vec();
+        for request in [
+            json!({"jsonrpc": "2.0", "method": "fixture/unknown", "id": 2}),
+            json!({"jsonrpc": "2.0", "method": "tools/call", "id": 3}),
+            json!({"jsonrpc": "2.0", "method": "prompts/get", "id": 4}),
+            json!({"jsonrpc": "2.0", "method": "resources/read", "id": 5, "params": {"uri": "fixture://unconfigured"}}),
+            json!({"jsonrpc": "2.0", "method": "resources/read", "id": 6, "params": {"uri": local_uri}}),
+        ] {
+            serde_json::to_writer(&mut input, &request).unwrap();
+            input.push(b'\n');
+        }
+        let (mut reader, sender) = tokio::io::duplex(8_192);
+        let transport = ServerStdioTransport::with_io(std::io::Cursor::new(input), sender);
+        tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            server.start(Box::new(transport)),
+        )
+        .await
+        .expect("server stops at EOF")
+        .expect("server ran");
+
+        let mut raw = String::new();
+        reader.read_to_string(&mut raw).await.unwrap();
+        let replies: Vec<Value> = raw
+            .lines()
+            .map(|line| serde_json::from_str(line).expect("valid response"))
+            .collect();
+        assert_eq!(replies.len(), 7, "{replies:?}");
+        assert_eq!(
+            replies[0],
+            json!({"jsonrpc": "2.0", "id": "first", "result": {}})
+        );
+        assert_eq!(replies[1].get("id"), Some(&Value::Null));
+        assert_eq!(replies[1]["error"]["code"], -32603);
+        for (reply, (id, code)) in
+            replies[2..6]
+                .iter()
+                .zip([(2, -32601), (3, -32602), (4, -32600), (5, -32001)])
+        {
+            assert_eq!(reply["id"], id, "{reply}");
+            assert_eq!(reply["error"]["code"], code, "{reply}");
+        }
+        assert_eq!(replies[6]["id"], 6);
+        assert_eq!(
+            replies[6]["result"]["contents"],
+            json!([{
+                "uri": local_uri, "mimeType": "text/plain", "text": "fixture resource contents"
+            }])
+        );
+    }
+
+    #[tokio::test]
+    async fn stdio_server_stops_when_the_peer_cannot_receive_a_reply() {
+        use crate::transport::ServerStdioTransport;
+
+        let server = McpServer::new(Arc::new(ToolRegistry::new()));
+        for input in [
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}\n".as_slice(),
+            b"{invalid json}\n".as_slice(),
+        ] {
+            let (reader, sender) = tokio::io::duplex(64);
+            drop(reader);
+            let transport = ServerStdioTransport::with_io(input, sender);
+            tokio::time::timeout(
+                std::time::Duration::from_secs(5),
+                server.start(Box::new(transport)),
+            )
+            .await
+            .expect("server stops after a failed reply")
+            .expect("closed peer is handled");
+        }
+    }
+
     struct EchoArgsHandler;
 
     #[async_trait]
