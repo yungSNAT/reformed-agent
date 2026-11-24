@@ -1,26 +1,26 @@
 class HermesAgentUltra < Formula
-  desc "Hermes Agent Ultra autonomous AI agent"
-  homepage "https://github.com/sheawinkler/hermes-agent-ultra"
-  version "0.14.2"
+  desc "Reformed Agent autonomous AI agent"
+  homepage "https://github.com/yungSNAT/reformed-agent"
+  version "0.22.0"
   license "MIT"
 
   on_macos do
     if Hardware::CPU.arm?
-      url "https://github.com/sheawinkler/hermes-agent-ultra/releases/download/v0.14.2/hermes-macos-aarch64.tar.gz"
-      sha256 "71ab5172a0ba2672bd66ab4742c73b99649adaeba131df29a6a08987059953c8"
+      url "https://github.com/yungSNAT/reformed-agent/releases/download/v0.22.0/hermes-macos-aarch64.tar.gz"
+      sha256 "584bda4bb4524f813a2503a7a42cd3945a40f8ec4ed6a1d005bd82d822ba2399"
     else
-      url "https://github.com/sheawinkler/hermes-agent-ultra/releases/download/v0.14.2/hermes-macos-x86_64.tar.gz"
-      sha256 "ae8472ad3a724de13897ed2a9ec808024a0b732353fcf28b45ecdf1ab821f4e8"
+      url "https://github.com/yungSNAT/reformed-agent/releases/download/v0.22.0/hermes-macos-x86_64.tar.gz"
+      sha256 "47c263f51c5fe701622645c29e2780288ede1fdcce6e29a43965fca4e2982ed9"
     end
   end
 
   on_linux do
     if Hardware::CPU.arm?
-      url "https://github.com/sheawinkler/hermes-agent-ultra/releases/download/v0.14.2/hermes-linux-aarch64.tar.gz"
-      sha256 "75a5b2751c38b131b3c244504ec69c37e2a7799259cee26bb6e13e695dcf0529"
+      url "https://github.com/yungSNAT/reformed-agent/releases/download/v0.22.0/hermes-linux-aarch64.tar.gz"
+      sha256 "a08450ed39f12cea79bf2f7a842d326508c1449852a83d4bcb6505edae731187"
     else
-      url "https://github.com/sheawinkler/hermes-agent-ultra/releases/download/v0.14.2/hermes-linux-x86_64.tar.gz"
-      sha256 "f22d6fb401c0a1ef75a4cd873079063a5f9e2d83679716c4ac911c2db11fd30d"
+      url "https://github.com/yungSNAT/reformed-agent/releases/download/v0.22.0/hermes-linux-x86_64.tar.gz"
+      sha256 "76b1fc251a1314fc30ca9a6b78708071d214a3709fa8a563378126d70b781afc"
     end
   end
 
