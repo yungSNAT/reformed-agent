@@ -81,6 +81,15 @@ pub fn is_git_2_39_1_or_later(version: &str) -> bool {
 /// A repository whose own config names a user (see [`names_a_user`]) gets
 /// no command.
 pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
+    workspace_git_with(std::ffi::OsStr::new("git"), root, guard)
+}
+
+/// [`workspace_git`] for the git program `git`.
+fn workspace_git_with(
+    git: &std::ffi::OsStr,
+    root: &Path,
+    guard: LazyFetchGuard,
+) -> Option<Command> {
     // Every config key git reads for this repository, from every scope and
     // included file. `git config` alone reads the file `GIT_CONFIG` names in
     // their place, so that variable is dropped. The keys are matched here,
@@ -88,7 +97,7 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
     // its locale cannot decode, so a repository could hide a filter or a
     // remote from it.
     let listed = output_within_timeout(
-        Command::new("git")
+        Command::new(git)
             .arg("-C")
             .arg(root)
             .args(["config", "--includes", "--null", "--show-scope", "--list"])
@@ -143,7 +152,7 @@ pub fn workspace_git(root: &Path, guard: LazyFetchGuard) -> Option<Command> {
             _ => {}
         }
     }
-    let mut cmd = Command::new("git");
+    let mut cmd = Command::new(git);
     cmd.arg("-C")
         .arg(root)
         .args(["-c", "core.fsmonitor=", "-c", "log.showSignature=false"])
@@ -479,5 +488,79 @@ mod tests {
         );
         assert!(workspace_git(&linked, LazyFetchGuard::NoPromisorRemote).is_none());
         assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_some());
+    }
+
+    /// A `git` that records each call's arguments and runs the real one.
+    #[cfg(unix)]
+    fn recording_git(dir: &Path) -> (std::path::PathBuf, std::path::PathBuf) {
+        use std::os::unix::fs::PermissionsExt;
+        let log = dir.join("calls.log");
+        let spy = dir.join("git");
+        std::fs::write(
+            &spy,
+            format!(
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\nexec git \"$@\"\n",
+                log.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&spy, std::fs::Permissions::from_mode(0o755)).unwrap();
+        (spy, log)
+    }
+
+    /// The repository's own config, and the files it includes, are read
+    /// without git following an include, so git never expands a `~name`
+    /// include path or condition the repository chose.
+    #[cfg(unix)]
+    #[test]
+    fn git_does_not_follow_the_repository_s_includes_before_they_are_checked() {
+        for (key, value) in [
+            ("include.path".to_string(), format!("~{USER}/x")),
+            (format!("includeIf.gitdir:~{USER}/.path"), "x".to_string()),
+            // Reached through a plain include of a file that names the user.
+            ("include.path".to_string(), "../shared.config".to_string()),
+        ] {
+            let tmp = tempfile::tempdir().unwrap();
+            let repo = tmp.path().join("repo");
+            new_repo(&repo);
+            std::fs::write(
+                repo.join("shared.config"),
+                format!("[include]\n\tpath = ~{USER}/y\n"),
+            )
+            .unwrap();
+            git(&repo, &["config", &key, &value]);
+            let (spy, log) = recording_git(tmp.path());
+
+            let command =
+                workspace_git_with(spy.as_os_str(), &repo, LazyFetchGuard::NoPromisorRemote);
+
+            let calls = std::fs::read_to_string(&log).unwrap_or_default();
+            assert!(command.is_none(), "{key} = {value}");
+            assert!(
+                !calls.lines().any(|call| call.contains("--includes")),
+                "{key} = {value}: git followed the includes: {calls}"
+            );
+        }
+    }
+
+    /// A clean repository's includes, relative and nested, are checked and
+    /// the command is still given.
+    #[cfg(unix)]
+    #[test]
+    fn a_repository_with_clean_includes_still_gets_a_command() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo = tmp.path().join("repo");
+        new_repo(&repo);
+        std::fs::write(repo.join("a.config"), "[include]\n\tpath = b.config\n").unwrap();
+        std::fs::write(repo.join("b.config"), "[core]\n\texcludesFile = ~/x\n").unwrap();
+        git(&repo, &["config", "include.path", "../a.config"]);
+        let (spy, _log) = recording_git(tmp.path());
+        let nested = repo.join("src");
+        std::fs::create_dir_all(&nested).unwrap();
+
+        assert!(
+            workspace_git_with(spy.as_os_str(), &nested, LazyFetchGuard::NoPromisorRemote)
+                .is_some()
+        );
     }
 }
