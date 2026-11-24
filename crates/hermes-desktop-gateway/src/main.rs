@@ -105,7 +105,7 @@ async fn main() -> ExitCode {
             }
         },
         () = stdin_closed => {
-            eprintln!("standard input closed; stopping");
+            let _ = writeln!(std::io::stderr(), "standard input closed; stopping");
             ExitCode::SUCCESS
         }
     }
