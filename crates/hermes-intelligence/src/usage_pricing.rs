@@ -23,11 +23,13 @@ pub struct CanonicalUsage {
 
 impl CanonicalUsage {
     pub fn prompt_tokens(&self) -> u64 {
-        self.input_tokens + self.cache_read_tokens + self.cache_write_tokens
+        self.input_tokens
+            .saturating_add(self.cache_read_tokens)
+            .saturating_add(self.cache_write_tokens)
     }
 
     pub fn total_tokens(&self) -> u64 {
-        self.prompt_tokens() + self.output_tokens
+        self.prompt_tokens().saturating_add(self.output_tokens)
     }
 }
 
@@ -753,6 +755,7 @@ mod tests {
                 "codex_responses",
                 serde_json::json!({
                     "input_tokens": 10,
+                    "output_tokens": 2,
                     "input_tokens_details": { "cached_tokens": u64::MAX, "cache_creation_tokens": 1 }
                 }),
             ),
@@ -760,6 +763,7 @@ mod tests {
                 "chat_completions",
                 serde_json::json!({
                     "prompt_tokens": 10,
+                    "completion_tokens": 2,
                     "prompt_tokens_details": { "cached_tokens": u64::MAX, "cache_write_tokens": 1 }
                 }),
             ),
@@ -768,6 +772,9 @@ mod tests {
             assert_eq!(usage.input_tokens, 0, "{mode}");
             assert_eq!(usage.cache_read_tokens, u64::MAX, "{mode}");
             assert_eq!(usage.cache_write_tokens, 1, "{mode}");
+            assert_eq!(usage.output_tokens, 2, "{mode}");
+            assert_eq!(usage.prompt_tokens(), u64::MAX, "{mode}");
+            assert_eq!(usage.total_tokens(), u64::MAX, "{mode}");
         }
     }
 
