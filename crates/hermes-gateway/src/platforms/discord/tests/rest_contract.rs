@@ -7,7 +7,13 @@ mod rest_contract {
         let mut config = test_config();
         config.api_base_url = Some(server.uri());
         config.application_id = app_id.map(str::to_string);
-        DiscordAdapter::new(config).expect("initialise adapter for loopback server")
+        let mut adapter =
+            DiscordAdapter::new(config).expect("initialise adapter for loopback server");
+        adapter.client = reqwest::Client::builder()
+            .no_proxy()
+            .build()
+            .expect("build loopback-only client");
+        adapter
     }
 
     #[tokio::test]
@@ -57,7 +63,9 @@ mod rest_contract {
         let adapter = adapter_for_mock(&server, None);
         Mock::given(method("POST"))
             .and(path("/channels/channel/messages/message/threads"))
-            .and(body_json(json!({"name": "Review", "auto_archive_duration": 1440})))
+            .and(body_json(
+                json!({"name": "Review", "auto_archive_duration": 1440}),
+            ))
             .respond_with(ResponseTemplate::new(201).set_body_json(json!({
                 "id": "created-thread", "name": "Review", "type": 11,
                 "guild_id": "guild", "parent_id": "channel"
@@ -67,7 +75,9 @@ mod rest_contract {
             .await;
         for verb in ["PUT", "DELETE"] {
             Mock::given(method(verb))
-                .and(path("/channels/created-thread/messages/message/reactions/check/@me"))
+                .and(path(
+                    "/channels/created-thread/messages/message/reactions/check/@me",
+                ))
                 .and(header("Authorization", "Bot test-token"))
                 .respond_with(ResponseTemplate::new(204))
                 .expect(1)
@@ -81,8 +91,14 @@ mod rest_contract {
             .expect("create thread");
         assert_eq!(thread.id, "created-thread");
         assert_eq!(thread.parent_id.as_deref(), Some("channel"));
-        adapter.add_reaction(&thread.id, "message", "check").await.unwrap();
-        adapter.remove_reaction(&thread.id, "message", "check").await.unwrap();
+        adapter
+            .add_reaction(&thread.id, "message", "check")
+            .await
+            .unwrap();
+        adapter
+            .remove_reaction(&thread.id, "message", "check")
+            .await
+            .unwrap();
         let requests = server.received_requests().await.unwrap();
         let methods: Vec<_> = requests
             .iter()
@@ -110,7 +126,9 @@ mod rest_contract {
         let unconfigured = adapter_for_mock(&server, None);
         for result in [
             unconfigured.register_slash_commands(&commands).await,
-            unconfigured.register_guild_slash_commands("guild", &commands).await,
+            unconfigured
+                .register_guild_slash_commands("guild", &commands)
+                .await,
         ] {
             assert!(matches!(
                 result,
@@ -120,17 +138,25 @@ mod rest_contract {
         assert!(server.received_requests().await.unwrap().is_empty());
 
         let adapter = adapter_for_mock(&server, Some("app"));
-        for endpoint in ["/applications/app/commands", "/applications/app/guilds/guild/commands"] {
+        for endpoint in [
+            "/applications/app/commands",
+            "/applications/app/guilds/guild/commands",
+        ] {
             Mock::given(method("PUT"))
                 .and(path(endpoint))
-                .and(body_json(json!([{"name":"status","description":"Show status","type":1}])))
+                .and(body_json(
+                    json!([{"name":"status","description":"Show status","type":1}]),
+                ))
                 .respond_with(ResponseTemplate::new(200))
                 .expect(1)
                 .mount(&server)
                 .await;
         }
         adapter.register_slash_commands(&commands).await.unwrap();
-        adapter.register_guild_slash_commands("guild", &commands).await.unwrap();
+        adapter
+            .register_guild_slash_commands("guild", &commands)
+            .await
+            .unwrap();
         let requests = server.received_requests().await.unwrap();
         let paths: Vec<_> = requests.iter().map(|request| request.url.path()).collect();
         assert_eq!(
@@ -166,7 +192,9 @@ mod rest_contract {
             .respond_to_interaction("message", "interaction-fixture", "done")
             .await
             .unwrap();
-        let deferred = adapter.defer_interaction("pending", "interaction-fixture").await;
+        let deferred = adapter
+            .defer_interaction("pending", "interaction-fixture")
+            .await;
         assert!(matches!(
             deferred,
             Err(GatewayError::SendFailed(message)) if message.contains("already acknowledged")
