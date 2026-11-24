@@ -69,7 +69,7 @@ impl ApiTestState {
     }
 
     async fn roundtrip(&self, request: String, auth_token: Option<String>) -> String {
-        let (addr, handle) = spawn_one_request_server(
+        let (addr, mut handle) = spawn_one_request_server(
             Arc::clone(&self.mailbox),
             Arc::clone(&self.response_store),
             Arc::clone(&self.run_cancels),
@@ -80,15 +80,26 @@ impl ApiTestState {
         )
         .await;
 
-        let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
-        client
-            .write_all(request.as_bytes())
-            .await
-            .expect("write request");
-        client.shutdown().await.expect("shutdown write side");
-        let response = read_http_response(client).await;
-        handle.await.expect("server task");
-        response
+        let response = tokio::time::timeout(Duration::from_secs(10), async {
+            let mut client = tokio::net::TcpStream::connect(addr).await.expect("connect");
+            client
+                .write_all(request.as_bytes())
+                .await
+                .expect("write request");
+            client.shutdown().await.expect("shutdown write side");
+            let response = read_http_response(client).await;
+            (&mut handle).await.expect("server task");
+            response
+        })
+        .await;
+        match response {
+            Ok(response) => response,
+            Err(_) => {
+                handle.abort();
+                let _ = handle.await;
+                panic!("HTTP test request timed out");
+            }
+        }
     }
 }
 
@@ -675,7 +686,7 @@ async fn responses_endpoint_stores_streams_and_deletes_conversation_replies() {
         );
         assert!(missing_previous.contains("Previous response not found"));
     };
-    tokio::time::timeout(Duration::from_secs(10), async {
+    tokio::time::timeout(Duration::from_secs(30), async {
         tokio::join!(requests, respond);
     })
     .await
