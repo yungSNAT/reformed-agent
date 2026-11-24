@@ -282,6 +282,35 @@ fn parse_git_bool(value: Option<&[u8]>) -> Option<bool> {
     }
 }
 
+fn lexical_normalize(path: &Path) -> PathBuf {
+    let mut out = Vec::new();
+    for comp in path.components() {
+        match comp {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => match out.last() {
+                Some(std::path::Component::Normal(_)) => {
+                    out.pop();
+                }
+                Some(std::path::Component::RootDir | std::path::Component::Prefix(_)) => {}
+                _ => out.push(comp),
+            },
+            _ => out.push(comp),
+        }
+    }
+    if out.is_empty() {
+        PathBuf::from(".")
+    } else {
+        out.iter().collect()
+    }
+}
+
+fn lexical_parent(file: &Path) -> PathBuf {
+    match file.parent() {
+        Some(p) if !p.as_os_str().is_empty() => lexical_normalize(p),
+        _ => PathBuf::new(),
+    }
+}
+
 fn read_gitfile(file: &Path) -> Option<PathBuf> {
     let meta = std::fs::metadata(file).ok()?;
     if !meta.is_file() || meta.len() > 1024 * 1024 {
@@ -294,7 +323,9 @@ fn read_gitfile(file: &Path) -> Option<PathBuf> {
         return None;
     }
     let target_path = bytes_to_path(target)?;
-    Some(file.parent().unwrap_or(Path::new("")).join(target_path))
+    Some(lexical_normalize(
+        &file.parent().unwrap_or(Path::new("")).join(target_path),
+    ))
 }
 
 fn resolve_commondir(git_dir: &Path) -> Option<Option<PathBuf>> {
@@ -309,7 +340,9 @@ fn resolve_commondir(git_dir: &Path) -> Option<Option<PathBuf>> {
             if trimmed.is_empty() {
                 return None;
             }
-            Some(Some(git_dir.join(bytes_to_path(trimmed)?)))
+            Some(Some(lexical_normalize(
+                &git_dir.join(bytes_to_path(trimmed)?),
+            )))
         }
     }
 }
@@ -351,7 +384,11 @@ fn is_valid_head(head: &Path) -> bool {
     let Ok(bytes) = std::fs::read(head) else {
         return false;
     };
-    let trimmed = trim_trailing_crlf(&bytes);
+    let first_line = match bytes.iter().position(|&b| b == b'\n') {
+        Some(nl) => &bytes[..nl],
+        None => &bytes,
+    };
+    let trimmed = first_line.strip_suffix(b"\r").unwrap_or(first_line);
     if let Some(after_ref) = trimmed.strip_prefix(b"ref:") {
         let mut i = 0;
         while i < after_ref.len() && matches!(after_ref[i], b' ' | b'\t') {
@@ -368,10 +405,14 @@ fn is_git_directory(dir: &Path, root: &Path) -> Option<bool> {
     if !is_valid_head(&dir.join("HEAD")) {
         return Some(false);
     }
-    let common = resolve_commondir(dir)?.unwrap_or_else(|| dir.to_path_buf());
+    let common = if let Some(gcd) = std::env::var_os("GIT_COMMON_DIR").filter(|d| !d.is_empty()) {
+        lexical_normalize(&root.join(gcd))
+    } else {
+        resolve_commondir(dir)?.unwrap_or_else(|| dir.to_path_buf())
+    };
     let has_objects =
         if let Some(obj_dir) = std::env::var_os("GIT_OBJECT_DIRECTORY").filter(|d| !d.is_empty()) {
-            root.join(obj_dir).is_dir()
+            lexical_normalize(&root.join(obj_dir)).is_dir()
         } else {
             common.join("objects").is_dir()
         };
@@ -408,7 +449,7 @@ fn find_git_dirs(root: &Path) -> Option<Option<GitDirs>> {
     let root = canonicalize_clean(root).ok()?;
     let mut candidates = Vec::new();
     let git_dir = if let Some(env_dir) = std::env::var_os("GIT_DIR").filter(|d| !d.is_empty()) {
-        let path = root.join(env_dir);
+        let path = lexical_normalize(&root.join(env_dir));
         let resolved = match std::fs::metadata(&path) {
             Ok(meta) if meta.is_file() => read_gitfile(&path)?,
             _ => path,
@@ -440,9 +481,6 @@ fn find_git_dirs(root: &Path) -> Option<Option<GitDirs>> {
                         break;
                     }
                     if meta.is_dir() && is_git_directory(&dot_git, &root)? {
-                        if is_sym {
-                            push_unique_path(&mut candidates, dot_git.clone());
-                        }
                         push_unique_path(&mut candidates, dot_git.clone());
                         found = Some(dot_git);
                         break;
@@ -467,7 +505,7 @@ fn find_git_dirs(root: &Path) -> Option<Option<GitDirs>> {
     }
     let common_dir = if let Some(gcd) = std::env::var_os("GIT_COMMON_DIR").filter(|d| !d.is_empty())
     {
-        root.join(gcd)
+        lexical_normalize(&root.join(gcd))
     } else {
         resolve_commondir(&git_dir)?.unwrap_or_else(|| git_dir.clone())
     };
@@ -486,6 +524,24 @@ fn byte_eq(a: u8, b: u8, icase: bool) -> bool {
     }
 }
 
+fn match_posix_class(name: &[u8], ch: u8, icase: bool) -> Option<bool> {
+    Some(match name {
+        b"alnum" => ch.is_ascii_alphanumeric(),
+        b"alpha" => ch.is_ascii_alphabetic(),
+        b"blank" => matches!(ch, b' ' | b'\t'),
+        b"cntrl" => ch.is_ascii_control(),
+        b"digit" => ch.is_ascii_digit(),
+        b"graph" => ch.is_ascii_graphic(),
+        b"lower" => ch.is_ascii_lowercase() || (icase && ch.is_ascii_uppercase()),
+        b"print" => ch == b' ' || ch.is_ascii_graphic(),
+        b"punct" => ch.is_ascii_punctuation(),
+        b"space" => matches!(ch, b' ' | b'\t' | b'\n' | b'\r' | 0x0b | 0x0c),
+        b"upper" => ch.is_ascii_uppercase() || (icase && ch.is_ascii_lowercase()),
+        b"xdigit" => ch.is_ascii_hexdigit(),
+        _ => return None,
+    })
+}
+
 fn match_char_class(pat: &[u8], ch: u8, icase: bool) -> Option<(bool, usize)> {
     let mut i = 0;
     let negated = if i < pat.len() && matches!(pat[i], b'!' | b'^') {
@@ -501,6 +557,16 @@ fn match_char_class(pat: &[u8], ch: u8, icase: bool) -> Option<(bool, usize)> {
             return Some((matched ^ negated, i + 1));
         }
         first = false;
+        if pat[i..].starts_with(b"[:") {
+            if let Some(end_rel) = pat[i + 2..].windows(2).position(|w| w == b":]") {
+                let name = &pat[i + 2..i + 2 + end_rel];
+                if match_posix_class(name, ch, icase)? {
+                    matched = true;
+                }
+                i += 4 + end_rel;
+                continue;
+            }
+        }
         let start = if pat[i] == b'\\' && i + 1 < pat.len() {
             i += 1;
             pat[i]
@@ -623,62 +689,82 @@ fn wildmatch_pathname(pat: &[u8], text: &[u8], icase: bool) -> bool {
     dp[t_segs.len()]
 }
 
+fn git_home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        return Some(PathBuf::from(home));
+    }
+    #[cfg(windows)]
+    if let (Some(mut drive), Some(path)) = (
+        std::env::var_os("HOMEDRIVE").filter(|v| !v.is_empty()),
+        std::env::var_os("HOMEPATH").filter(|v| !v.is_empty()),
+    ) {
+        drive.push(path);
+        return Some(PathBuf::from(drive));
+    }
+    std::env::home_dir()
+}
+
+fn join_slash_pattern(base: &Path, rest: &[u8]) -> Vec<u8> {
+    let mut out = path_to_slash_bytes(base);
+    if !out.ends_with(b"/") {
+        out.push(b'/');
+    }
+    out.extend_from_slice(rest);
+    out
+}
+
 fn gitdir_condition_matches(
     raw_pat: &[u8],
     config_file: &Path,
     candidates: &[PathBuf],
     icase: bool,
 ) -> bool {
-    let pat;
-    let pat_ref: &[u8] = if let Some(rest) = raw_pat.strip_prefix(b"~/") {
-        let Some(home) = std::env::home_dir() else {
+    let patterns: Vec<Vec<u8>> = if let Some(rest) = raw_pat.strip_prefix(b"~/") {
+        let Some(home) = git_home_dir() else {
             return true;
         };
-        let mut expanded = path_to_slash_bytes(&home);
-        if !expanded.ends_with(b"/") {
-            expanded.push(b'/');
+        let mut bases = vec![lexical_normalize(&home)];
+        if let Ok(canon) = canonicalize_clean(&home) {
+            push_unique_path(&mut bases, canon);
         }
-        expanded.extend_from_slice(rest);
-        pat = expanded;
-        &pat
+        bases
+            .into_iter()
+            .map(|base| join_slash_pattern(&base, rest))
+            .collect()
     } else if let Some(rest) = raw_pat.strip_prefix(b"./") {
-        let base = config_file.parent().unwrap_or(Path::new(""));
-        let mut expanded = path_to_slash_bytes(base);
-        if !expanded.ends_with(b"/") {
-            expanded.push(b'/');
+        let mut bases = vec![lexical_parent(config_file)];
+        let canon = canonical_parent(config_file);
+        if !canon.as_os_str().is_empty() {
+            push_unique_path(&mut bases, canon);
         }
-        expanded.extend_from_slice(rest);
-        pat = expanded;
-        &pat
+        bases
+            .into_iter()
+            .map(|base| join_slash_pattern(&base, rest))
+            .collect()
     } else {
-        raw_pat
+        vec![raw_pat.to_vec()]
     };
-    #[cfg(windows)]
-    let normalized_pat: Vec<u8> = pat_ref
-        .iter()
-        .map(|&b| if b == b'\\' { b'/' } else { b })
-        .collect();
-    #[cfg(not(windows))]
-    let normalized_pat: Vec<u8> = pat_ref.to_vec();
 
-    let is_abs = normalized_pat.starts_with(b"/")
-        || (cfg!(windows)
-            && normalized_pat.len() >= 3
-            && normalized_pat[0].is_ascii_alphabetic()
-            && normalized_pat[1] == b':'
-            && normalized_pat[2] == b'/');
-    let mut final_pat = Vec::new();
-    if !is_abs {
-        final_pat.extend_from_slice(b"**/");
-    }
-    final_pat.extend_from_slice(&normalized_pat);
-    if final_pat.ends_with(b"/") {
-        final_pat.extend_from_slice(b"**");
-    }
     let icase = icase || cfg!(windows);
-    candidates
-        .iter()
-        .any(|gd| wildmatch_pathname(&final_pat, &path_to_slash_bytes(gd), icase))
+    patterns.iter().any(|pat| {
+        let is_abs = pat.starts_with(b"/")
+            || (cfg!(windows)
+                && pat.len() >= 3
+                && pat[0].is_ascii_alphabetic()
+                && pat[1] == b':'
+                && pat[2] == b'/');
+        let mut final_pat = Vec::new();
+        if !is_abs {
+            final_pat.extend_from_slice(b"**/");
+        }
+        final_pat.extend_from_slice(pat);
+        if final_pat.ends_with(b"/") {
+            final_pat.extend_from_slice(b"**");
+        }
+        candidates
+            .iter()
+            .any(|gd| wildmatch_pathname(&final_pat, &path_to_slash_bytes(gd), icase))
+    })
 }
 
 fn canonical_parent(file: &Path) -> PathBuf {
@@ -760,6 +846,7 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
     // ignores `extensions.worktreeConfig` set only via includes).
     let common_config = dirs.common_dir.join("config");
     let mut worktree_config = false;
+    let mut reftable_storage = false;
     match std::fs::metadata(&common_config) {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
         Err(_) => return None,
@@ -770,10 +857,19 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
             for (key, value) in entries {
                 if key == b"extensions.worktreeconfig" {
                     worktree_config = parse_git_bool(value.as_deref())?;
+                } else if key == b"extensions.refstorage"
+                    && value
+                        .as_deref()
+                        .is_some_and(|v| v.eq_ignore_ascii_case(b"reftable"))
+                {
+                    reftable_storage = true;
                 }
             }
         }
     }
+    let reftable_active = reftable_storage
+        || head_branch.as_deref() == Some(b".invalid")
+        || dirs.common_dir.join("reftable").is_dir();
 
     let mut pending = vec![(common_config, 0usize)];
     if worktree_config {
@@ -793,7 +889,7 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
         let Ok(real) = canonicalize_clean(&file) else {
             return None;
         };
-        let parent = canonical_parent(&file);
+        let parent = lexical_parent(&file);
         if !visited.insert((real.clone(), parent)) {
             continue;
         }
@@ -820,7 +916,9 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
                         pending.push((target, depth + 1));
                     }
                 } else if let Some(pat) = cond.strip_prefix(b"onbranch:") {
-                    if let Some(branch) = &head_branch {
+                    if reftable_active {
+                        pending.push((target, depth + 1));
+                    } else if let Some(branch) = &head_branch {
                         let mut full_pat = pat.to_vec();
                         if full_pat.ends_with(b"/") {
                             full_pat.extend_from_slice(b"**");
@@ -857,20 +955,21 @@ fn include_path(file: &Path, value: &[u8]) -> Option<PathBuf> {
                 break;
             }
         }
-        let home = std::env::home_dir()?;
+        let home = git_home_dir()?;
         if rest.is_empty() {
-            return Some(home);
+            return Some(lexical_normalize(&home));
         }
-        return Some(home.join(bytes_to_path(rest)?));
+        return Some(lexical_normalize(&home.join(bytes_to_path(rest)?)));
     }
     if value == b"~" {
-        return std::env::home_dir();
+        return git_home_dir().map(|home| lexical_normalize(&home));
     }
-    Some(
-        file.parent()
+    Some(lexical_normalize(
+        &file
+            .parent()
             .unwrap_or(Path::new(""))
             .join(bytes_to_path(value)?),
-    )
+    ))
 }
 
 /// A `git` command for reading the repository at `root` that its own
@@ -1428,6 +1527,20 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
         let pw = std::fs::read_to_string(&pw_log).unwrap_or_default();
         assert!(!calls.contains("--includes"), "{calls}");
         assert!(!pw.contains(USER), "S8 leaked getpwnam lookup: {pw}");
+
+        // B5: `.git` holding only HEAD (no objects/, refs/, or commondir) still
+        // resolves `GIT_COMMON_DIR` in git and must be refused without `getpwnam`.
+        let min_repo = tmp.path().join("minimal_head_only");
+        std::fs::create_dir_all(min_repo.join(".git")).unwrap();
+        std::fs::write(min_repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        assert!(
+            workspace_git_with(spy.as_os_str(), &min_repo, LazyFetchGuard::NoPromisorRemote)
+                .is_none()
+        );
+        let calls = std::fs::read_to_string(&calls_log).unwrap_or_default();
+        let pw = std::fs::read_to_string(&pw_log).unwrap_or_default();
+        assert!(!calls.contains("--includes"), "{calls}");
+        assert!(!pw.contains(USER), "B5 leaked getpwnam lookup: {pw}");
     }
 
     #[cfg(unix)]
@@ -1778,5 +1891,303 @@ int getpwnam_r(const char *name, struct passwd *pwd, char *buf, size_t buflen, s
             ],
         );
         assert!(workspace_git(&repo, LazyFetchGuard::NoPromisorRemote).is_none());
+    }
+
+    fn link_dir(target: &Path, link: &Path) -> bool {
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(target, link).is_ok()
+        }
+        #[cfg(windows)]
+        {
+            Command::new("cmd")
+                .args(["/C", "mklink", "/J"])
+                .arg(link)
+                .arg(target)
+                .output()
+                .is_ok_and(|o| o.status.success())
+        }
+    }
+
+    fn assert_refused_without_includes(repo: &Path, tmp: &Path) {
+        #[cfg(unix)]
+        {
+            let (spy, log) = recording_git(tmp);
+            assert!(
+                workspace_git_with(spy.as_os_str(), repo, LazyFetchGuard::NoPromisorRemote)
+                    .is_none(),
+                "expected refusal for {}",
+                repo.display()
+            );
+            assert!(
+                !std::fs::read_to_string(&log)
+                    .unwrap_or_default()
+                    .contains("--includes"),
+                "git --includes ran on {}",
+                repo.display()
+            );
+        }
+        #[cfg(not(unix))]
+        {
+            let _ = tmp;
+            assert!(
+                workspace_git(repo, LazyFetchGuard::NoPromisorRemote).is_none(),
+                "expected refusal for {}",
+                repo.display()
+            );
+        }
+    }
+
+    #[test]
+    fn include_if_edge_cases_and_posix_classes_prevent_preflight_bypasses() {
+        // B2 unit checks: all 12 POSIX classes, negation, icase [:upper:]/[:lower:], unknown.
+        for (pat, yes, no) in [
+            (b"[[:alnum:]]" as &[u8], b'Z', b'-'),
+            (b"[[:alpha:]]", b'a', b'5'),
+            (b"[[:blank:]]", b'\t', b'x'),
+            (b"[[:cntrl:]]", b'\x07', b' '),
+            (b"[[:digit:]]", b'9', b'a'),
+            (b"[[:graph:]]", b'!', b' '),
+            (b"[[:lower:]]", b'z', b'Z'),
+            (b"[[:print:]]", b' ', b'\n'),
+            (b"[[:punct:]]", b'/', b'a'),
+            (b"[[:space:]]", b'\x0b', b'x'),
+            (b"[[:upper:]]", b'A', b'a'),
+            (b"[[:xdigit:]]", b'f', b'g'),
+            (b"[![:digit:]]", b'a', b'4'),
+        ] {
+            assert!(wildmatch_segment(pat, &[yes], false));
+            assert!(!wildmatch_segment(pat, &[no], false));
+        }
+        assert!(wildmatch_segment(b"[[:upper:]]", b"a", true));
+        assert!(wildmatch_segment(b"[[:lower:]]", b"A", true));
+        assert!(!wildmatch_segment(b"[[:unknown:]]", b"a", false));
+
+        let tmp = tempfile::tempdir().unwrap();
+        let bad_user = format!("[core]\n\texcludesFile = ~{USER}/b\n");
+
+        // B1a: `../inc.conf` with `includeIf.gitdir:./`
+        let b1a = tmp.path().join("b1a");
+        new_repo(&b1a);
+        std::fs::write(b1a.join("evil1a.conf"), &bad_user).unwrap();
+        std::fs::write(
+            b1a.join("inc1a.conf"),
+            "[includeIf \"gitdir:./\"]\n\tpath = evil1a.conf\n",
+        )
+        .unwrap();
+        git(&b1a, &["config", "include.path", "../inc1a.conf"]);
+        assert_refused_without_includes(&b1a, tmp.path());
+
+        // B1b: linked worktree `commondir` (`../..`) with `includeIf.gitdir:./worktrees/`
+        let b1b = tmp.path().join("b1b");
+        new_repo(&b1b);
+        git(
+            &b1b,
+            &[
+                "-c",
+                "user.name=test",
+                "-c",
+                "user.email=test@example.com",
+                "commit",
+                "-q",
+                "--allow-empty",
+                "-m",
+                "init",
+            ],
+        );
+        let wt = tmp.path().join("b1b_wt");
+        git(&b1b, &["worktree", "add", "-q", wt.to_str().unwrap()]);
+        std::fs::write(b1b.join("evil1b.conf"), &bad_user).unwrap();
+        git(
+            &b1b,
+            &[
+                "config",
+                "includeIf.gitdir:./worktrees/.path",
+                "../evil1b.conf",
+            ],
+        );
+        assert_refused_without_includes(&wt, tmp.path());
+
+        // B2: POSIX classes in `onbranch:`, `gitdir:`, and `gitdir/i:`
+        let r5 = tmp.path().join("r5");
+        new_repo(&r5);
+        std::fs::write(r5.join("evil2.conf"), &bad_user).unwrap();
+        git(&r5, &["checkout", "-q", "-b", "main"]);
+        git(
+            &r5,
+            &[
+                "config",
+                "includeIf.onbranch:[[:alpha:]]*.path",
+                "../evil2.conf",
+            ],
+        );
+        assert_refused_without_includes(&r5, tmp.path());
+
+        let r5b = tmp.path().join("b5");
+        new_repo(&r5b);
+        std::fs::write(r5b.join("evil2b.conf"), &bad_user).unwrap();
+        git(&r5b, &["checkout", "-q", "-b", "1"]);
+        git(
+            &r5b,
+            &[
+                "config",
+                "includeIf.gitdir:**/[[:alpha:]][[:digit:]]/.path",
+                "../evil2b.conf",
+            ],
+        );
+        assert_refused_without_includes(&r5b, tmp.path());
+
+        let r5c = tmp.path().join("abc");
+        new_repo(&r5c);
+        std::fs::write(r5c.join("evil2c.conf"), &bad_user).unwrap();
+        git(
+            &r5c,
+            &[
+                "config",
+                "includeIf.gitdir/i:**/[[:upper:]]*/.path",
+                "../evil2c.conf",
+            ],
+        );
+        assert_refused_without_includes(&r5c, tmp.path());
+
+        // B3: escaped `\[` / `\]` on Windows and Unix
+        let b3 = tmp.path().join("my[1]repo");
+        new_repo(&b3);
+        std::fs::write(b3.join("evil3.conf"), &bad_user).unwrap();
+        git(
+            &b3,
+            &[
+                "config",
+                "includeIf.gitdir:**/my\\[1\\]repo/.path",
+                "../evil3.conf",
+            ],
+        );
+        assert_refused_without_includes(&b3, tmp.path());
+
+        // B4: reftable (`ref: refs/heads/.invalid`) + `includeIf.onbranch:`
+        let b4 = tmp.path().join("b4_rt");
+        let rt_ok = Command::new("git")
+            .args(["init", "-q", "--ref-format=reftable", "-b", "main"])
+            .arg(&b4)
+            .output()
+            .is_ok_and(|o| o.status.success());
+        if !rt_ok {
+            new_repo(&b4);
+            std::fs::create_dir_all(b4.join(".git/reftable")).unwrap();
+            std::fs::write(b4.join(".git/HEAD"), "ref: refs/heads/.invalid\n").unwrap();
+            git(&b4, &["config", "extensions.refStorage", "reftable"]);
+        }
+        std::fs::write(b4.join("evil4.conf"), &bad_user).unwrap();
+        git(
+            &b4,
+            &["config", "includeIf.onbranch:main.path", "../evil4.conf"],
+        );
+        assert_refused_without_includes(&b4, tmp.path());
+
+        // N8: multiline HEAD decoy inside unsafe parent still stops ancestor walk
+        let parent = tmp.path().join("parent_ml");
+        new_repo(&parent);
+        git(
+            &parent,
+            &["config", "core.excludesFile", &format!("~{USER}/ml")],
+        );
+        let child = parent.join("child");
+        new_repo(&child);
+        std::fs::write(child.join(".git/HEAD"), "ref: refs/heads/main\nsecond\n").unwrap();
+        assert!(workspace_git(&child, LazyFetchGuard::NoPromisorRemote).is_some());
+
+        // S7: `dir_link -> real_sub` must not shadow `real_sub/inc.conf` in `visited`
+        let real_sub = tmp.path().join("real_sub");
+        let inner = real_sub.join("inner");
+        new_repo(&inner);
+        std::fs::write(real_sub.join("hit7.conf"), &bad_user).unwrap();
+        std::fs::write(
+            real_sub.join("inc7.conf"),
+            "[includeIf \"gitdir:./\"]\n\tpath = hit7.conf\n",
+        )
+        .unwrap();
+        let dir_link = tmp.path().join("dir_link");
+        if link_dir(&real_sub, &dir_link) {
+            git(
+                &inner,
+                &[
+                    "config",
+                    "--add",
+                    "include.path",
+                    "../../../dir_link/inc7.conf",
+                ],
+            );
+            assert_refused_without_includes(&inner, tmp.path());
+            git(
+                &inner,
+                &["config", "--add", "include.path", "../../inc7.conf"],
+            );
+            assert_refused_without_includes(&inner, tmp.path());
+        }
+    }
+
+    #[test]
+    fn symlinked_home_and_minimal_dotgit_with_common_dir_prevent_bypasses() {
+        if let Some(r2_raw) = std::env::var_os("HERMES_B6_R2") {
+            let r2 = PathBuf::from(r2_raw);
+            assert!(workspace_git(&r2, LazyFetchGuard::NoPromisorRemote).is_none());
+            return;
+        }
+        if let Some(min_raw) = std::env::var_os("HERMES_B5_MIN") {
+            let min_repo = PathBuf::from(min_raw);
+            assert!(workspace_git(&min_repo, LazyFetchGuard::NoPromisorRemote).is_none());
+            return;
+        }
+        let tmp = tempfile::tempdir().unwrap();
+
+        // B6: symlinked/junctioned HOME + `includeIf.gitdir:~/`
+        let real_home = tmp.path().join("real_home");
+        let r2 = real_home.join("r2");
+        new_repo(&r2);
+        std::fs::write(
+            real_home.join("hit6.conf"),
+            format!("[core]\n\texcludesFile = ~{USER}/b6\n"),
+        )
+        .unwrap();
+        git(
+            &r2,
+            &["config", "includeIf.gitdir:~/r2/.path", "../../hit6.conf"],
+        );
+        let link_home = tmp.path().join("link_home");
+        if link_dir(&real_home, &link_home) {
+            run_in_child_env(
+                "git::tests::symlinked_home_and_minimal_dotgit_with_common_dir_prevent_bypasses",
+                &[
+                    ("HOME", link_home.as_os_str()),
+                    ("HERMES_B6_R2", r2.as_os_str()),
+                ],
+            );
+        }
+
+        // B5 cross-platform: minimal `.git` (HEAD only) + `GIT_COMMON_DIR`
+        let evil_common = tmp.path().join("evil_common");
+        new_repo(&evil_common);
+        let gcd = tmp.path().join("gcd");
+        std::fs::rename(evil_common.join(".git"), &gcd).unwrap();
+        git(
+            &gcd,
+            &[
+                "--git-dir",
+                gcd.to_str().unwrap(),
+                "config",
+                "core.excludesFile",
+                &format!("~{USER}/b5"),
+            ],
+        );
+        let min_repo = tmp.path().join("min_repo");
+        std::fs::create_dir_all(min_repo.join(".git")).unwrap();
+        std::fs::write(min_repo.join(".git/HEAD"), "ref: refs/heads/main\n").unwrap();
+        run_in_child_env(
+            "git::tests::symlinked_home_and_minimal_dotgit_with_common_dir_prevent_bypasses",
+            &[
+                ("GIT_COMMON_DIR", gcd.as_os_str()),
+                ("HERMES_B5_MIN", min_repo.as_os_str()),
+            ],
+        );
     }
 }
