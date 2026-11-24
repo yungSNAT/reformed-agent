@@ -1231,13 +1231,16 @@ mod tests {
         let root = tmp.path().join("root");
         let work = root.join("profiles/work");
         let play = root.join("profiles/play");
-        for dir in [&home, &work, &play] {
+        // Not a name `--profile` can select.
+        let backup = root.join("profiles/Work.bak");
+        for dir in [&home, &work, &play, &backup] {
             std::fs::create_dir_all(dir).unwrap();
         }
         std::fs::write(root.join("profiles/default.yaml"), "").unwrap();
 
         for active in [&root, &work] {
             let denied = |path: &Path| is_write_denied_with_roots(path, Some(&home), Some(active));
+            assert!(!denied(&backup.join(".env")));
             for profile in [&root, &work, &play] {
                 for store in [
                     ".env",
@@ -1262,6 +1265,37 @@ mod tests {
             assert!(protected.removed_by(&root.join("profiles")).is_some());
             assert!(protected.contains(&play.join(".env")));
             assert_eq!(protected.removed_by(&play.join("cache")), None);
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_deny_covers_profiles_it_cannot_list() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let root = tmp.path().join("root");
+        let profiles = root.join("profiles");
+        let work = profiles.join("work");
+        for dir in [&home, &work] {
+            std::fs::create_dir_all(dir).unwrap();
+        }
+        // Searchable but not readable: `--profile work` still finds the
+        // folder, but it cannot be listed.
+        let set_mode = |mode| {
+            std::fs::set_permissions(&profiles, std::fs::Permissions::from_mode(mode)).unwrap()
+        };
+        set_mode(0o100);
+        let listed = std::fs::read_dir(&profiles).is_ok();
+        let denied = is_write_denied_with_roots(&work.join(".env"), Some(&home), Some(&root));
+        let removed = ProtectedPaths::with_roots(Some(&home), Some(&root)).removed_by(&work);
+        set_mode(0o700);
+
+        // Root can list any folder, so the case cannot arise.
+        if !listed {
+            assert!(denied, "an unlisted profile's .env is writable");
+            assert!(removed.is_some());
         }
     }
 
