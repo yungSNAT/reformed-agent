@@ -21,9 +21,12 @@ fn platform(extra: Value) -> hermes_config::PlatformConfig {
     }
 }
 
+// Distinctive so a leak check cannot match ordinary words such as "token".
+const SENTINEL: &str = "zq-sentinel-41";
+
 fn config(extra: Value) -> HomeAssistantConfig {
     HomeAssistantConfig::from_platform_config_with_env(&platform(extra), |key| {
-        (key == "HASS_TOKEN").then(|| "tok".to_string())
+        (key == "HASS_TOKEN").then(|| SENTINEL.to_string())
     })
 }
 
@@ -86,7 +89,7 @@ fn config_reads_filters_cooldown_and_fallbacks() {
         "cooldown_seconds": "12",
     }));
     assert_eq!(cfg.base_url, "http://ha.lan:8123");
-    assert_eq!(cfg.long_lived_token, "tok");
+    assert_eq!(cfg.long_lived_token, SENTINEL);
     assert_eq!(cfg.watch_domains, ["climate", "light"]);
     assert_eq!(cfg.watch_entities, ["sensor.a", "sensor.b"]);
     assert_eq!(cfg.ignore_entities, ["sensor.uptime"]);
@@ -163,7 +166,7 @@ async fn accept_handshake(
     send_text(&mut ws, serde_json::json!({"type": "auth_required"})).await;
     let auth = recv_text(&mut ws).await;
     assert_eq!(auth["type"], "auth");
-    assert_eq!(auth["access_token"], "tok");
+    assert_eq!(auth["access_token"], SENTINEL);
     if !auth_ok {
         send_text(&mut ws, serde_json::json!({"type": "auth_invalid"})).await;
         return None;
@@ -244,7 +247,7 @@ async fn rejected_token_is_an_auth_error() {
         panic!("auth rejected token was accepted");
     };
     assert!(matches!(err, GatewayError::Auth(_)), "{err:?}");
-    assert!(!err.to_string().contains("tok"), "token leaked: {err}");
+    assert!(!err.to_string().contains(SENTINEL), "token leaked: {err}");
     server.await.expect("server");
 }
 
@@ -254,7 +257,10 @@ async fn replies_to_the_event_channel_become_persistent_notifications() {
     let long = "x".repeat(MAX_MESSAGE_LENGTH + 10);
     Mock::given(method("POST"))
         .and(path("/api/services/persistent_notification/create"))
-        .and(header("Authorization", "Bearer tok"))
+        .and(header(
+            "Authorization",
+            format!("Bearer {SENTINEL}").as_str(),
+        ))
         .and(body_json(serde_json::json!({
             "title": "Hermes Agent",
             "message": "x".repeat(MAX_MESSAGE_LENGTH),
