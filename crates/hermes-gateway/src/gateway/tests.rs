@@ -1181,6 +1181,7 @@ async fn gateway_send_file_validates_and_canonicalizes_local_paths() {
 }
 
 include!("tests/status_profiles.rs");
+include!("tests/reply_recovery.rs");
 
 mod hook_lifecycle;
 mod runtime_controls;
