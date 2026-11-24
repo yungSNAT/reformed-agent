@@ -44,6 +44,12 @@
                 None,
             );
         }
+        // On disk too: `/tools` edits the saved config and takes its tool lists.
+        std::fs::write(
+            app.state_root.join("config.yaml"),
+            "platform_toolsets:\n  cli: [delegate_task, probe_visible, probe_disabled]\ntools_config:\n  disabled: [probe_disabled]\n",
+        )
+        .expect("write config");
         let config = Arc::make_mut(&mut app.config);
         config.platform_toolsets.insert(
             "cli".to_string(),
@@ -82,6 +88,7 @@
     /// tool results, it answers.
     struct ScopeModel {
         parent_calls: Vec<hermes_core::ToolCall>,
+        child_requests: std::sync::atomic::AtomicUsize,
     }
 
     #[async_trait::async_trait]
@@ -105,6 +112,8 @@
             let (message, finish) = if answered {
                 (hermes_core::Message::assistant("done"), "stop")
             } else if child {
+                self.child_requests
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
                 let calls = vec![
                     scope_tool_call("c1", "probe_disabled", serde_json::json!({})),
                     scope_tool_call("c2", "probe_outside", serde_json::json!({})),
@@ -140,7 +149,11 @@
 
     /// Runs one turn on the session's own agent tools (as the CLI built them)
     /// and sub-agent orchestrator, with [`ScopeModel`] as the model.
-    async fn run_scope_turn(app: &App, parent_calls: Vec<hermes_core::ToolCall>) {
+    /// Returns the turn's messages and how many requests the sub-agent made.
+    async fn run_scope_turn(
+        app: &App,
+        parent_calls: Vec<hermes_core::ToolCall>,
+    ) -> (Vec<hermes_core::Message>, usize) {
         let mut config = crate::app::build_agent_config(&app.config, "dynamic");
         config.skip_memory = true;
         config.skip_context_files = true;
@@ -148,23 +161,31 @@
         config.max_turns = 4;
         config.retry.max_retries = 0;
         config.hermes_home = Some(app.state_root.to_string_lossy().into_owned());
+        let model = Arc::new(ScopeModel {
+            parent_calls,
+            child_requests: Default::default(),
+        });
         let agent = hermes_agent::AgentLoop::new(
             config,
             app.agent.tool_registry.clone(),
-            Arc::new(ScopeModel { parent_calls }),
+            model.clone(),
         );
         let orchestrator = Arc::new(hermes_agent::sub_agent_orchestrator::SubAgentOrchestrator::from_parent(
             &agent,
             app.state_root.clone(),
         ));
         let agent = agent.with_sub_agent_orchestrator(orchestrator);
-        agent
+        let result = agent
             .run(
                 vec![hermes_core::Message::user("scope-probe parent")],
                 Some(app.tool_schemas.clone()),
             )
             .await
             .expect("turn runs");
+        let child_requests = model
+            .child_requests
+            .load(std::sync::atomic::Ordering::SeqCst);
+        (result.messages, child_requests)
     }
 
     #[tokio::test]
@@ -197,8 +218,9 @@
             "delegate_task",
             serde_json::json!({"task": SCOPE_CHILD_TASK, "toolset": "scope-probe"}),
         );
-        run_scope_turn(&app, vec![delegate]).await;
+        let (messages, child_requests) = run_scope_turn(&app, vec![delegate]).await;
 
+        assert!(child_requests > 0, "the sub-agent ran: {messages:#?}");
         assert_eq!(*calls.lock().unwrap(), Vec::<String>::new());
     }
 
