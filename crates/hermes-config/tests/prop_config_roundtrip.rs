@@ -186,6 +186,7 @@ fn gateway_config(
         mcp_servers: Vec::new(),
         profile: ProfileConfig::default(),
         agent: AgentLoopBehaviorConfig::default(),
+        prompt_caching: Default::default(),
         home_dir: None,
     }
 }

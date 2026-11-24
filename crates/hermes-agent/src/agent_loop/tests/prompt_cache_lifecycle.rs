@@ -59,6 +59,9 @@ fn lifecycle_agent(
         skip_memory: true,
         skip_context_files: true,
         session_id: Some(session.to_string()),
+        // A keep-alive needs a known price; the test model has none of its own.
+        prompt_cost_per_million_usd: Some(5.0),
+        completion_cost_per_million_usd: Some(25.0),
         prompt_caching,
         ..AgentConfig::default()
     };
