@@ -50,6 +50,14 @@ pub(crate) const ACP_MULTIMODAL_PREFIX: &str = "__hermes_acp_parts_json__:";
 /// `extra_body` key asking the Anthropic provider for the 1-hour cache tier
 /// (`"1h"`). A local control: no provider sends it on the wire.
 pub const PROMPT_CACHE_TTL_KEY: &str = "prompt_cache_ttl";
+
+/// True for `extra_body` keys that steer this agent and never go on the wire.
+pub(crate) fn is_local_control_key(key: &str) -> bool {
+    matches!(
+        key,
+        "strict_tool_calls" | "strict_api" | "provider_strict" | PROMPT_CACHE_TTL_KEY
+    )
+}
 pub const OPENAI_CODEX_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
 pub const OPENAI_CODEX_DYNAMIC_WIRE_MODEL: &str = "gpt-5.4";
 const CODEX_CLOUDFLARE_ORIGINATOR: &str = "codex_cli_rs";

@@ -79,6 +79,7 @@ fn request(provider: Arc<CacheProvider>, model: &str, extra_body: Option<Value>)
         model: model.to_string(),
         extra_body,
         usage: usage(0, 50_000),
+        sent_at: tokio::time::Instant::now(),
     }
 }
 
@@ -114,6 +115,33 @@ async fn pings_at_five_sixths_of_the_ttl_with_a_one_token_cap_until_the_budget_i
         assert_eq!(messages.len(), 2, "the last request, replayed as sent");
         assert_eq!(messages[1].content.as_deref(), Some("hello"));
     }
+}
+
+#[tokio::test(start_paused = true)]
+async fn the_first_ping_is_timed_from_when_the_request_was_sent() {
+    let provider = CacheProvider::new(50_000, 0);
+    let request = request(provider.clone(), "claude-test", None);
+    // The run ends 60 s after its last request was sent.
+    tokio::time::advance(Duration::from_secs(60)).await;
+    let run_end = tokio::time::Instant::now();
+    let stop = warm("ka-sent", request, &plan(1, 60, None)).await;
+    assert_eq!(stop, KeepAliveStop::PingsSpent);
+    assert_eq!(run_end.elapsed(), Duration::from_secs(190));
+    assert_eq!(provider.calls().len(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn a_full_map_evicts_the_session_sent_first() {
+    let provider = CacheProvider::new(50_000, 0);
+    let mut last = HashMap::new();
+    for session in ["b", "a", "c"] {
+        last.insert(
+            session.to_string(),
+            request(provider.clone(), "claude-test", None),
+        );
+        tokio::time::advance(Duration::from_secs(1)).await;
+    }
+    assert_eq!(oldest_session(&last).as_deref(), Some("b"));
 }
 
 #[tokio::test(start_paused = true)]

@@ -8,6 +8,7 @@
 //! writing it again. The task is process-wide, keyed by session id, because
 //! the gateway drops its agent after every message.
 //!
+//! Each ping is due 5/6 of the lifetime after the previous request was sent.
 //! Warming stops at the first of: `max_pings` sent; the next ping would land
 //! more than `max_idle_minutes` after the run ended; a ping that came back
 //! missed (nothing read, or more written than read); a ping whose worst-case
@@ -42,6 +43,8 @@ pub struct CachedRequest {
     pub model: String,
     pub extra_body: Option<Value>,
     pub usage: UsageStats,
+    /// When the request was sent: the cache entry's lifetime runs from here.
+    pub sent_at: tokio::time::Instant,
 }
 
 /// Limits for one idle stretch.
@@ -70,8 +73,9 @@ pub enum KeepAliveStop {
 
 static LAST_REQUEST: LazyLock<Mutex<HashMap<String, CachedRequest>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
-static ARMED: LazyLock<Mutex<HashMap<String, tokio::task::AbortHandle>>> =
+static ARMED: LazyLock<Mutex<HashMap<String, (u64, tokio::task::AbortHandle)>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+static ARM_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Sessions whose last request is kept; the oldest entry goes beyond this.
 const SESSIONS_MAX: usize = 64;
@@ -85,16 +89,23 @@ pub fn remember(session_id: &str, request: CachedRequest) {
         return;
     };
     if last.len() >= SESSIONS_MAX && !last.contains_key(session_id) {
-        if let Some(any) = last.keys().next().cloned() {
-            last.remove(&any);
+        if let Some(oldest) = oldest_session(&last) {
+            last.remove(&oldest);
         }
     }
     last.insert(session_id.to_string(), request);
 }
 
+/// The session whose last request was sent first.
+fn oldest_session(last: &HashMap<String, CachedRequest>) -> Option<String> {
+    last.iter()
+        .min_by_key(|(_, request)| request.sent_at)
+        .map(|(session, _)| session.clone())
+}
+
 /// Stop any keep-alive armed for `session_id` (a run is starting).
 pub fn cancel(session_id: &str) {
-    if let Some(handle) = ARMED
+    if let Some((_, handle)) = ARMED
         .lock()
         .ok()
         .and_then(|mut armed| armed.remove(session_id))
@@ -148,16 +159,19 @@ pub fn arm(session_id: &str, plan: KeepAlivePlan) {
         return;
     };
     let session = session_id.to_string();
+    let generation = ARM_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     let task = runtime.spawn(async move {
         let stop = warm(&session, request, &plan).await;
         tracing::info!(session = %session, ?stop, "prompt cache keep-alive stopped");
         if let Ok(mut armed) = ARMED.lock() {
-            armed.remove(&session);
+            if armed.get(&session).is_some_and(|(g, _)| *g == generation) {
+                armed.remove(&session);
+            }
         }
         stop
     });
     if let Ok(mut armed) = ARMED.lock() {
-        armed.insert(session_id.to_string(), task.abort_handle());
+        armed.insert(session_id.to_string(), (generation, task.abort_handle()));
     }
 }
 
@@ -168,7 +182,7 @@ pub(crate) async fn warm(
     plan: &KeepAlivePlan,
 ) -> KeepAliveStop {
     let idle_from = tokio::time::Instant::now();
-    let mut last_use = idle_from;
+    let mut last_use = request.sent_at;
     let interval = plan.ttl / 6 * 5;
     let prefix = request
         .usage
@@ -196,6 +210,7 @@ pub(crate) async fn warm(
             return KeepAliveStop::CostCap;
         }
         tokio::time::sleep_until(at).await;
+        let sent = tokio::time::Instant::now();
         let response = request
             .provider
             .chat_completion(
@@ -226,7 +241,7 @@ pub(crate) async fn warm(
             return KeepAliveStop::Missed;
         }
         super::tool_result_prune::record_cache_touch(session_id);
-        last_use = tokio::time::Instant::now();
+        last_use = sent;
     }
     KeepAliveStop::PingsSpent
 }

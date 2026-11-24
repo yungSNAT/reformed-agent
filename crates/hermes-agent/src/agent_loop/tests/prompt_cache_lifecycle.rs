@@ -101,6 +101,79 @@ async fn keep_alive_replays_the_last_request_after_a_run_only_when_opted_in() {
     crate::context::cache_keep_alive::forget("lifecycle-on");
 }
 
+#[tokio::test(start_paused = true)]
+async fn a_background_review_leaves_the_sessions_keep_alive_alone() {
+    let on = hermes_config::PromptCachingConfig {
+        keep_alive: hermes_config::PromptCacheKeepAliveConfig {
+            max_pings: 2,
+            max_idle_minutes: 60,
+        },
+        ..Default::default()
+    };
+    let (agent, provider, _home) = lifecycle_agent("lifecycle-review", on);
+    agent
+        .run(vec![Message::user("hi")], Some(Vec::new()))
+        .await
+        .expect("run");
+    let review_provider = Arc::new(LifecycleProvider {
+        seen: Mutex::new(Vec::new()),
+    });
+    let review = AgentLoop::new(
+        agent.background_review_config(),
+        Arc::new(ToolRegistry::new()),
+        review_provider.clone(),
+    );
+    review
+        .run(
+            vec![Message::user("hi"), Message::user("review")],
+            Some(Vec::new()),
+        )
+        .await
+        .expect("review run");
+    tokio::time::sleep(Duration::from_secs(7_200)).await;
+    let seen = provider.seen.lock().expect("seen").clone();
+    assert_eq!(seen.len(), 3, "the turn, then its 2 keep-alives: {seen:?}");
+    assert_eq!(seen[1], (seen[0].0, Some(1)));
+    let review_seen = review_provider.seen.lock().expect("seen").clone();
+    assert_eq!(review_seen.len(), 1, "the review only: {review_seen:?}");
+    crate::context::cache_keep_alive::forget("lifecycle-review");
+}
+
+#[test]
+fn the_one_hour_tier_applies_only_on_the_anthropic_provider() {
+    let one_hour = hermes_config::PromptCachingConfig {
+        cache_ttl: hermes_config::PromptCacheTtl::OneHour,
+        ..Default::default()
+    };
+    for (model, tier) in [
+        ("anthropic:claude-test", hermes_config::PromptCacheTtl::OneHour),
+        ("bedrock:anthropic.claude-test", hermes_config::PromptCacheTtl::FiveMinutes),
+        ("openrouter:anthropic/claude-test", hermes_config::PromptCacheTtl::FiveMinutes),
+    ] {
+        let config = AgentConfig {
+            model: model.to_string(),
+            prompt_caching: one_hour,
+            ..AgentConfig::default()
+        };
+        let agent = AgentLoop::new(
+            config,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(LifecycleProvider {
+                seen: Mutex::new(Vec::new()),
+            }),
+        );
+        assert_eq!(agent.prompt_cache_ttl(), tier, "{model}");
+        let body = agent
+            .extra_body_for_api_mode(&agent.config.api_mode)
+            .unwrap_or_default();
+        assert_eq!(
+            body.get(crate::provider::PROMPT_CACHE_TTL_KEY).is_some(),
+            tier == hermes_config::PromptCacheTtl::OneHour,
+            "{model}: {body}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn a_cold_return_compacts_a_half_full_history_before_the_first_request_when_opted_in() {
     let history = || {

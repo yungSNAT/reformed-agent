@@ -292,13 +292,19 @@ impl AgentLoop {
             "Context pressure at {}%, triggering compression",
             (total_chars * 100) / max_c
         );
-        self.compress_with_status(ctx, &message, false);
+        self.compress_with_status(ctx, &message, false, total_chars);
     }
 
     /// Compress `ctx`, reporting `message`: past the 80% threshold only, or
-    /// whatever its size when `force`.
-    fn compress_with_status(&self, ctx: &mut ContextManager, message: &str, force: bool) {
-        let total_chars = ctx.total_chars();
+    /// whatever its size when `force`. `before_chars` is the size before
+    /// any tool-result prune, for the compaction checkpoint.
+    fn compress_with_status(
+        &self,
+        ctx: &mut ContextManager,
+        message: &str,
+        force: bool,
+        before_chars: usize,
+    ) {
         let max_c = ctx.max_context_chars().max(1);
         tracing::info!("{message}");
         self.emit_status("lifecycle", message);
@@ -311,7 +317,7 @@ impl AgentLoop {
             ctx.compress();
         }
         let after_chars = ctx.total_chars();
-        self.emit_compaction_contextlattice_checkpoint(total_chars, after_chars, max_c);
+        self.emit_compaction_contextlattice_checkpoint(before_chars, after_chars, max_c);
     }
 
     fn emit_compaction_contextlattice_checkpoint(
@@ -536,7 +542,7 @@ impl AgentLoop {
         {
             body["strict_api"] = Value::Bool(true);
         }
-        if self.config.prompt_caching.cache_ttl == hermes_config::PromptCacheTtl::OneHour {
+        if self.prompt_cache_ttl() == hermes_config::PromptCacheTtl::OneHour {
             body[crate::provider::PROMPT_CACHE_TTL_KEY] = Value::String("1h".to_string());
         }
         Some(body)
@@ -606,6 +612,7 @@ impl AgentLoop {
             let target = self.attempt_runtime(route, model);
             // A replay after an OAuth refresh reuses `target`, the provider that
             // now holds the new token: a rebuilt route could load the old key.
+            let sent_at = tokio::time::Instant::now();
             let result = loop {
                 let sent = target.provider.active_credential();
                 let result = target
@@ -644,6 +651,7 @@ impl AgentLoop {
                         &api_messages,
                         tool_schemas,
                         response.usage.as_ref(),
+                        sent_at,
                     );
                     return Ok(response);
                 }
@@ -1052,6 +1060,7 @@ impl AgentLoop {
             } else {
                 active_model
             };
+            let sent_at = tokio::time::Instant::now();
             let sent = target.provider.active_credential();
             let mut stream = target.provider.chat_completion_stream(
                 &api_messages,
@@ -1321,6 +1330,7 @@ impl AgentLoop {
                 &api_messages,
                 tool_schemas,
                 last_usage.as_ref(),
+                sent_at,
             );
             return Ok(StreamCollectOutcome::Complete(LlmResponse {
                 message,

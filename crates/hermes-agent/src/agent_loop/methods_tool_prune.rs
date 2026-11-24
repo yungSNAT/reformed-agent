@@ -1,14 +1,22 @@
 impl AgentLoop {
+    /// The cache tier in force: `1h` only on the Anthropic provider, the one
+    /// that writes the `ttl` on its markers.
+    fn prompt_cache_ttl(&self) -> hermes_config::PromptCacheTtl {
+        let (provider, _) = self.extract_provider_and_model(&self.config.model);
+        if provider == "anthropic" {
+            self.config.prompt_caching.cache_ttl
+        } else {
+            hermes_config::PromptCacheTtl::FiveMinutes
+        }
+    }
+
     /// True when this session's prompt cache has expired since its last use.
     fn session_cache_cold(&self) -> bool {
         let Some(session_id) = self.config.session_id.as_deref().filter(|s| !s.is_empty())
         else {
             return false;
         };
-        let ttl = tool_result_prune::cache_ttl_for_model(
-            &self.config.model,
-            self.config.prompt_caching.cache_ttl,
-        );
+        let ttl = tool_result_prune::cache_ttl_for_model(&self.config.model, self.prompt_cache_ttl());
         tool_result_prune::cache_expired(session_id, ttl)
     }
 
@@ -24,6 +32,7 @@ impl AgentLoop {
         tool_schemas: &[ToolSchema],
     ) {
         let cold = self.session_cache_cold();
+        let before_chars = ctx.total_chars();
         if tool_schemas.iter().any(|t| t.name == "read_file")
             && tool_result_prune::file_tools_read_this_machine()
         {
@@ -55,7 +64,7 @@ impl AgentLoop {
                 "Prompt cache expired with context at {}%: compacting before the first request",
                 (ctx.total_chars() * 100) / max_c
             );
-            self.compress_with_status(ctx, &message, true);
+            self.compress_with_status(ctx, &message, true, before_chars);
         }
     }
 
@@ -88,6 +97,7 @@ impl AgentLoop {
         messages: &[Message],
         tools: &[ToolSchema],
         usage: Option<&hermes_core::UsageStats>,
+        sent_at: tokio::time::Instant,
     ) {
         let (Some(session_id), Some(usage)) = (self.config.session_id.as_deref(), usage) else {
             return;
@@ -104,12 +114,16 @@ impl AgentLoop {
                 model: target.wire_model.clone(),
                 extra_body: target.extra_body.clone(),
                 usage: usage.clone(),
+                sent_at,
             },
         );
     }
 
     /// Run start: no keep-alive runs beside a turn.
     fn cancel_cache_keep_alive(&self) {
+        if self.config.prompt_caching.keep_alive.pings() == 0 {
+            return;
+        }
         if let Some(session_id) = self.config.session_id.as_deref() {
             crate::context::cache_keep_alive::cancel(session_id);
         }
@@ -130,13 +144,13 @@ impl AgentLoop {
             crate::context::cache_keep_alive::KeepAlivePlan {
                 ttl: tool_result_prune::cache_ttl_for_model(
                     &self.config.model,
-                    self.config.prompt_caching.cache_ttl,
+                    self.prompt_cache_ttl(),
                 ),
                 max_pings: keep_alive.pings(),
                 max_idle: Duration::from_secs(keep_alive.max_idle_seconds()),
                 max_cost_usd: self.config.max_cost_usd,
                 cost: Arc::new(move |usage, model| estimate_usage_cost_usd(usage, model, &config)),
-                write_price_factor: match self.config.prompt_caching.cache_ttl {
+                write_price_factor: match self.prompt_cache_ttl() {
                     hermes_config::PromptCacheTtl::FiveMinutes => 1.0,
                     hermes_config::PromptCacheTtl::OneHour => 2.0 / 1.25,
                 },
