@@ -90,6 +90,14 @@ fn workspace_git_with(
     root: &Path,
     guard: LazyFetchGuard,
 ) -> Option<Command> {
+    // Git follows the repository's includes, expanding their paths and
+    // conditions, as soon as it reads its config. So the repository's own
+    // config files are first read here, each without its includes, and their
+    // includes followed here: a `~name` among them is refused before git
+    // reads them.
+    if repository_config_names_a_user(git, root)? {
+        return None;
+    }
     // Every config key git reads for this repository, from every scope and
     // included file. `git config` alone reads the file `GIT_CONFIG` names in
     // their place, so that variable is dropped. The keys are matched here,
@@ -194,13 +202,6 @@ fn workspace_git_with(
 /// home through `getpwnam`, which can ask a directory service about a name
 /// the repository chose. Any value counts, as git takes many keys as paths.
 /// Git tests an `includeIf` condition whatever the variable under it.
-///
-/// shortcut: git follows the includes, and expands their paths and
-/// conditions, as soon as it starts in the repository, so the listing itself
-/// still makes those lookups; this stops the ones status, log and the other
-/// commands would make for every other path. Ending those too means reading
-/// the repository's config files without git's repository discovery and
-/// include traversal.
 fn names_a_user(key: &[u8], value: Option<&[u8]>) -> bool {
     let condition = key
         .strip_prefix(b"includeif.")
@@ -219,6 +220,117 @@ fn names_a_user(key: &[u8], value: Option<&[u8]>) -> bool {
         let path = path.strip_prefix(b":(optional)").unwrap_or(path);
         path.len() > 1 && path[0] == b'~' && path[1] != b'/'
     })
+}
+
+/// Git's limit on nested includes.
+const MAX_INCLUDE_DEPTH: usize = 10;
+
+/// Whether the config of the repository git would find from `root`, or a
+/// file it includes, names a user (see [`names_a_user`]). Each file is listed
+/// by `git config --file --no-includes`, which neither follows nor expands an
+/// include, with no repository to read; the includes are followed here, under
+/// every condition. `Some(false)` outside a repository; `None` when a file
+/// cannot be listed, an include path cannot be resolved or the includes nest
+/// deeper than git allows.
+fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<bool> {
+    let Some(git_dir) = find_git_dir(root)? else {
+        return Some(false);
+    };
+    // A linked worktree's shared config is in the main repository's folder.
+    let common_dir = match std::fs::read_to_string(git_dir.join("commondir")) {
+        Ok(text) => git_dir.join(text.trim_end_matches(['\n', '\r'])),
+        Err(_) => git_dir.clone(),
+    };
+    let mut pending = vec![
+        (common_dir.join("config"), 0),
+        (git_dir.join("config.worktree"), 0),
+    ];
+    while let Some((file, depth)) = pending.pop() {
+        // Git passes over an include that is missing.
+        if !file.exists() {
+            continue;
+        }
+        if depth > MAX_INCLUDE_DEPTH {
+            return None;
+        }
+        let listed = output_within_timeout(
+            Command::new(git)
+                .args(["config", "--no-includes", "--null", "--list", "--file"])
+                .arg(&file)
+                // No repository: `<file>/` is no folder, so git finds no
+                // config, and no includes, of a repository to read early.
+                .env("GIT_DIR", file.join("no-repository"))
+                .env_remove("GIT_CONFIG")
+                .stdin(Stdio::null())
+                .suppress_windows_console(),
+            GIT_SNAPSHOT_TIMEOUT,
+        )?;
+        if !listed.status.success() {
+            return None;
+        }
+        for entry in listed.stdout.split(|byte| *byte == 0) {
+            let (key, value) = match entry.iter().position(|byte| *byte == b'\n') {
+                Some(newline) => (&entry[..newline], Some(&entry[newline + 1..])),
+                None => (entry, None),
+            };
+            if names_a_user(key, value) {
+                return Some(true);
+            }
+            let is_include = key == b"include.path"
+                || (key.starts_with(b"includeif.") && key.ends_with(b".path"));
+            if let (true, Some(value)) = (is_include, value) {
+                pending.push((include_path(&file, value)?, depth + 1));
+            }
+        }
+    }
+    Some(false)
+}
+
+/// The file an include in `file` names, resolved as git resolves it: `~/`
+/// under the home folder, a relative path beside `file`. None for a path
+/// that is not UTF-8 or a `~/` path with no home folder.
+fn include_path(file: &Path, value: &[u8]) -> Option<std::path::PathBuf> {
+    let value = std::str::from_utf8(value).ok()?;
+    let value = value.strip_prefix(":(optional)").unwrap_or(value);
+    if let Some(rest) = value.strip_prefix("~/") {
+        return Some(std::env::home_dir()?.join(rest));
+    }
+    if value == "~" {
+        return std::env::home_dir();
+    }
+    Some(file.parent().unwrap_or(Path::new("")).join(value))
+}
+
+/// The git folder that git's discovery finds from `root`: `GIT_DIR` when
+/// set, else the first folder upward with a `.git` folder or file, or that is
+/// itself a bare repository. `Some(None)` outside a repository; None when a
+/// `.git` file cannot be read. Git may stop sooner (a ceiling, another file
+/// system, an owner it does not trust), and then reads none of this.
+fn find_git_dir(root: &Path) -> Option<Option<std::path::PathBuf>> {
+    let root = std::path::absolute(root).ok()?;
+    if let Some(git_dir) = std::env::var_os("GIT_DIR").filter(|dir| !dir.is_empty()) {
+        return Some(Some(root.join(git_dir)));
+    }
+    let is_git_dir = |dir: &Path| {
+        dir.join("HEAD").is_file()
+            && (dir.join("commondir").is_file()
+                || (dir.join("objects").is_dir() && dir.join("refs").is_dir()))
+    };
+    for dir in root.ancestors() {
+        let dot_git = dir.join(".git");
+        if dot_git.is_file() {
+            let text = std::fs::read_to_string(&dot_git).ok()?;
+            let target = text.lines().next()?.strip_prefix("gitdir:")?.trim();
+            return Some(Some(dir.join(target)));
+        }
+        if is_git_dir(&dot_git) {
+            return Some(Some(dot_git));
+        }
+        if is_git_dir(dir) {
+            return Some(Some(dir.to_path_buf()));
+        }
+    }
+    Some(None)
 }
 
 /// A `git` command for reading the repository at `root` that its own
