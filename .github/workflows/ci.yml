@@ -301,6 +301,8 @@ jobs:
         run: cargo test --locked -p hermes-tools --lib credential_guard
       - name: Native tests
         if: ${{ !cancelled() }}
+        env:
+          REFORMED_TEST_REQUIRE_LIVE_REFUSING_MEMBER: '1'
         run: cargo test --locked --no-fail-fast -p hermes-environments -p hermes-mcp
 
   desktop-gateway:

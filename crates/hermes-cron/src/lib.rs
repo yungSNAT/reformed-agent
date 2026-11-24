@@ -31,7 +31,7 @@ pub use cli_support::{cron_scheduler_for_data_dir, MinimalCronLlm};
 pub use completion::CronCompletionEvent;
 pub use job::{CronJob, DeliverConfig, DeliverTarget, JobStatus, ModelConfig};
 pub use persistence::{FileJobPersistence, JobPersistence, SqliteJobPersistence};
-pub use runner::CronRunner;
+pub use runner::{CronRunner, CRON_HARD_DISABLED_TOOLS};
 pub use scheduler::{CronError, CronScheduler, ManagedCronProvider};
 pub use suggestions::{
     SuggestionError, SuggestionJobSpec, SuggestionRecord, SuggestionStatus, SuggestionStore,

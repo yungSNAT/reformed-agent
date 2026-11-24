@@ -72,7 +72,7 @@ const DEFAULT_SCRIPT_SHELL: &str = "sh";
 const MAX_SCRIPT_OUTPUT_CHARS: usize = 64_000;
 const CRON_PLATFORM: &str = "cron";
 const CRON_DEFAULT_TOOLSET: &str = "hermes-cron";
-const CRON_HARD_DISABLED_TOOLS: &[&str] = &["cronjob", "send_message", "clarify"];
+pub const CRON_HARD_DISABLED_TOOLS: &[&str] = &["cronjob", "send_message", "clarify"];
 
 #[derive(Debug, Clone)]
 struct ScriptControl {
@@ -490,9 +490,10 @@ fn build_cron_skill_prompt(identifiers: &[String]) -> Result<Option<String>, Cro
 // CronRunner
 // ---------------------------------------------------------------------------
 
-/// Builds the tools for one job run, and the browser they drive, which is
-/// closed when the run ends.
-type RunTools = dyn Fn() -> (Arc<ToolRegistry>, SharedBrowser) + Send + Sync;
+/// Builds the tools for one job run, optionally their pre-planned offered
+/// schemas, and the browser they drive, which is closed when the run ends.
+type RunTools =
+    dyn Fn() -> (Arc<ToolRegistry>, Option<Vec<ToolSchema>>, SharedBrowser) + Send + Sync;
 
 /// Executes cron jobs by spinning up a fresh agent loop for each invocation.
 pub struct CronRunner {
@@ -521,7 +522,27 @@ impl CronRunner {
         mut self,
         run_tools: impl Fn() -> (Arc<ToolRegistry>, SharedBrowser) + Send + Sync + 'static,
     ) -> Self {
-        self.run_tools = Some(Box::new(run_tools));
+        self.run_tools = Some(Box::new(move || {
+            let (tools, browser) = run_tools();
+            (tools, None, browser)
+        }));
+        self
+    }
+
+    /// Like [`Self::with_run_tools`], but also supplies the run's pre-planned
+    /// offered tool schemas so platform MCP aliases and gateway scopes are
+    /// preserved.
+    pub fn with_planned_run_tools(
+        mut self,
+        run_tools: impl Fn() -> (Arc<ToolRegistry>, Vec<ToolSchema>, SharedBrowser)
+            + Send
+            + Sync
+            + 'static,
+    ) -> Self {
+        self.run_tools = Some(Box::new(move || {
+            let (tools, offered, browser) = run_tools();
+            (tools, Some(offered), browser)
+        }));
         self
     }
 
@@ -603,20 +624,19 @@ impl CronRunner {
             runnable_job.prompt
         ));
 
-        // Build tool list from `hermes tools` cron-platform config, with
-        // recursive/messaging tools denied even if a broad toolset includes them.
-        let tools = self.filtered_tool_schemas();
-
         // Build initial messages
         let messages = self.build_messages(&runnable_job)?;
 
-        let (tool_registry, browser) = match &self.run_tools {
+        let (tool_registry, planned_tools, browser) = match &self.run_tools {
             Some(run_tools) => {
-                let (tools, browser) = run_tools();
-                (tools, Some(browser))
+                let (tools, planned, browser) = run_tools();
+                (tools, planned, Some(browser))
             }
-            None => (self.tool_registry.clone(), None),
+            None => (self.tool_registry.clone(), None, None),
         };
+        // Build tool list from `hermes tools` cron-platform config, with
+        // recursive/messaging tools denied even if a broad toolset includes them.
+        let tools = planned_tools.unwrap_or_else(|| self.filtered_tool_schemas());
 
         let run = async {
             let agent_loop = AgentLoop::new(config, tool_registry, self.llm_provider.clone());

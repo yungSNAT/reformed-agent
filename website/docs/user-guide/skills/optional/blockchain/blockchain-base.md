@@ -4,7 +4,7 @@ sidebar_label: "Base"
 description: "Query Base (Ethereum L2) blockchain data with USD pricing — wallet balances, token info, transaction details, gas analysis, contract inspection, whale detect..."
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # Base
 

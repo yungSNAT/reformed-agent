@@ -641,6 +641,9 @@ fn credential_stores(
 #[cfg(test)]
 thread_local! {
     static GUARD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SUBTREE_DIRS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    #[cfg(target_os = "linux")]
+    static TEST_LINUX_MOUNTINFO: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
 }
 
 /// Path judgements and set lookups made on this thread, for tests that bound
@@ -757,6 +760,225 @@ impl ProtectedPaths {
     }
 }
 
+#[cfg(any(target_os = "linux", test))]
+fn decode_mountinfo_path(raw: &str) -> PathBuf {
+    let bytes = raw.as_bytes();
+    let mut out = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'\\' && i + 3 < bytes.len() {
+            let oct = &bytes[i + 1..i + 4];
+            if oct.iter().all(|b| (b'0'..=b'7').contains(b)) {
+                let val = u16::from(oct[0] - b'0') * 64
+                    + u16::from(oct[1] - b'0') * 8
+                    + u16::from(oct[2] - b'0');
+                if val <= 255 {
+                    out.push(val as u8);
+                    i += 4;
+                    continue;
+                }
+            }
+        }
+        out.push(bytes[i]);
+        i += 1;
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStringExt;
+        PathBuf::from(std::ffi::OsString::from_vec(out))
+    }
+    #[cfg(not(unix))]
+    {
+        PathBuf::from(String::from_utf8_lossy(&out).into_owned())
+    }
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn parse_linux_mounts(mountinfo: &str) -> Option<Vec<PathBuf>> {
+    let mut mounts: Vec<PathBuf> = mountinfo
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .map(decode_mountinfo_path)
+        .collect();
+    if mounts.is_empty() {
+        return None;
+    }
+    mounts.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+    Some(mounts)
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_mounts() -> Option<Vec<PathBuf>> {
+    #[cfg(test)]
+    if let Some(override_text) = TEST_LINUX_MOUNTINFO.with(|cell| cell.borrow().clone()) {
+        return parse_linux_mounts(&override_text);
+    }
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    parse_linux_mounts(&mountinfo)
+}
+
+/// Whether `target_path` (the resolved path of a `links == 1` write) may name
+/// a file inside `store_dir` under a spelling path checks did not see (such as
+/// a UNC loopback share, cross-drive/subst prefix, macOS firmlink, Linux bind
+/// mount, or a symlinked store root).
+fn may_have_single_link_alias(
+    target_path: &Path,
+    store_dir: &Path,
+    #[cfg(target_os = "linux")] linux_mounts: Option<&[PathBuf]>,
+) -> bool {
+    let Ok(canon_store) = std::fs::canonicalize(store_dir) else {
+        return true;
+    };
+    if target_path.starts_with(&canon_store) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let disk_of = |p: &Path| match p.components().next() {
+            Some(Component::Prefix(pre)) => match pre.kind() {
+                Prefix::Disk(d) | Prefix::VerbatimDisk(d) => Some(d.to_ascii_uppercase()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(t_disk) = disk_of(target_path) else {
+            return true;
+        };
+        disk_of(&canon_store) != Some(t_disk) || disk_of(store_dir) != Some(t_disk)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = canon_store;
+        target_path.starts_with("/System/Volumes/")
+            || target_path.starts_with("/Volumes/")
+            || target_path.starts_with("/dev/")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if target_path.starts_with("/proc/") || target_path.starts_with("/dev/") {
+            return true;
+        }
+        let Some(mounts) = linux_mounts else {
+            return true;
+        };
+        let mp = |p: &Path| mounts.iter().find(|m| p.starts_with(m));
+        if mp(target_path) != mp(&canon_store) {
+            return true;
+        }
+        mounts
+            .iter()
+            .any(|m| m != &canon_store && m.starts_with(&canon_store))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = canon_store;
+        true
+    }
+}
+
+/// Whether `path` names, under another name, the same file as a protected
+/// one: a credential store or token source, a file inside a store folder or
+/// a protected home folder, or a home or system file the rule names. A hard
+/// link made outside the file tools (the terminal's `ln`) gives such a file a
+/// name the path rules cannot see, and a write through it changes the file in
+/// place; so can another spelling of the same file (a Windows loopback share,
+/// a bind mount). Tracks visited directory `(volume, file)` identities so
+/// `auth/` overlap and bind-mount cycles cannot re-walk, and skips subtree
+/// recursion on ordinary local `links == 1` writes without an alternate
+/// spelling (whilst directory symlinks/junctions below protected roots remain
+/// excluded by `entry.file_type().is_dir()`).
+fn is_hard_link_to_protected_file(
+    path: &Path,
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
+) -> bool {
+    let Some(target) = hermes_config::file_identity(path) else {
+        return false;
+    };
+    let stores = credential_stores(home, hermes_home, auth_override);
+    let exact_home_files = home.into_iter().flat_map(|home| {
+        WRITE_DENY_HOME_EXACT
+            .iter()
+            .map(move |name| home.join(name))
+    });
+    let exact_system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
+    let mut exact_files: Vec<PathBuf> = exact_home_files.chain(exact_system_files).collect();
+    let mut pending: Vec<PathBuf> = home
+        .into_iter()
+        .flat_map(|home| {
+            WRITE_DENY_HOME_PREFIX
+                .iter()
+                .map(move |name| home.join(name))
+        })
+        .collect();
+    for (candidate, is_exact_file) in stores {
+        if is_exact_file {
+            exact_files.push(candidate);
+        } else {
+            pending.push(candidate);
+        }
+    }
+    for file in exact_files {
+        if hermes_config::file_identity(&file).is_some_and(|id| id.same_file(&target)) {
+            return true;
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    let linux_mounts = if target.links < 2 {
+        read_linux_mounts()
+    } else {
+        None
+    };
+
+    let mut seen_dirs: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
+    while let Some(protected) = pending.pop() {
+        let Some(id) = hermes_config::file_identity(&protected) else {
+            continue;
+        };
+        if id.same_file(&target) {
+            return true;
+        }
+        if !protected.is_dir() {
+            continue;
+        }
+        if target.links < 2
+            && !may_have_single_link_alias(
+                path,
+                &protected,
+                #[cfg(target_os = "linux")]
+                linux_mounts.as_deref(),
+            )
+        {
+            continue;
+        }
+        if !seen_dirs.insert((id.volume, id.file)) {
+            continue;
+        }
+        #[cfg(test)]
+        SUBTREE_DIRS_READ.with(|reads| reads.set(reads.get() + 1));
+        // A folder's entries, links not followed; a file has none.
+        for entry in std::fs::read_dir(&protected)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let entry_path = entry.path();
+            if is_dir {
+                pending.push(entry_path);
+            } else if hermes_config::file_identity(&entry_path)
+                .is_some_and(|entry_id| entry_id.same_file(&target))
+            {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
 /// has already expanded, so it is not expanded a second time.
 fn is_expanded_write_denied(
@@ -823,6 +1045,10 @@ fn is_expanded_write_denied(
                 return true;
             }
         }
+    }
+
+    if is_hard_link_to_protected_file(&forms[1], home, hermes_home, auth_override) {
+        return true;
     }
 
     if let Some(safe_root) = safe_root {
@@ -1684,6 +1910,240 @@ mod tests {
         assert!(!is_write_denied_with_roots(
             &vault.join("notes.md"),
             None,
+            Some(&hermes_home)
+        ));
+    }
+
+    #[test]
+    fn write_deny_refuses_a_hard_link_to_a_file_deep_in_a_protected_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let keys = home.join(".gnupg").join("private-keys-v1.d");
+        std::fs::create_dir_all(&keys).expect("keys dir");
+        let key = keys.join("ABCD.key");
+        std::fs::write(&key, "x").expect("key");
+        let alias = tmp.path().join("notes.txt");
+        std::fs::hard_link(&key, &alias).expect("hard link");
+
+        assert!(is_write_denied_with_roots(&alias, Some(&home), None));
+
+        // 5-level deep subtree (past old depth-4 cap) stays protected too.
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("deep dir");
+        let deep_key = deep.join("id_deep");
+        std::fs::write(&deep_key, "x").expect("deep key");
+        let deep_alias = tmp.path().join("deep-notes.txt");
+        std::fs::hard_link(&deep_key, &deep_alias).expect("deep hard link");
+        assert!(is_write_denied_with_roots(&deep_alias, Some(&home), None));
+    }
+
+    #[test]
+    fn write_deny_allows_unrelated_multiply_linked_file_past_4096_protected_entries() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let many = home.join(".ssh").join("many");
+        let elsewhere = tmp.path().join("work");
+        std::fs::create_dir_all(&many).expect("many");
+        std::fs::create_dir_all(&elsewhere).expect("work");
+        for i in 0..4_100 {
+            std::fs::write(many.join(format!("entry-{i}")), "x").expect("entry");
+        }
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(
+            !is_write_denied_with_roots(&plain, Some(&home), None),
+            "unrelated multiply-linked file denied due to protected entry count"
+        );
+        let protected_alias = elsewhere.join("leak-4099.txt");
+        std::fs::hard_link(many.join("entry-4099"), &protected_alias).expect("protected alias");
+        assert!(is_write_denied_with_roots(
+            &protected_alias,
+            Some(&home),
+            None
+        ));
+    }
+
+    #[test]
+    fn ordinary_single_link_write_skips_protected_subtrees_and_seen_dedups_auth_subfolders() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let auth_sub = hermes_home.join("auth").join("nested");
+        let ssh_sub = home.join(".ssh").join("cache");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&auth_sub).expect("auth_sub");
+        std::fs::create_dir_all(&ssh_sub).expect("ssh_sub");
+        std::fs::create_dir_all(&work).expect("work");
+        let token = auth_sub.join("token.json");
+        std::fs::write(&token, "{}").expect("token");
+        std::fs::write(ssh_sub.join("id_ed25519"), "k").expect("key");
+        let plain = work.join("note.txt");
+        std::fs::write(&plain, "ok").expect("plain");
+
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 0);
+
+        let token_alias = work.join("token_alias.json");
+        std::fs::hard_link(&token, &token_alias).expect("hard link");
+        let unrelated_link = work.join("other_a.txt");
+        std::fs::write(&unrelated_link, "x").expect("unrelated");
+        std::fs::hard_link(&unrelated_link, work.join("other_b.txt")).expect("other link");
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &unrelated_link,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        // 4 unique dirs: auth, auth/nested, .ssh, .ssh/cache -> auth/nested visited once.
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 4);
+        assert!(is_write_denied_with_roots(
+            &token_alias,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+
+        #[cfg(unix)]
+        {
+            let vault = tmp.path().join("vault");
+            std::fs::create_dir_all(vault.join("kube/sub")).expect("vault kube");
+            let linked_cfg = vault.join("kube/sub/config");
+            std::fs::write(&linked_cfg, "k").expect("cfg");
+            std::os::unix::fs::symlink(vault.join("kube"), home.join(".kube")).expect("kube link");
+            assert!(is_write_denied_with_roots(&linked_cfg, Some(&home), None));
+        }
+    }
+
+    #[test]
+    fn linux_mountinfo_escapes_are_decoded_and_trigger_bind_mount_subtree_scan() {
+        let parsed = parse_linux_mounts(
+            "10 1 8:1 / / rw,relatime - ext4 /dev/sda1 rw\n\
+             20 10 8:1 /home/u/.ssh /mnt/tab\\011nl\\012bs\\134sp\\040lit\\134040 rw - ext4 /dev/sda1 rw\n",
+        )
+        .expect("mounts");
+        assert_eq!(parsed[0], PathBuf::from("/mnt/tab\tnl\nbs\\sp lit\\040"));
+        assert_eq!(parsed[1], PathBuf::from("/"));
+
+        #[cfg(target_os = "linux")]
+        {
+            struct ResetMountinfo;
+            impl Drop for ResetMountinfo {
+                fn drop(&mut self) {
+                    TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = None);
+                }
+            }
+            let tmp = tempfile::tempdir().expect("tempdir");
+            let home = tmp.path().join("home");
+            std::fs::create_dir_all(home.join(".ssh")).expect("ssh");
+            std::fs::write(home.join(".ssh/id_ed25519"), "k").expect("key");
+            let mnt = tmp.path().join("mnt\t\n\\ sp");
+            std::fs::create_dir_all(&mnt).expect("mnt");
+            let alias = mnt.join("id_ed25519");
+            std::fs::write(&alias, "x").expect("alias");
+            let canon_mnt = std::fs::canonicalize(&mnt).expect("canon mnt");
+            let escaped = canon_mnt
+                .to_string_lossy()
+                .replace('\\', r"\134")
+                .replace(' ', r"\040")
+                .replace('\t', r"\011")
+                .replace('\n', r"\012");
+            let table = format!(
+                "10 1 8:1 / / rw - ext4 /dev/sda1 rw\n20 10 8:1 /x {escaped} rw - ext4 /dev/sda1 rw\n"
+            );
+            let _reset = ResetMountinfo;
+            TEST_LINUX_MOUNTINFO.with(|cell| *cell.borrow_mut() = Some(table));
+            SUBTREE_DIRS_READ.with(|r| r.set(0));
+            assert!(!is_write_denied_with_roots(&alias, Some(&home), None));
+            assert!(
+                SUBTREE_DIRS_READ.with(std::cell::Cell::get) > 0,
+                "escaped bind mountpoint skipped protected subtree scan"
+            );
+        }
+    }
+
+    /// The loopback share names a local file under a path the path rules do
+    /// not know; it is the same file, with one link. Skipped where the
+    /// administrative share cannot be reached.
+    #[cfg(windows)]
+    #[test]
+    fn write_deny_refuses_a_protected_file_through_the_loopback_share() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let deep = home.join(".ssh").join("a/b/c/d/e");
+        std::fs::create_dir_all(&deep).expect("ssh deep");
+        std::fs::create_dir_all(&hermes_home).expect("profile");
+        std::fs::write(hermes_home.join(".env"), "x").expect("env");
+        std::fs::write(home.join(".ssh").join("authorized_keys"), "x").expect("keys");
+        std::fs::write(deep.join("id_ed25519"), "x").expect("deep key");
+        for local in [
+            hermes_home.join(".env"),
+            home.join(".ssh").join("authorized_keys"),
+            deep.join("id_ed25519"),
+        ] {
+            let local = local.to_string_lossy().to_string();
+            let Some((drive, rest)) = local.split_once(":\\") else {
+                return;
+            };
+            let share = PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"));
+            if hermes_config::file_identity(&share).is_none() {
+                eprintln!("skipped: the loopback share is not reachable");
+                return;
+            }
+            assert!(
+                is_write_denied_with_roots(&share, Some(&home), Some(&hermes_home)),
+                "{}",
+                share.display()
+            );
+        }
+    }
+
+    #[test]
+    fn write_deny_refuses_a_hard_link_to_a_protected_file_under_another_name() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = home.join(".hermes");
+        let elsewhere = tmp.path().join("work");
+        for dir in [
+            hermes_home.join("auth"),
+            home.join(".ssh"),
+            home.join(".claude"),
+            elsewhere.clone(),
+        ] {
+            std::fs::create_dir_all(dir).expect("dir");
+        }
+        for (index, protected) in [
+            hermes_home.join(".env"),
+            hermes_home.join("auth").join("tokens.json"),
+            home.join(".ssh").join("id_ed25519"),
+            home.join(".bashrc"),
+            home.join(".claude").join(".credentials.json"),
+        ]
+        .iter()
+        .enumerate()
+        {
+            std::fs::write(protected, "x").expect("protected file");
+            let alias = elsewhere.join(format!("notes-{index}.txt"));
+            std::fs::hard_link(protected, &alias).expect("hard link");
+            assert!(
+                is_write_denied_with_roots(&alias, Some(&home), Some(&hermes_home)),
+                "a hard link to {} was writable",
+                protected.display()
+            );
+        }
+
+        // A multiply-linked file that is no protected file stays writable.
+        let plain = elsewhere.join("plain.txt");
+        std::fs::write(&plain, "x").expect("plain");
+        std::fs::hard_link(&plain, elsewhere.join("plain-2.txt")).expect("plain link");
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
             Some(&hermes_home)
         ));
     }

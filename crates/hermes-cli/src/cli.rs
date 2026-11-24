@@ -101,6 +101,12 @@ pub enum CliCommand {
     /// Build an incident support bundle with replay/provenance diagnostics.
     IncidentPack(IncidentPackArgs),
 
+    /// Run an SLO check command and the rollback command when it fails (exit 1 on violation).
+    SloRollback(SloRollbackArgs),
+
+    /// Score recent sessions and write a session eval report.
+    SessionEval(SessionEvalArgs),
+
     /// Show running status (active sessions, model, uptime).
     Status,
 
@@ -492,6 +498,44 @@ pub struct IncidentPackArgs {
     #[arg(long)]
     pub output: Option<String>,
     /// Print machine-readable JSON summary.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SloRollbackArgs {
+    /// Folder the commands run in and reports go under (default: current folder).
+    #[arg(long)]
+    pub repo_root: Option<std::path::PathBuf>,
+    /// SLO check command; a non-zero exit is a violation (default: HERMES_SLO_CHECK_CMD).
+    #[arg(long)]
+    pub check_cmd: Option<String>,
+    /// Command run on a violation (default: HERMES_SLO_ROLLBACK_CMD).
+    #[arg(long)]
+    pub rollback_cmd: Option<String>,
+    /// Report a violation without running the rollback command.
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Report file (default: <repo-root>/.sync-reports/slo-auto-rollback-<stamp>.json).
+    #[arg(long)]
+    pub report_path: Option<std::path::PathBuf>,
+    /// Print the report as JSON.
+    #[arg(long)]
+    pub json: bool,
+}
+
+#[derive(Debug, Clone, Args)]
+pub struct SessionEvalArgs {
+    /// Sessions folder (default: <hermes home>/sessions).
+    #[arg(long)]
+    pub sessions_dir: Option<std::path::PathBuf>,
+    /// Most recent sessions to read (at least 1).
+    #[arg(long, default_value_t = 25)]
+    pub max_sessions: usize,
+    /// Report file (default: <hermes home>/eval-reports/session-eval-harness-<stamp>.json).
+    #[arg(long)]
+    pub out_json: Option<std::path::PathBuf>,
+    /// Print the report as JSON (its path goes to stderr).
     #[arg(long)]
     pub json: bool,
 }

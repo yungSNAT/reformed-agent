@@ -1,0 +1,319 @@
+[
+  {
+    "name": "apple-notes",
+    "description": "Manage Apple Notes from the terminal",
+    "overview": "Notes integration lets the agent read and write Apple Notes. Notes integration lets the agent read and write Apple Notes. Notes integration lets the agent read and write Apple Notes. Notes integration lets the agent read and write Apple Notes. Notes integration lets the agent read and write Apple Notes. Notes integration lets the agent read and write Apple Notes. It also syncs folders.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [
+      "Notes",
+      "Apple"
+    ],
+    "platforms": [
+      "macos"
+    ],
+    "author": "Hermes Team",
+    "version": "1.2.0",
+    "license": "MIT",
+    "envVars": [
+      "NOTES_TOKEN",
+      "42"
+    ],
+    "commands": [
+      "osascript"
+    ],
+    "docsPath": "bundled/apple/apple-notes"
+  },
+  {
+    "name": "apple-reminders",
+    "description": "Reminders",
+    "overview": "First body line under the heading.\nSecond line.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [
+      "reminders"
+    ],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-reminders"
+  },
+  {
+    "name": "bigint",
+    "description": "Large integer version",
+    "overview": "Integer above u64::MAX.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": 99999999999999999999,
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-bigint"
+  },
+  {
+    "name": "dup-key",
+    "description": "Last value wins",
+    "overview": "Duplicate keys keep the last value.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-dup-key"
+  },
+  {
+    "name": "findmy",
+    "description": "Find my devices: {quoted}",
+    "overview": "Real overview after a fence. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here. Sentence one is here.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-findmy"
+  },
+  {
+    "name": "imessage",
+    "description": "Send iMessages",
+    "overview": "Short overview with unicode caf\u00e9.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [
+      "chat"
+    ],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-imessage"
+  },
+  {
+    "name": "merge",
+    "description": "YAML merge key",
+    "overview": "Merged frontmatter keeps explicit keys and earlier merge sources.",
+    "category": "apple",
+    "categoryLabel": "Apple",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "anchored",
+    "version": 2.0,
+    "license": "Apache-2.0",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/apple/apple-merge"
+  },
+  {
+    "name": "axolotl",
+    "description": "Fine-tune models",
+    "overview": "Body.",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "built-in",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "bundled/mlops/mlops-training-axolotl"
+  },
+  {
+    "name": "solana",
+    "description": "Query Solana",
+    "overview": "Solana body.",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "optional",
+    "tags": [],
+    "platforms": [
+      "linux",
+      "macos"
+    ],
+    "author": [
+      "Alice",
+      "Bob"
+    ],
+    "version": 1.0,
+    "license": "",
+    "envVars": [
+      "SOLANA_RPC"
+    ],
+    "commands": [],
+    "docsPath": "optional/blockchain/blockchain-solana"
+  },
+  {
+    "name": "x-tool",
+    "description": "No name field",
+    "overview": "Fallback name from the directory.",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "optional",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "optional/my-cat/my-cat-x-tool"
+  },
+  {
+    "name": "already",
+    "description": "",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "ClawHub",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "clawhub/already",
+    "installCmd": "hermes skills install clawhub/already"
+  },
+  {
+    "name": "b",
+    "description": "",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "skills.sh",
+    "tags": [
+      "Video"
+    ],
+    "platforms": [],
+    "author": "acme",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "a/b",
+    "installCmd": "hermes skills install a/b"
+  },
+  {
+    "name": "claw-thing",
+    "description": "",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "ClawHub",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "",
+    "installCmd": "hermes skills install clawhub/claw-thing"
+  },
+  {
+    "name": "n",
+    "description": "",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "mystery",
+    "tags": [
+      "Game Dev"
+    ],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "m/n",
+    "installCmd": "hermes skills install m/n"
+  },
+  {
+    "name": "pdf",
+    "description": "PDF",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "OpenAI",
+    "tags": [
+      "documents"
+    ],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "openai/skills/pdf",
+    "installCmd": "hermes skills install openai/skills/pdf"
+  },
+  {
+    "name": "tool",
+    "description": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee...",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "GitHub",
+    "tags": [
+      "Python",
+      "x"
+    ],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "someone/repo/tool",
+    "installCmd": "hermes skills install someone/repo/tool"
+  },
+  {
+    "name": "unknown",
+    "description": "",
+    "overview": "",
+    "category": "other",
+    "categoryLabel": "Other",
+    "source": "community",
+    "tags": [],
+    "platforms": [],
+    "author": "",
+    "version": "",
+    "license": "",
+    "envVars": [],
+    "commands": [],
+    "docsPath": "",
+    "identifier": "",
+    "installCmd": "hermes skills install unknown"
+  }
+]

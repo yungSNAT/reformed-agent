@@ -4,7 +4,7 @@ sidebar_label: "Subagent Driven Development"
 description: "Execute plans via delegate_task subagents (2-stage review)"
 ---
 
-{/* This page is auto-generated from the skill's SKILL.md by website/scripts/generate-skill-docs.py. Edit the source SKILL.md, not this page. */}
+{/* This page is auto-generated from the skill's SKILL.md by `cargo run -p hermes-parity-tools -- generate-skill-docs`. Edit the source SKILL.md, not this page. */}
 
 # Subagent Driven Development
 

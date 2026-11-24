@@ -7,7 +7,7 @@ Date: 2026-04-27
 - ELITE-21: Differential parity runner
   - `scripts/run-differential-parity-gate.py`
 - ELITE-22: SLO auto-rollback
-  - `scripts/run-slo-auto-rollback.py`
+  - `hermes slo-rollback [--check-cmd <cmd>] [--rollback-cmd <cmd>] [--dry-run] [--report-path <path>] [--json]`
   - `scripts/sync-upstream.sh --elite-rollback-cmd ...`
   - `scripts/upstream_webhook_sync.py --elite-rollback-cmd ...`
 - ELITE-23: Router health scorer
@@ -37,7 +37,7 @@ Run:
 cargo test -p hermes-cli -- --nocapture
 cargo test -p hermes-tools -- --nocapture
 cargo test -p hermes-agent -- --nocapture
-python3 -m py_compile scripts/run-differential-parity-gate.py scripts/run-eval-trend-gate.py scripts/run-slo-auto-rollback.py scripts/run-elite-sync-gate.py scripts/upstream_webhook_sync.py
+python3 -m py_compile scripts/run-differential-parity-gate.py scripts/run-eval-trend-gate.py scripts/run-elite-sync-gate.py scripts/upstream_webhook_sync.py
 bash -n scripts/sync-upstream.sh
 ```
 
