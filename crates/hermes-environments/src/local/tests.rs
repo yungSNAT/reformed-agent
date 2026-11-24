@@ -1340,10 +1340,12 @@ async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_k
     let dir = tempdir().unwrap();
     let marker = dir.path().join("member");
     let shell_marker = marker.to_string_lossy().replace('\\', "/");
-    // `sudo` runs as root and its child as nobody: neither accepts a signal
-    // from this user, whilst the shell does.
-    let command =
-        format!("sudo -n -u nobody sleep 31.4159 & echo > \"{shell_marker}.ready\"; wait");
+    // Fork `sleep` from a short-lived `nobody` subshell so `sudo` (whose real
+    // uid is the caller's and would forward SIGTERM) exits before the kill,
+    // leaving an unkillable `nobody` child in the shell's process group.
+    let command = format!(
+        "sudo -n -u nobody sh -c 'sleep 31.4159 </dev/null >/dev/null 2>&1 &' && echo > \"{shell_marker}.ready\"; sleep 30 & wait"
+    );
     let backend = LocalBackend::new(60, 1_048_576);
     let started = backend
         .execute_command(&command, None, None, true, false)
@@ -1356,7 +1358,7 @@ async fn test_kill_process_does_not_report_a_group_with_a_live_refusing_member_k
 
     let killed = backend.kill_process(session_id).await;
     let _ = tokio::process::Command::new("sudo")
-        .args(["-n", "pkill", "-f", "sleep 31.4159"])
+        .args(["-n", "pkill", "-u", "nobody", "-f", "sleep 31.4159"])
         .status()
         .await;
 
