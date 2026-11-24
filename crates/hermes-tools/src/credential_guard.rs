@@ -641,6 +641,7 @@ fn credential_stores(
 #[cfg(test)]
 thread_local! {
     static GUARD_CALLS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static SUBTREE_DIRS_READ: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 /// Path judgements and set lookups made on this thread, for tests that bound
@@ -757,15 +758,92 @@ impl ProtectedPaths {
     }
 }
 
+#[cfg(target_os = "linux")]
+fn read_linux_mounts() -> Option<Vec<PathBuf>> {
+    let mountinfo = std::fs::read_to_string("/proc/self/mountinfo").ok()?;
+    let mut mounts: Vec<PathBuf> = mountinfo
+        .lines()
+        .filter_map(|line| line.split_whitespace().nth(4))
+        .map(|mp| PathBuf::from(mp.replace(r"\040", " ")))
+        .collect();
+    if mounts.is_empty() {
+        return None;
+    }
+    mounts.sort_by_key(|p| std::cmp::Reverse(p.as_os_str().len()));
+    Some(mounts)
+}
+
+/// Whether `target_path` (the resolved path of a `links == 1` write) may name
+/// a file inside `store_dir` under a spelling path checks did not see (such as
+/// a UNC loopback share, cross-drive/subst prefix, macOS firmlink, Linux bind
+/// mount, or a symlinked store root).
+fn may_have_single_link_alias(
+    target_path: &Path,
+    store_dir: &Path,
+    #[cfg(target_os = "linux")] linux_mounts: Option<&[PathBuf]>,
+) -> bool {
+    let Ok(canon_store) = std::fs::canonicalize(store_dir) else {
+        return true;
+    };
+    if target_path.starts_with(&canon_store) {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::path::{Component, Prefix};
+        let disk_of = |p: &Path| match p.components().next() {
+            Some(Component::Prefix(pre)) => match pre.kind() {
+                Prefix::Disk(d) | Prefix::VerbatimDisk(d) => Some(d.to_ascii_uppercase()),
+                _ => None,
+            },
+            _ => None,
+        };
+        let Some(t_disk) = disk_of(target_path) else {
+            return true;
+        };
+        disk_of(&canon_store) != Some(t_disk) || disk_of(store_dir) != Some(t_disk)
+    }
+    #[cfg(target_os = "macos")]
+    {
+        let _ = canon_store;
+        target_path.starts_with("/System/Volumes/")
+            || target_path.starts_with("/Volumes/")
+            || target_path.starts_with("/dev/")
+    }
+    #[cfg(target_os = "linux")]
+    {
+        if target_path.starts_with("/proc/") || target_path.starts_with("/dev/") {
+            return true;
+        }
+        let Some(mounts) = linux_mounts else {
+            return true;
+        };
+        let mp = |p: &Path| mounts.iter().find(|m| p.starts_with(m));
+        if mp(target_path) != mp(&canon_store) {
+            return true;
+        }
+        mounts
+            .iter()
+            .any(|m| m != &canon_store && m.starts_with(&canon_store))
+    }
+    #[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
+    {
+        let _ = canon_store;
+        true
+    }
+}
+
 /// Whether `path` names, under another name, the same file as a protected
 /// one: a credential store or token source, a file inside a store folder or
 /// a protected home folder, or a home or system file the rule names. A hard
 /// link made outside the file tools (the terminal's `ln`) gives such a file a
 /// name the path rules cannot see, and a write through it changes the file in
 /// place; so can another spelling of the same file (a Windows loopback share,
-/// a bind mount). Traverses the full protected subtree (without following
-/// directory symlinks, so symlink loops cannot occur) regardless of depth,
-/// entry count, or target link count.
+/// a bind mount). Tracks visited directory `(volume, file)` identities so
+/// `auth/` overlap and bind-mount cycles cannot re-walk, and skips subtree
+/// recursion on ordinary local `links == 1` writes without an alternate
+/// spelling (whilst directory symlinks/junctions below protected roots remain
+/// excluded by `entry.file_type().is_dir()`).
 fn is_hard_link_to_protected_file(
     path: &Path,
     home: Option<&Path>,
@@ -775,21 +853,68 @@ fn is_hard_link_to_protected_file(
     let Some(target) = hermes_config::file_identity(path) else {
         return false;
     };
-    let stores = credential_stores(home, hermes_home, auth_override)
-        .into_iter()
-        .map(|(store, _)| store);
-    let home_files = home.into_iter().flat_map(|home| {
+    let stores = credential_stores(home, hermes_home, auth_override);
+    let exact_home_files = home.into_iter().flat_map(|home| {
         WRITE_DENY_HOME_EXACT
             .iter()
-            .chain(WRITE_DENY_HOME_PREFIX)
             .map(move |name| home.join(name))
     });
-    let system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
-    let mut pending: Vec<PathBuf> = stores.chain(home_files).chain(system_files).collect();
-    while let Some(protected) = pending.pop() {
-        if hermes_config::file_identity(&protected).is_some_and(|id| id.same_file(&target)) {
+    let exact_system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
+    let mut exact_files: Vec<PathBuf> = exact_home_files.chain(exact_system_files).collect();
+    let mut pending: Vec<PathBuf> = home
+        .into_iter()
+        .flat_map(|home| {
+            WRITE_DENY_HOME_PREFIX
+                .iter()
+                .map(move |name| home.join(name))
+        })
+        .collect();
+    for (candidate, is_exact_file) in stores {
+        if is_exact_file {
+            exact_files.push(candidate);
+        } else {
+            pending.push(candidate);
+        }
+    }
+    for file in exact_files {
+        if hermes_config::file_identity(&file).is_some_and(|id| id.same_file(&target)) {
             return true;
         }
+    }
+
+    #[cfg(target_os = "linux")]
+    let linux_mounts = if target.links < 2 {
+        read_linux_mounts()
+    } else {
+        None
+    };
+
+    let mut seen_dirs: std::collections::HashSet<(u64, u64)> = std::collections::HashSet::new();
+    while let Some(protected) = pending.pop() {
+        let Some(id) = hermes_config::file_identity(&protected) else {
+            continue;
+        };
+        if id.same_file(&target) {
+            return true;
+        }
+        if !protected.is_dir() {
+            continue;
+        }
+        if target.links < 2
+            && !may_have_single_link_alias(
+                path,
+                &protected,
+                #[cfg(target_os = "linux")]
+                linux_mounts.as_deref(),
+            )
+        {
+            continue;
+        }
+        if !seen_dirs.insert((id.volume, id.file)) {
+            continue;
+        }
+        #[cfg(test)]
+        SUBTREE_DIRS_READ.with(|reads| reads.set(reads.get() + 1));
         // A folder's entries, links not followed; a file has none.
         for entry in std::fs::read_dir(&protected)
             .into_iter()
@@ -797,10 +922,12 @@ fn is_hard_link_to_protected_file(
             .flatten()
         {
             let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
-            let path = entry.path();
+            let entry_path = entry.path();
             if is_dir {
-                pending.push(path);
-            } else if hermes_config::file_identity(&path).is_some_and(|id| id.same_file(&target)) {
+                pending.push(entry_path);
+            } else if hermes_config::file_identity(&entry_path)
+                .is_some_and(|entry_id| entry_id.same_file(&target))
+            {
                 return true;
             }
         }
@@ -1791,6 +1918,61 @@ mod tests {
             Some(&home),
             None
         ));
+    }
+
+    #[test]
+    fn ordinary_single_link_write_skips_protected_subtrees_and_seen_dedups_auth_subfolders() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let hermes_home = tmp.path().join("profile");
+        let auth_sub = hermes_home.join("auth").join("nested");
+        let ssh_sub = home.join(".ssh").join("cache");
+        let work = tmp.path().join("work");
+        std::fs::create_dir_all(&auth_sub).expect("auth_sub");
+        std::fs::create_dir_all(&ssh_sub).expect("ssh_sub");
+        std::fs::create_dir_all(&work).expect("work");
+        let token = auth_sub.join("token.json");
+        std::fs::write(&token, "{}").expect("token");
+        std::fs::write(ssh_sub.join("id_ed25519"), "k").expect("key");
+        let plain = work.join("note.txt");
+        std::fs::write(&plain, "ok").expect("plain");
+
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &plain,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 0);
+
+        let token_alias = work.join("token_alias.json");
+        std::fs::hard_link(&token, &token_alias).expect("hard link");
+        let unrelated_link = work.join("other_a.txt");
+        std::fs::write(&unrelated_link, "x").expect("unrelated");
+        std::fs::hard_link(&unrelated_link, work.join("other_b.txt")).expect("other link");
+        SUBTREE_DIRS_READ.with(|r| r.set(0));
+        assert!(!is_write_denied_with_roots(
+            &unrelated_link,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+        // 4 unique dirs: auth, auth/nested, .ssh, .ssh/cache -> auth/nested visited once.
+        assert_eq!(SUBTREE_DIRS_READ.with(std::cell::Cell::get), 4);
+        assert!(is_write_denied_with_roots(
+            &token_alias,
+            Some(&home),
+            Some(&hermes_home)
+        ));
+
+        #[cfg(unix)]
+        {
+            let vault = tmp.path().join("vault");
+            std::fs::create_dir_all(vault.join("kube/sub")).expect("vault kube");
+            let linked_cfg = vault.join("kube/sub/config");
+            std::fs::write(&linked_cfg, "k").expect("cfg");
+            std::os::unix::fs::symlink(vault.join("kube"), home.join(".kube")).expect("kube link");
+            assert!(is_write_denied_with_roots(&linked_cfg, Some(&home), None));
+        }
     }
 
     /// The loopback share names a local file under a path the path rules do
