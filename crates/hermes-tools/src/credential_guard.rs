@@ -1738,6 +1738,43 @@ mod tests {
     }
 
     #[test]
+    fn write_deny_refuses_a_hard_link_to_a_file_deep_in_a_protected_folder() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let home = tmp.path().join("home");
+        let keys = home.join(".gnupg").join("private-keys-v1.d");
+        std::fs::create_dir_all(&keys).expect("keys dir");
+        let key = keys.join("ABCD.key");
+        std::fs::write(&key, "x").expect("key");
+        let alias = tmp.path().join("notes.txt");
+        std::fs::hard_link(&key, &alias).expect("hard link");
+
+        assert!(is_write_denied_with_roots(&alias, Some(&home), None));
+    }
+
+    /// The loopback share names a local file under a path the path rules do
+    /// not know; it is the same file, with one link. Skipped where the
+    /// administrative share cannot be reached.
+    #[cfg(windows)]
+    #[test]
+    fn write_deny_refuses_a_protected_file_through_the_loopback_share() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let hermes_home = tmp.path().join("profile");
+        std::fs::create_dir_all(&hermes_home).expect("home");
+        std::fs::write(hermes_home.join(".env"), "x").expect("env");
+        let local = hermes_home.join(".env").to_string_lossy().to_string();
+        let Some((drive, rest)) = local.split_once(":\\") else {
+            return;
+        };
+        let share = PathBuf::from(format!(r"\\localhost\{drive}$\{rest}"));
+        if hermes_config::file_identity(&share).is_none() {
+            eprintln!("skipped: the loopback share is not reachable");
+            return;
+        }
+
+        assert!(is_write_denied_with_roots(&share, None, Some(&hermes_home)));
+    }
+
+    #[test]
     fn write_deny_refuses_a_hard_link_to_a_protected_file_under_another_name() {
         let tmp = tempfile::tempdir().expect("tempdir");
         let home = tmp.path().join("home");
