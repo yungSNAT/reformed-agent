@@ -573,15 +573,21 @@ mod tests {
     #[tokio::test]
     async fn stdio_server_stops_when_the_peer_cannot_receive_a_reply() {
         use crate::transport::ServerStdioTransport;
+        use tokio::io::AsyncWriteExt;
 
         let server = McpServer::new(Arc::new(ToolRegistry::new()));
         for input in [
             b"{\"jsonrpc\":\"2.0\",\"method\":\"ping\",\"id\":1}\n".as_slice(),
             b"{invalid json}\n".as_slice(),
         ] {
-            let (reader, sender) = tokio::io::duplex(64);
-            drop(reader);
-            let transport = ServerStdioTransport::with_io(input, sender);
+            let (mut input_writer, input_reader) = tokio::io::duplex(64);
+            input_writer
+                .write_all(input)
+                .await
+                .expect("write fixture frame");
+            let (output_reader, output_sender) = tokio::io::duplex(64);
+            drop(output_reader);
+            let transport = ServerStdioTransport::with_io(input_reader, output_sender);
             tokio::time::timeout(
                 std::time::Duration::from_secs(5),
                 server.start(Box::new(transport)),
@@ -589,6 +595,8 @@ mod tests {
             .await
             .expect("server stops after a failed reply")
             .expect("closed peer is handled");
+            // Keep input open until the failed reply stops the server.
+            drop(input_writer);
         }
     }
 
