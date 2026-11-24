@@ -252,20 +252,21 @@ fn resolve_tool_names(
     gateway: bool,
 ) -> HashSet<String> {
     let manager = ToolsetManager::new(Arc::clone(registry));
-    let mut names = requested_tool_names(config, platform, registry, &manager, gateway);
+    let (mut names, _) = requested_tool_names(config, platform, registry, &manager, gateway);
     remove_disabled_tools(config, &mut names, &manager);
     names
 }
 
-/// The tools a platform's toolsets and `tools_config.enabled` ask for, before
-/// the disabled lists apply.
+/// The available tools a platform's toolsets and `tools_config.enabled` ask
+/// for, before the disabled lists apply, and whether they name any registered
+/// tool, available or not.
 fn requested_tool_names(
     config: &GatewayConfig,
     platform: &str,
     registry: &Arc<ToolRegistry>,
     manager: &ToolsetManager,
     gateway: bool,
-) -> HashSet<String> {
+) -> (HashSet<String>, bool) {
     let key = normalize_platform_key(platform);
     let has_custom_toolsets = platform_has_custom_toolsets(config, &key);
     let mut requested = coding_focus_toolsets(config, platform, manager)
@@ -278,11 +279,13 @@ fn requested_tool_names(
         .iter()
         .any(|token| names_configured_mcp_server(config, token));
     let mut names: HashSet<String> = HashSet::new();
+    let mut names_registered = false;
     for token in requested {
         let original = token.trim();
         if original.is_empty() {
             continue;
         }
+        names_registered |= token_names_registered_tool(original, manager, registry);
         match resolve_toolset_token(original, manager, registry) {
             Some(resolved) => names.extend(resolved),
             None => tracing::warn!(
@@ -303,6 +306,7 @@ fn requested_tool_names(
         }
         if registry.get_tool(trimmed).is_some() {
             names.insert(trimmed.to_string());
+            names_registered = true;
         }
     }
     if gateway {
@@ -315,7 +319,25 @@ fn requested_tool_names(
             names.insert(MCP_GATEWAY_TOOL.to_string());
         }
     }
-    names
+    (names, names_registered)
+}
+
+/// Whether a `platform_toolsets` token names a registered tool, available or
+/// not: a toolset whose tools are all unavailable still names them.
+fn token_names_registered_tool(
+    token: &str,
+    manager: &ToolsetManager,
+    registry: &ToolRegistry,
+) -> bool {
+    let canonical = canonical_toolset_token(token);
+    candidate_toolset_tokens(&canonical, token)
+        .into_iter()
+        .any(|candidate| {
+            registry.get_tool(candidate).is_some()
+                || manager
+                    .resolve_toolset_unfiltered(candidate)
+                    .is_ok_and(|tools| tools.iter().any(|tool| registry.get_tool(tool).is_some()))
+        })
 }
 
 /// Removes `agent.disabled_toolsets` and `tools_config.disabled` from `names`.
@@ -357,9 +379,10 @@ fn names_configured_mcp_server(config: &GatewayConfig, token: &str) -> bool {
 
 /// Resolve and filter tool schemas to those allowed for the given platform.
 ///
-/// When the platform's toolsets name no registered tool, every registered
-/// tool is offered instead; the disabled lists apply either way, so a
-/// platform whose tools are all disabled is offered none.
+/// When the platform's toolsets name no registered tool, every available
+/// tool is offered instead. A platform whose named tools are unavailable or
+/// disabled is offered none of them and no others; the disabled lists apply
+/// either way.
 pub fn resolve_platform_tool_schemas(
     config: &GatewayConfig,
     platform: &str,
@@ -374,8 +397,9 @@ pub fn resolve_platform_tool_schemas(
     // go; a sorted list keeps the provider's cached prefix.
     all_defs.sort_by(|a, b| a.name.cmp(&b.name));
     let manager = ToolsetManager::new(Arc::clone(registry));
-    let mut allowed = requested_tool_names(config, platform, registry, &manager, gateway);
-    if !all_defs.iter().any(|schema| allowed.contains(&schema.name)) {
+    let (mut allowed, names_registered) =
+        requested_tool_names(config, platform, registry, &manager, gateway);
+    if !names_registered {
         allowed = all_defs.iter().map(|schema| schema.name.clone()).collect();
     }
     remove_disabled_tools(config, &mut allowed, &manager);
@@ -1009,6 +1033,34 @@ mod tests {
         let reg = registry_with_minimal_tools();
 
         assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_platform_naming_only_unavailable_tools_is_offered_none() {
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets
+            .insert("telegram".to_string(), vec!["host_files".to_string()]);
+        let reg = registry_with_minimal_tools();
+        let schema = tool_schema("host_read", "host_read tool", JsonSchema::new("object"));
+        reg.register(
+            "host_read",
+            "host_files",
+            schema.clone(),
+            Arc::new(NoopTool { schema }),
+            Arc::new(|| false),
+            Vec::new(),
+            true,
+            "host_read tool",
+            "x",
+            None,
+        );
+
+        let names: Vec<String> = resolve_platform_tool_schemas(&cfg, "telegram", &reg)
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect();
+
+        assert_eq!(names, Vec::<String>::new());
     }
 
     #[test]
