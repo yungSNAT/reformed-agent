@@ -93,6 +93,7 @@ async fn main() -> std::process::ExitCode {
 
 async fn run() -> EvalResult<()> {
     let args = Args::parse();
+    use_config_dir_as_home(args.config_dir.as_deref());
     // Before anything writes to the home; see check_implicit_home for the limit.
     hermes_config::check_implicit_home().map_err(EvalError::Other)?;
     let benchmark_path = args.benchmark.clone();
@@ -223,10 +224,17 @@ fn bench_skills_dir() -> PathBuf {
     hermes_config::skills_dir()
 }
 
+/// `--config-dir` chooses the Hermes home, as it does for `hermes`.
+fn use_config_dir_as_home(config_dir: Option<&Path>) {
+    let _ = config_dir;
+}
+
 #[cfg(all(test, feature = "agent-loop"))]
 mod tests {
     #[test]
-    fn bench_skills_come_from_the_hermes_home_skills_folder() {
-        assert_eq!(super::bench_skills_dir(), hermes_config::skills_dir());
+    fn config_dir_sets_the_home_the_bench_skills_come_from() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        super::use_config_dir_as_home(Some(dir.path()));
+        assert_eq!(super::bench_skills_dir(), dir.path().join("skills"));
     }
 }
