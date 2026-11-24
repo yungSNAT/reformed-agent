@@ -248,7 +248,7 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
         (common_dir.join("config"), 0),
         (git_dir.join("config.worktree"), 0),
     ];
-    let mut listed = std::collections::HashSet::new();
+    let mut seen = std::collections::HashSet::new();
     while let Some((file, depth)) = pending.pop() {
         // Git passes over an include that is missing.
         let Ok(real) = std::fs::canonicalize(&file) else {
@@ -257,10 +257,10 @@ fn repository_config_names_a_user(git: &std::ffi::OsStr, root: &Path) -> Option<
         if depth > MAX_INCLUDE_DEPTH {
             return None;
         }
-        if !listed.insert(real) {
+        if !seen.insert(real) {
             continue;
         }
-        if listed.len() > MAX_CONFIG_FILES {
+        if seen.len() > MAX_CONFIG_FILES {
             return None;
         }
         let listed = output_within_timeout(
