@@ -1,3 +1,6 @@
+/// The tool whose late result carries recovered sub-agent results.
+const RECOVERED_RESULTS_TOOL: &str = "delegate_task";
+
 impl AgentLoop {
     /// Populate [`AgentConfig::stored_system_prompt`] from SQLite (`sessions.system_prompt`) for session continuation.
     ///
@@ -343,6 +346,71 @@ impl AgentLoop {
     ) -> Self {
         self.sub_agent_orchestrator = Some(orchestrator);
         self
+    }
+
+    /// Hand the model this session's sub-agent results that an earlier turn
+    /// never received (it crashed, restarted or failed first). Delivery is at
+    /// least once: a process that stops after the model saw them but before
+    /// the run ends hands them over again next time. They arrive as a result
+    /// of `delegate_task`, so only on a turn that offers that tool; otherwise
+    /// they wait for a later turn. The pair goes just before the newest user
+    /// message at or after `from`, so it closes the earlier turn and the
+    /// current one starts with the user, as thinking modes expect; a run
+    /// with no such message leaves them waiting too.
+    fn add_recovered_sub_agent_results(
+        &self,
+        ctx: &mut ContextManager,
+        tool_schemas: &[ToolSchema],
+        from: usize,
+    ) {
+        let offered = tool_schemas.iter().any(|t| t.name == RECOVERED_RESULTS_TOOL);
+        let at = ctx
+            .get_messages()
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+            .filter(|&i| i >= from);
+        let Some(note) = self
+            .sub_agent_orchestrator
+            .as_ref()
+            .and_then(|o| o.recover_undelivered(offered && at.is_some()))
+        else {
+            return;
+        };
+        self.emit_status(
+            "lifecycle",
+            "Recovered sub-agent results from an earlier turn that did not finish",
+        );
+        // As a tool call and its result, so a child's answer keeps the tool
+        // role and no more trust than that.
+        let id = format!("recovered_{}", uuid::Uuid::new_v4().simple());
+        let call = ToolCall {
+            id: id.clone(),
+            function: hermes_core::FunctionCall {
+                name: RECOVERED_RESULTS_TOOL.to_string(),
+                arguments: r#"{"task":"results of earlier sub-agents"}"#.to_string(),
+            },
+            extra_content: None,
+        };
+        let mut assistant = Message::assistant_with_tool_calls(None, vec![call]);
+        // Present but empty: a thinking provider expects the field echoed on
+        // every earlier tool call, and this call had no reasoning. Request
+        // bodies for other providers leave an empty one out.
+        assistant.reasoning_content = Some(String::new());
+        let result = Self::named_tool_result_message(id, RECOVERED_RESULTS_TOOL, note);
+        let at = at.unwrap_or_default();
+        ctx.get_messages_mut().splice(at..at, [assistant, result]);
+    }
+
+    /// A run that ended normally received its sub-agents' results; one that
+    /// failed counts against handing them over again.
+    fn note_sub_agent_results_delivered(&self, result: &Result<AgentResult, AgentError>) {
+        let Some(orchestrator) = self.sub_agent_orchestrator.as_ref() else {
+            return;
+        };
+        match result {
+            Ok(_) => orchestrator.mark_delivered(),
+            Err(_) => orchestrator.note_run_failed(),
+        }
     }
 
     /// Attach the primary runtime credential pool (API key rotation).

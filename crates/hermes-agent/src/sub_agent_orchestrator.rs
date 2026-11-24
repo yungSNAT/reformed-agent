@@ -19,9 +19,11 @@
 //! [`crate::AgentLoop::with_sub_agent_orchestrator`] to swap the default
 //! signal-only behavior with real execution.
 
+use std::collections::HashSet;
 use std::future::Future;
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
@@ -35,6 +37,8 @@ use crate::agent_loop::{AgentConfig, AgentLoop, ToolRegistry};
 use crate::code_index::CodeIndex;
 use crate::credential_pool::CredentialPool;
 use crate::interrupt::InterruptController;
+
+mod recovery;
 
 /// Boxed `Send` future type alias used to short-circuit async-recursion
 /// between parent and child [`AgentLoop::execute_tool_calls`] futures.
@@ -90,6 +94,14 @@ pub struct SubAgentLineage {
     pub estimated_cost_usd: Option<f64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// The child's final answer, kept so a parent turn that never finished
+    /// can still use it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub result: Option<String>,
+    /// Whether a parent turn received this result; `None` on records written
+    /// before results were kept, which recovery leaves alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delivered: Option<bool>,
 }
 
 /// Terminal state vocabulary for sub-agent lineage records.
@@ -143,11 +155,27 @@ pub struct SubAgentOrchestratorConfig {
 /// In-process executor for `delegate_task` tool calls.
 pub struct SubAgentOrchestrator {
     cfg: SubAgentOrchestratorConfig,
+    /// Sub-agent results handed to the model in the current parent run.
+    handed: Mutex<HashSet<String>>,
+    /// Whether the current parent run carries recovered results.
+    recovering: AtomicBool,
+    /// Parent runs that carried recovered results and failed, since one
+    /// that carried them last finished.
+    failed_recoveries: AtomicU32,
 }
+
+/// Failed parent runs carrying recovered results after which this process
+/// stops adding them, in case the provider rejects them; they stay pending.
+const MAX_FAILED_RECOVERIES: u32 = 2;
 
 impl SubAgentOrchestrator {
     pub fn new(cfg: SubAgentOrchestratorConfig) -> Self {
-        Self { cfg }
+        Self {
+            cfg,
+            handed: Mutex::default(),
+            recovering: AtomicBool::new(false),
+            failed_recoveries: AtomicU32::new(0),
+        }
     }
 
     /// Default orchestrator that mirrors the current `AgentLoop`'s wiring.
@@ -173,6 +201,9 @@ impl SubAgentOrchestrator {
                     .or_else(|| parent.callbacks.background_review_callback.clone()),
                 code_index: parent.code_index.clone(),
             },
+            handed: Mutex::default(),
+            recovering: AtomicBool::new(false),
+            failed_recoveries: AtomicU32::new(0),
         }
     }
 
@@ -196,7 +227,9 @@ impl SubAgentOrchestrator {
                 this.dispatch_background(req)
             } else {
                 let sub_agent_id = format!("subagent-{}", uuid::Uuid::new_v4());
-                this.execute_inner(req, sub_agent_id).await
+                let out = this.clone().execute_inner(req, sub_agent_id.clone()).await;
+                this.note_handed([sub_agent_id]);
+                out
             }
         })
     }
@@ -213,10 +246,14 @@ impl SubAgentOrchestrator {
         let worker = self.clone();
         let worker_sub_agent_id = sub_agent_id.clone();
         tokio::spawn(async move {
-            let output = worker.execute_inner(req, worker_sub_agent_id).await;
+            let output = worker
+                .clone()
+                .execute_inner(req, worker_sub_agent_id.clone())
+                .await;
             if let Some(callback) = callback {
                 let summary = format_background_delegation_notification(&output);
                 callback(&summary);
+                recovery::mark_one_delivered(&worker.cfg.hermes_home, &worker_sub_agent_id);
             }
         });
 
@@ -258,6 +295,8 @@ impl SubAgentOrchestrator {
             completion_tokens: None,
             estimated_cost_usd: None,
             error: None,
+            result: None,
+            delivered: Some(false),
         };
 
         // Best-effort lineage persistence — failures must never break delegation.
@@ -276,9 +315,10 @@ impl SubAgentOrchestrator {
                     lineage.estimated_cost_usd = usage.estimated_cost;
                 }
                 lineage.ended_at = Some(Timestamp::now());
+                let final_text = extract_final_assistant_text(&result.messages);
+                lineage.result = Some(final_text.clone());
                 self.persist_lineage(&lineage).await;
 
-                let final_text = extract_final_assistant_text(&result.messages);
                 json!({
                     "sub_agent_id": sub_agent_id,
                     "status": "completed",
@@ -514,23 +554,73 @@ impl SubAgentOrchestrator {
     }
 
     async fn persist_lineage(&self, lineage: &SubAgentLineage) {
-        let dir = self.cfg.hermes_home.join("subagents");
-        if let Err(e) = tokio::fs::create_dir_all(&dir).await {
-            tracing::debug!(error = %e, "sub-agent lineage dir create failed");
-            return;
-        }
-        let path = dir.join(format!("{}.json", lineage.sub_agent_id));
-        let body = match serde_json::to_string_pretty(lineage) {
-            Ok(s) => s,
-            Err(e) => {
-                tracing::debug!(error = %e, "sub-agent lineage serialize failed");
-                return;
-            }
-        };
-        if let Err(e) = tokio::fs::write(&path, body).await {
-            tracing::debug!(error = %e, path = %path.display(), "sub-agent lineage write failed");
+        let home = self.cfg.hermes_home.clone();
+        let lineage = lineage.clone();
+        let _ = tokio::task::spawn_blocking(move || recovery::write_lineage(&home, &lineage)).await;
+    }
+
+    fn note_handed(&self, ids: impl IntoIterator<Item = String>) {
+        if let Ok(mut handed) = self.handed.lock() {
+            handed.extend(ids);
         }
     }
+
+    /// Start of a parent run: a block listing this session's sub-agent
+    /// results that no finished parent run received, or `None`. With
+    /// `can_deliver` false (the run cannot hand them over) nothing is listed
+    /// and they wait for a later run, as they do in this process after
+    /// [`MAX_FAILED_RECOVERIES`] failed runs that carried them. See
+    /// [`recovery`].
+    pub fn recover_undelivered(&self, can_deliver: bool) -> Option<String> {
+        if let Ok(mut handed) = self.handed.lock() {
+            handed.clear();
+        }
+        self.recovering.store(false, Ordering::SeqCst);
+        if !can_deliver {
+            return None;
+        }
+        let session = self.cfg.parent_session_id.as_deref()?;
+        if self.failed_recoveries.load(Ordering::SeqCst) >= MAX_FAILED_RECOVERIES {
+            tracing::warn!(
+                session,
+                "not adding recovered sub-agent results after failed runs that carried them"
+            );
+            return None;
+        }
+        let (note, ids) = recovery::recover(&self.cfg.hermes_home, session, self.cfg.timeout)?;
+        self.note_handed(ids);
+        self.recovering.store(true, Ordering::SeqCst);
+        Some(note)
+    }
+
+    /// A parent run failed: if it carried recovered results, count it.
+    pub fn note_run_failed(&self) {
+        if self.recovering.swap(false, Ordering::SeqCst) {
+            self.failed_recoveries.fetch_add(1, Ordering::SeqCst);
+        }
+    }
+
+    /// A parent run ended normally: the results it handed to the model (its
+    /// foreground children and its recovery block) are delivered.
+    pub fn mark_delivered(&self) {
+        if self.recovering.swap(false, Ordering::SeqCst) {
+            self.failed_recoveries.store(0, Ordering::SeqCst);
+        }
+        let Some(session) = self.cfg.parent_session_id.as_deref() else {
+            return;
+        };
+        let handed = self
+            .handed
+            .lock()
+            .map(|mut h| std::mem::take(&mut *h))
+            .unwrap_or_default();
+        recovery::mark_delivered(&self.cfg.hermes_home, session, &handed);
+    }
+}
+
+/// Delete the undelivered sub-agent results of `session_id`.
+pub fn forget_session_results(hermes_home: &std::path::Path, session_id: &str) {
+    recovery::remove_session_records(hermes_home, session_id);
 }
 
 #[derive(Debug)]
@@ -915,14 +1005,10 @@ mod tests {
             .unwrap()
             .starts_with("subagent-"));
         // Lineage file should exist under $HERMES_HOME/subagents/<id>.json
-        let dir = tmp.path().join("subagents");
-        let mut entries = tokio::fs::read_dir(&dir).await.unwrap();
-        let entry = entries.next_entry().await.unwrap().unwrap();
-        assert!(entry
-            .path()
-            .extension()
-            .map(|s| s == "json")
-            .unwrap_or(false));
+        // (beside the `pending` folder of undelivered results).
+        let id = parsed["sub_agent_id"].as_str().unwrap();
+        let record = tmp.path().join("subagents").join(format!("{id}.json"));
+        assert!(record.is_file(), "{}", record.display());
     }
 
     #[tokio::test]
