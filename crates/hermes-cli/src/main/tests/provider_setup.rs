@@ -578,6 +578,33 @@
     }
 
     #[test]
+    fn gateway_platform_access_policy_admits_home_assistant_events_under_a_global_allowlist() {
+        let mut config = hermes_config::GatewayConfig::default();
+        for platform in ["homeassistant", "telegram"] {
+            config.platforms.insert(
+                platform.to_string(),
+                PlatformConfig {
+                    enabled: true,
+                    ..PlatformConfig::default()
+                },
+            );
+        }
+        let env = std::collections::HashMap::from([(
+            "GATEWAY_ALLOWED_USERS".to_string(),
+            "42".to_string(),
+        )]);
+
+        let policies = build_gateway_platform_access_policies_with_lookup(&config, |key| {
+            env.get(key).cloned()
+        });
+        let ha = policies.get("homeassistant").expect("homeassistant policy");
+        assert!(ha.is_user_allowed("homeassistant"));
+        let telegram = policies.get("telegram").expect("telegram policy");
+        assert!(!telegram.is_user_allowed("homeassistant"));
+        assert!(telegram.is_user_allowed("42"));
+    }
+
+    #[test]
     fn gateway_allowlist_startup_warning_matches_env_contract() {
         let env_lookup = |pairs: &[(&str, &str)]| {
             let env = pairs
