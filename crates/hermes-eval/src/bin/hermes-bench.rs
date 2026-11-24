@@ -220,7 +220,7 @@ async fn run_agent_rollout(
 /// The skills folder the bench agent loads, the one `hermes` itself uses.
 #[cfg(feature = "agent-loop")]
 fn bench_skills_dir() -> PathBuf {
-    FileSkillStore::default_dir()
+    hermes_config::skills_dir()
 }
 
 #[cfg(all(test, feature = "agent-loop"))]
