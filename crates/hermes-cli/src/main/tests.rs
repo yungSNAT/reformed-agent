@@ -1312,7 +1312,11 @@ mod tests {
                     self.review_done.notify_one();
                     serde_json::json!({"role": "assistant", "content": "review-done"})
                 } else {
-                    let cmd = format!("touch {}", self.marker_path.display());
+                    let cmd = if cfg!(windows) {
+                        format!("echo x > \"{}\"", self.marker_path.display())
+                    } else {
+                        format!("touch '{}'", self.marker_path.display())
+                    };
                     serde_json::json!({
                         "role": "assistant",
                         "content": serde_json::Value::Null,
@@ -1358,6 +1362,37 @@ mod tests {
         }
     }
 
+    struct CronEnvGuard {
+        prev_home: Option<String>,
+        prev_ignore: Option<String>,
+    }
+
+    impl CronEnvGuard {
+        fn set_temp_home(home: &std::path::Path) -> Self {
+            let prev_home = std::env::var("HERMES_HOME").ok();
+            let prev_ignore = std::env::var("HERMES_IGNORE_USER_CONFIG").ok();
+            std::env::set_var("HERMES_HOME", home);
+            std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+            Self {
+                prev_home,
+                prev_ignore,
+            }
+        }
+    }
+
+    impl Drop for CronEnvGuard {
+        fn drop(&mut self) {
+            match &self.prev_home {
+                Some(v) => std::env::set_var("HERMES_HOME", v),
+                None => std::env::remove_var("HERMES_HOME"),
+            }
+            match &self.prev_ignore {
+                Some(v) => std::env::set_var("HERMES_IGNORE_USER_CONFIG", v),
+                None => std::env::remove_var("HERMES_IGNORE_USER_CONFIG"),
+            }
+        }
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn live_cron_scheduler_background_review_only_reaches_planned_cron_tools() {
         use std::sync::atomic::AtomicUsize;
@@ -1366,10 +1401,7 @@ mod tests {
 
         let _lock = env_lock_async().await;
         let dir = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var("HERMES_HOME").ok();
-        let prev_ignore = std::env::var("HERMES_IGNORE_USER_CONFIG").ok();
-        std::env::set_var("HERMES_HOME", dir.path());
-        std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+        let _env_guard = CronEnvGuard::set_temp_home(dir.path());
 
         let server = MockServer::start().await;
         let review_offered = Arc::new(Mutex::new(Vec::new()));
@@ -1408,15 +1440,6 @@ mod tests {
             .await
             .expect("background review finished");
 
-        match prev_home {
-            Some(v) => std::env::set_var("HERMES_HOME", v),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match prev_ignore {
-            Some(v) => std::env::set_var("HERMES_IGNORE_USER_CONFIG", v),
-            None => std::env::remove_var("HERMES_IGNORE_USER_CONFIG"),
-        }
-
         let offered = review_offered.lock().unwrap().clone();
         assert_eq!(
             offered.first(),
@@ -1441,10 +1464,7 @@ mod tests {
 
         let _lock = env_lock_async().await;
         let dir = tempfile::tempdir().expect("tempdir");
-        let prev_home = std::env::var("HERMES_HOME").ok();
-        let prev_ignore = std::env::var("HERMES_IGNORE_USER_CONFIG").ok();
-        std::env::set_var("HERMES_HOME", dir.path());
-        std::env::remove_var("HERMES_IGNORE_USER_CONFIG");
+        let _env_guard = CronEnvGuard::set_temp_home(dir.path());
 
         let server = MockServer::start().await;
         let review_offered = Arc::new(Mutex::new(Vec::new()));
@@ -1502,15 +1522,6 @@ mod tests {
             weak_registry.upgrade().is_none(),
             "gateway cron runner must hold ToolRegistry weakly"
         );
-
-        match prev_home {
-            Some(v) => std::env::set_var("HERMES_HOME", v),
-            None => std::env::remove_var("HERMES_HOME"),
-        }
-        match prev_ignore {
-            Some(v) => std::env::set_var("HERMES_IGNORE_USER_CONFIG", v),
-            None => std::env::remove_var("HERMES_IGNORE_USER_CONFIG"),
-        }
 
         let offered = review_offered.lock().unwrap().clone();
         assert_eq!(

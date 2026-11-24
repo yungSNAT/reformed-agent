@@ -604,6 +604,12 @@ fn spawn_tui_direct_agent_turn(
     trimmed: &str,
     stream_tx: mpsc::UnboundedSender<Event>,
 ) -> Option<JoinHandle<()>> {
+    if let Err(err) = app.check_tool_snapshot_sync(true) {
+        state.status_message = format!("Error: {err}");
+        state.push_activity(format!("✖ {err}"));
+        app.push_ui_assistant(format!("Error: {err}"));
+        return None;
+    }
     app.input_history.push(trimmed.to_string());
     app.history_index = app.input_history.len();
     let user_message = app.prepare_user_message(trimmed);

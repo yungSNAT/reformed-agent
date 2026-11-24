@@ -139,7 +139,8 @@ fn build_cron_runner_with_optional_owner(
                 ))
             },
         );
-        let offered = run_tools.schemas();
+        let mut offered = run_tools.schemas();
+        offered.sort_by(|a, b| a.name.cmp(&b.name));
         (run_tools, offered, browser)
     })
 }

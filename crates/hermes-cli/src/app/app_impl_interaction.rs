@@ -631,12 +631,7 @@ impl App {
             .await
     }
 
-    pub(crate) async fn run_messages_with_current_agent_tools(
-        &self,
-        messages: Vec<hermes_core::Message>,
-        stream_enabled: bool,
-        include_tools: bool,
-    ) -> Result<hermes_core::AgentResult, AgentError> {
+    pub(crate) fn check_tool_snapshot_sync(&self, include_tools: bool) -> Result<(), AgentError> {
         if let Some(err) = &self.tool_snapshot_sync_error {
             return Err(AgentError::Config(err.clone()));
         }
@@ -650,6 +645,16 @@ impl App {
                 "agent tool snapshot is out of sync with active tool schemas".to_string(),
             ));
         }
+        Ok(())
+    }
+
+    pub(crate) async fn run_messages_with_current_agent_tools(
+        &self,
+        messages: Vec<hermes_core::Message>,
+        stream_enabled: bool,
+        include_tools: bool,
+    ) -> Result<hermes_core::AgentResult, AgentError> {
+        self.check_tool_snapshot_sync(include_tools)?;
         // `None` would offer every tool the agent holds.
         let tool_schemas = Some(if include_tools {
             self.tool_schemas.clone()
