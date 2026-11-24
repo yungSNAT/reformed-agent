@@ -757,13 +757,21 @@ impl ProtectedPaths {
     }
 }
 
+/// How deep below a protected folder, and how many entries in all, the
+/// comparison for a multiply-linked file reads; past the entry limit the
+/// write is refused.
+const PROTECTED_TREE_DEPTH: usize = 4;
+const PROTECTED_TREE_ENTRIES: usize = 4096;
+
 /// Whether `path` names, under another name, the same file as a protected
-/// one: a credential store or token source, a file directly inside a store
-/// folder or a protected home folder, or a home or system file the rule
-/// names. A hard link made outside the file tools (the terminal's `ln`)
-/// gives such a file a name the path rules cannot see, and a write through
-/// it changes the file in place. Only a file with more than one link is
-/// compared; files deeper inside a protected folder are not.
+/// one: a credential store or token source, a file inside a store folder or
+/// a protected home folder, or a home or system file the rule names. A hard
+/// link made outside the file tools (the terminal's `ln`) gives such a file a
+/// name the path rules cannot see, and a write through it changes the file in
+/// place; so can another spelling of the same file (a Windows loopback share,
+/// a bind mount). A file with one link is compared with the named files and
+/// stores only; one with more links with everything up to 4 levels inside
+/// each protected folder too.
 fn is_hard_link_to_protected_file(
     path: &Path,
     home: Option<&Path>,
@@ -773,9 +781,6 @@ fn is_hard_link_to_protected_file(
     let Some(target) = hermes_config::file_identity(path) else {
         return false;
     };
-    if target.links < 2 {
-        return false;
-    }
     let stores = credential_stores(home, hermes_home, auth_override)
         .into_iter()
         .map(|(store, _)| store);
@@ -786,20 +791,39 @@ fn is_hard_link_to_protected_file(
             .map(move |name| home.join(name))
     });
     let system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
-    stores
+    let mut pending: Vec<(PathBuf, usize)> = stores
         .chain(home_files)
         .chain(system_files)
-        .flat_map(|protected| {
-            // A folder's own files; reading a file's entries yields none.
-            let entries = std::fs::read_dir(&protected)
-                .into_iter()
-                .flatten()
-                .flatten()
-                .map(|entry| entry.path());
-            std::iter::once(protected).chain(entries)
-        })
-        .filter_map(|protected| hermes_config::file_identity(&protected))
-        .any(|protected| protected.same_file(&target))
+        .map(|protected| (protected, 0))
+        .collect();
+    let mut read = 0;
+    while let Some((protected, depth)) = pending.pop() {
+        if hermes_config::file_identity(&protected).is_some_and(|id| id.same_file(&target)) {
+            return true;
+        }
+        if target.links < 2 || depth == PROTECTED_TREE_DEPTH {
+            continue;
+        }
+        // A folder's entries, links not followed; a file has none.
+        for entry in std::fs::read_dir(&protected)
+            .into_iter()
+            .flatten()
+            .flatten()
+        {
+            read += 1;
+            if read > PROTECTED_TREE_ENTRIES {
+                return true;
+            }
+            let is_dir = entry.file_type().is_ok_and(|kind| kind.is_dir());
+            let path = entry.path();
+            if is_dir {
+                pending.push((path, depth + 1));
+            } else if hermes_config::file_identity(&path).is_some_and(|id| id.same_file(&target)) {
+                return true;
+            }
+        }
+    }
+    false
 }
 
 /// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
