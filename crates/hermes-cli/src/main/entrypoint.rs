@@ -139,6 +139,37 @@ async fn run_main() {
         }
         return;
     }
+    if let CliCommand::SloRollback(args) = &effective_command {
+        let options = hermes_cli::commands::SloRollbackOptions {
+            repo_root: args.repo_root.clone(),
+            check_cmd: args.check_cmd.clone(),
+            rollback_cmd: args.rollback_cmd.clone(),
+            dry_run: args.dry_run,
+            report_path: args.report_path.clone(),
+            json: args.json,
+        };
+        match hermes_cli::commands::run_slo_rollback_cli(options).await {
+            Ok(false) => return,
+            Ok(true) => std::process::exit(1),
+            Err(error) => {
+                eprintln!("Error: {error}");
+                std::process::exit(1);
+            }
+        }
+    }
+    if let CliCommand::SessionEval(args) = &effective_command {
+        let options = hermes_cli::commands::SessionEvalOptions {
+            sessions_dir: args.sessions_dir.clone(),
+            max_sessions: args.max_sessions,
+            out_json: args.out_json.clone(),
+            json: args.json,
+        };
+        if let Err(error) = hermes_cli::commands::run_session_eval_cli(options) {
+            eprintln!("Error: {error}");
+            std::process::exit(1);
+        }
+        return;
+    }
     if cli.ignore_user_config {
         std::env::set_var("HERMES_IGNORE_USER_CONFIG", "1");
     }
@@ -752,6 +783,9 @@ async fn run_main() {
         CliCommand::ImportHermesSessions(_) => unreachable!("offline import already handled"),
         CliCommand::Migrate(_) => unreachable!("migration already handled"),
         CliCommand::ImportAgent(_) => unreachable!("agent import already handled"),
+        CliCommand::SloRollback(_) | CliCommand::SessionEval(_) => {
+            unreachable!("headless report command already handled")
+        }
         CliCommand::Version => hermes_cli::commands::handle_cli_version(),
         CliCommand::Cron(CronArgs {
             action,
