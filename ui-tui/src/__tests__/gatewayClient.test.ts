@@ -549,11 +549,13 @@ describe('GatewayClient spawned Rust gateway', () => {
     const [command, args, options] = vi.mocked(spawn).mock.calls[0] as unknown as [
       string,
       string[],
-      { env: Record<string, string> }
+      { env: Record<string, string>; stdio: string[] }
     ]
 
     expect(command).toBe(configuredBin)
-    expect(args).toEqual(['--host', '127.0.0.1', '--port', '0'])
+    expect(args).toEqual(['--host', '127.0.0.1', '--port', '0', '--exit-when-stdin-closes'])
+    // The gateway stops when this pipe closes, so a killed TUI leaves no gateway behind.
+    expect(options.stdio[0]).toBe('pipe')
 
     const token = options.env.HERMES_DASHBOARD_SESSION_TOKEN ?? ''
 

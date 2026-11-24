@@ -961,6 +961,7 @@ pub fn build_agent_config(config: &GatewayConfig, model: &str) -> AgentConfig {
         lsp_context_enabled: config.agent.lsp_context_enabled,
         lsp_context_max_chars: config.agent.lsp_context_max_chars,
         preflight_context_compress: config.agent.preflight_context_compress,
+        prompt_caching: config.prompt_caching,
         ..AgentConfig::default()
     }
 }
@@ -1140,6 +1141,18 @@ mod tests {
         assert!(rendered.contains("ultra_autonomy"));
         assert!(rendered.contains("contextlattice"));
         assert!(rendered.contains("resource_plan"));
+    }
+
+    #[test]
+    fn build_agent_config_maps_prompt_caching() {
+        let mut config = GatewayConfig::default();
+        config.prompt_caching.cache_ttl = hermes_config::PromptCacheTtl::OneHour;
+        config.prompt_caching.keep_alive.max_pings = 3;
+        config.prompt_caching.compact_when_cold = true;
+
+        let agent_config = build_agent_config(&config, "anthropic:claude-test");
+
+        assert_eq!(agent_config.prompt_caching, config.prompt_caching);
     }
 
     #[test]

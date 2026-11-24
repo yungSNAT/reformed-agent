@@ -465,6 +465,14 @@ impl App {
     }
 
     fn build_agent_for_model(&self, provider_model: &str) -> Result<Arc<AgentLoop>, AgentError> {
+        self.build_agent_for_model_with_schemas(provider_model, &self.tool_schemas)
+    }
+
+    fn build_agent_for_model_with_schemas(
+        &self,
+        provider_model: &str,
+        tool_schemas: &[ToolSchema],
+    ) -> Result<Arc<AgentLoop>, AgentError> {
         #[cfg(test)]
         if self
             .fail_model_rebuild_for
@@ -480,7 +488,8 @@ impl App {
             let provider = build_provider(&self.config, provider_model);
             let mut agent_config = build_agent_config(&self.config, provider_model);
             agent_config.session_id = Some(self.session_id.clone());
-            let agent_tool_registry = Arc::new(bridge_tool_registry(&self.tool_registry));
+            let agent_tool_registry =
+                Arc::new(bridge_offered_tools(&self.tool_registry, tool_schemas));
 
             let agent_inner = hermes_agent::attach_discovered_memory(AgentLoop::new(
                 agent_config,
@@ -502,14 +511,62 @@ impl App {
         })
     }
 
+    fn narrow_agent_to_intersection(&mut self, next_schemas: &[ToolSchema]) {
+        let next_names: BTreeSet<&str> = next_schemas.iter().map(|s| s.name.as_str()).collect();
+        self.tool_schemas.retain(|schema| {
+            next_names.contains(schema.name.as_str())
+                && self.agent.tool_registry.get(&schema.name).is_some()
+        });
+        let mut narrowed_registry = (*self.agent.tool_registry).clone();
+        narrowed_registry.retain_offered(&self.tool_schemas);
+        let narrowed_registry = Arc::new(narrowed_registry);
+        let prev_agent = self.agent.clone();
+        let state_root = self.state_root.clone();
+        let rebuilt = std::panic::catch_unwind(std::panic::AssertUnwindSafe(move || {
+            let loop_base = prev_agent.clone_with_tool_registry(narrowed_registry);
+            let orchestrator = Arc::new(SubAgentOrchestrator::from_parent(&loop_base, state_root));
+            Arc::new(loop_base.with_sub_agent_orchestrator(orchestrator))
+        }));
+        match rebuilt {
+            Ok(agent) => self.agent = agent,
+            Err(_) => {
+                self.tool_schemas.clear();
+                self.agent = Arc::new(
+                    self.agent
+                        .clone_with_tool_registry(Arc::new(AgentToolRegistry::new())),
+                );
+            }
+        }
+    }
+
     pub fn refresh_agent_tool_snapshot(&mut self) -> AgentToolSnapshotRefresh {
         let before = sorted_tool_schema_names(&self.tool_schemas);
-        self.tool_schemas = hermes_tool_planning::resolve_platform_tool_schemas(
+        let next_schemas = hermes_tool_planning::resolve_platform_tool_schemas(
             &self.config,
             "cli",
             &self.tool_registry,
         );
-        self.rebuild_agent_for_active_session();
+        let rebuild_error = match self
+            .build_agent_for_model_with_schemas(&self.current_model, &next_schemas)
+        {
+            Ok(agent) => {
+                self.tool_schemas = next_schemas;
+                self.agent = agent;
+                self.tool_snapshot_sync_error = None;
+                None
+            }
+            Err(err) => {
+                let message = format!("agent tool snapshot rebuild failed: {err}");
+                tracing::warn!(
+                    model = %self.current_model,
+                    error = %message,
+                    "Agent rebuild failed during tool snapshot refresh; failing closed"
+                );
+                self.narrow_agent_to_intersection(&next_schemas);
+                self.tool_snapshot_sync_error = Some(message.clone());
+                Some(message)
+            }
+        };
         let after = sorted_tool_schema_names(&self.tool_schemas);
         let before_set: BTreeSet<_> = before.iter().cloned().collect();
         let after_set: BTreeSet<_> = after.iter().cloned().collect();
@@ -519,6 +576,7 @@ impl App {
             after_count: after.len(),
             added: after_set.difference(&before_set).cloned().collect(),
             removed: before_set.difference(&after_set).cloned().collect(),
+            rebuild_error,
         }
     }
 
@@ -573,13 +631,36 @@ impl App {
             .await
     }
 
-    async fn run_messages_with_current_agent_tools(
+    pub(crate) fn check_tool_snapshot_sync(&self, include_tools: bool) -> Result<(), AgentError> {
+        if let Some(err) = &self.tool_snapshot_sync_error {
+            return Err(AgentError::Config(err.clone()));
+        }
+        if include_tools
+            && self
+                .tool_schemas
+                .iter()
+                .any(|schema| self.agent.tool_registry.get(&schema.name).is_none())
+        {
+            return Err(AgentError::Config(
+                "agent tool snapshot is out of sync with active tool schemas".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    pub(crate) async fn run_messages_with_current_agent_tools(
         &self,
         messages: Vec<hermes_core::Message>,
         stream_enabled: bool,
         include_tools: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
-        let tool_schemas = include_tools.then(|| self.tool_schemas.clone());
+        self.check_tool_snapshot_sync(include_tools)?;
+        // `None` would offer every tool the agent holds.
+        let tool_schemas = Some(if include_tools {
+            self.tool_schemas.clone()
+        } else {
+            Vec::new()
+        });
         if stream_enabled && self.config.streaming.enabled {
             let stream_handle = self.stream_handle.clone();
             let stream_cb: Option<Box<dyn Fn(hermes_core::StreamChunk) + Send + Sync>> =

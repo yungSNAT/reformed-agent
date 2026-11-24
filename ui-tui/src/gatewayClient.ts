@@ -374,7 +374,13 @@ export class GatewayClient extends EventEmitter {
     const env = { ...process.env, [GATEWAY_TOKEN_ENV]: token }
 
     this.startReadyTimer(bin, cwd)
-    this.proc = spawn(bin, ['--host', '127.0.0.1', '--port', '0'], { cwd, env, stdio: ['ignore', 'pipe', 'pipe'] })
+    // Standard input is a pipe nothing writes to: when this process dies, however it dies,
+    // the pipe closes and the gateway stops with it.
+    this.proc = spawn(bin, ['--host', '127.0.0.1', '--port', '0', '--exit-when-stdin-closes'], {
+      cwd,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe']
+    })
 
     const ownedProc = this.proc
 

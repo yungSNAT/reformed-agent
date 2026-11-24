@@ -1035,6 +1035,26 @@ impl AgentLoop {
     }
 
     /// Metrics (always) + optional Python-style memory/skill review LLM pass on session end.
+    /// The review agent's config: no nudges, no delegates, no keep-alive (it
+    /// shares the session id, and the session's cache holds the parent's
+    /// prefix, not the review's).
+    fn background_review_config(&self) -> AgentConfig {
+        let mut cfg = self.config.clone();
+        cfg.background_review_enabled = false;
+        cfg.background_review_metrics_enabled = false;
+        cfg.memory_nudge_interval = 0;
+        cfg.skill_creation_nudge_interval = 0;
+        cfg.max_concurrent_delegates = 0;
+        cfg.quiet_mode = true;
+        cfg.prompt_caching.keep_alive.max_pings = 0;
+        cfg.max_turns = if cfg.max_turns == 0 {
+            16
+        } else {
+            cfg.max_turns.min(16)
+        };
+        cfg
+    }
+
     fn spawn_background_review(&self, turn: u32, ctx: &ContextManager, review_memory_at_end: bool) {
         self.emit_background_review_metrics(turn, ctx);
         if !self.config.background_review_enabled {
@@ -1067,18 +1087,7 @@ impl AgentLoop {
         };
         let mut hist = ctx.get_messages().to_vec();
         hist.push(Message::user(prompt));
-        let mut cfg = self.config.clone();
-        cfg.background_review_enabled = false;
-        cfg.background_review_metrics_enabled = false;
-        cfg.memory_nudge_interval = 0;
-        cfg.skill_creation_nudge_interval = 0;
-        cfg.max_concurrent_delegates = 0;
-        cfg.quiet_mode = true;
-        cfg.max_turns = if cfg.max_turns == 0 {
-            16
-        } else {
-            cfg.max_turns.min(16)
-        };
+        let cfg = self.background_review_config();
         let tools = self.tool_registry.clone();
         let provider = self.llm_provider.clone();
         let review_cb = self.callbacks.background_review_callback.clone();
