@@ -437,6 +437,7 @@ pub struct Gateway {
     busy_sessions: Arc<RwLock<BusySessionCoordinator>>,
     /// Where turns in flight are recorded for recovery after a restart.
     reply_records: std::sync::OnceLock<PathBuf>,
+    reply_writer_alive: std::sync::OnceLock<fn(u32) -> bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]

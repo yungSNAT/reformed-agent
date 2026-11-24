@@ -188,11 +188,39 @@ fn writer_pid(record: &PendingReply) -> Option<u32> {
     record.process.split('-').next()?.parse().ok()
 }
 
+/// When the record's writer started.
+fn writer_started(record: &PendingReply) -> Option<std::time::SystemTime> {
+    let nanos: u64 = record.process.split_once('-')?.1.parse().ok()?;
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_nanos(nanos))
+}
+
+/// When this host booted (Linux: `btime` in `/proc/stat`); `None` elsewhere.
+pub fn boot_time() -> Option<std::time::SystemTime> {
+    let stat = std::fs::read_to_string("/proc/stat").ok()?;
+    let secs: u64 = stat
+        .lines()
+        .find_map(|line| line.strip_prefix("btime "))?
+        .trim()
+        .parse()
+        .ok()?;
+    Some(std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs))
+}
+
 /// At start, before any turn runs: move each record a stopped process left
 /// into [`recovering_dir`]. Records this process wrote, and records whose
 /// writer `process_alive` says is still running (another gateway, or an old
-/// one still finishing a turn), stay. Returns the number moved.
+/// one still finishing a turn), stay. A writer that started before this
+/// host booted has stopped, whatever process its pid now names. Returns
+/// the number moved.
 pub fn take_over(dir: &Path, process_alive: fn(u32) -> bool) -> usize {
+    take_over_since(dir, process_alive, boot_time())
+}
+
+fn take_over_since(
+    dir: &Path,
+    process_alive: fn(u32) -> bool,
+    booted_at: Option<std::time::SystemTime>,
+) -> usize {
     let me = this_process();
     let to = recovering_dir(dir);
     let mut moved = 0;
@@ -204,7 +232,13 @@ pub fn take_over(dir: &Path, process_alive: fn(u32) -> bool) -> usize {
             continue;
         }
         // A writer with this process's id ran before it (a container's pid 1).
-        if writer_pid(&record).is_some_and(|pid| pid != std::process::id() && process_alive(pid)) {
+        let before_boot = booted_at
+            .zip(writer_started(&record))
+            .is_some_and(|(boot, started)| started < boot);
+        if !before_boot
+            && writer_pid(&record)
+                .is_some_and(|pid| pid != std::process::id() && process_alive(pid))
+        {
             continue;
         }
         let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {

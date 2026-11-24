@@ -332,7 +332,7 @@ A gateway restart does not lose a reply, short of the send cap below. Before a t
 
 Each send is counted before it is made. A send that fails is tried again a minute later, and a record is dropped after 3 sends that fail. Delivery is at least once: a gateway that stops after a send but before deleting the record sends it again on the next start. A turn that fails deletes its record, as you already got the error. A reply whose own send failed during the turn keeps its record until the session's next turn, so a restart before then sends it.
 
-On Linux and macOS a record whose gateway process is still running (another gateway on the same home, or an old one still finishing a turn) is left to that process. On Windows the gateway cannot tell, so it takes over every record a different process wrote.
+On Linux and macOS a record whose gateway process is still running (another gateway on the same home, or an old one still finishing a turn) is left to that process, and taken over if that process stops whilst failed sends are being retried; on Linux a record written before the host last booted is always taken over. On Windows the gateway cannot tell, so it takes over every record a different process wrote.
 
 On Linux and macOS the records and their folder are readable by their owner only. On Windows they take the permissions of the folder they are in (the user profile's by default).
 

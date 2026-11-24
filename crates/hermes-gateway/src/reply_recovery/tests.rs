@@ -22,7 +22,12 @@ fn a_start_takes_over_only_records_that_stopped_processes_left() {
     let dir = records_dir(tmp.path());
     write(&dir, &record("mine", &this_process()));
     write(&dir, &record("stopped", "1-1"));
-    write(&dir, &record("running", "7-1"));
+    // Started since this boot: liveness decides.
+    let started = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_nanos();
+    write(&dir, &record("running", &format!("7-{started}")));
     std::fs::write(dir.join("broken.json"), b"{ not json").expect("write");
 
     answered(&dir, "mine", "done");
@@ -49,6 +54,26 @@ fn a_start_takes_over_only_records_that_stopped_processes_left() {
         "finish leaves taken-over records"
     );
     assert_eq!(json_files(&dir).len(), 1, "the running writer's record");
+}
+
+#[test]
+fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
+    // Written by pid 7, started at 1,000 s; pid 7 is alive now.
+    write(&dir, &record("rebooted", "7-1000000000000"));
+    assert_eq!(
+        take_over_since(&dir, |pid| pid == 7, Some(at(500))),
+        0,
+        "same boot"
+    );
+    assert_eq!(
+        take_over_since(&dir, |pid| pid == 7, Some(at(2_000))),
+        1,
+        "booted since"
+    );
+    assert_eq!(recovering(&dir)[0].1.session_key, "rebooted");
 }
 
 #[test]

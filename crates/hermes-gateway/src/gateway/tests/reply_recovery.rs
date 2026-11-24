@@ -39,7 +39,14 @@ fn left_by_an_earlier_process(home: &Path, session: &str, reply: Option<&str>) {
             platform: "test".to_string(),
             chat_id: format!("chat-{session}"),
             thread_id: None,
-            process: "4242-1".to_string(),
+            // Started since this boot, so only liveness decides.
+            process: format!(
+                "4242-{}",
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos()
+            ),
             reply: reply.map(str::to_string),
             attempts: 0,
         },
@@ -190,6 +197,40 @@ async fn a_turn_during_recovery_keeps_its_own_record_and_the_lost_reply_is_sent(
         "{sent:?}"
     );
     assert!(sent.iter().any(|(_, text)| text == "new answer"), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_retry_pass_takes_over_a_record_whose_writer_has_since_stopped() {
+    static ALIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    fn alive(_pid: u32) -> bool {
+        ALIVE.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    let tmp = tempfile::tempdir().expect("tempdir");
+    left_by_an_earlier_process(tmp.path(), "test:late", Some("late answer"));
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("user1");
+    let gw = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        dm_manager,
+        GatewayConfig::default(),
+    );
+    gw.register_adapter(
+        "test",
+        Arc::new(TestAdapter {
+            messages: sent.clone(),
+        }),
+    )
+    .await;
+    gw.enable_reply_recovery(tmp.path(), alive);
+    assert_eq!(gw.recover_pending_replies().await, 0, "its writer still runs");
+    ALIVE.store(false, std::sync::atomic::Ordering::SeqCst);
+    let recovered = gw
+        .recover_pending_replies_with_retries(std::time::Duration::from_millis(5))
+        .await;
+    assert_eq!(recovered, 1);
+    assert!(record_files(tmp.path()).is_empty());
+    assert_eq!(sent.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

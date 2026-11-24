@@ -31,6 +31,7 @@ impl Gateway {
             message_deduplicator: RwLock::new(MessageDeduplicator::default()),
             busy_sessions: Arc::new(RwLock::new(BusySessionCoordinator::default())),
             reply_records: std::sync::OnceLock::new(),
+            reply_writer_alive: std::sync::OnceLock::new(),
         }
     }
 

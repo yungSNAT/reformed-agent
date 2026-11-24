@@ -12,6 +12,7 @@ impl Gateway {
     ) {
         let dir = crate::reply_recovery::records_dir(hermes_home);
         if self.reply_records.set(dir.clone()).is_ok() {
+            let _ = self.reply_writer_alive.set(process_alive);
             let moved = crate::reply_recovery::take_over(&dir, process_alive);
             if moved > 0 {
                 tracing::info!(moved, "taking over replies a gateway restart cut off");
@@ -77,7 +78,7 @@ impl Gateway {
                 .await
             {
                 Ok(()) => {
-                    let _ = std::fs::remove_file(&path);
+                    let _ = tokio::fs::remove_file(&path).await;
                     sent += 1;
                 }
                 Err(e) => warn!(
@@ -98,6 +99,12 @@ impl Gateway {
     ) -> usize {
         let mut sent = 0;
         for pass in 0..=crate::reply_recovery::MAX_SEND_ATTEMPTS {
+            // A writer that was still running at start may have stopped.
+            if let (Some(dir), Some(alive)) =
+                (self.reply_records.get(), self.reply_writer_alive.get())
+            {
+                crate::reply_recovery::take_over(dir, *alive);
+            }
             sent += self.recover_pending_replies().await;
             let left = self
                 .reply_records
