@@ -1,8 +1,87 @@
 use std::time::Duration;
 
-use tokio::process::Command;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
+
+#[path = "support/isolated_hermes.rs"]
+mod isolated;
+use isolated::isolated_hermes;
+
+async fn platform_auth(sandbox: &std::path::Path, action: &str, platform: &str) -> String {
+    let output = tokio::time::timeout(
+        Duration::from_secs(15),
+        isolated_hermes(sandbox)
+            .args(["auth", action, platform])
+            .output(),
+    )
+    .await
+    .expect("platform auth timeout")
+    .expect("run platform auth");
+    assert!(
+        output.status.success(),
+        "auth {action} {platform}: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    String::from_utf8(output.stdout).expect("platform auth stdout")
+}
+
+#[tokio::test]
+async fn platform_auth_status_and_logout_update_the_isolated_profile() {
+    use std::fmt::Write as _;
+
+    let sandbox = tempfile::tempdir().expect("temporary CLI home");
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).expect("fixture CLI home");
+    let config = home.join("config.yaml");
+    let platforms = [
+        ("telegram", "token_present"),
+        ("weixin", "cfg_token_present"),
+        ("discord", "credential_present"),
+    ];
+
+    for (platform, presence) in platforms {
+        let stdout = platform_auth(sandbox.path(), "status", platform).await;
+        assert!(stdout.contains(&format!("{presence}=false")), "{stdout}");
+        assert!(stdout.contains("enabled=false"), "{stdout}");
+    }
+
+    let fixture = "plain-local-test-value";
+    let mut yaml = String::from("platforms:\n");
+    for (platform, _) in platforms {
+        writeln!(
+            yaml,
+            "  {platform}:\n    enabled: true\n    token: {fixture}"
+        )
+        .expect("fixture configuration");
+    }
+    std::fs::write(&config, yaml).expect("write fixture configuration");
+    for (platform, presence) in platforms {
+        let stdout = platform_auth(sandbox.path(), "status", platform).await;
+        assert!(stdout.contains(&format!("{presence}=true")), "{stdout}");
+        assert!(stdout.contains("enabled=true"), "{stdout}");
+        assert!(
+            !stdout.contains(fixture),
+            "status displayed the fixture value"
+        );
+
+        let stdout = platform_auth(sandbox.path(), "logout", platform).await;
+        assert!(stdout.contains("cleared"), "{stdout}");
+        assert!(
+            !stdout.contains(fixture),
+            "logout displayed the fixture value"
+        );
+
+        let stdout = platform_auth(sandbox.path(), "status", platform).await;
+        assert!(stdout.contains(&format!("{presence}=false")), "{stdout}");
+        assert!(stdout.contains("enabled=false"), "{stdout}");
+    }
+    let config = hermes_config::load_user_config_file(&config).expect("saved configuration");
+    for (platform, _) in platforms {
+        let row = &config.platforms[platform];
+        assert!(!row.enabled, "{platform}");
+        assert!(row.token.is_none(), "{platform}");
+    }
+}
 
 #[tokio::test]
 async fn qwen_verification_omits_untrusted_refresh_error_details() {
@@ -28,19 +107,13 @@ async fn qwen_verification_omits_untrusted_refresh_error_details() {
 
     let output = tokio::time::timeout(
         Duration::from_secs(25),
-        Command::new(env!("CARGO_BIN_EXE_hermes-agent-ultra"))
-            .env_clear()
-            .env("HOME", sandbox.path())
-            .env("USERPROFILE", sandbox.path())
-            .env("HERMES_HOME", sandbox.path().join("hermes"))
+        isolated_hermes(sandbox.path())
             .env("HERMES_QWEN_CLI_AUTH_FILE", &fixture)
             .env(
                 "HERMES_QWEN_OAUTH_TOKEN_URL",
                 format!("{}/token", endpoint.uri()),
             )
             .env("HERMES_QWEN_OAUTH_CLIENT_ID", "loopback-fixture")
-            .current_dir(sandbox.path())
-            .kill_on_drop(true)
             .args(["auth", "verify", "qwen-oauth"])
             .output(),
     )
