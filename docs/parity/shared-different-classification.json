@@ -1428,6 +1428,13 @@
     },
     {
       "classification": "intentional_divergence",
+      "owner": "yungSNAT",
+      "path": "scripts/install.ps1",
+      "rationale": "Windows PowerShell installer intentionally downloads checksummed Reformed Agent Rust release binaries (hermes-windows-x86_64.zip) instead of cloning upstream's Python/uv environment; installer contracts cover SHA-256 verification, HTTPS enforcement and coexistence.",
+      "ticket": 305
+    },
+    {
+      "classification": "intentional_divergence",
       "owner": "sheawinkler",
       "path": "scripts/install.sh",
       "rationale": "Installer intentionally downloads or builds Hermes Agent Ultra Rust release binaries instead of cloning upstream's Python/uv environment; installer contracts cover release assets, symlinks, PATH guard, Termux pathing, and post-install probes.",

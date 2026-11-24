@@ -4,6 +4,27 @@ This guide is the fastest path from install to a working interactive session.
 
 ## 1) Install
 
+Prebuilt binaries (Linux and macOS, `x86_64` / `aarch64`):
+
+```bash
+curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/install.sh -o install.sh
+bash install.sh
+```
+
+Windows (`x86_64`, PowerShell):
+
+```powershell
+irm https://raw.githubusercontent.com/yungSNAT/reformed-agent/main/scripts/install.ps1 -OutFile install.ps1
+.\install.ps1
+```
+
+Homebrew (macOS and Linux):
+
+```bash
+curl -fsSL https://github.com/yungSNAT/reformed-agent/releases/latest/download/hermes-agent-ultra.rb -o hermes-agent-ultra.rb
+brew install --formula ./hermes-agent-ultra.rb
+```
+
 From source:
 
 ```bash
