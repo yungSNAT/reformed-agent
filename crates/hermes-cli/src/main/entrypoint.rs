@@ -140,6 +140,8 @@ async fn run_main() {
         return;
     }
     if let CliCommand::SloRollback(args) = &effective_command {
+        // HERMES_SLO_* may live in the home's .env, as for `/ops gate slo`.
+        hermes_config::loader::load_dotenv();
         let options = hermes_cli::commands::SloRollbackOptions {
             repo_root: args.repo_root.clone(),
             check_cmd: args.check_cmd.clone(),
