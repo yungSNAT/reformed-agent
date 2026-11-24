@@ -200,7 +200,7 @@ async fn run_agent_rollout(
 ) -> EvalResult<hermes_eval::RunRecord> {
     let tool_registry = Arc::new(ToolRegistry::new());
     let terminal_backend = hermes_cli::terminal_backend::build_terminal_backend(config);
-    let skill_store = Arc::new(FileSkillStore::new(FileSkillStore::default_dir()));
+    let skill_store = Arc::new(FileSkillStore::new(bench_skills_dir()));
     let skill_provider: Arc<dyn SkillProvider> = Arc::new(SkillManager::new(skill_store));
     hermes_tools::register_builtin_tools(&tool_registry, terminal_backend, skill_provider);
     hermes_cli::runtime_tool_wiring::wire_stdio_clarify_backend(&tool_registry);
@@ -215,4 +215,18 @@ async fn run_agent_rollout(
     ));
     let rollout = Arc::new(AgentLoopRollout::new(agent).with_full_state(full_state));
     runner.run(adapter, rollout).await
+}
+
+/// The skills folder the bench agent loads, the one `hermes` itself uses.
+#[cfg(feature = "agent-loop")]
+fn bench_skills_dir() -> PathBuf {
+    FileSkillStore::default_dir()
+}
+
+#[cfg(all(test, feature = "agent-loop"))]
+mod tests {
+    #[test]
+    fn bench_skills_come_from_the_hermes_home_skills_folder() {
+        assert_eq!(super::bench_skills_dir(), hermes_config::skills_dir());
+    }
 }
