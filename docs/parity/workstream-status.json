@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-11-23T23:18:35+11:00",
-  "head_sha": "aff366282dbe812cac50d18d6b02630e414786ba",
+  "generated_at_utc": "2026-11-25T06:35:17+11:00",
+  "head_sha": "7a8e690bb411773cc04bef54317014d3e531bc63",
   "states": {
     "complete": 2,
     "in_progress": 5
@@ -42,7 +42,7 @@
       ],
       "metrics": {
         "divergence_documented": false,
-        "local_skill_files": 1002,
+        "local_skill_files": 1003,
         "upstream_skill_files": 1127
       },
       "state": "in_progress",
@@ -57,7 +57,7 @@
       ],
       "metrics": {
         "divergence_documented": true,
-        "e2e_cli_tests": 16,
+        "e2e_cli_tests": 17,
         "rows_not_shown_matching": 155
       },
       "state": "in_progress",
