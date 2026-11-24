@@ -21,6 +21,190 @@ fn assert_exit(output: Output, code: i32, context: &str) {
 }
 
 #[test]
+fn adapter_matrix_reports_only_feature_gated_platforms_and_public_memory_plugins() {
+    let root = tempfile::tempdir().unwrap();
+    for (relative, source) in [
+        (
+            "crates/hermes-gateway/src/platforms/mod.rs",
+            "#[cfg(feature = \"second\")]\r\npub mod zeta;\r\n\
+             #[cfg(feature = \"first\")] pub mod alpha;\r\npub mod always_on;\r\n",
+        ),
+        (
+            "crates/hermes-agent/src/memory_plugins/mod.rs",
+            "pub mod snapshot;\r\nmod private_plugin;\r\n",
+        ),
+    ] {
+        let path = root.path().join(relative);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, source).unwrap();
+    }
+    assert_exit(
+        parity_tool(root.path(), "generate-adapter-matrix")
+            .args(["--out-json", "matrix.json", "--out-md", "matrix.md"])
+            .output()
+            .unwrap(),
+        0,
+        "render adapter feature matrix",
+    );
+    let report: Value =
+        serde_json::from_slice(&fs::read(root.path().join("matrix.json")).unwrap()).unwrap();
+    assert_eq!(report["summary"]["platform_adapters"], 2);
+    assert_eq!(report["summary"]["memory_plugins"], 1);
+    assert_eq!(report["summary"]["non_rust_native"], 0);
+    let markdown = fs::read_to_string(root.path().join("matrix.md")).unwrap();
+    let rows = report["items"].as_array().unwrap();
+    assert_eq!(rows.len(), 3);
+    for (row, (category, name, feature)) in rows.iter().zip([
+        ("memory_plugin", "snapshot", "always"),
+        ("platform_adapter", "alpha", "first"),
+        ("platform_adapter", "zeta", "second"),
+    ]) {
+        assert_eq!(
+            row,
+            &json!({"category": category, "name": name, "feature": feature, "status": "rust-native"})
+        );
+        assert!(markdown.contains(&format!(
+            "| {category} | `{name}` | `{feature}` | rust-native |"
+        )));
+    }
+}
+
+#[test]
+fn global_proof_reports_overdue_evidence_and_rejects_release_without_rewriting_reports() {
+    let root = tempfile::tempdir().unwrap();
+    let parity = root.path().join("docs/parity");
+    fs::create_dir_all(&parity).unwrap();
+    for (name, report) in [
+        (
+            "global-parity-thresholds",
+            json!({
+                "program": "fixture parity",
+                "ci_thresholds": {"min_test_intent_mapping_ratio": 0.9},
+                "release_thresholds": {
+                    "max_deferred_review_overdue": 0,
+                    "required_workstreams_complete": ["GPAR-01", "GPAR-04"],
+                },
+            }),
+        ),
+        (
+            "parity-matrix",
+            json!({"summary": {}, "top_shared_different": [{"path": "fixture.rs"}]}),
+        ),
+        (
+            "workstream-status",
+            json!({"states": {"fixture": "complete"}}),
+        ),
+        (
+            "test-intent-mapping",
+            json!({"summary": {"mapping_ratio": 1.0}}),
+        ),
+        (
+            "adapter-feature-matrix",
+            json!({"summary": {"non_rust_native": 0}}),
+        ),
+        (
+            "shared-different-classification",
+            json!({"items": [{
+                "path": "fixture.rs", "classification": "deferred", "review_date": "2000-01-01"
+            }]}),
+        ),
+        (
+            "shared-diff-backlog",
+            json!({"summary": {"deferred_review": 1}}),
+        ),
+        (
+            "divergence-validation",
+            json!({"summary": {"errors": 0, "unowned": 0, "review_overdue": 0}}),
+        ),
+        (
+            "upstream-missing-queue",
+            json!({"summary": {
+                "total_commits": 2, "by_disposition": {"ported": 2}, "by_target_ticket": {"12": 2}
+            }}),
+        ),
+        (
+            "test-coverage-audit",
+            json!({
+                "summary": {
+                    "tracked_behavior_rows": 5,
+                    "covered_behavior_rows": 3,
+                    "coverage_manifest_deferred_entries": 1,
+                    "coverage_manifest_not_rechecked_entries": 1,
+                    "tracked_behavior_coverage_ratio": 0.6,
+                },
+                "audit_gate": {"pass": true, "critical_gaps": 0},
+                "coverage_manifests": [{"path": "docs/parity/fixture-manifest.json"}],
+            }),
+        ),
+        (
+            "fixture-manifest",
+            json!({"entries": [
+                {"status": "deferred_not_covered", "review_date": "2000-01-01"},
+                {"status": "covered"},
+            ]}),
+        ),
+        (
+            "sota-harness-matrix",
+            json!({"summary": {"domain_coverage_ratio": 1.0}, "gate": {"pass": true}}),
+        ),
+        (
+            "behavioral-similarity-diff",
+            json!({"summary": {}, "gate": {"pass": false}}),
+        ),
+        (
+            "deep-problem-solving-diff",
+            json!({"summary": {}, "gate": {"pass": true}}),
+        ),
+    ] {
+        fs::write(parity.join(format!("{name}.json")), report.to_string()).unwrap();
+    }
+    let run = |args: &[&str]| {
+        parity_tool(root.path(), "generate-global-parity-proof")
+            .args(args)
+            .output()
+            .unwrap()
+    };
+    let json_path = parity.join("global-parity-proof.json");
+    let markdown_path = parity.join("global-parity-proof.md");
+    assert_exit(run(&["--check-ci"]), 0, "CI threshold passes");
+    assert_exit(
+        run(&["--check-release"]),
+        1,
+        "overdue fixture evidence fails release",
+    );
+    assert!(!json_path.exists() && !markdown_path.exists());
+    assert_exit(run(&[]), 0, "generate proof reports");
+    let raw_json = fs::read(&json_path).unwrap();
+    let markdown = fs::read_to_string(&markdown_path).unwrap();
+    let report: Value = serde_json::from_slice(&raw_json).unwrap();
+    assert_eq!(report["ci_gate"]["pass"], true);
+    assert_eq!(report["release_gate"]["pass"], false);
+    assert_eq!(
+        report["metrics"]["max_deferred_review_overdue"].as_f64(),
+        Some(2.0)
+    );
+    assert_eq!(
+        report["metrics"]["max_test_coverage_unaccounted_rows"].as_f64(),
+        Some(0.0)
+    );
+    for index in ["GPAR-01", "GPAR-04", "GPAR-06", "GPAR-09", "GPAR-11"] {
+        assert_eq!(report["gpar_completion"][index], true, "{index}");
+    }
+    assert_eq!(report["gpar_completion"]["GPAR-10"], false);
+    assert!(markdown.contains("- CI gate: **PASS**"));
+    assert!(markdown.contains("- Release gate: **FAIL**"));
+    assert!(markdown.contains("| `GPAR-06` | yes |"));
+    assert!(markdown.contains("| `GPAR-10` | no |"));
+    assert_exit(
+        run(&["--check-release"]),
+        1,
+        "check keeps both generated reports",
+    );
+    assert_eq!(fs::read(json_path).unwrap(), raw_json);
+    assert_eq!(fs::read_to_string(markdown_path).unwrap(), markdown);
+}
+
+#[test]
 fn case_proofs_reject_superior_cases_when_required_evidence_is_missing() {
     let root = tempfile::tempdir().unwrap();
     let source = "crates/example/src/lib.rs";
