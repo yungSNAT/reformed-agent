@@ -1,0 +1,62 @@
+{
+ "generated_at": "2026-11-23T18:35:11.712384+00:00",
+ "skill_count": 9,
+ "version": 2,
+ "skills": [
+  {
+   "source": "official",
+   "identifier": "official/x/y",
+   "name": "skipped"
+  },
+  {
+   "source": "github",
+   "identifier": "openai/skills/pdf",
+   "name": "pdf",
+   "description": "PDF\nsecond line",
+   "tags": [
+    "documents"
+   ]
+  },
+  {
+   "source": "GitHub",
+   "identifier": "someone/repo/tool",
+   "description": "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+   "tags": [
+    "Python",
+    "x"
+   ]
+  },
+  {
+   "source": "clawhub",
+   "identifier": "",
+   "name": "claw-thing",
+   "tags": "not-a-list"
+  },
+  {
+   "source": "clawhub",
+   "identifier": "clawhub/already",
+   "name": "already"
+  },
+  {
+   "source": "skills.sh",
+   "identifier": "a/b",
+   "repo": "acme/skills",
+   "tags": [
+    "Video"
+   ]
+  },
+  {
+   "source": "",
+   "identifier": "",
+   "name": null
+  },
+  {
+   "source": "mystery",
+   "identifier": "m/n",
+   "tags": [
+    "Game Dev"
+   ]
+  },
+  "not-a-dict"
+ ]
+}

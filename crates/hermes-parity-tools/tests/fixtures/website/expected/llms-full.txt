@@ -1,0 +1,74 @@
+# Hermes Agent — Full Documentation
+This file is the entire Hermes Agent documentation concatenated for LLM context ingestion. Section order reflects docs-site navigation: Getting Started, Using Hermes, Features, Messaging, Integrations, Guides, Developer Guide, Reference, then everything else.
+Canonical site: https://hermes-agent.nousresearch.com/docs
+Short index: https://hermes-agent.nousresearch.com/docs/llms.txt
+
+---
+
+<!-- source: website/docs/getting-started/installation.md -->
+# Install Hermes
+
+# Install
+
+Steps.
+
+---
+
+<!-- source: website/docs/getting-started/quickstart/index.md -->
+# getting-started/quickstart
+
+Quick.
+
+---
+
+<!-- source: website/docs/user-guide/cli.md -->
+# user-guide/cli
+
+# CLI
+
+No frontmatter here.
+
+---
+
+<!-- source: website/docs/reference/skills-catalog.md -->
+# reference/skills-catalog
+
+Table.
+
+---
+
+<!-- source: website/docs/crlf.md -->
+# CRLF page
+
+Line one.
+Line two.
+
+---
+
+<!-- source: website/docs/extra/zeta.md -->
+# extra/zeta.md
+
+Zeta page.
+
+---
+
+<!-- source: website/docs/extra-b/alpha.md -->
+# Extra B
+
+Alpha.
+
+---
+
+<!-- source: website/docs/extra.md -->
+# extra.md
+
+Extra top page.
+
+---
+
+<!-- source: website/docs/user-guide/skills/godmode.md -->
+# Godmode
+
+Kept.
+
+---

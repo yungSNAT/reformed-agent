@@ -1,0 +1,6 @@
+# Hermes Agent — Full Documentation
+This file is the entire Hermes Agent documentation concatenated for LLM context ingestion. Section order reflects docs-site navigation: Getting Started, Using Hermes, Features, Messaging, Integrations, Guides, Developer Guide, Reference, then everything else.
+Canonical site: https://hermes-agent.nousresearch.com/docs
+Short index: https://hermes-agent.nousresearch.com/docs/llms.txt
+
+---

@@ -85,7 +85,7 @@
       "summary": "Keep platform adapter parity in the Rust gateway instead of vendoring upstream Python platform-plugin trees.",
       "owner": "yungSNAT",
       "ticket": 7,
-      "last_reviewed": "2026-11-10",
+      "last_reviewed": "2026-11-24",
       "review_date": "2027-02-10",
       "rationale": "Platform behavior is represented by Rust-native gateway adapters, delivery helpers, auth/config readers, and adapter contracts; upstream Python plugin files are reference-only and must not become runtime execution paths in the Rust-first repo.",
       "path_prefixes": [
@@ -99,7 +99,8 @@
         "plugins/platforms/sms/",
         "plugins/platforms/telegram/",
         "plugins/platforms/wecom/",
-        "plugins/platforms/whatsapp/"
+        "plugins/platforms/whatsapp/",
+        "plugins/platforms/homeassistant/"
       ]
     },
     {

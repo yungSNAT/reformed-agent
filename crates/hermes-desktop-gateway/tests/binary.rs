@@ -2,12 +2,29 @@
 //! lines Hermes Desktop's launcher reads from standard output.
 
 use std::ffi::OsStr;
-use std::io::{BufRead, BufReader, Read};
-use std::process::{Command, Stdio};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::TcpStream;
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 const BIN: &str = env!("CARGO_BIN_EXE_hermes-desktop-gateway");
 const TOKEN_ENV: &str = "HERMES_DASHBOARD_SESSION_TOKEN";
+
+/// Waits up to 10 seconds for `child` to exit, killing it on timeout.
+fn wait_exit(child: &mut Child) -> Option<ExitStatus> {
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            return Some(status);
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            return None;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
 
 /// Runs the binary, which must refuse and exit within 10 seconds (a binary that serves
 /// instead fails the test rather than hanging it); returns its standard error.
@@ -19,18 +36,7 @@ fn refusal(args: &[&str], token: &OsStr) -> String {
         .stderr(Stdio::piped())
         .spawn()
         .unwrap();
-    let deadline = Instant::now() + Duration::from_secs(10);
-    let status = loop {
-        if let Some(status) = child.try_wait().unwrap() {
-            break Some(status);
-        }
-        if Instant::now() > deadline {
-            child.kill().unwrap();
-            child.wait().unwrap();
-            break None;
-        }
-        std::thread::sleep(Duration::from_millis(20));
-    };
+    let status = wait_exit(&mut child);
     let mut stderr = String::new();
     child
         .stderr
@@ -127,4 +133,98 @@ fn without_a_token_it_makes_one_and_prints_it_once() {
     assert_eq!(printed.len(), 1, "{stderr}");
     let token = printed[0];
     assert!(token.len() >= 32 && token.chars().all(|c| c.is_ascii_hexdigit()));
+}
+
+/// A launcher that dies without stopping the gateway (killed, or crashed) closes the pipes it
+/// gave as standard input, output and error, so the token-bearing port does not outlive it
+/// and the gateway still exits with status 0 without panicking on a broken stderr pipe, even
+/// while a keep-alive HTTP connection stays open.
+#[test]
+fn stops_when_its_launchers_stdin_pipe_closes() {
+    let mut child = Command::new(BIN)
+        .args(["--port", "0", "--exit-when-stdin-closes"])
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let first = lines.next().unwrap().unwrap();
+    let second = lines.next().unwrap().unwrap();
+    let port: u16 = first
+        .strip_prefix("HERMES_BACKEND_READY port=")
+        .unwrap_or_else(|| panic!("first line: {first}"))
+        .parse()
+        .unwrap();
+    assert_eq!(second, format!("HERMES_DASHBOARD_READY port={port}"));
+
+    // Serving stays up while stdin remains open; hold the HTTP keep-alive socket open across EOF.
+    let mut open_conn = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    open_conn
+        .write_all(format!("GET /api/health HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n").as_bytes())
+        .unwrap();
+    let mut resp = [0u8; 32];
+    let n = open_conn.read(&mut resp).unwrap();
+    assert!(std::str::from_utf8(&resp[..n]).unwrap().contains("200 OK"));
+    assert!(child.try_wait().unwrap().is_none());
+
+    drop(lines);
+    drop(child.stderr.take());
+    drop(child.stdin.take());
+    let status = wait_exit(&mut child);
+    drop(open_conn);
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "gateway did not exit cleanly when stdin closed: {status:?}"
+    );
+    assert!(
+        TcpStream::connect(("127.0.0.1", port)).is_err(),
+        "loopback listener stayed reachable after gateway stopped"
+    );
+}
+
+/// Launcher death before readiness completes closes stdout/stderr before `serve` starts;
+/// the gateway still exits 0 without leaving a listener behind.
+#[test]
+fn stops_cleanly_when_pipes_close_before_readiness() {
+    let mut child = Command::new(BIN)
+        .args(["--port", "0", "--exit-when-stdin-closes"])
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    drop(child.stdout.take());
+    drop(child.stderr.take());
+    drop(child.stdin.take());
+    let status = wait_exit(&mut child);
+    assert!(
+        status.is_some_and(|s| s.success()),
+        "gateway did not exit cleanly when pipes closed early: {status:?}"
+    );
+}
+
+/// Without the flag a closed standard input (`nohup`, a service manager) changes nothing.
+#[test]
+fn keeps_serving_after_stdin_closes_without_the_flag() {
+    let mut child = Command::new(BIN)
+        .args(["--port", "0"])
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    lines.next().unwrap().unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    let running = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        running,
+        "the gateway stopped although stdin closing was not asked for"
+    );
 }

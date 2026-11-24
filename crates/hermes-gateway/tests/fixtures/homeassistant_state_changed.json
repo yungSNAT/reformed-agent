@@ -1,0 +1,749 @@
+{
+  "cases": [
+    {
+      "name": "no filters drops everything",
+      "extra": {},
+      "events": [
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.kitchen",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        null
+      ]
+    },
+    {
+      "name": "domain formats",
+      "extra": {
+        "watch_domains": [
+          "climate",
+          "sensor",
+          "binary_sensor",
+          "light",
+          "switch",
+          "fan",
+          "alarm_control_panel",
+          "cover"
+        ]
+      },
+      "events": [
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "climate.thermostat",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "heat",
+                "attributes": {
+                  "friendly_name": "Thermostat",
+                  "current_temperature": 21,
+                  "temperature": 23
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "climate.office",
+              "old_state": {
+                "state": "heat",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "cool",
+                "attributes": {
+                  "current_temperature": 21.5
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.temp",
+              "old_state": {
+                "state": "21",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "22",
+                "attributes": {
+                  "friendly_name": "Temp",
+                  "unit_of_measurement": "°C"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.count",
+              "old_state": {
+                "state": "1",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "2",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "binary_sensor.door",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {
+                  "friendly_name": "Front door"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "binary_sensor.window",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "off",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.kitchen",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {
+                  "friendly_name": "Kitchen"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "switch.pump",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "unavailable",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "fan.loft",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "alarm_control_panel.home",
+              "old_state": {
+                "state": "armed_away",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "triggered",
+                "attributes": {
+                  "friendly_name": "Alarm"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "cover.garage",
+              "old_state": {
+                "state": "closed",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "open",
+                "attributes": {
+                  "friendly_name": "Garage"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "media_player.tv",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "text": "[Home Assistant] Thermostat: HVAC mode changed from 'off' to 'heat' (current: 21, target: 23)",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] climate.office: HVAC mode changed from 'heat' to 'cool' (current: 21.5, target: ?)",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] Temp: changed from 21°C to 22°C",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] sensor.count: changed from 1 to 2",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] Front door: triggered (was cleared)",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] binary_sensor.window: cleared (was triggered)",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] Kitchen: turned on",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] switch.pump: turned off",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] fan.loft: turned on",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] Alarm: alarm state changed from 'armed_away' to 'triggered'",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] Garage (cover.garage): changed from 'closed' to 'open'",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        null
+      ]
+    },
+    {
+      "name": "watch_entities and domains are either-or",
+      "extra": {
+        "watch_domains": [
+          "light"
+        ],
+        "watch_entities": [
+          "sensor.front_door_battery"
+        ]
+      },
+      "events": [
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.front_door_battery",
+              "old_state": {
+                "state": "50",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "49",
+                "attributes": {
+                  "unit_of_measurement": "%"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.other",
+              "old_state": {
+                "state": "1",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "2",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.hall",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "off",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "text": "[Home Assistant] sensor.front_door_battery: changed from 50% to 49%",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        null,
+        {
+          "text": "[Home Assistant] light.hall: turned off",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        }
+      ]
+    },
+    {
+      "name": "ignore beats watch_all",
+      "extra": {
+        "watch_all": true,
+        "ignore_entities": [
+          "sensor.uptime"
+        ]
+      },
+      "events": [
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.uptime",
+              "old_state": {
+                "state": "1",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "2",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "vacuum.robo",
+              "old_state": {
+                "state": "docked",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "cleaning",
+                "attributes": {
+                  "friendly_name": "Robo"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "nodot",
+              "old_state": {
+                "state": "a",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "b",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        null,
+        {
+          "text": "[Home Assistant] Robo (vacuum.robo): changed from 'docked' to 'cleaning'",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] nodot (nodot): changed from 'a' to 'b'",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        }
+      ]
+    },
+    {
+      "name": "cooldown per entity, set even when nothing is formatted",
+      "extra": {
+        "watch_all": true,
+        "cooldown_seconds": 30
+      },
+      "events": [
+        [
+          100,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          105,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "off",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          129.5,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          130,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "off",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          131,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.b",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        null,
+        null,
+        null,
+        {
+          "text": "[Home Assistant] light.a: turned off",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] light.b: turned on",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        }
+      ]
+    },
+    {
+      "name": "cooldown zero",
+      "extra": {
+        "watch_all": true,
+        "cooldown_seconds": 0
+      },
+      "events": [
+        [
+          100,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "off",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "on",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          100,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.a",
+              "old_state": {
+                "state": "on",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "off",
+                "attributes": {}
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "text": "[Home Assistant] light.a: turned on",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        {
+          "text": "[Home Assistant] light.a: turned off",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        }
+      ]
+    },
+    {
+      "name": "null and empty states",
+      "extra": {
+        "watch_all": true,
+        "cooldown_seconds": 0
+      },
+      "events": [
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.new",
+              "old_state": null,
+              "new_state": {
+                "state": "5",
+                "attributes": {
+                  "unit_of_measurement": "W"
+                }
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "sensor.gone",
+              "old_state": {
+                "state": "5",
+                "attributes": {}
+              },
+              "new_state": null
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "",
+              "old_state": {
+                "state": "1",
+                "attributes": {}
+              },
+              "new_state": {
+                "state": "2",
+                "attributes": {}
+              }
+            }
+          }
+        ],
+        [
+          0,
+          {
+            "event_type": "state_changed",
+            "data": {
+              "entity_id": "light.x",
+              "new_state": {
+                "state": "on"
+              }
+            }
+          }
+        ]
+      ],
+      "expected": [
+        {
+          "text": "[Home Assistant] sensor.new: changed from unknownW to 5W",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        },
+        null,
+        null,
+        {
+          "text": "[Home Assistant] light.x: turned on",
+          "chat_id": "ha_events",
+          "user_id": "homeassistant",
+          "chat_type": "channel"
+        }
+      ]
+    }
+  ]
+}
