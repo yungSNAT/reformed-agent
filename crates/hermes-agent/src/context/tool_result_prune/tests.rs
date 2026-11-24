@@ -362,8 +362,26 @@ fn the_clock_is_cold_only_after_a_known_touch_ages_past_its_ttl() {
     record_cache_touch_at("", past);
     assert!(!cache_expired("", ttl));
     assert_eq!(
-        cache_ttl_for_model("anthropic/claude-sonnet-5"),
+        cache_ttl_for_model(
+            "anthropic/claude-sonnet-5",
+            hermes_config::PromptCacheTtl::FiveMinutes
+        ),
         ANTHROPIC_CACHE_TTL
     );
-    assert_eq!(cache_ttl_for_model("gpt-6.2"), AUTOMATIC_CACHE_TTL);
+    assert_eq!(
+        cache_ttl_for_model("gpt-6.2", hermes_config::PromptCacheTtl::FiveMinutes),
+        AUTOMATIC_CACHE_TTL
+    );
+    assert_eq!(
+        cache_ttl_for_model(
+            "anthropic/claude-sonnet-5",
+            hermes_config::PromptCacheTtl::OneHour
+        ),
+        Duration::from_secs(3_600)
+    );
+    assert_eq!(
+        cache_ttl_for_model("gpt-6.2", hermes_config::PromptCacheTtl::OneHour),
+        AUTOMATIC_CACHE_TTL,
+        "the tier is a marker setting; automatic caches keep their own lifetime"
+    );
 }
