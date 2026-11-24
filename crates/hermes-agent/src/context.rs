@@ -13,6 +13,8 @@ use std::path::{Path, PathBuf};
 
 use hermes_core::{BudgetConfig, Message, MessageRole};
 
+pub mod tool_result_prune;
+
 /// Number of recent messages to preserve during compression.
 const DEFAULT_RECENT_MESSAGES: usize = 4;
 const MEMORY_ENTRY_DELIMITER: &str = "\n§\n";
@@ -159,6 +161,7 @@ impl ContextCompressor {
         const MAX_SUMMARY_CHARS: usize = 2048;
         const MAX_ITEMS_PER_SECTION: usize = 5;
         const MAX_ITEM_CHARS: usize = 180;
+        const MAX_ARCHIVES_LISTED: usize = 20;
 
         let mut goals: Vec<String> = Vec::new();
         let mut assistant_updates: Vec<String> = Vec::new();
@@ -231,6 +234,24 @@ impl ContextCompressor {
         if out.chars().count() > MAX_SUMMARY_CHARS {
             out = out.chars().take(MAX_SUMMARY_CHARS).collect::<String>() + "...";
         }
+        // Results a prune archived stay reachable: list their files, newest kept.
+        let archives: Vec<&str> = messages
+            .iter()
+            .filter(|m| m.role == MessageRole::Tool)
+            .filter_map(|m| {
+                m.content
+                    .as_deref()
+                    .and_then(tool_result_prune::archive_pointer)
+            })
+            .collect();
+        if !archives.is_empty() {
+            out.push('\n');
+            out.push_str(tool_result_prune::ARCHIVE_LIST_HEADING);
+            for path in &archives[archives.len().saturating_sub(MAX_ARCHIVES_LISTED)..] {
+                out.push_str("\n- ");
+                out.push_str(path);
+            }
+        }
         out
     }
 
@@ -280,6 +301,51 @@ pub struct ContextManager {
     protected_head: usize,
     /// Where the prefill sits in the protected head.
     prefill: Option<Range<usize>>,
+    /// Where pruned tool results are archived; `None` turns pruning off.
+    archive_dir: Option<PathBuf>,
+    /// For each prune, the results it replaced with the calls that made them.
+    /// Kept apart from `compressed_transcripts`, whose first entry callers
+    /// read as the full history before the first compression.
+    pruned_originals: Vec<Vec<Message>>,
+}
+
+/// The tool results `after` replaced, each after a copy of the assistant
+/// message that called it, trimmed to the calls whose results were replaced.
+fn replaced_with_calls(before: &[Message], after: &[Message]) -> Vec<Message> {
+    let mut out: Vec<Message> = Vec::new();
+    let mut caller: Option<usize> = None;
+    let mut caller_in_out: Option<usize> = None;
+    for (i, (old, new)) in before.iter().zip(after).enumerate() {
+        if old.role == MessageRole::Assistant && old.tool_calls.is_some() {
+            caller = Some(i);
+            caller_in_out = None;
+            continue;
+        }
+        if old.role != MessageRole::Tool || old.content == new.content {
+            continue;
+        }
+        if let (Some(c), None) = (caller, caller_in_out) {
+            let mut call = before[c].clone();
+            if let Some(calls) = call.tool_calls.as_mut() {
+                calls.clear();
+            }
+            caller_in_out = Some(out.len());
+            out.push(call);
+        }
+        if let (Some(c), Some(at)) = (caller, caller_in_out) {
+            let wanted = old.tool_call_id.as_deref();
+            let made = before[c]
+                .tool_calls
+                .iter()
+                .flatten()
+                .filter(|t| Some(t.id.as_str()) == wanted);
+            if let Some(calls) = out[at].tool_calls.as_mut() {
+                calls.extend(made.cloned());
+            }
+        }
+        out.push(old.clone());
+    }
+    out
 }
 
 impl ContextManager {
@@ -292,6 +358,8 @@ impl ContextManager {
             compressed_transcripts: Vec::new(),
             protected_head: 0,
             prefill: None,
+            archive_dir: None,
+            pruned_originals: Vec::new(),
         }
     }
 
@@ -309,6 +377,8 @@ impl ContextManager {
             compressed_transcripts: Vec::new(),
             protected_head: 0,
             prefill: None,
+            archive_dir: None,
+            pruned_originals: Vec::new(),
         }
     }
 
@@ -432,13 +502,58 @@ impl ContextManager {
         }
     }
 
+    /// Archive pruned tool results in `dir`, which the agent's `read_file`
+    /// can open. Until this is set, [`Self::prune_tool_results`] does nothing.
+    pub fn set_tool_result_archive(&mut self, dir: PathBuf) {
+        self.archive_dir = Some(dir);
+    }
+
+    /// Archive and shorten old tool results after the protected head, leaving
+    /// the messages from the newest user message on whole; see
+    /// [`tool_result_prune::prune_tool_results`]. The originals it replaced,
+    /// each after the assistant message that called it, are handed out after
+    /// the compressed transcripts, so the session store still holds them.
+    pub fn prune_tool_results(
+        &mut self,
+        session_id: &str,
+        min_reclaim_chars: usize,
+    ) -> tool_result_prune::PruneOutcome {
+        let Some(dir) = self.archive_dir.clone() else {
+            return tool_result_prune::PruneOutcome::default();
+        };
+        let before = self.messages.clone();
+        let head = self.protected_head.min(self.messages.len());
+        let history = &mut self.messages[head..];
+        let turn_start = history
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+            .unwrap_or(history.len());
+        let outcome = tool_result_prune::prune_tool_results(
+            history,
+            turn_start,
+            &dir,
+            session_id,
+            min_reclaim_chars,
+        );
+        if outcome.pruned > 0 {
+            let originals = replaced_with_calls(&before, &self.messages);
+            self.pruned_originals.push(originals);
+        }
+        outcome
+    }
+
     /// The history as it stood before each compression, oldest first.
     pub fn compressed_transcripts(&self) -> &[Vec<Message>] {
         &self.compressed_transcripts
     }
 
+    /// For each prune so far, the results it replaced and their calls.
+    pub fn pruned_originals(&self) -> &[Vec<Message>] {
+        &self.pruned_originals
+    }
+
     /// Take the history as it stood before each compression, oldest first,
-    /// without the prefill.
+    /// without the prefill, then each prune's replaced results.
     pub fn take_compressed_transcripts(&mut self) -> Vec<Vec<Message>> {
         let mut transcripts = std::mem::take(&mut self.compressed_transcripts);
         if let Some(prefill) = &self.prefill {
@@ -448,6 +563,7 @@ impl ContextManager {
                 }
             }
         }
+        transcripts.append(&mut self.pruned_originals);
         transcripts
     }
 
