@@ -365,21 +365,21 @@
 
     /// Registers one server tool, `mcp_docs_page`, and an MCP gateway whose
     /// scope holds it until `/tools` or `/reload` rescopes the gateway.
-    fn gateway_over_a_docs_page(app: &App) {
-        let schema = hermes_core::tool_schema(
-            "mcp_docs_page",
-            "CLI noop",
-            hermes_core::JsonSchema::new("object"),
-        );
+    fn gateway_over_a_docs_page(app: &App) -> Arc<std::sync::Mutex<Vec<String>>> {
+        let calls = Arc::new(std::sync::Mutex::new(Vec::new()));
+        let handler = Arc::new(ScopeProbe {
+            name: "mcp_docs_page".to_string(),
+            calls: calls.clone(),
+        });
         app.tool_registry.register(
             "mcp_docs_page",
             "mcp-docs",
-            schema.clone(),
-            Arc::new(CliNoopTool { schema }),
+            hermes_core::ToolHandler::schema(handler.as_ref()),
+            handler,
             Arc::new(|| true),
             Vec::new(),
             true,
-            "CLI noop",
+            "probe",
             "mcp",
             None,
         );
@@ -388,10 +388,12 @@
             &["docs".to_string()],
             Arc::new(|_: &hermes_tools::ToolRegistry| ["mcp_docs_page".to_string()].into()),
         );
+        calls
     }
 
-    /// Whether the gateway lets the model call `mcp_docs_page`.
-    async fn gateway_calls_docs_page(app: &App) -> bool {
+    /// Whether a gateway call to `mcp_docs_page` runs it.
+    async fn gateway_calls_docs_page(app: &App, calls: &std::sync::Mutex<Vec<String>>) -> bool {
+        let before = calls.lock().unwrap().len();
         let out = app
             .tool_registry
             .dispatch_async(
@@ -399,7 +401,9 @@
                 serde_json::json!({"action": "call", "tool": "mcp_docs_page"}),
             )
             .await;
-        !out.contains("not an MCP tool this session can call")
+        let ran = calls.lock().unwrap().len() > before;
+        assert_eq!(ran, out.contains("mcp_docs_page ran"), "{out}");
+        ran
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -408,18 +412,18 @@
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
-        gateway_over_a_docs_page(&app);
-        assert!(gateway_calls_docs_page(&app).await);
+        let calls = gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app, &calls).await);
 
         handle_slash_command(&mut app, "/tools", &["disable", "mcp_docs_page"])
             .await
             .expect("disable");
-        assert!(!gateway_calls_docs_page(&app).await);
+        assert!(!gateway_calls_docs_page(&app, &calls).await);
 
         handle_slash_command(&mut app, "/tools", &["enable", "mcp_docs_page"])
             .await
             .expect("enable");
-        assert!(gateway_calls_docs_page(&app).await);
+        assert!(gateway_calls_docs_page(&app, &calls).await);
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -428,8 +432,17 @@
         let tmp = tempdir().expect("tempdir");
         let _home_guard = TempHomeGuard::new(tmp.path());
         let mut app = build_test_app_with_stream(tmp.path()).await;
-        gateway_over_a_docs_page(&app);
-        assert!(gateway_calls_docs_page(&app).await);
+        let calls = gateway_over_a_docs_page(&app);
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+        // Control: a reload that leaves the tool enabled keeps it callable.
+        std::fs::write(
+            app.state_root.join("config.yaml"),
+            "tools_config:\n  disabled: []\n",
+        )
+        .expect("write config");
+        handle_slash_command(&mut app, "/reload", &[]).await.expect("reload");
+        assert!(gateway_calls_docs_page(&app, &calls).await);
+
         std::fs::write(
             app.state_root.join("config.yaml"),
             "tools_config:\n  disabled: [mcp_docs_page]\n",
@@ -438,5 +451,5 @@
 
         handle_slash_command(&mut app, "/reload", &[]).await.expect("reload");
 
-        assert!(!gateway_calls_docs_page(&app).await);
+        assert!(!gateway_calls_docs_page(&app, &calls).await);
     }
