@@ -127,8 +127,8 @@ fn api_key_source_uses_resolver_for_runtime_provider() {
     assert_eq!(source, Some("oauth_resolver:zz-cov-runtime-b".to_string()));
 }
 
-#[test]
-fn isolated_fallback_and_provider_env_cases() {
+#[tokio::test]
+async fn isolated_fallback_and_provider_env_cases() {
     const CASE: &str = "HERMES_TEST_PROVIDER_RUNTIME_CASE";
     if let Ok(case) = std::env::var(CASE) {
         match case.as_str() {
@@ -141,6 +141,15 @@ fn isolated_fallback_and_provider_env_cases() {
                 assert_eq!(chain, ["custom:fallback"]);
             }
             "startup" => {
+                let provider = LlmProviderConfig {
+                    api_key_env: Some("HERMES_TEST_ABSENT_PROVIDER_KEY".into()),
+                    ..Default::default()
+                };
+                assert_eq!(
+                    provider_runtime_api_key_source(Some(&provider), "fixture", "fixture", None),
+                    (false, None)
+                );
+                assert_backend_without_configured_key().await;
                 assert_default_startup_selection();
                 assert_configured_fallback_chain();
                 assert_skip_duplicate_startup_fallback();
@@ -161,26 +170,24 @@ fn isolated_fallback_and_provider_env_cases() {
 
     let (_, module) = module_path!().split_once("::").unwrap();
     let test_name = format!("{module}::isolated_fallback_and_provider_env_cases");
-    let cases: &[(&str, &[(&str, &str)])] = &[
+    let list = [
         (
-            "list",
-            &[
-                (
-                    "HERMES_FALLBACK_MODELS",
-                    " openai:a, OPENAI:A, ,anthropic:b ",
-                ),
-                ("HERMES_FALLBACK_MODEL", "ignored:fallback"),
-            ],
+            "HERMES_FALLBACK_MODELS",
+            " openai:a, OPENAI:A, ,anthropic:b ",
         ),
-        (
-            "single",
-            &[
-                ("HERMES_FALLBACK_MODELS", ", "),
-                ("HERMES_FALLBACK_MODEL", " custom:fallback "),
-            ],
-        ),
-        ("startup", &[]),
-        ("provider", &[("OPENAI_API_KEY", "runtime-test-fixture")]),
+        ("HERMES_FALLBACK_MODEL", "ignored:fallback"),
+    ];
+    let single = [
+        ("HERMES_FALLBACK_MODELS", ", "),
+        ("HERMES_FALLBACK_MODEL", " custom:fallback "),
+    ];
+    let blank_fallback = [("HERMES_FALLBACK_MODEL", " ")];
+    let provider = [("OPENAI_API_KEY", "runtime-test-fixture")];
+    let cases = [
+        ("list", &list[..]),
+        ("single", &single[..]),
+        ("startup", &blank_fallback[..]),
+        ("provider", &provider[..]),
     ];
     for (case, environment) in cases {
         // Execute only this test binary in a controlled child environment.
@@ -204,6 +211,65 @@ fn isolated_fallback_and_provider_env_cases() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+async fn assert_backend_without_configured_key() {
+    use wiremock::matchers::{body_partial_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let mut config = GatewayConfig::default();
+    config.llm_providers.insert(
+        "openai".to_string(),
+        LlmProviderConfig {
+            base_url: Some("https://provider.test/v1".into()),
+            ..Default::default()
+        },
+    );
+    let provider = build_provider(&config, "openai:fixture-model");
+    let result = provider
+        .chat_completion(&[], &[], None, None, None, None)
+        .await;
+    assert!(matches!(
+        result,
+        Err(AgentError::LlmApi(message)) if message.contains("no LLM backend configured")
+            && message.contains("openai:fixture-model")
+    ));
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(serde_json::json!({"model": "fixture-model"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "model": "fixture-model",
+            "choices": [{"message": {"role": "assistant", "content": "local response"}, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 2}
+        })))
+        .expect(2)
+        .mount(&server)
+        .await;
+    for provider_name in ["ollama-local", "openai"] {
+        config.llm_providers.insert(
+            provider_name.to_string(),
+            LlmProviderConfig {
+                base_url: Some(server.uri()),
+                ..Default::default()
+            },
+        );
+        let provider = build_provider(&config, &format!("{provider_name}:fixture-model"));
+        let response = provider
+            .chat_completion(
+                &[hermes_core::Message::user("hello")],
+                &[],
+                None,
+                None,
+                None,
+                None,
+            )
+            .await
+            .expect("loopback provider works without a configured key");
+        assert_eq!(response.message.content.as_deref(), Some("local response"));
+    }
+    server.verify().await;
 }
 
 #[test]

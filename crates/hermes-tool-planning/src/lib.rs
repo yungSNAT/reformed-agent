@@ -1109,4 +1109,54 @@ mod tests {
             assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new(), "{token}");
         }
     }
+
+    #[test]
+    fn platform_toolsets_ignore_blanks_and_unregistered_entries() {
+        let mut config = GatewayConfig::default();
+        config.platform_toolsets.insert(
+            "custom-case".into(),
+            vec![" ".into(), "web".into(), "missing-toolset".into()],
+        );
+        config.tools_config.enabled = vec![" ".into(), "nonexistent".into(), "terminal".into()];
+        config.tools_config.disabled = vec![" ".into(), "web_crawl".into()];
+        config.agent.disabled_toolsets = vec![" ".into(), "nonexistent".into()];
+        let registry = registry_with_minimal_tools();
+
+        assert_eq!(
+            resolve_platform_tool_names(&config, "custom-case", &registry),
+            ["terminal", "web_extract", "web_search"]
+        );
+        assert_eq!(
+            configured_platform_toolsets(&config, "custom-case"),
+            [" ", "web", "missing-toolset"]
+        );
+        let default_tools = resolve_platform_tool_names(&config, "telegram", &registry);
+        config
+            .platform_toolsets
+            .insert("telegram".into(), Vec::new());
+        assert_eq!(
+            resolve_platform_tool_names(&config, "telegram", &registry),
+            default_tools
+        );
+        assert_eq!(
+            configured_platform_toolsets(&config, "telegram"),
+            ["hermes-telegram"]
+        );
+    }
+
+    #[test]
+    fn tool_definition_summary_preserves_order_and_leaves_out_schema_fields() {
+        let defs = [
+            tool_schema("read_file", "Read a file", JsonSchema::new("object")),
+            tool_schema("web_search", "Find documents", JsonSchema::new("object")),
+        ];
+        assert_eq!(
+            tool_definition_summary(&defs),
+            [
+                serde_json::json!({"name":"read_file","description":"Read a file"}),
+                serde_json::json!({"name":"web_search","description":"Find documents"}),
+            ]
+        );
+        assert!(tool_definition_summary(&[]).is_empty());
+    }
 }
