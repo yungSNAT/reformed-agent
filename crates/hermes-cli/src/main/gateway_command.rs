@@ -327,8 +327,14 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                        let tool_schemas = resolve_platform_tool_schemas(
+                            config.as_ref(),
+                            &ctx.platform,
                             &runtime_tools,
+                        );
+                        let agent_tools = Arc::new(bridge_offered_tools_with(
+                            &runtime_tools,
+                            &tool_schemas,
                             gateway_turn_tool_overrides(
                                 &terminal_backend,
                                 &gateway_for_review,
@@ -338,11 +344,6 @@ async fn run_gateway(
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
-                        );
-                        let tool_schemas = resolve_platform_tool_schemas(
-                            config.as_ref(),
-                            &ctx.platform,
-                            &runtime_tools,
                         );
                         let tool_defs = tool_definition_summary(&tool_schemas);
                         gateway_for_review
@@ -610,8 +611,14 @@ async fn run_gateway(
                                 "Clarification received. Continuing task execution...".to_string()
                             );
                         }
-                        let agent_tools = Arc::new(bridge_tool_registry_with(
+                        let tool_schemas = resolve_platform_tool_schemas(
+                            config.as_ref(),
+                            &ctx.platform,
                             &runtime_tools,
+                        );
+                        let agent_tools = Arc::new(bridge_offered_tools_with(
+                            &runtime_tools,
+                            &tool_schemas,
                             gateway_turn_tool_overrides(
                                 &terminal_backend,
                                 &gateway_for_review,
@@ -621,11 +628,6 @@ async fn run_gateway(
                         let effective_model = resolve_model_for_gateway(
                             config.model.as_deref().unwrap_or("gpt-5.5"),
                             &ctx,
-                        );
-                        let tool_schemas = resolve_platform_tool_schemas(
-                            config.as_ref(),
-                            &ctx.platform,
-                            &runtime_tools,
                         );
                         let tool_defs = tool_definition_summary(&tool_schemas);
                         gateway_for_review

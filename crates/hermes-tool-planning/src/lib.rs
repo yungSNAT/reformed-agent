@@ -252,12 +252,26 @@ fn resolve_tool_names(
     gateway: bool,
 ) -> HashSet<String> {
     let manager = ToolsetManager::new(Arc::clone(registry));
+    let mut names = requested_tool_names(config, platform, registry, &manager, gateway);
+    remove_disabled_tools(config, &mut names, &manager);
+    names
+}
+
+/// The tools a platform's toolsets and `tools_config.enabled` ask for, before
+/// the disabled lists apply.
+fn requested_tool_names(
+    config: &GatewayConfig,
+    platform: &str,
+    registry: &Arc<ToolRegistry>,
+    manager: &ToolsetManager,
+    gateway: bool,
+) -> HashSet<String> {
     let key = normalize_platform_key(platform);
     let has_custom_toolsets = platform_has_custom_toolsets(config, &key);
-    let mut requested = coding_focus_toolsets(config, platform, &manager)
+    let mut requested = coding_focus_toolsets(config, platform, manager)
         .unwrap_or_else(|| configured_platform_toolsets(config, platform));
     if !has_custom_toolsets {
-        append_live_mcp_toolsets(&mut requested, &manager);
+        append_live_mcp_toolsets(&mut requested, manager);
     }
 
     let names_a_server = requested
@@ -269,7 +283,7 @@ fn resolve_tool_names(
         if original.is_empty() {
             continue;
         }
-        match resolve_toolset_token(original, &manager, registry) {
+        match resolve_toolset_token(original, manager, registry) {
             Some(resolved) => names.extend(resolved),
             None => tracing::warn!(
                 "Unknown platform toolset/token '{}' for platform '{}'",
@@ -301,7 +315,16 @@ fn resolve_tool_names(
             names.insert(MCP_GATEWAY_TOOL.to_string());
         }
     }
-    apply_disabled_toolsets(&mut names, &config.agent.disabled_toolsets, &manager);
+    names
+}
+
+/// Removes `agent.disabled_toolsets` and `tools_config.disabled` from `names`.
+fn remove_disabled_tools(
+    config: &GatewayConfig,
+    names: &mut HashSet<String>,
+    manager: &ToolsetManager,
+) {
+    apply_disabled_toolsets(names, &config.agent.disabled_toolsets, manager);
     for tool_name in &config.tools_config.disabled {
         let trimmed = tool_name.trim();
         if trimmed.is_empty() {
@@ -309,7 +332,6 @@ fn resolve_tool_names(
         }
         names.remove(trimmed);
     }
-    names
 }
 
 /// Whether a `platform_toolsets` token names a configured MCP server, as
@@ -334,32 +356,31 @@ fn names_configured_mcp_server(config: &GatewayConfig, token: &str) -> bool {
 }
 
 /// Resolve and filter tool schemas to those allowed for the given platform.
+///
+/// When the platform's toolsets name no registered tool, every registered
+/// tool is offered instead; the disabled lists apply either way, so a
+/// platform whose tools are all disabled is offered none.
 pub fn resolve_platform_tool_schemas(
     config: &GatewayConfig,
     platform: &str,
     registry: &Arc<ToolRegistry>,
 ) -> Vec<ToolSchema> {
+    let gateway = is_mcp_gateway_registered(registry);
     let mut all_defs = registry.get_definitions();
-    if is_mcp_gateway_registered(registry) {
+    if gateway {
         all_defs.retain(|schema| !is_mcp_server_tool(registry, &schema.name));
     }
     // The registry is a hash map, whose order can change as tools come and
     // go; a sorted list keeps the provider's cached prefix.
     all_defs.sort_by(|a, b| a.name.cmp(&b.name));
-    let allowed = resolve_platform_tool_names(config, platform, registry);
-    if allowed.is_empty() {
-        return all_defs;
+    let manager = ToolsetManager::new(Arc::clone(registry));
+    let mut allowed = requested_tool_names(config, platform, registry, &manager, gateway);
+    if !all_defs.iter().any(|schema| allowed.contains(&schema.name)) {
+        allowed = all_defs.iter().map(|schema| schema.name.clone()).collect();
     }
-    let allowed_set: HashSet<String> = allowed.into_iter().collect();
-    let filtered: Vec<ToolSchema> = all_defs
-        .iter()
-        .filter(|schema| allowed_set.contains(&schema.name))
-        .cloned()
-        .collect();
-    if filtered.is_empty() {
-        return all_defs;
-    }
-    filtered
+    remove_disabled_tools(config, &mut allowed, &manager);
+    all_defs.retain(|schema| allowed.contains(&schema.name));
+    all_defs
 }
 
 /// Compact tool-definition summary for hooks/transcript metadata.
@@ -1003,6 +1024,9 @@ mod tests {
 
         assert!(names.contains(&"read_file".to_string()), "{names:?}");
         assert!(!names.contains(&"terminal".to_string()), "{names:?}");
-        assert!(!names.contains(&"browser_navigate".to_string()), "{names:?}");
+        assert!(
+            !names.contains(&"browser_navigate".to_string()),
+            "{names:?}"
+        );
     }
 }

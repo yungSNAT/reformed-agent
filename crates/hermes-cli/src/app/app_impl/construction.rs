@@ -93,9 +93,9 @@ impl App {
             .map_err(|e| AgentError::Config(format!("cron load: {e}")))?;
         cron_scheduler.start().await;
         wire_cron_scheduler_backend(&tool_registry, cron_scheduler.clone());
-        let agent_tool_registry = Arc::new(bridge_tool_registry(&tool_registry));
         let tool_schemas =
             hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &tool_registry);
+        let agent_tool_registry = Arc::new(bridge_offered_tools(&tool_registry, &tool_schemas));
 
         let session_id = Uuid::new_v4().to_string();
         let mut agent_config = build_agent_config(&config, &current_model);

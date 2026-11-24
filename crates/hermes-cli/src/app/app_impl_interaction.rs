@@ -480,7 +480,10 @@ impl App {
             let provider = build_provider(&self.config, provider_model);
             let mut agent_config = build_agent_config(&self.config, provider_model);
             agent_config.session_id = Some(self.session_id.clone());
-            let agent_tool_registry = Arc::new(bridge_tool_registry(&self.tool_registry));
+            let agent_tool_registry = Arc::new(bridge_offered_tools(
+                &self.tool_registry,
+                &self.tool_schemas,
+            ));
 
             let agent_inner = hermes_agent::attach_discovered_memory(AgentLoop::new(
                 agent_config,
@@ -579,7 +582,12 @@ impl App {
         stream_enabled: bool,
         include_tools: bool,
     ) -> Result<hermes_core::AgentResult, AgentError> {
-        let tool_schemas = include_tools.then(|| self.tool_schemas.clone());
+        // `None` would offer every tool the agent holds.
+        let tool_schemas = Some(if include_tools {
+            self.tool_schemas.clone()
+        } else {
+            Vec::new()
+        });
         if stream_enabled && self.config.streaming.enabled {
             let stream_handle = self.stream_handle.clone();
             let stream_cb: Option<Box<dyn Fn(hermes_core::StreamChunk) + Send + Sync>> =

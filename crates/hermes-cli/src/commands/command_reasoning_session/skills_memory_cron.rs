@@ -567,6 +567,7 @@ fn handle_reload_command(app: &mut App, cmd: &str) -> Result<CommandResult, Agen
                     &app.config,
                     &app.tool_registry,
                 );
+                app.refresh_agent_tool_snapshot();
                 emit_command_output(
                     app,
                     "Reload complete: env + config rehydrated for this session.",

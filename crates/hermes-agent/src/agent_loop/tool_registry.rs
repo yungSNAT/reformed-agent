@@ -63,6 +63,14 @@ impl ToolRegistry {
     pub fn names(&self) -> Vec<String> {
         self.tools.keys().cloned().collect()
     }
+
+    /// Keep only the tools named in `offered`, the list a run shows the
+    /// model, so a run given no list of its own (the background review, a
+    /// sub-agent) cannot reach a tool that list leaves out.
+    pub fn retain_offered(&mut self, offered: &[ToolSchema]) {
+        self.tools
+            .retain(|name, _| offered.iter().any(|schema| schema.name == *name));
+    }
 }
 
 impl Default for ToolRegistry {

@@ -17,8 +17,8 @@ use hermes_auth::{
     exchange_refresh_token, AuthManager, FileTokenStore, OAuth2Endpoints, OAuthCredential,
 };
 use hermes_cli::app::{
-    bridge_tool_registry, bridge_tool_registry_with, build_agent_config, build_provider,
-    provider_api_key_from_env, provider_oauth_token_from_auth_state,
+    bridge_offered_tools_with, bridge_tool_registry, bridge_tool_registry_with, build_agent_config,
+    build_provider, provider_api_key_from_env, provider_oauth_token_from_auth_state,
     select_startup_model_with_fallback_and_auth_resolver,
 };
 use hermes_cli::auth::{

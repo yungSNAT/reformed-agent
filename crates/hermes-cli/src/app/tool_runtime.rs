@@ -28,6 +28,24 @@ pub fn bridge_tool_registry_with(
     })
 }
 
+/// The agent's tools for a session: those in `offered`, the list planned for
+/// the model. A run given no list of its own (a sub-agent with its own
+/// toolset, the background review) then reaches no tool the session hides.
+pub fn bridge_offered_tools(tools: &ToolRegistry, offered: &[ToolSchema]) -> AgentToolRegistry {
+    bridge_offered_tools_with(tools, offered, hermes_tools::ToolOverrides::new())
+}
+
+/// [`bridge_offered_tools`] with `overrides`; see [`bridge_tool_registry_with`].
+pub fn bridge_offered_tools_with(
+    tools: &ToolRegistry,
+    offered: &[ToolSchema],
+    overrides: hermes_tools::ToolOverrides,
+) -> AgentToolRegistry {
+    let mut bridged = bridge_tool_registry_with(tools, overrides);
+    bridged.retain_offered(offered);
+    bridged
+}
+
 /// Bridge for the runner of a cron scheduler that `tools` itself holds, as the
 /// `cronjob` tool's backend. It omits that tool, so jobs cannot schedule jobs,
 /// and holds `tools` weakly: a strong handle would keep the registry, and so
