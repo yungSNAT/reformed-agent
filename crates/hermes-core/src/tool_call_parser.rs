@@ -493,6 +493,80 @@ Let me run that.
     }
 
     #[test]
+    fn loose_json_tool_call_recovers_nested_arguments_with_escaped_delimiters() {
+        let content = r#"<tool_call>
+preface {"name": "catalog", "arguments": {"query":{"text":"a \"quoted} {name\""}}} trailing text
+</tool_call>"#;
+        let calls = parse_tool_calls(content).unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "catalog");
+        let arguments: serde_json::Value =
+            serde_json::from_str(&calls[0].function.arguments).unwrap();
+        assert_eq!(
+            arguments,
+            serde_json::json!({"query":{"text":"a \"quoted} {name\""}})
+        );
+    }
+
+    #[test]
+    fn loose_json_tool_call_skips_incomplete_payloads() {
+        for content in [
+            r#"<tool_call>42</tool_call>"#,
+            r#"<tool_call>{"name":0, "arguments":{}}</tool_call>"#,
+            r#"<tool_call>{"name": "unfinished</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","args":</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","arguments":[</tool_call>"#,
+            r#"<tool_call>{"name":"catalog","arguments":{"items": [</tool_call>"#,
+        ] {
+            assert!(parse_tool_calls(content).unwrap().is_empty(), "{content}");
+        }
+    }
+
+    #[test]
+    fn tool_use_skips_nameless_calls_and_normalizes_scalar_arguments() {
+        let content = r#"
+<tool_use><description>ignored</description></tool_use>
+<tool_use><name> </name></tool_use>
+<tool_use><name>count</name><arguments>7</arguments></tool_use>
+<tool_use><name>status</name></tool_use>
+"#;
+        let calls = parse_tool_calls(content).unwrap();
+        let calls: Vec<_> = calls
+            .iter()
+            .map(|call| {
+                (
+                    call.function.name.as_str(),
+                    call.function.arguments.as_str(),
+                )
+            })
+            .collect();
+        assert_eq!(calls, [("count", r#"{"value":7}"#), ("status", "{}")]);
+    }
+
+    #[test]
+    fn fenced_tool_call_reports_a_missing_name() {
+        let fence = "```";
+        let content = format!("{fence}tool_call\n{}\n{fence}", r#"{"arguments":{"n":1}}"#);
+        assert!(matches!(
+            parse_tool_calls(&content),
+            Err(AgentError::InvalidToolCall(message)) if message.contains("Missing 'name' field")
+        ));
+    }
+
+    #[test]
+    fn registered_parser_is_retrievable_by_its_distinct_name() {
+        let name = "hermes-test-registry-contract";
+        assert!(get_parser(name).is_none());
+        register_parser(name, Box::new(HermesToolCallParser));
+        let parser = get_parser(name).unwrap();
+        let calls = parser
+            .parse(r#"<tool_call>{"name":"catalog"}</tool_call>"#)
+            .unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].function.name, "catalog");
+    }
+
+    #[test]
     fn test_separate_text_and_calls() {
         let content = r#"
 Hello! Let me search for that.

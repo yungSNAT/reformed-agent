@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "fixture_group": "harness_validation",
+  "python_module": "",
+  "cases": [
+    {
+      "id": "placeholder",
+      "op": "unknown-placeholder",
+      "input": {},
+      "expected": null,
+      "skip": true
+    },
+    {
+      "id": "empty_commit_hash",
+      "op": "checkpoint_validate_commit_hash",
+      "input": {
+        "commit_hash": ""
+      },
+      "expected": null
+    }
+  ]
+}
