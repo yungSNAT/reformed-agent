@@ -182,6 +182,8 @@ impl AgentLoop {
             ctx.add_message(Message::system(hint));
         }
 
+        // Before the turn's user message is recorded, as the pair goes ahead of it.
+        self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas, prefill_end);
         let mut steers = TurnSteers::new(ctx.get_messages());
         let persist_user_idx = if self.config.persist_user_message.is_some() {
             ctx.get_messages()
@@ -218,8 +220,6 @@ impl AgentLoop {
         if !mem_ctx_raw.is_empty() {
             ctx.add_message(Message::system(&mem_ctx_raw));
         }
-        // After the prefetch, so recovered results stay out of its query.
-        self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas);
 
         self.prune_tool_results_on_cold_cache(&mut ctx, &tool_schemas);
         if self.config.preflight_context_compress {

@@ -297,16 +297,18 @@ async fn results_stay_pending_through_failed_runs_and_go_after_a_finished_one() 
     let sent = &seen[runs_before];
     let n = sent.len();
     assert_eq!(
-        sent[n - 3].content.as_deref(),
+        sent[n - 1].content.as_deref(),
         Some("two"),
-        "the user's words stay theirs"
+        "the user's words stay theirs and open the turn"
     );
-    let calls = sent[n - 2]
-        .tool_calls
-        .as_ref()
-        .expect("a recovery tool call");
+    let call = &sent[n - 3];
+    let calls = call.tool_calls.as_ref().expect("a recovery tool call");
     assert_eq!(calls[0].function.name, "delegate_task");
-    let result = &sent[n - 1];
+    // Thinking providers expect the field on every earlier tool call; the
+    // OpenAI-compatible body is this message serialised.
+    assert_eq!(call.reasoning_content.as_deref(), Some(""));
+    assert_eq!(serde_json::to_value(call).unwrap()["reasoning_content"], "");
+    let result = &sent[n - 2];
     assert_eq!(result.role, hermes_core::MessageRole::Tool);
     assert_eq!(result.tool_call_id.as_deref(), Some(calls[0].id.as_str()));
     let text = result.content.as_deref().unwrap();

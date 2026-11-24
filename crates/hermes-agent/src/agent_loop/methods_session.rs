@@ -353,11 +353,14 @@ impl AgentLoop {
     /// least once: a process that stops after the model saw them but before
     /// the run ends hands them over again next time. They arrive as a result
     /// of `delegate_task`, so only on a turn that offers that tool; otherwise
-    /// they wait for a later turn.
+    /// they wait for a later turn. The pair goes just before the newest user
+    /// message at or after `from`, so it closes the earlier turn and the
+    /// current one starts with the user, as thinking modes expect.
     fn add_recovered_sub_agent_results(
         &self,
         ctx: &mut ContextManager,
         tool_schemas: &[ToolSchema],
+        from: usize,
     ) {
         let offered = tool_schemas.iter().any(|t| t.name == RECOVERED_RESULTS_TOOL);
         let Some(note) = self
@@ -371,8 +374,8 @@ impl AgentLoop {
             "lifecycle",
             "Recovered sub-agent results from an earlier turn that did not finish",
         );
-        // As a tool call and its result after the newest message, so a
-        // child's answer keeps the tool role and no more trust than that.
+        // As a tool call and its result, so a child's answer keeps the tool
+        // role and no more trust than that.
         let id = format!("recovered_{}", uuid::Uuid::new_v4().simple());
         let call = ToolCall {
             id: id.clone(),
@@ -382,12 +385,18 @@ impl AgentLoop {
             },
             extra_content: None,
         };
-        ctx.add_message(Message::assistant_with_tool_calls(None, vec![call]));
-        ctx.add_message(Self::named_tool_result_message(
-            id,
-            RECOVERED_RESULTS_TOOL,
-            note,
-        ));
+        let mut assistant = Message::assistant_with_tool_calls(None, vec![call]);
+        // Present but empty: a thinking provider expects the field echoed on
+        // every earlier tool call, and this call had no reasoning.
+        assistant.reasoning_content = Some(String::new());
+        let result = Self::named_tool_result_message(id, RECOVERED_RESULTS_TOOL, note);
+        let messages = ctx.get_messages_mut();
+        let at = messages
+            .iter()
+            .rposition(|m| m.role == MessageRole::User)
+            .filter(|&i| i >= from)
+            .unwrap_or(messages.len());
+        messages.splice(at..at, [assistant, result]);
     }
 
     /// A run that ended normally received its sub-agents' results.
