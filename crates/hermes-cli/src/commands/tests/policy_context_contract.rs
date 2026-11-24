@@ -54,52 +54,56 @@ async fn recap_and_context_report_the_merged_transcript_without_rewriting_it() {
     let home = hermes_config::hermes_home();
     let mut app = build_test_app_with_stream(&home).await;
     app.messages.clear();
-    assert!(
-        command_output(&mut app, "/context", &["breakdown"])
-            .await
-            .contains("No transcript")
-    );
-    assert!(
-        command_output(&mut app, "/recap", &[])
-            .await
-            .contains("No activity")
-    );
+    assert!(command_output(&mut app, "/context", &["breakdown"])
+        .await
+        .contains("No transcript"));
+    assert!(command_output(&mut app, "/recap", &[])
+        .await
+        .contains("No activity"));
     app.messages.extend([
         hermes_core::Message::system("fixture system notes"),
         hermes_core::Message::user("fixture question"),
         hermes_core::Message::assistant("fixture answer\nsecond line"),
         hermes_core::Message::tool_result("fixture-call", "tool result"),
     ]);
-    let recap = command_output(&mut app, "/recap", &["4"]).await;
-    assert!(recap.contains("roles: user=1 assistant=1 tool=1 system=1"));
-    assert!(recap.contains("latest_user: fixture question"));
+    let durable = app.messages.clone();
+    async fn report_with_ui_message(app: &mut App, command: &str, args: &[&str]) -> String {
+        app.ui_messages.clear();
+        app.push_ui_user("fixture UI-only follow-up");
+        assert_eq!(
+            handle_slash_command(app, command, args).await.unwrap(),
+            CommandResult::Handled,
+        );
+        latest_ui_assistant_text(app)
+    }
+
+    let recap = report_with_ui_message(&mut app, "/recap", &["5"]).await;
+    assert!(recap.contains("roles: user=2 assistant=1 tool=1 system=1"));
+    assert!(recap.contains("latest_user: fixture UI-only follow-up"));
     assert!(recap.contains("latest_hermes: fixture answer"));
     let recent = command_output(&mut app, "/recap", &["2"]).await;
     assert!(recent.contains("roles: user=0 assistant=1 tool=1 system=0"));
     assert!(recent.contains("latest_user: (none)"));
 
-    let summary = command_output(&mut app, "/context", &[]).await;
-    assert!(summary.contains("transcript_messages: 4"));
-    let footprint = command_output(&mut app, "/context", &["breakdown"]).await;
+    let summary = report_with_ui_message(&mut app, "/context", &[]).await;
+    assert!(summary.contains("transcript_messages: 5"));
+    let footprint = report_with_ui_message(&mut app, "/context", &["breakdown"]).await;
     for (role, preview) in [
         ("SYSTEM", "fixture system notes"),
         ("USER", "fixture question"),
         ("HERMES", "fixture answer"),
         ("TOOL", "tool result"),
+        ("USER", "fixture UI-only follow-up"),
     ] {
-        assert!(
-            footprint
-                .lines()
-                .any(|line| line.contains(role) && line.ends_with(preview))
-        );
+        assert!(footprint
+            .lines()
+            .any(|line| line.contains(role) && line.ends_with(preview)));
     }
     assert!(!footprint.contains("second line"));
-    assert!(
-        command_output(&mut app, "/context", &["unknown"])
-            .await
-            .contains("Usage: /context")
-    );
-    assert_eq!(app.messages.len(), 4);
+    assert!(command_output(&mut app, "/context", &["unknown"])
+        .await
+        .contains("Usage: /context"));
+    assert_eq!(app.messages, durable);
 }
 
 #[tokio::test]

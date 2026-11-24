@@ -85,12 +85,20 @@ async fn session_commands_restore_saved_messages_and_diagnose_invalid_snapshots(
     assert_eq!(app.current_personality.as_deref(), Some("Fixture persona"));
     assert_eq!(app.messages[0].content.as_deref(), Some("saved question"));
 
+    app.current_personality = None;
+    app.messages.clear();
+
     let resumed = command_output(&mut app, "/resume", &[]).await;
     assert!(
         resumed.contains(&format!("Resumed session '{original_id}'")),
         "{resumed}"
     );
     assert_eq!(app.session_id, original_id);
+    assert_eq!(app.current_personality.as_deref(), Some("Fixture persona"));
+    assert_eq!(
+        app.messages,
+        vec![hermes_core::Message::user("saved question")]
+    );
     assert_eq!(
         app.agent.config.session_id.as_deref(),
         Some(original_id.as_str())
