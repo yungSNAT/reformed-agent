@@ -97,6 +97,9 @@ mod tests {
         ))
     }
 
+    #[cfg(unix)]
+    include!("tests/gateway_registration_contract.rs");
+
     fn assert_gateway_feature_guard(platform: &str, feature_enabled: bool, feature_name: &str) {
         if feature_enabled {
             assert_eq!(missing_gateway_adapter_feature(platform), None);
