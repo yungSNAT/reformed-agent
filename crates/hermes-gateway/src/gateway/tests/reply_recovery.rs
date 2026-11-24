@@ -201,10 +201,13 @@ async fn a_turn_during_recovery_keeps_its_own_record_and_the_lost_reply_is_sent(
 
 #[tokio::test]
 async fn a_retry_pass_takes_over_a_record_whose_writer_has_since_stopped() {
-    static ALIVE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+    static ALIVE_CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     fn alive(_pid: u32) -> bool {
-        ALIVE.load(std::sync::atomic::Ordering::SeqCst)
+        // Check 0 is enable_reply_recovery, check 1 is pass 0 (both true while recovering/ is empty).
+        // Writer stops before pass 1.
+        ALIVE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst) < 2
     }
+    ALIVE_CHECKS.store(0, std::sync::atomic::Ordering::SeqCst);
     let tmp = tempfile::tempdir().expect("tempdir");
     left_by_an_earlier_process(tmp.path(), "test:late", Some("late answer"));
     let sent = Arc::new(Mutex::new(Vec::new()));
@@ -223,10 +226,8 @@ async fn a_retry_pass_takes_over_a_record_whose_writer_has_since_stopped() {
     )
     .await;
     gw.enable_reply_recovery(tmp.path(), alive);
-    assert_eq!(gw.recover_pending_replies().await, 0, "its writer still runs");
-    ALIVE.store(false, std::sync::atomic::Ordering::SeqCst);
     let recovered = gw
-        .recover_pending_replies_with_retries(std::time::Duration::from_millis(5))
+        .recover_pending_replies_with_retries(std::time::Duration::from_millis(2))
         .await;
     assert_eq!(recovered, 1);
     assert!(record_files(tmp.path()).is_empty());
@@ -323,4 +324,521 @@ async fn without_recovery_enabled_nothing_is_written() {
     gw.route_message(&incoming("hello")).await.expect("route");
     assert!(record_files(tmp.path()).is_empty());
     assert_eq!(gw.recover_pending_replies().await, 0);
+}
+
+struct FailThenOkAdapter {
+    succeed_first: Mutex<usize>,
+    fail_remaining: Mutex<usize>,
+    messages: Arc<Mutex<Vec<(String, String)>>>,
+}
+
+#[async_trait]
+impl PlatformAdapter for FailThenOkAdapter {
+    async fn start(&self) -> Result<(), GatewayError> {
+        Ok(())
+    }
+
+    async fn stop(&self) -> Result<(), GatewayError> {
+        Ok(())
+    }
+
+    async fn send_message(
+        &self,
+        chat_id: &str,
+        text: &str,
+        _parse_mode: Option<ParseMode>,
+    ) -> Result<(), GatewayError> {
+        self.messages
+            .lock()
+            .unwrap()
+            .push((chat_id.to_string(), text.to_string()));
+        {
+            let mut skip = self.succeed_first.lock().unwrap();
+            if *skip > 0 {
+                *skip -= 1;
+                return Ok(());
+            }
+        }
+        let mut remaining = self.fail_remaining.lock().unwrap();
+        if *remaining > 0 {
+            *remaining -= 1;
+            return Err(GatewayError::Platform("platform offline".into()));
+        }
+        Ok(())
+    }
+
+    async fn edit_message(
+        &self,
+        _chat_id: &str,
+        _message_id: &str,
+        _text: &str,
+    ) -> Result<(), GatewayError> {
+        Ok(())
+    }
+
+    async fn send_file(
+        &self,
+        _chat_id: &str,
+        _file_path: &str,
+        _caption: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        Ok(())
+    }
+
+    async fn send_image_url(
+        &self,
+        _chat_id: &str,
+        _image_url: &str,
+        _caption: Option<&str>,
+    ) -> Result<(), GatewayError> {
+        Ok(())
+    }
+
+    fn is_running(&self) -> bool {
+        true
+    }
+
+    fn platform_name(&self) -> &str {
+        "test"
+    }
+}
+
+async fn learn_session_key(adapter: Arc<dyn PlatformAdapter>) -> String {
+    let probe_home = tempfile::tempdir().expect("tempdir");
+    let first = recovery_gateway(probe_home.path(), adapter).await;
+    let home = probe_home.path().to_path_buf();
+    let key = Arc::new(Mutex::new(String::new()));
+    let seen = key.clone();
+    first
+        .set_message_handler(Arc::new(move |_| {
+            let (home, seen) = (home.clone(), seen.clone());
+            Box::pin(async move {
+                let file = record_files(&home).remove(0);
+                let record: crate::reply_recovery::PendingReply =
+                    serde_json::from_slice(&std::fs::read(file).unwrap()).unwrap();
+                *seen.lock().unwrap() = record.session_key;
+                Ok("probe".to_string())
+            })
+        }))
+        .await;
+    first.route_message(&incoming("probe")).await.expect("probe");
+    let session_key = key.lock().unwrap().clone();
+    assert!(!session_key.is_empty());
+    session_key
+}
+
+/// Simulate a gateway process restart in tests: records written by `this_process()`
+/// now belong to an earlier stopped process so the next gateway instance takes them over.
+fn simulate_restart(home: &Path) -> usize {
+    let mut count = 0;
+    for path in json_in(&crate::reply_recovery::records_dir(home)) {
+        let Ok(bytes) = std::fs::read(&path) else {
+            continue;
+        };
+        if let Ok(mut record) = serde_json::from_slice::<crate::reply_recovery::PendingReply>(&bytes) {
+            record.process = "4242-1".to_string();
+            let body = serde_json::to_vec_pretty(&record).expect("serialize");
+            std::fs::write(&path, body).expect("rewrite");
+            count += 1;
+        }
+    }
+    count
+}
+
+#[tokio::test]
+async fn a_turn_preserves_an_unmoved_record_when_recovering_dir_is_blocked() {
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter: Arc<dyn PlatformAdapter> = Arc::new(TestAdapter {
+        messages: sent.clone(),
+    });
+    let session_key = learn_session_key(adapter.clone()).await;
+    sent.lock().unwrap().clear();
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    left_by_an_earlier_process(tmp.path(), &session_key, Some("old lost answer"));
+    let dir = crate::reply_recovery::records_dir(tmp.path());
+    let recovering = crate::reply_recovery::recovering_dir(&dir);
+    std::fs::write(&recovering, b"blocking recovering dir").expect("block");
+
+    let gw = recovery_gateway(tmp.path(), adapter.clone()).await;
+    gw.set_message_handler(Arc::new(|_| Box::pin(async { Ok("new answer".to_string()) })))
+        .await;
+    gw.route_message(&incoming("hello again")).await.expect("route");
+
+    std::fs::remove_file(&recovering).expect("unblock");
+    let gw_next = recovery_gateway(tmp.path(), adapter).await;
+    assert_eq!(gw_next.recover_pending_replies().await, 1);
+    let sent = sent.lock().unwrap().clone();
+    assert!(
+        sent.iter().any(|(_, text)| text.ends_with("old lost answer")),
+        "blocked old record must survive a subsequent turn in the same session: {sent:?}"
+    );
+    assert!(sent.iter().any(|(_, text)| text == "new answer"), "{sent:?}");
+}
+
+#[tokio::test]
+async fn a_subsequent_turn_keeps_an_earlier_failed_live_send_record() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let sent = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(FailThenOkAdapter {
+        succeed_first: Mutex::new(0),
+        fail_remaining: Mutex::new(1),
+        messages: sent.clone(),
+    });
+    let gw = recovery_gateway(tmp.path(), adapter).await;
+    gw.set_message_handler(Arc::new(|messages| {
+        let last = messages
+            .last()
+            .and_then(|m| m.content.as_deref())
+            .unwrap_or("")
+            .to_string();
+        Box::pin(async move { Ok(format!("reply:{last}")) })
+    }))
+    .await;
+
+    assert!(gw.route_message(&incoming("first")).await.is_err());
+    gw.route_message(&incoming("second")).await.expect("second succeeds");
+    assert_eq!(simulate_restart(tmp.path()), 1, "failed live send record survived turn 2");
+
+    let recovered_sent = Arc::new(Mutex::new(Vec::new()));
+    let gw_next = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: recovered_sent.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(gw_next.recover_pending_replies().await, 1);
+    let recovered = recovered_sent.lock().unwrap().clone();
+    assert_eq!(
+        recovered,
+        vec![(
+            "chat1".to_string(),
+            format!(
+                "{}\n\nreply:first",
+                crate::reply_recovery::RECOVERED_REPLY_HEADING
+            )
+        )]
+    );
+}
+
+#[tokio::test]
+async fn an_original_live_send_is_counted_toward_the_three_attempt_cap() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(FailingSendAdapter {
+        messages: attempts.clone(),
+        error: "platform offline",
+    });
+    let gw1 = recovery_gateway(tmp.path(), adapter.clone()).await;
+    gw1.set_message_handler(Arc::new(|_| Box::pin(async { Ok("live reply".to_string()) })))
+        .await;
+    assert!(gw1.route_message(&incoming("hello")).await.is_err());
+    let live_calls = attempts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, text)| text.ends_with("live reply"))
+        .count();
+    assert_eq!(live_calls, 1, "original send attempted once");
+    assert_eq!(simulate_restart(tmp.path()), 1, "live failed record kept on disk");
+
+    let gw2 = recovery_gateway(tmp.path(), adapter).await;
+    let recovered = gw2
+        .recover_pending_replies_with_retries(std::time::Duration::from_millis(2))
+        .await;
+    assert_eq!(recovered, 0);
+    let total_reply_calls = attempts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, text)| text.ends_with("live reply"))
+        .count();
+    assert_eq!(
+        total_reply_calls,
+        crate::reply_recovery::MAX_SEND_ATTEMPTS as usize,
+        "original send plus recovery retries must not exceed MAX_SEND_ATTEMPTS"
+    );
+    assert!(record_files(tmp.path()).is_empty());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn concurrent_gateway_recoveries_at_two_authorize_at_most_three_total_calls() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = crate::reply_recovery::records_dir(tmp.path());
+    crate::reply_recovery::write(
+        &dir,
+        &crate::reply_recovery::PendingReply {
+            session_key: "test:race".to_string(),
+            platform: "test".to_string(),
+            chat_id: "chat-race".to_string(),
+            thread_id: None,
+            process: "4242-1".to_string(),
+            reply: Some("race reply".to_string()),
+            attempts: crate::reply_recovery::MAX_SEND_ATTEMPTS - 1,
+        },
+    )
+    .expect("write");
+
+    struct SlowFailAdapter {
+        calls: Arc<Mutex<Vec<(String, String)>>>,
+        entered: tokio::sync::Notify,
+        release: tokio::sync::Notify,
+        hold_first: std::sync::atomic::AtomicBool,
+    }
+
+    #[async_trait]
+    impl PlatformAdapter for SlowFailAdapter {
+        async fn start(&self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn stop(&self) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn send_message(
+            &self,
+            chat_id: &str,
+            text: &str,
+            _parse_mode: Option<ParseMode>,
+        ) -> Result<(), GatewayError> {
+            self.calls
+                .lock()
+                .unwrap()
+                .push((chat_id.to_string(), text.to_string()));
+            if self
+                .hold_first
+                .swap(false, std::sync::atomic::Ordering::SeqCst)
+            {
+                self.entered.notify_one();
+                self.release.notified().await;
+            }
+            Err(GatewayError::Platform("offline".into()))
+        }
+        async fn edit_message(
+            &self,
+            _chat_id: &str,
+            _message_id: &str,
+            _text: &str,
+        ) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn send_file(
+            &self,
+            _chat_id: &str,
+            _file_path: &str,
+            _caption: Option<&str>,
+        ) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        async fn send_image_url(
+            &self,
+            _chat_id: &str,
+            _image_url: &str,
+            _caption: Option<&str>,
+        ) -> Result<(), GatewayError> {
+            Ok(())
+        }
+        fn is_running(&self) -> bool {
+            true
+        }
+        fn platform_name(&self) -> &str {
+            "test"
+        }
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(SlowFailAdapter {
+        calls: calls.clone(),
+        entered: tokio::sync::Notify::new(),
+        release: tokio::sync::Notify::new(),
+        hold_first: std::sync::atomic::AtomicBool::new(true),
+    });
+    let gw1 = recovery_gateway(tmp.path(), adapter.clone()).await;
+    let gw2 = recovery_gateway(tmp.path(), adapter.clone()).await;
+
+    let first_fut = gw1.recover_pending_replies();
+    tokio::pin!(first_fut);
+    let (r1, r2) = tokio::join!(first_fut, async {
+        adapter.entered.notified().await;
+        let second = gw2.recover_pending_replies().await;
+        adapter.release.notify_one();
+        second
+    });
+    assert_eq!(r1 + r2, 0);
+    assert_eq!(
+        calls.lock().unwrap().len(),
+        1,
+        "at most one third-attempt call across concurrent recoveries"
+    );
+    assert!(record_files(tmp.path()).is_empty());
+}
+
+#[tokio::test]
+async fn three_recorded_attempts_without_sends_exhaust_record() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = crate::reply_recovery::records_dir(tmp.path());
+    crate::reply_recovery::write(
+        &dir,
+        &crate::reply_recovery::PendingReply {
+            session_key: "test:crash-before-send".to_string(),
+            platform: "test".to_string(),
+            chat_id: "chat-crash".to_string(),
+            thread_id: None,
+            process: "4242-1".to_string(),
+            reply: Some("never sent".to_string()),
+            attempts: 0,
+        },
+    )
+    .expect("write");
+    assert_eq!(crate::reply_recovery::take_over(&dir, |_| false), 1);
+    let (path, mut rec) = crate::reply_recovery::recovering(&dir).remove(0);
+    for _ in 0..crate::reply_recovery::MAX_SEND_ATTEMPTS {
+        assert!(crate::reply_recovery::count_attempt(&dir, &path, &mut rec));
+    }
+
+    let calls = Arc::new(Mutex::new(Vec::new()));
+    let gw = recovery_gateway(
+        tmp.path(),
+        Arc::new(TestAdapter {
+            messages: calls.clone(),
+        }),
+    )
+    .await;
+    assert_eq!(gw.recover_pending_replies().await, 0);
+    assert!(calls.lock().unwrap().is_empty(), "exhausted without 3 adapter sends");
+    assert!(record_files(tmp.path()).is_empty());
+}
+
+#[tokio::test]
+async fn a_writer_stopping_on_the_old_final_pass_is_still_retried_until_delivery() {
+    static ALIVE_CHECKS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    fn alive(_pid: u32) -> bool {
+        let check = ALIVE_CHECKS.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        // Check 0 is enable_reply_recovery; checks 1..=3 are passes 0..=2.
+        // Writer stops right as pass 3 (the former MAX_SEND_ATTEMPTS final pass) begins.
+        check <= crate::reply_recovery::MAX_SEND_ATTEMPTS as usize
+    }
+    ALIVE_CHECKS.store(0, std::sync::atomic::Ordering::SeqCst);
+
+    let tmp = tempfile::tempdir().expect("tempdir");
+    left_by_an_earlier_process(tmp.path(), "test:late-final-pass", Some("late pass answer"));
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(FailThenOkAdapter {
+        succeed_first: Mutex::new(0),
+        fail_remaining: Mutex::new((crate::reply_recovery::MAX_SEND_ATTEMPTS - 1) as usize),
+        messages: attempts.clone(),
+    });
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("user1");
+    let gw = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        dm_manager,
+        GatewayConfig::default(),
+    );
+    gw.register_adapter("test", adapter).await;
+    gw.enable_reply_recovery(tmp.path(), alive);
+
+    let recovered = gw
+        .recover_pending_replies_with_retries(std::time::Duration::from_millis(2))
+        .await;
+    assert_eq!(recovered, 1, "must retry past the old pass cap until delivered");
+    assert_eq!(
+        attempts.lock().unwrap().len(),
+        crate::reply_recovery::MAX_SEND_ATTEMPTS as usize
+    );
+    assert!(record_files(tmp.path()).is_empty());
+}
+
+#[tokio::test]
+async fn streaming_turns_record_recover_and_count_live_sends() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let attempts = Arc::new(Mutex::new(Vec::new()));
+    let adapter = Arc::new(TestAdapter {
+        messages: attempts.clone(),
+    });
+    let mut dm_manager = DmManager::with_pair_behavior();
+    dm_manager.authorize_user("user1");
+    let cfg = GatewayConfig {
+        streaming_enabled: true,
+        ..Default::default()
+    };
+    let gw = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        dm_manager,
+        cfg,
+    );
+    gw.register_adapter("test", adapter).await;
+    gw.enable_reply_recovery(tmp.path(), |_| false);
+
+    let home = tmp.path().to_path_buf();
+    let seen = Arc::new(Mutex::new(0usize));
+    let seen_clone = seen.clone();
+    gw.set_streaming_handler(Arc::new(move |_, _| {
+        let (home, seen_clone) = (home.clone(), seen_clone.clone());
+        Box::pin(async move {
+            *seen_clone.lock().unwrap() = record_files(&home).len();
+            Ok("streamed reply".to_string())
+        })
+    }))
+    .await;
+
+    gw.route_message(&incoming("stream please"))
+        .await
+        .expect("stream route");
+    assert_eq!(*seen.lock().unwrap(), 1, "streaming turn must record while active");
+    assert!(record_files(tmp.path()).is_empty(), "cleared after stream send");
+    assert!(
+        attempts
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|(_, text)| text == "streamed reply")
+    );
+
+    // Failed live send on streaming path must also count toward MAX_SEND_ATTEMPTS.
+    let fail_home = tempfile::tempdir().expect("tempdir");
+    let fail_calls = Arc::new(Mutex::new(Vec::new()));
+    let fail_adapter = Arc::new(FailThenOkAdapter {
+        succeed_first: Mutex::new(1),
+        fail_remaining: Mutex::new(10),
+        messages: fail_calls.clone(),
+    });
+    let mut dm_fail = DmManager::with_pair_behavior();
+    dm_fail.authorize_user("user1");
+    let gw_fail = Gateway::new(
+        Arc::new(SessionManager::new(SessionConfig::default())),
+        dm_fail,
+        GatewayConfig {
+            streaming_enabled: true,
+            ..Default::default()
+        },
+    );
+    gw_fail.register_adapter("test", fail_adapter.clone()).await;
+    gw_fail.enable_reply_recovery(fail_home.path(), |_| false);
+    gw_fail
+        .set_streaming_handler(Arc::new(|_, _| {
+            Box::pin(async move { Ok("failed stream reply".to_string()) })
+        }))
+        .await;
+    assert!(gw_fail.route_message(&incoming("stream fail")).await.is_err());
+    assert_eq!(simulate_restart(fail_home.path()), 1, "failed streaming send kept on disk");
+
+    let gw_recover = recovery_gateway(fail_home.path(), fail_adapter).await;
+    assert_eq!(
+        gw_recover
+            .recover_pending_replies_with_retries(std::time::Duration::from_millis(2))
+            .await,
+        0
+    );
+    let stream_reply_sends = fail_calls
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|(_, text)| text.ends_with("failed stream reply"))
+        .count();
+    assert_eq!(
+        stream_reply_sends,
+        crate::reply_recovery::MAX_SEND_ATTEMPTS as usize
+    );
+    assert!(record_files(fail_home.path()).is_empty());
 }

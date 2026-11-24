@@ -20,33 +20,40 @@ impl Gateway {
         }
     }
 
-    fn reply_begin(&self, incoming: &IncomingMessage, session_key: &str) {
-        if let Some(dir) = self.reply_records.get() {
-            crate::reply_recovery::write(
-                dir,
-                &crate::reply_recovery::PendingReply {
-                    session_key: session_key.to_string(),
-                    platform: incoming.platform.clone(),
-                    chat_id: incoming.chat_id.clone(),
-                    thread_id: Self::reply_thread_id(incoming).map(str::to_string),
-                    process: crate::reply_recovery::this_process(),
-                    reply: None,
-                    attempts: 0,
-                },
-            );
-        }
+    async fn reply_begin(&self, incoming: &IncomingMessage, session_key: &str) -> Option<PathBuf> {
+        let dir = self.reply_records.get()?.clone();
+        let record = crate::reply_recovery::PendingReply {
+            session_key: session_key.to_string(),
+            platform: incoming.platform.clone(),
+            chat_id: incoming.chat_id.clone(),
+            thread_id: Self::reply_thread_id(incoming).map(str::to_string),
+            process: crate::reply_recovery::this_process(),
+            reply: None,
+            attempts: 0,
+        };
+        tokio::task::spawn_blocking(move || crate::reply_recovery::write(&dir, &record))
+            .await
+            .ok()
+            .flatten()
     }
 
-    fn reply_answered(&self, session_key: &str, reply: &str) {
-        if let Some(dir) = self.reply_records.get() {
-            crate::reply_recovery::answered(dir, session_key, reply);
-        }
+    async fn reply_begin_send(&self, pending: Option<&PathBuf>, reply: &str) {
+        let (Some(dir), Some(path)) = (self.reply_records.get().cloned(), pending.cloned()) else {
+            return;
+        };
+        let reply = reply.to_string();
+        let _ = tokio::task::spawn_blocking(move || {
+            crate::reply_recovery::begin_send(&dir, &path, &reply)
+        })
+        .await;
     }
 
-    fn reply_finish(&self, session_key: &str) {
-        if let Some(dir) = self.reply_records.get() {
-            crate::reply_recovery::finish(dir, session_key);
-        }
+    async fn reply_finish(&self, pending: Option<PathBuf>) {
+        let (Some(dir), Some(path)) = (self.reply_records.get().cloned(), pending) else {
+            return;
+        };
+        let _ = tokio::task::spawn_blocking(move || crate::reply_recovery::finish(&dir, &path))
+            .await;
     }
 
     /// After a restart: send each taken-over reply an earlier process
@@ -54,36 +61,61 @@ impl Gateway {
     /// One pass; returns the number sent. Call once the adapters have
     /// started.
     pub async fn recover_pending_replies(&self) -> usize {
-        let Some(dir) = self.reply_records.get() else {
+        let Some(dir) = self.reply_records.get().cloned() else {
             return 0;
         };
+        let dir_list = dir.clone();
+        let records =
+            tokio::task::spawn_blocking(move || crate::reply_recovery::recovering(&dir_list))
+                .await
+                .unwrap_or_default();
         let mut sent = 0;
-        for (path, mut record) in crate::reply_recovery::recovering(dir) {
-            if !crate::reply_recovery::count_attempt(&path, &mut record) {
+        for (path, record) in records {
+            let dir_count = dir.clone();
+            let path_count = path.clone();
+            let mut record_for_attempt = record;
+            let Ok((allowed, updated)) = tokio::task::spawn_blocking(move || {
+                let allowed = crate::reply_recovery::count_attempt(
+                    &dir_count,
+                    &path_count,
+                    &mut record_for_attempt,
+                );
+                (allowed, record_for_attempt)
+            })
+            .await
+            else {
+                continue;
+            };
+            if !allowed {
                 warn!(
-                    session = %record.session_key,
-                    "dropping a recovered reply after {} failed sends",
+                    session = %updated.session_key,
+                    "dropping a recovered reply after {} recorded attempts",
                     crate::reply_recovery::MAX_SEND_ATTEMPTS
                 );
                 continue;
             }
             match self
                 .send_notify_message_threaded(
-                    &record.platform,
-                    &record.chat_id,
-                    &record.recovery_text(),
+                    &updated.platform,
+                    &updated.chat_id,
+                    &updated.recovery_text(),
                     None,
-                    record.thread_id.as_deref(),
+                    updated.thread_id.as_deref(),
                 )
                 .await
             {
                 Ok(()) => {
-                    let _ = tokio::fs::remove_file(&path).await;
+                    let dir_done = dir.clone();
+                    let path_done = path.clone();
+                    let _ = tokio::task::spawn_blocking(move || {
+                        crate::reply_recovery::mark_delivered(&dir_done, &path_done);
+                    })
+                    .await;
                     sent += 1;
                 }
                 Err(e) => warn!(
-                    session = %record.session_key,
-                    attempt = record.attempts,
+                    session = %updated.session_key,
+                    attempt = updated.attempts,
                     "recovered reply not sent: {e}"
                 ),
             }
@@ -92,26 +124,33 @@ impl Gateway {
     }
 
     /// [`Self::recover_pending_replies`], then again every `retry_after`
-    /// whilst failed sends remain; each record stops at the send cap.
+    /// whilst taken-over records or records held by another running process
+    /// remain; each record stops at its own attempt cap.
     pub async fn recover_pending_replies_with_retries(
         &self,
         retry_after: std::time::Duration,
     ) -> usize {
+        let Some(dir) = self.reply_records.get().cloned() else {
+            return 0;
+        };
+        let alive = self.reply_writer_alive.get().copied();
         let mut sent = 0;
-        for pass in 0..=crate::reply_recovery::MAX_SEND_ATTEMPTS {
-            // A writer that was still running at start may have stopped.
-            if let (Some(dir), Some(alive)) =
-                (self.reply_records.get(), self.reply_writer_alive.get())
-            {
-                crate::reply_recovery::take_over(dir, *alive);
+        loop {
+            if let Some(alive) = alive {
+                let dir_take = dir.clone();
+                let _ = tokio::task::spawn_blocking(move || {
+                    crate::reply_recovery::take_over(&dir_take, alive)
+                })
+                .await;
             }
             sent += self.recover_pending_replies().await;
-            let left = self
-                .reply_records
-                .get()
-                .map(|dir| crate::reply_recovery::recovering(dir).len())
-                .unwrap_or(0);
-            if left == 0 || pass == crate::reply_recovery::MAX_SEND_ATTEMPTS {
+            let dir_left = dir.clone();
+            let left = tokio::task::spawn_blocking(move || {
+                crate::reply_recovery::pending_count(&dir_left)
+            })
+            .await
+            .unwrap_or(0);
+            if left == 0 {
                 break;
             }
             tokio::time::sleep(retry_after).await;

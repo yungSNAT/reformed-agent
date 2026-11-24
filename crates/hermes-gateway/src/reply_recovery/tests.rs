@@ -20,18 +20,18 @@ fn never_alive(_pid: u32) -> bool {
 fn a_start_takes_over_only_records_that_stopped_processes_left() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
-    write(&dir, &record("mine", &this_process()));
-    write(&dir, &record("stopped", "1-1"));
+    let mine = write(&dir, &record("mine", &this_process())).expect("mine");
+    let stopped = write(&dir, &record("stopped", "1-1")).expect("stopped");
     // Started since this boot: liveness decides.
     let started = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_nanos();
-    write(&dir, &record("running", &format!("7-{started}")));
+    write(&dir, &record("running", &format!("7-{started}"))).expect("running");
     std::fs::write(dir.join("broken.json"), b"{ not json").expect("write");
 
-    answered(&dir, "mine", "done");
-    answered(&dir, "stopped", "not mine to write");
+    assert!(!begin_send(&dir, &stopped, "not mine to write"));
+    assert!(begin_send(&dir, &mine, "done"));
     assert_eq!(take_over(&dir, |pid| pid == 7), 1);
     let taken = recovering(&dir);
     assert_eq!(taken.len(), 1, "own and live writers' records stay");
@@ -44,10 +44,10 @@ fn a_start_takes_over_only_records_that_stopped_processes_left() {
     );
 
     // A new turn of the same session writes its own record beside it.
-    write(&dir, &record("stopped", &this_process()));
+    let next_turn = write(&dir, &record("stopped", &this_process())).expect("next turn");
     assert_eq!(recovering(&dir).len(), 1);
-    finish(&dir, "stopped");
-    finish(&dir, "mine");
+    finish(&dir, &next_turn);
+    finish(&dir, &mine);
     assert_eq!(
         recovering(&dir).len(),
         1,
@@ -57,19 +57,34 @@ fn a_start_takes_over_only_records_that_stopped_processes_left() {
 }
 
 #[test]
+fn distinct_turn_records_do_not_overwrite_earlier_session_records() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let turn1 = write(&dir, &record("same-session", &this_process())).expect("turn1");
+    let turn2 = write(&dir, &record("same-session", &this_process())).expect("turn2");
+    assert_ne!(turn1, turn2);
+    assert!(begin_send(&dir, &turn1, "first reply"));
+    finish(&dir, &turn2);
+    assert!(turn1.exists(), "finishing turn 2 must preserve turn 1");
+    let saved = read(&turn1).expect("turn1 readable");
+    assert_eq!(saved.reply.as_deref(), Some("first reply"));
+    assert_eq!(saved.attempts, 1);
+}
+
+#[test]
 fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
     let at = |secs: u64| std::time::UNIX_EPOCH + std::time::Duration::from_secs(secs);
     // Written by pid 7, started at 1,000 s; pid 7 is alive now.
-    write(&dir, &record("rebooted", "7-1000000000000"));
+    write(&dir, &record("rebooted", "7-1000000000000")).expect("rebooted");
     assert_eq!(
-        take_over_since(&dir, |pid| pid == 7, Some(at(500))),
+        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(500)), || {}),
         0,
         "same boot"
     );
     assert_eq!(
-        take_over_since(&dir, |pid| pid == 7, Some(at(2_000))),
+        take_over_since_with_hook(&dir, |pid| pid == 7, Some(at(2_000)), || {}),
         1,
         "booted since"
     );
@@ -80,45 +95,192 @@ fn a_writer_from_before_the_boot_has_stopped_whatever_its_pid_names_now() {
 fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
-    write(&dir, &record("stuck", "1-1"));
+    write(&dir, &record("stuck", "1-1")).expect("write");
     assert_eq!(take_over(&dir, never_alive), 1);
     let (path, mut stuck) = recovering(&dir).remove(0);
     for n in 1..=MAX_SEND_ATTEMPTS {
-        assert!(count_attempt(&path, &mut stuck));
+        assert!(count_attempt(&dir, &path, &mut stuck));
         assert_eq!(recovering(&dir)[0].1.attempts, n, "written before the send");
     }
-    assert!(!count_attempt(&path, &mut stuck));
+    assert!(!count_attempt(&dir, &path, &mut stuck));
     assert!(recovering(&dir).is_empty());
+}
+
+#[test]
+fn concurrent_snapshots_at_two_authorize_at_most_one_third_attempt() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let mut rec = record("raced", "1-1");
+    rec.attempts = MAX_SEND_ATTEMPTS - 1;
+    write(&dir, &rec).expect("write");
+    assert_eq!(take_over(&dir, never_alive), 1);
+
+    let (path1, mut snap1) = recovering(&dir).remove(0);
+    let (path2, mut snap2) = recovering(&dir).remove(0);
+    assert_eq!(path1, path2);
+
+    assert!(
+        count_attempt(&dir, &path1, &mut snap1),
+        "first snapshot reserves attempt 3"
+    );
+    assert_eq!(snap1.attempts, MAX_SEND_ATTEMPTS);
+    assert!(
+        !count_attempt(&dir, &path2, &mut snap2),
+        "second stale snapshot must see attempt 3 on disk and refuse send"
+    );
+    assert!(recovering(&dir).is_empty(), "exhausted record dropped");
+}
+
+#[test]
+fn takeover_and_record_creation_serialize_under_cross_handle_lock() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let dir = records_dir(tmp.path());
+    let mut old = record("chat", "1-1");
+    old.reply = Some("old reply".to_string());
+    write(&dir, &old).expect("old");
+
+    let (paused_tx, paused_rx) = std::sync::mpsc::channel();
+    let (go_tx, go_rx) = std::sync::mpsc::channel();
+    let dir_a = dir.clone();
+    let thread_a = std::thread::spawn(move || {
+        take_over_since_with_hook(&dir_a, never_alive, None, || {
+            paused_tx.send(()).expect("signal pause");
+            go_rx.recv().expect("wait go");
+        })
+    });
+
+    paused_rx.recv().expect("wait A inside takeover lock");
+    let probe = std::fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(lock_path(&dir))
+        .expect("open lock probe");
+    assert!(
+        probe.try_lock().is_err(),
+        "second independent file handle must see the directory lock held"
+    );
+    drop(probe);
+
+    let (w_done_tx, w_done_rx) = std::sync::mpsc::channel();
+    let dir_w = dir.clone();
+    let thread_w = std::thread::spawn(move || {
+        let mut fresh = record("chat", "2-2");
+        fresh.reply = Some("new reply".to_string());
+        let written = write(&dir_w, &fresh);
+        w_done_tx.send(written.is_some()).expect("w done");
+    });
+
+    let (b_done_tx, b_done_rx) = std::sync::mpsc::channel();
+    let dir_b = dir.clone();
+    let thread_b = std::thread::spawn(move || {
+        let moved = take_over(&dir_b, never_alive);
+        b_done_tx.send(moved).expect("b done");
+    });
+
+    std::thread::yield_now();
+    assert!(
+        matches!(
+            w_done_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ),
+        "new record creation must block while takeover holds the lock"
+    );
+    assert!(
+        matches!(
+            b_done_rx.try_recv(),
+            Err(std::sync::mpsc::TryRecvError::Empty)
+        ),
+        "second takeover must block while first takeover holds the lock"
+    );
+
+    go_tx.send(()).expect("release A");
+    assert_eq!(thread_a.join().expect("join A"), 1);
+    assert!(w_done_rx.recv().expect("w result"));
+    let _ = b_done_rx.recv().expect("b result");
+    thread_w.join().expect("join W");
+    thread_b.join().expect("join B");
+
+    // In case B acquired the lock before W, take over any remaining stopped record.
+    take_over(&dir, never_alive);
+    let mut replies: Vec<Option<String>> =
+        recovering(&dir).into_iter().map(|(_, r)| r.reply).collect();
+    replies.sort();
+    assert_eq!(
+        replies,
+        vec![Some("new reply".to_string()), Some("old reply".to_string())],
+        "both old and new records must survive without overwriting each other"
+    );
 }
 
 #[test]
 fn no_send_is_made_when_its_count_cannot_be_written() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
-    write(&dir, &record("stuck", "1-1"));
+    write(&dir, &record("stuck", "1-1")).expect("write");
     take_over(&dir, never_alive);
     let (path, mut stuck) = recovering(&dir).remove(0);
     // A file where the folder was: the count cannot be written.
     let taken = recovering_dir(&dir);
     std::fs::remove_dir_all(&taken).expect("remove");
     std::fs::write(&taken, b"").expect("block");
-    assert!(!count_attempt(&path, &mut stuck));
+    assert!(!count_attempt(&dir, &path, &mut stuck));
 }
 
 #[cfg(unix)]
 #[test]
-fn records_are_readable_by_their_owner_only() {
+fn records_are_readable_by_their_owner_only_and_chmod_failures_fail_closed() {
     use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
-    write(&dir, &record("private", "1-1"));
+    let path = write(&dir, &record("private", "1-1")).expect("write");
     let mode = |p: &Path| std::fs::metadata(p).expect("metadata").permissions().mode() & 0o777;
     assert_eq!(mode(&dir), 0o700);
-    let file = std::fs::read_dir(&dir)
+    assert_eq!(mode(&lock_path(&dir)), 0o600);
+    assert_eq!(mode(&path), 0o600);
+
+    // Inject chmod failure for files: must refuse to write temp or final bytes.
+    let file_chmod_fails = |p: &Path, m: u32| -> std::io::Result<()> {
+        if m == 0o600 {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::PermissionDenied,
+                "injected file chmod failure",
+            ));
+        }
+        std::fs::set_permissions(p, std::fs::Permissions::from_mode(m))
+    };
+    let rejected_dir = tmp.path().join("rejected-file-chmod");
+    let rejected_path = rejected_dir.join("secret.json");
+    assert!(!write_at_with(
+        &rejected_path,
+        &record("secret", "1-1"),
+        file_chmod_fails
+    ));
+    assert!(!rejected_path.exists());
+    let leftovers: Vec<_> = std::fs::read_dir(&rejected_dir)
         .expect("dir")
         .flatten()
-        .next()
-        .expect("record")
-        .path();
-    assert_eq!(mode(&file), 0o600);
+        .collect();
+    assert!(
+        leftovers.is_empty(),
+        "no temp or final files may remain: {leftovers:?}"
+    );
+
+    // Inject chmod failure for a traversable 0o755 directory: must fail closed.
+    let perm_dir = tmp.path().join("traversable");
+    std::fs::create_dir_all(&perm_dir).expect("mkdir");
+    std::fs::set_permissions(&perm_dir, std::fs::Permissions::from_mode(0o755)).expect("chmod");
+    let dir_chmod_fails = |_: &Path, _: u32| -> std::io::Result<()> {
+        Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            "injected dir chmod failure",
+        ))
+    };
+    let perm_path = perm_dir.join("secret.json");
+    assert!(!write_at_with(
+        &perm_path,
+        &record("secret", "1-1"),
+        dir_chmod_fails
+    ));
+    assert!(!perm_path.exists());
+    assert!(std::fs::read_dir(&perm_dir).expect("dir").next().is_none());
 }

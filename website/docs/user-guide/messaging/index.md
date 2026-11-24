@@ -325,14 +325,14 @@ Background tasks on messaging platforms are fire-and-forget — you don't need t
 
 ## Restarts
 
-A gateway restart does not lose a reply, short of the send cap below. Before a turn runs, the gateway writes a record for its session under `~/.hermes/gateway/pending-replies/`; the record keeps the reply once the agent answers, and goes once the reply is sent. On the next start, before any chat is read, the gateway sets aside each record a stopped process left, so new messages in the same chat cannot write over it, and then handles each one:
+A gateway restart does not lose a reply, short of the attempt cap below. Before a turn runs, the gateway writes one private record for that turn under `~/.hermes/gateway/pending-replies/`; when the agent answers, the record saves the reply before sending and goes once the reply is sent. On the next start, before any chat is read, the gateway takes over each record a stopped process left under a lock serialised with new turn records, so later messages in the same chat cannot overwrite it, and then handles each one:
 
 - a reply that was ready but not sent is sent, headed 'Reply recovered after a gateway restart:';
 - a turn the restart cut off before it answered gets one notice asking you to send the message again. The turn is not run again, as that could repeat its commands, file writes or messages.
 
-Each send is counted before it is made. A send that fails is tried again a minute later, and a record is dropped after 3 sends that fail. Delivery is at least once: a gateway that stops after a send but before deleting the record sends it again on the next start. A turn that fails deletes its record, as you already got the error. A reply whose own send failed during the turn keeps its record until the session's next turn, so a restart before then sends it.
+Each send attempt is recorded before it is made, starting with the turn's own live send; a gateway that stops after counting an attempt but before sending still consumes that attempt. Failed recovery sends are retried every minute until delivered or capped, and a record is dropped once 3 attempts have been recorded. Delivery is at least once: a gateway that stops after a send but before deleting the record sends it again on the next start within the cap. A turn that fails deletes its record, as you already got the error. A reply whose own send failed during the turn keeps its own record across later turns in the same chat until a restart sends it.
 
-On Linux and macOS a record whose gateway process is still running (another gateway on the same home, or an old one still finishing a turn) is left to that process, and taken over if that process stops whilst failed sends are being retried; on Linux a record written before the host last booted is always taken over. On Windows the gateway cannot tell, so it takes over every record a different process wrote.
+On Linux and macOS a record whose gateway process is still running (another gateway on the same home, or an old one still finishing a turn) is left to that process, and taken over if that process stops whilst recovery retries or held-record checks are still running; on Linux a record written before the host last booted is always taken over. On Windows the gateway cannot tell, so it takes over every record a different process wrote.
 
 On Linux and macOS the records and their folder are readable by their owner only. On Windows they take the permissions of the folder they are in (the user profile's by default).
 
