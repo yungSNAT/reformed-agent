@@ -415,6 +415,11 @@ pub struct AgentConfig {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_cost_usd: Option<f64>,
 
+    /// Prompt-cache lifetime, keep-alive requests and cold-return compaction
+    /// (`prompt_caching:` in config.yaml).
+    #[serde(default)]
+    pub prompt_caching: hermes_config::PromptCachingConfig,
+
     /// Ratio (0.0-1.0) at which to proactively degrade to a cheaper model.
     #[serde(default = "default_cost_guard_degrade_at_ratio")]
     pub cost_guard_degrade_at_ratio: f64,
@@ -741,6 +746,7 @@ impl Default for AgentConfig {
             ephemeral_system_prompt: None,
             prefill_messages: Vec::new(),
             max_cost_usd: None,
+            prompt_caching: hermes_config::PromptCachingConfig::default(),
             cost_guard_degrade_at_ratio: default_cost_guard_degrade_at_ratio(),
             cost_guard_degrade_model: None,
             prompt_cost_per_million_usd: None,

@@ -59,6 +59,21 @@ impl Drop for ScopedEnv {
 }
 
 #[test]
+fn build_converse_body_keeps_local_controls_off_the_wire() {
+    let extra = serde_json::json!({"prompt_cache_ttl": "1h", "strict_api": true});
+    let body = build_converse_body(
+        "global.anthropic.claude-opus-4-7",
+        &[Message::user("hello")],
+        &[],
+        None,
+        None,
+        Some(&extra),
+    );
+    assert!(body.get("prompt_cache_ttl").is_none(), "{body}");
+    assert!(body.get("strict_api").is_none(), "{body}");
+}
+
+#[test]
 fn build_converse_body_maps_messages_tools_and_1m_beta() {
     let tools = vec![ToolSchema::new(
         "terminal",
