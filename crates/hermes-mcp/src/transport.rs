@@ -230,15 +230,16 @@ fn program_name(command: &str) -> Option<String> {
 }
 
 /// Whether `name` runs a listed shell (see [`program_name`]). A command that
-/// leaves no name, or whose name looks like an 8.3 short name (`POWERS~1.EXE`),
+/// leaves no name, or on Windows has an 8.3 short name (`POWERS~1.EXE`),
 /// is refused too. A shell copied or linked under another name is not detected.
 fn is_direct_shell(name: Option<&str>) -> bool {
     let Some(name) = name else {
         return true;
     };
-    let short_name = name
-        .split_once('~')
-        .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
+    let short_name = cfg!(windows)
+        && name
+            .split_once('~')
+            .is_some_and(|(_, rest)| rest.starts_with(|c: char| c.is_ascii_digit()));
     short_name || DIRECT_SHELLS.contains(&name)
 }
 
