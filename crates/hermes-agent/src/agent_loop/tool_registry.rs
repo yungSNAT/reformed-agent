@@ -68,8 +68,10 @@ impl ToolRegistry {
     /// model, so a run given no list of its own (the background review, a
     /// sub-agent) cannot reach a tool that list leaves out.
     pub fn retain_offered(&mut self, offered: &[ToolSchema]) {
+        let allowed: std::collections::HashSet<&str> =
+            offered.iter().map(|schema| schema.name.as_str()).collect();
         self.tools
-            .retain(|name, _| offered.iter().any(|schema| schema.name == *name));
+            .retain(|name, _| allowed.contains(name.as_str()));
     }
 }
 

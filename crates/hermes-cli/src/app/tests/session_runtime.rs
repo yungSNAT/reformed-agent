@@ -779,12 +779,20 @@
     fn runtime_cron_scheduler_bridge_excludes_recursive_cronjob_tool() {
         let tools = ToolRegistry::new();
         register_test_tool(&tools, "cronjob");
+        register_test_tool(&tools, "send_message");
+        register_test_tool(&tools, "clarify");
         register_test_tool(&tools, "terminal");
 
-        let agent_registry = bridge_tool_registry_for_cron(&tools, hermes_tools::ToolOverrides::new());
+        let agent_registry = bridge_tool_registry_for_cron(
+            &GatewayConfig::default(),
+            &tools,
+            hermes_tools::ToolOverrides::new(),
+        );
         let names = agent_registry.names();
 
         assert!(!names.contains(&"cronjob".to_string()));
+        assert!(!names.contains(&"send_message".to_string()));
+        assert!(!names.contains(&"clarify".to_string()));
         assert!(names.contains(&"terminal".to_string()));
     }
 

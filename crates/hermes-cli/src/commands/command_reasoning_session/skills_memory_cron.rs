@@ -533,6 +533,9 @@ fn handle_memory_command(app: &mut App, args: &[&str]) -> Result<CommandResult, 
 fn handle_reload_command(app: &mut App, cmd: &str) -> Result<CommandResult, AgentError> {
     if cmd == "/reload-mcp" {
         let refresh = app.refresh_agent_tool_snapshot();
+        if let Some(err) = refresh.rebuild_error {
+            return Err(AgentError::Config(err));
+        }
         let mut out = format!(
             "MCP reload complete: refreshed agent tool snapshot ({} -> {} tools).",
             refresh.before_count, refresh.after_count
@@ -567,7 +570,10 @@ fn handle_reload_command(app: &mut App, cmd: &str) -> Result<CommandResult, Agen
                     &app.config,
                     &app.tool_registry,
                 );
-                app.refresh_agent_tool_snapshot();
+                let refresh = app.refresh_agent_tool_snapshot();
+                if let Some(err) = refresh.rebuild_error {
+                    return Err(AgentError::Config(err));
+                }
                 emit_command_output(
                     app,
                     "Reload complete: env + config rehydrated for this session.",

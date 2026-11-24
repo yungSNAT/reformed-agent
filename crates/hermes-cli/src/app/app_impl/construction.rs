@@ -152,6 +152,7 @@ impl App {
             pending_system_notes: Vec::new(),
             quorum_armed_once: false,
             pet_settings: load_pet_settings(),
+            tool_snapshot_sync_error: None,
             #[cfg(test)]
             fail_model_rebuild_for: None,
         };
