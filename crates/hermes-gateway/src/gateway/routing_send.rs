@@ -26,6 +26,7 @@ impl Gateway {
             .await;
         runtime_context.deferred_post_delivery_messages = Some(deferred_messages.clone());
         runtime_context.deferred_post_delivery_released = Some(deferred_release.clone());
+        self.reply_begin(incoming, session_key);
         let context_handler = self.message_handler_with_context.read().await.clone();
         let response_result = if let Some(handler) = context_handler {
             handler(messages, runtime_context).await
@@ -40,6 +41,7 @@ impl Gateway {
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
+                self.reply_finish(session_key);
                 self.emit_hook_event(
                     "agent:end",
                     serde_json::json!({
@@ -70,6 +72,7 @@ impl Gateway {
         }
 
         // Send response back to the platform
+        self.reply_answered(session_key, &response);
         let reply_thread_id = Self::reply_thread_id(incoming);
         self.send_notify_message_threaded(
             &incoming.platform,
@@ -79,6 +82,7 @@ impl Gateway {
             reply_thread_id,
         )
         .await?;
+        self.reply_finish(session_key);
         self.flush_post_delivery_messages(
             &incoming.platform,
             &incoming.chat_id,
@@ -147,6 +151,7 @@ impl Gateway {
             SendMessageOptions::non_conversational_threaded(reply_thread_id.as_deref()),
         )
         .await?;
+        self.reply_begin(incoming, session_key);
 
         let stream_handle = self
             .stream_manager
@@ -210,6 +215,7 @@ impl Gateway {
         let response = match response_result {
             Ok(text) => text,
             Err(e) => {
+                self.reply_finish(session_key);
                 self.emit_hook_event(
                     "agent:end",
                     serde_json::json!({
@@ -239,6 +245,7 @@ impl Gateway {
             self.bump_output_usage(session_key, response.chars().count()).await;
         }
         if !response.trim().is_empty() {
+            self.reply_answered(session_key, &response);
             self.send_notify_message_threaded(
                 &incoming.platform,
                 &incoming.chat_id,
@@ -248,6 +255,7 @@ impl Gateway {
             )
             .await?;
         }
+        self.reply_finish(session_key);
         self.flush_post_delivery_messages(
             &incoming.platform,
             &incoming.chat_id,

@@ -30,6 +30,7 @@ impl Gateway {
             fail_closed_default_warnings: RwLock::new(HashSet::new()),
             message_deduplicator: RwLock::new(MessageDeduplicator::default()),
             busy_sessions: Arc::new(RwLock::new(BusySessionCoordinator::default())),
+            reply_records: std::sync::OnceLock::new(),
         }
     }
 
