@@ -321,17 +321,10 @@ pub async fn connect_configured_mcp_servers(
         // Before connecting, so the tool list is the same whichever servers
         // connect in time.
         let names: Vec<String> = servers.iter().map(|(name, _)| name.clone()).collect();
-        let scope_config = config.clone();
         hermes_tools::mcp_gateway::register_mcp_gateway(
             tool_registry,
             &names,
-            Arc::new(move |registry: &ToolRegistry| {
-                hermes_tool_planning::platform_mcp_tool_names(
-                    &scope_config,
-                    "cli",
-                    &Arc::new(registry.clone()),
-                )
-            }),
+            cli_mcp_gateway_scope(config),
         );
     }
     let mut manager = McpManager::new(Arc::clone(tool_registry));
@@ -346,6 +339,20 @@ pub async fn connect_configured_mcp_servers(
             manager.connected_servers()
         );
     }
+}
+
+/// The MCP tools the CLI's gateway may reach under `config`.
+fn cli_mcp_gateway_scope(config: &GatewayConfig) -> hermes_tools::mcp_gateway::McpGatewayScope {
+    let config = config.clone();
+    Arc::new(move |registry: &ToolRegistry| {
+        hermes_tool_planning::platform_mcp_tool_names(&config, "cli", &Arc::new(registry.clone()))
+    })
+}
+
+/// After the session's config changes (`/tools enable|disable`, `/reload`),
+/// hold the MCP gateway, if any, to the new config.
+pub(crate) fn rescope_cli_mcp_gateway(config: &GatewayConfig, tool_registry: &ToolRegistry) {
+    hermes_tools::mcp_gateway::rescope_mcp_gateway(tool_registry, cli_mcp_gateway_scope(config));
 }
 
 #[cfg(test)]
@@ -977,6 +984,67 @@ mod tests {
             )
             .await;
         assert!(out.contains("found: gmail"), "{out}");
+    }
+
+    /// `/tools disable` and `/reload` narrow the gateway's reach as they
+    /// narrow the tool list, and leave its schema alone.
+    #[tokio::test]
+    async fn a_config_change_rescopes_the_gateway() {
+        struct Page;
+        #[async_trait]
+        impl ToolHandler for Page {
+            async fn execute(
+                &self,
+                _params: serde_json::Value,
+            ) -> Result<String, hermes_core::ToolError> {
+                Ok("page".to_string())
+            }
+            fn schema(&self) -> hermes_core::ToolSchema {
+                hermes_core::tool_schema("page", "page", hermes_core::JsonSchema::new("object"))
+            }
+        }
+        let registry = Arc::new(ToolRegistry::new());
+        registry.register(
+            "mcp_docs_page",
+            "mcp-docs",
+            hermes_core::tool_schema(
+                "mcp_docs_page",
+                "A page",
+                hermes_core::JsonSchema::new("object"),
+            ),
+            Arc::new(Page),
+            Arc::new(|| true),
+            Vec::new(),
+            true,
+            "A page",
+            "x",
+            None,
+        );
+        let mut config = GatewayConfig::default();
+        hermes_tools::mcp_gateway::register_mcp_gateway(
+            &registry,
+            &["docs".to_string()],
+            cli_mcp_gateway_scope(&config),
+        );
+        let call = json!({"action": "call", "tool": "mcp_docs_page"});
+        assert!(registry
+            .dispatch_async("mcp", call.clone())
+            .await
+            .contains("page"));
+        let schemas =
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry);
+
+        config.tools_config.disabled = vec!["mcp_docs_page".to_string()];
+        rescope_cli_mcp_gateway(&config, &registry);
+        let out = registry.dispatch_async("mcp", call).await;
+        assert!(
+            out.contains("not an MCP tool this session can call"),
+            "{out}"
+        );
+        assert_eq!(
+            schemas,
+            hermes_tool_planning::resolve_platform_tool_schemas(&config, "cli", &registry)
+        );
     }
 
     /// Direct mode (the default) registers no gateway.

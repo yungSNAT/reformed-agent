@@ -337,7 +337,7 @@ hermes-ultra mcp sentrux
 hermes-ultra mcp sentrux-status
 ```
 
-With many MCP servers, set `mcp_tool_mode: gateway` in `config.yaml`. The model then sees one `mcp` tool that searches and calls the servers' tools, so its tool list stays the same as servers connect or change their tools, and the provider's prompt cache keeps hitting. The default, `direct`, lists every MCP tool.
+With many MCP servers, set `mcp_tool_mode: gateway` in `config.yaml`. The model then sees one `mcp` tool that searches and calls the servers' tools, so its tool list stays the same as servers connect or change their tools, and the provider's prompt cache keeps hitting. The default, `direct`, lists every MCP tool. The mode covers the servers in `config.yaml`, not those an ACP client passes; with a tool policy allowlist, allow `mcp` as well as the MCP tools.
 
 Key operator commands:
 

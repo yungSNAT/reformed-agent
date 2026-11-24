@@ -227,12 +227,18 @@ pub fn resolve_platform_tool_names(
 }
 
 /// The MCP server tools this platform may use: those direct mode would list.
-/// The MCP gateway can search and call exactly these.
+/// The MCP gateway can search and call exactly these, and none when the
+/// platform does not list the gateway itself (it was disabled).
 pub fn platform_mcp_tool_names(
     config: &GatewayConfig,
     platform: &str,
     registry: &Arc<ToolRegistry>,
 ) -> HashSet<String> {
+    if is_mcp_gateway_registered(registry)
+        && !resolve_tool_names(config, platform, registry, true).contains(MCP_GATEWAY_TOOL)
+    {
+        return HashSet::new();
+    }
     resolve_tool_names(config, platform, registry, false)
         .into_iter()
         .filter(|name| is_mcp_server_tool(registry, name))
@@ -254,6 +260,9 @@ fn resolve_tool_names(
         append_live_mcp_toolsets(&mut requested, &manager);
     }
 
+    let names_a_server = requested
+        .iter()
+        .any(|token| names_configured_mcp_server(config, token));
     let mut names: HashSet<String> = HashSet::new();
     for token in requested {
         let original = token.trim();
@@ -284,10 +293,11 @@ fn resolve_tool_names(
     }
     if gateway {
         // Default toolsets always get the gateway, so the tool list does not
-        // change as servers connect; custom ones when they name MCP tools.
+        // change as servers connect; custom ones when they name MCP tools or
+        // a configured server, connected or not.
         let before = names.len();
         names.retain(|name| !is_mcp_server_tool(registry, name));
-        if names.len() < before || !has_custom_toolsets {
+        if names.len() < before || !has_custom_toolsets || names_a_server {
             names.insert(MCP_GATEWAY_TOOL.to_string());
         }
     }
@@ -300,6 +310,27 @@ fn resolve_tool_names(
         names.remove(trimmed);
     }
     names
+}
+
+/// Whether a `platform_toolsets` token names a configured MCP server, as
+/// `<server>` or `mcp-<server>`, in its raw or tool-name-safe spelling.
+fn names_configured_mcp_server(config: &GatewayConfig, token: &str) -> bool {
+    let token = token.trim();
+    let bare = token.strip_prefix("mcp-").unwrap_or(token);
+    config.mcp_servers.iter().any(|server| {
+        let safe: String = server
+            .name
+            .chars()
+            .map(|ch| {
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    ch
+                } else {
+                    '_'
+                }
+            })
+            .collect();
+        bare == server.name || bare == safe
+    })
 }
 
 /// Resolve and filter tool schemas to those allowed for the given platform.

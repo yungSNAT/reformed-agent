@@ -310,8 +310,9 @@ impl ToolRegistry {
         ) = {
             let mut inner = self.inner.lock().unwrap();
             let decision = evaluate_dispatch_policy(&inner.policy, name, &params);
-            let raw_bypassed = inner.rtk_raw_mode || inner.rtk_raw_once;
-            if inner.rtk_raw_once {
+            let passthrough = passes_through(inner.tools.get(name));
+            let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
+            if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
             }
             let (effective_params, rewrite_applied) =
@@ -388,8 +389,9 @@ impl ToolRegistry {
             rtk_filter,
         ) = {
             let mut inner = self.inner.lock().unwrap();
-            let raw_bypassed = inner.rtk_raw_mode || inner.rtk_raw_once;
-            if inner.rtk_raw_once {
+            let passthrough = passes_through(inner.tools.get(name));
+            let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
+            if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
             }
             let (effective_params, rewrite_applied) =
@@ -599,6 +601,16 @@ impl ToolRegistry {
         let _ =
             persist_tool_policy_counters(&default_tool_policy_counters_path(), &counters_snapshot);
     }
+}
+
+/// The MCP gateway's inner dispatch applies raw mode and output filtering for
+/// the tool it calls; applying them to the gateway's own call as well would
+/// spend a one-shot raw request before the inner tool could use it.
+fn passes_through(entry: Option<&ToolEntry>) -> bool {
+    entry.is_some_and(|entry| {
+        entry.name == crate::mcp_gateway::MCP_GATEWAY_TOOL
+            && entry.toolset == crate::mcp_gateway::MCP_GATEWAY_TOOLSET
+    })
 }
 
 fn evaluate_dispatch_policy(

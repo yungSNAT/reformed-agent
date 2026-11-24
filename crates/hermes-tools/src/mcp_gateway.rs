@@ -21,6 +21,9 @@ pub const MCP_GATEWAY_TOOLSET: &str = "mcp";
 
 const DEFAULT_LIMIT: usize = 10;
 const MAX_LIMIT: usize = 50;
+/// Search results carry at most this much of each description: the
+/// gateway's result has no size limit of its own.
+const MAX_DESCRIPTION_CHARS: usize = 1_000;
 
 /// The MCP tool names the gateway may search and call now.
 pub type McpGatewayScope = Arc<dyn Fn(&ToolRegistry) -> HashSet<String> + Send + Sync>;
@@ -62,7 +65,31 @@ pub fn register_mcp_gateway(registry: &ToolRegistry, servers: &[String], scope: 
         "required": ["action"]
     }))
     .expect("gateway schema");
-    let schema = ToolSchema::new(MCP_GATEWAY_TOOL, description.clone(), parameters);
+    let schema = ToolSchema::new(MCP_GATEWAY_TOOL, description, parameters);
+    register_handler(registry, schema, scope);
+}
+
+/// Give the registered gateway a new scope, as after a config change. Its
+/// schema stays, so the tool list stays byte-identical. False when no
+/// gateway is registered.
+pub fn rescope_mcp_gateway(registry: &ToolRegistry, scope: McpGatewayScope) -> bool {
+    if !is_mcp_gateway_registered(registry) {
+        return false;
+    }
+    let Some(schema) = registry
+        .get_definitions()
+        .into_iter()
+        .find(|schema| schema.name == MCP_GATEWAY_TOOL)
+    else {
+        return false;
+    };
+    registry.deregister(MCP_GATEWAY_TOOL);
+    register_handler(registry, schema, scope);
+    true
+}
+
+fn register_handler(registry: &ToolRegistry, schema: ToolSchema, scope: McpGatewayScope) {
+    let description = schema.description.clone();
     let handler = Arc::new(McpGateway {
         registry: registry.downgrade(),
         scope,
@@ -78,7 +105,9 @@ pub fn register_mcp_gateway(registry: &ToolRegistry, servers: &[String], scope: 
         true,
         description,
         "mcp",
-        None,
+        // The inner tool's own limit applies; a second cut here would hide
+        // how much the first one removed.
+        Some(usize::MAX),
     );
 }
 
@@ -161,7 +190,7 @@ fn search(registry: &ToolRegistry, scope: &HashSet<String>, query: &str, limit: 
         .map(|(_, schema)| {
             json!({
                 "name": schema.name,
-                "description": schema.description,
+                "description": schema.description.chars().take(MAX_DESCRIPTION_CHARS).collect::<String>(),
                 "parameters": schema.parameters,
             })
         })

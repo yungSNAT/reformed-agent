@@ -237,3 +237,85 @@ fn the_gateway_does_not_keep_its_registry_alive() {
     drop(registry);
     assert!(weak.upgrade().is_none());
 }
+
+/// Answers every call with the same text.
+struct TextTool(String);
+
+#[async_trait]
+impl ToolHandler for TextTool {
+    async fn execute(&self, _params: Value) -> Result<String, ToolError> {
+        Ok(self.0.clone())
+    }
+
+    fn schema(&self) -> ToolSchema {
+        tool_schema("text", "text", JsonSchema::new("object"))
+    }
+}
+
+fn text_registry(registry: ToolRegistry, text: &str) -> ToolRegistry {
+    registry.register(
+        "mcp_docs_page",
+        "mcp-docs",
+        tool_schema("mcp_docs_page", "A page", JsonSchema::new("object")),
+        Arc::new(TextTool(text.to_string())),
+        Arc::new(|| true),
+        Vec::new(),
+        true,
+        "A page",
+        "x",
+        None,
+    );
+    register_mcp_gateway(
+        &registry,
+        &["docs".to_string()],
+        Arc::new(|_: &ToolRegistry| ["mcp_docs_page".to_string()].into()),
+    );
+    registry
+}
+
+async fn call_page(registry: &ToolRegistry) -> String {
+    let out = gateway(registry, json!({"action": "call", "tool": "mcp_docs_page"})).await;
+    out["result"].as_str().expect("text result").to_string()
+}
+
+#[tokio::test]
+async fn a_cut_result_reports_what_the_inner_tool_lost() {
+    let registry = text_registry(ToolRegistry::with_max_result_size(100), &"x".repeat(250));
+    let page = call_page(&registry).await;
+    assert!(
+        page.ends_with("[... truncated 150 characters ...]"),
+        "{page}"
+    );
+}
+
+#[tokio::test]
+async fn a_one_shot_raw_request_reaches_the_inner_tool() {
+    let registry = text_registry(ToolRegistry::new(), "\u{1b}[31mred\u{1b}[0m");
+    registry.set_raw_mode_once();
+    assert_eq!(call_page(&registry).await, "\u{1b}[31mred\u{1b}[0m");
+    assert_eq!(call_page(&registry).await, "red", "the request is spent");
+}
+
+#[tokio::test]
+async fn rescoping_keeps_the_schema_and_changes_the_reach() {
+    let registry = gateway_registry();
+    let schema = |registry: &ToolRegistry| {
+        registry
+            .get_definitions()
+            .into_iter()
+            .find(|schema| schema.name == MCP_GATEWAY_TOOL)
+    };
+    let before = schema(&registry);
+    assert!(rescope_mcp_gateway(
+        &registry,
+        Arc::new(|_: &ToolRegistry| HashSet::new())
+    ));
+    assert_eq!(before, schema(&registry));
+    assert!(is_mcp_gateway_registered(&registry));
+    let out = gateway(&registry, json!({"action": "search"})).await;
+    assert_eq!(out["total"], 0);
+    assert!(!rescope_mcp_gateway(
+        &ToolRegistry::new(),
+        Arc::new(|_: &ToolRegistry| HashSet::new())
+    ));
+}

@@ -122,11 +122,42 @@ fn disabling_the_gateway_hides_it_and_every_mcp_tool() {
         } else {
             cfg.agent.disabled_toolsets = vec![MCP_GATEWAY_TOOL.to_string()];
         }
-        let names = schema_names(&cfg, &registry(&cfg, true));
+        let reg = registry(&cfg, true);
+        let names = schema_names(&cfg, &reg);
         assert!(names.contains(&"terminal".to_string()), "{disable}");
         assert!(
             !names.iter().any(|name| name.starts_with("mcp")),
             "{disable}: {names:?}"
+        );
+        // Called by name all the same, it reaches nothing.
+        assert!(
+            platform_mcp_tool_names(&cfg, "cli", &reg).is_empty(),
+            "{disable}"
+        );
+    }
+}
+
+#[test]
+fn custom_toolsets_naming_an_unconnected_server_keep_the_gateway() {
+    let mut cfg = GatewayConfig::default();
+    cfg.mcp_servers = vec![hermes_config::McpServerEntry {
+        name: "late-docs".to_string(),
+        ..Default::default()
+    }];
+    for token in ["late-docs", "mcp-late_docs"] {
+        cfg.platform_toolsets.insert(
+            "cli".to_string(),
+            vec!["web".to_string(), token.to_string()],
+        );
+        let reg = registry(&cfg, true);
+        assert_eq!(schema_names(&cfg, &reg), ["mcp", "web_search"], "{token}");
+        register(&reg, "mcp_late_docs_read", "mcp-late_docs");
+        reg.register_toolset_alias("late-docs", "mcp-late_docs");
+        assert_eq!(schema_names(&cfg, &reg), ["mcp", "web_search"], "{token}");
+        assert_eq!(
+            platform_mcp_tool_names(&cfg, "cli", &reg),
+            ["mcp_late_docs_read".to_string()].into(),
+            "{token}"
         );
     }
 }
