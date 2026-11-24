@@ -58,8 +58,12 @@ impl AgentLoop {
         tools: Option<Vec<ToolSchema>>,
     ) -> Result<AgentResult, AgentError> {
         let _cache_use = tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
+        self.cancel_cache_keep_alive();
         let result = Self::complete_memory_flush(self.run_inner(messages, tools)).await;
         self.note_sub_agent_results_delivered(&result);
+        if result.is_ok() {
+            self.arm_cache_keep_alive();
+        }
         result
     }
 
