@@ -54,6 +54,13 @@ fn anthropic_tool_loop_reply(index: usize, streaming: bool) -> wiremock::Respons
 }
 
 async fn anthropic_tool_loop_requests(streaming: bool) -> Vec<serde_json::Value> {
+    anthropic_tool_loop_requests_with(streaming, hermes_config::PromptCacheTtl::FiveMinutes).await
+}
+
+async fn anthropic_tool_loop_requests_with(
+    streaming: bool,
+    cache_ttl: hermes_config::PromptCacheTtl,
+) -> Vec<serde_json::Value> {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, Request};
 
@@ -84,6 +91,10 @@ async fn anthropic_tool_loop_requests(streaming: bool) -> Vec<serde_json::Value>
         skip_memory: true,
         skip_context_files: true,
         ephemeral_system_prompt: Some("later ephemeral instruction".to_string()),
+        prompt_caching: hermes_config::PromptCachingConfig {
+            cache_ttl,
+            ..Default::default()
+        },
         ..AgentConfig::default()
     };
     let _home = isolate_route_learning_home(&mut config);
@@ -190,6 +201,52 @@ async fn anthropic_tool_loop_keeps_one_cached_prefix_and_moves_its_breakpoints()
             let older = older.as_array().expect("messages");
             let newer = newer.as_array().expect("messages");
             assert_eq!(&newer[..older.len()], older);
+        }
+    }
+}
+
+/// Every `cache_control` object in `value`.
+fn cache_markers(value: &serde_json::Value, out: &mut Vec<serde_json::Value>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(marker) = map.get("cache_control") {
+                out.push(marker.clone());
+            }
+            map.values().for_each(|v| cache_markers(v, out));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| cache_markers(v, out)),
+        _ => {}
+    }
+}
+
+#[tokio::test]
+async fn one_hour_tier_puts_its_ttl_on_every_breakpoint_and_never_sends_the_setting() {
+    for streaming in [false, true] {
+        let hour = anthropic_tool_loop_requests_with(
+            streaming,
+            hermes_config::PromptCacheTtl::OneHour,
+        )
+        .await;
+        let five = anthropic_tool_loop_requests(streaming).await;
+        assert_eq!(hour.len(), 3);
+        for (body, default_body) in hour.iter().zip(&five) {
+            assert!(body.get("prompt_cache_ttl").is_none(), "{body}");
+            let mut markers = Vec::new();
+            cache_markers(body, &mut markers);
+            let mut default_markers = Vec::new();
+            cache_markers(default_body, &mut default_markers);
+            assert_eq!(markers.len(), default_markers.len(), "same breakpoints");
+            assert!(!markers.is_empty());
+            for marker in &markers {
+                assert_eq!(marker, &serde_json::json!({"type": "ephemeral", "ttl": "1h"}));
+            }
+            for marker in &default_markers {
+                assert_eq!(marker, &serde_json::json!({"type": "ephemeral"}));
+            }
+            let (mut hour_bare, mut five_bare) = (body.clone(), default_body.clone());
+            strip_cache_control(&mut hour_bare);
+            strip_cache_control(&mut five_bare);
+            assert_eq!(hour_bare, five_bare, "only the markers differ");
         }
     }
 }
