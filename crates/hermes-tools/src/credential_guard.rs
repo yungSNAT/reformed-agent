@@ -757,6 +757,51 @@ impl ProtectedPaths {
     }
 }
 
+/// Whether `path` names, under another name, the same file as a protected
+/// one: a credential store or token source, a file directly inside a store
+/// folder or a protected home folder, or a home or system file the rule
+/// names. A hard link made outside the file tools (the terminal's `ln`)
+/// gives such a file a name the path rules cannot see, and a write through
+/// it changes the file in place. Only a file with more than one link is
+/// compared; files deeper inside a protected folder are not.
+fn is_hard_link_to_protected_file(
+    path: &Path,
+    home: Option<&Path>,
+    hermes_home: Option<&Path>,
+    auth_override: Option<&Path>,
+) -> bool {
+    let Some(target) = hermes_config::file_identity(path) else {
+        return false;
+    };
+    if target.links < 2 {
+        return false;
+    }
+    let stores = credential_stores(home, hermes_home, auth_override)
+        .into_iter()
+        .map(|(store, _)| store);
+    let home_files = home.into_iter().flat_map(|home| {
+        WRITE_DENY_HOME_EXACT
+            .iter()
+            .chain(WRITE_DENY_HOME_PREFIX)
+            .map(move |name| home.join(name))
+    });
+    let system_files = WRITE_DENY_EXACT_ABSOLUTE.iter().map(PathBuf::from);
+    stores
+        .chain(home_files)
+        .chain(system_files)
+        .flat_map(|protected| {
+            // A folder's own files; reading a file's entries yields none.
+            let entries = std::fs::read_dir(&protected)
+                .into_iter()
+                .flatten()
+                .flatten()
+                .map(|entry| entry.path());
+            std::iter::once(protected).chain(entries)
+        })
+        .filter_map(|protected| hermes_config::file_identity(&protected))
+        .any(|protected| protected.same_file(&target))
+}
+
 /// `is_write_denied_with_roots_and_safe_root` for a path whose `~` the caller
 /// has already expanded, so it is not expanded a second time.
 fn is_expanded_write_denied(
@@ -823,6 +868,10 @@ fn is_expanded_write_denied(
                 return true;
             }
         }
+    }
+
+    if is_hard_link_to_protected_file(&forms[1], home, hermes_home, auth_override) {
+        return true;
     }
 
     if let Some(safe_root) = safe_root {
