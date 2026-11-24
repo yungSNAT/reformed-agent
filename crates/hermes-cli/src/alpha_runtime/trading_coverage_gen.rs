@@ -258,9 +258,44 @@ fn collect_repo_drift_on_plain_directory_is_not_git() {
 
 #[test]
 fn collect_repo_drift_detects_head_change() {
+    const CHILD: &str = "HERMES_TEST_TRADING_DRIFT_CHILD";
+    if std::env::var_os(CHILD).is_none() {
+        let home = tempfile::tempdir().expect("isolated Git home");
+        let (_, module) = module_path!().split_once("::").expect("test module");
+        let test = format!("{module}::collect_repo_drift_detects_head_change");
+        // Execute only this test binary, with fresh Git configuration.
+        let executable = std::env::current_exe().expect("test executable"); // nosemgrep: rust.lang.security.current-exe.current-exe
+        let mut child = Command::new(executable);
+        child
+            .env_clear()
+            .args(["--exact", &test])
+            .env(CHILD, "1")
+            .env("HOME", home.path())
+            .env("USERPROFILE", home.path())
+            .env("XDG_CONFIG_HOME", home.path())
+            .env("GIT_CONFIG_NOSYSTEM", "1")
+            .env("GIT_CONFIG_GLOBAL", home.path().join("gitconfig"));
+        for key in ["PATH", "SystemRoot", "PATHEXT", "LLVM_PROFILE_FILE"] {
+            if let Some(value) = std::env::var_os(key) {
+                child.env(key, value);
+            }
+        }
+        let output = assert_cmd::Command::from_std(child)
+            .timeout(std::time::Duration::from_secs(20))
+            .output()
+            .expect("run the trading drift test");
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        assert!(
+            output.status.success() && stdout.contains("1 passed;"),
+            "trading drift child failed:\n{stdout}\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        return;
+    }
+
     let dir = tempfile::tempdir().expect("tempdir");
     let init = Command::new("git")
-        .arg("init")
+        .args(["init", "--template="])
         .arg("-q")
         .arg(dir.path())
         .output()

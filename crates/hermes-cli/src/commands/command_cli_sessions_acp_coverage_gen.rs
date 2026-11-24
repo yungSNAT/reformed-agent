@@ -358,8 +358,10 @@ mod isolated_cli {
             .env(SCENARIO_ENV, scenario)
             .current_dir(root.path())
             .stdin(stdin);
+        if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+            command.env("LLVM_PROFILE_FILE", std::env::current_dir().unwrap().join(profile));
+        }
         for name in [
-            "LLVM_PROFILE_FILE",
             "LD_LIBRARY_PATH",
             "DYLD_LIBRARY_PATH",
             "DYLD_FALLBACK_LIBRARY_PATH",

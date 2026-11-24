@@ -273,36 +273,6 @@ fn handle_agent_card_stream_serves_not_found() {
 }
 
 #[test]
-fn serve_agent_card_once_serves_card() {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind");
-    // A second accept must fail immediately if once mode regresses.
-    listener
-        .set_nonblocking(true)
-        .expect("nonblocking listener");
-    let addr = listener.local_addr().expect("listener address");
-    let timeout = Duration::from_secs(2);
-    let mut client = TcpStream::connect_timeout(&addr, timeout).expect("connect");
-    client
-        .set_read_timeout(Some(timeout))
-        .expect("read timeout");
-    client
-        .set_write_timeout(Some(timeout))
-        .expect("write timeout");
-    client
-        .write_all(b"GET /.well-known/agent.json HTTP/1.1\r\nHost: x\r\n\r\n")
-        .expect("write request");
-    client
-        .shutdown(std::net::Shutdown::Write)
-        .expect("send EOF");
-
-    serve_agent_card_on(&listener, true).expect("serve one client");
-    let mut response = String::new();
-    client.read_to_string(&mut response).expect("read response");
-    assert!(response.starts_with("HTTP/1.1 200 OK"), "{response}");
-    assert!(response.contains("Reformed Agent"));
-}
-
-#[test]
 fn fail_builds_failing_check() {
     let check = fail("ping", "boom");
     assert_eq!(check.method, "ping");

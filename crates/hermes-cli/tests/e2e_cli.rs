@@ -405,6 +405,99 @@ fn e2e_cli_systems_status_and_reports_are_json() {
 }
 
 #[test]
+fn e2e_cli_agent_card_serves_one_request_and_exits() {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::{Shutdown, SocketAddr, TcpStream};
+    use std::process::{Child, Stdio};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    struct Server(Child);
+
+    impl Drop for Server {
+        fn drop(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+
+    let home = tempfile::tempdir().expect("isolated Hermes home");
+    let mut child = Server(
+        std::process::Command::new(assert_cmd::cargo::cargo_bin!("hermes-agent-ultra"))
+            .args([
+                "systems",
+                "agent-card",
+                "serve",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "0",
+                "--once",
+            ])
+            .env("HERMES_HOME", home.path())
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("start agent-card server"),
+    );
+    let stdout = BufReader::new(child.0.stdout.take().expect("capture server stdout"));
+    let (send_address, receive_address) = mpsc::channel();
+    let reader = thread::spawn(move || {
+        let address = stdout.lines().map_while(Result::ok).find_map(|line| {
+            let url = line.strip_prefix("Agent card server listening on http://")?;
+            let (address, path) = url.split_once('/')?;
+            (path == ".well-known/agent.json").then(|| address.parse::<SocketAddr>())
+        });
+        let _ = send_address.send(address);
+    });
+    let deadline = Duration::from_secs(10);
+    let address = receive_address
+        .recv_timeout(deadline)
+        .expect("server advertised an address within the deadline")
+        .expect("advertised agent card endpoint")
+        .expect("parse agent card listener address");
+    reader.join().expect("join stdout reader");
+    assert!(address.ip().is_loopback());
+
+    let mut client = TcpStream::connect_timeout(&address, deadline).expect("connect to agent card");
+    client
+        .set_read_timeout(Some(deadline))
+        .expect("read deadline");
+    client
+        .set_write_timeout(Some(deadline))
+        .expect("write deadline");
+    client
+        .write_all(b"GET /.well-known/agent.json HTTP/1.1\r\nHost: localhost\r\n\r\n")
+        .expect("request agent card");
+    client
+        .shutdown(Shutdown::Write)
+        .expect("finish sending request");
+
+    let mut response = String::new();
+    client
+        .read_to_string(&mut response)
+        .expect("read agent card");
+    let (headers, body) = response.split_once("\r\n\r\n").expect("HTTP response");
+    assert!(headers.starts_with("HTTP/1.1 200 OK"), "{headers}");
+    let card: serde_json::Value = serde_json::from_str(body).expect("agent card JSON");
+    assert_eq!(card["name"], "Reformed Agent");
+
+    let end = Instant::now() + deadline;
+    let status = loop {
+        if let Some(status) = child.0.try_wait().expect("check server exit") {
+            break status;
+        }
+        assert!(
+            Instant::now() < end,
+            "server did not exit after one request"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    assert!(status.success(), "server returned {status}");
+}
+
+#[test]
 fn e2e_cli_systems_replay_reports_existing_trace() {
     let dir = tempfile::tempdir().expect("tempdir");
     let replay_dir = dir.path().join("logs").join("replay");

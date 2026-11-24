@@ -52,7 +52,10 @@ fn isolated_cli(test: &str, vars: &[(&str, &str)]) -> Option<Cli> {
         .env("TMPDIR", &root)
         .env("TMP", &root)
         .env("TEMP", &root);
-    for key in ["SystemRoot", "WINDIR", "LLVM_PROFILE_FILE"] {
+    if let Some(profile) = std::env::var_os("LLVM_PROFILE_FILE") {
+        command.env("LLVM_PROFILE_FILE", std::env::current_dir().unwrap().join(profile));
+    }
+    for key in ["SystemRoot", "WINDIR"] {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
         }

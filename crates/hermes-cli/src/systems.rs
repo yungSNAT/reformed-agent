@@ -770,10 +770,6 @@ fn serve_agent_card(host: &str, port: u16, once: bool) -> Result<(), AgentError>
         "Agent card server listening on http://{}{}",
         addr, AGENT_CARD_PATH
     );
-    serve_agent_card_on(&listener, once)
-}
-
-fn serve_agent_card_on(listener: &TcpListener, once: bool) -> Result<(), AgentError> {
     for incoming in listener.incoming() {
         match incoming {
             Ok(mut stream) => handle_agent_card_stream(&mut stream)?,
