@@ -627,7 +627,7 @@ fn merge_bedrock_extra_body(body: &mut Value, extra_body: Option<&Value>) {
     };
     for (key, value) in extra {
         match key.as_str() {
-            "strict_api" | "strict_tool_calls" | "provider_strict" => {}
+            k if crate::provider::is_local_control_key(k) => {}
             "additionalModelRequestFields" => {
                 if let (Some(target), Some(source)) = (
                     body.get_mut("additionalModelRequestFields")

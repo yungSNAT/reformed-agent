@@ -335,7 +335,19 @@ Prompt caching is automatically enabled when:
 # config.yaml — TTL is configurable (must be "5m" or "1h")
 prompt_caching:
   cache_ttl: "5m"
+  keep_alive:
+    max_pings: 0          # billed keep-alive requests per idle stretch; 0 = off
+    max_idle_minutes: 60
+  compact_when_cold: false
 ```
+
+In the Rust runtime the 1-hour tier reaches the Anthropic provider as a
+local `extra_body` control (`prompt_cache_ttl`), which no provider sends on
+the wire. Keep-alive requests live in
+`crates/hermes-agent/src/context/cache_keep_alive.rs`, one task per session
+id for the whole process, because the gateway builds a new agent for every
+message. Costs and stop rules are in the
+[configuration guide](/docs/user-guide/configuration#prompt-caching).
 
 The CLI shows caching status at startup:
 ```

@@ -279,7 +279,7 @@ impl CodexProvider {
     }
 
     fn should_forward_extra_body_key(key: &str) -> bool {
-        !matches!(key, "strict_api" | "strict_tool_calls" | "provider_strict")
+        !crate::provider::is_local_control_key(key)
     }
 
     /// Convert tool schemas to Responses API function format.
@@ -807,6 +807,22 @@ mod tests {
         assert_eq!(input[1]["name"], "read_file");
         assert_eq!(input[2]["type"], "function_call_output");
         assert_eq!(input[2]["call_id"], "call_1");
+    }
+
+    #[test]
+    fn responses_body_keeps_the_cache_tier_control_off_the_wire() {
+        let provider = CodexProvider::openai_pro("token", "gpt-5.5");
+        let extra_body = serde_json::json!({"prompt_cache_ttl": "1h"});
+        let body = provider.build_body(
+            &[Message::user("Say ok")],
+            &[],
+            None,
+            None,
+            "gpt-5.5",
+            Some(&extra_body),
+            false,
+        );
+        assert!(body.get("prompt_cache_ttl").is_none(), "{body}");
     }
 
     #[test]
