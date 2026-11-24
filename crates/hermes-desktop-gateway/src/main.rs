@@ -22,6 +22,11 @@ struct Args {
     /// Port to bind; 0 picks a free one.
     #[arg(long, default_value_t = 9119)]
     port: u16,
+    /// Stop when standard input reaches end of file. A launcher passes this with a pipe as
+    /// standard input, so the gateway and its token stop with the launcher even when the
+    /// launcher is killed or crashes.
+    #[arg(long, hide = true)]
+    exit_when_stdin_closes: bool,
 }
 
 #[tokio::main]
@@ -90,11 +95,32 @@ async fn main() -> ExitCode {
         eprintln!("cannot write the readiness lines: {err}");
         return ExitCode::FAILURE;
     }
-    match serve(listener, token, Chat::new(config)).await {
-        Ok(()) => ExitCode::SUCCESS,
-        Err(err) => {
-            eprintln!("server stopped: {err}");
-            ExitCode::FAILURE
+    let stdin_closed = stdin_closed(args.exit_when_stdin_closes);
+    tokio::select! {
+        served = serve(listener, token, Chat::new(config)) => match served {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(err) => {
+                eprintln!("server stopped: {err}");
+                ExitCode::FAILURE
+            }
+        },
+        () = stdin_closed => {
+            eprintln!("standard input closed; stopping");
+            ExitCode::SUCCESS
         }
     }
+}
+
+/// Resolves once standard input reaches end of file or fails, when `watch` is set; never
+/// otherwise. A plain thread reads it, as a blocked runtime read would hold up shutdown.
+async fn stdin_closed(watch: bool) {
+    if !watch {
+        return std::future::pending().await;
+    }
+    let (closed, wait) = tokio::sync::oneshot::channel();
+    std::thread::spawn(move || {
+        let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+        let _ = closed.send(());
+    });
+    let _ = wait.await;
 }

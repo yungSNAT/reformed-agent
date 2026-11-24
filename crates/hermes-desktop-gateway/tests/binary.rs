@@ -128,3 +128,66 @@ fn without_a_token_it_makes_one_and_prints_it_once() {
     let token = printed[0];
     assert!(token.len() >= 32 && token.chars().all(|c| c.is_ascii_hexdigit()));
 }
+
+/// Starts the binary with a piped standard input, waits for its readiness line, closes the
+/// pipe and returns whether it exited within 10 seconds.
+fn exits_when_stdin_closes(args: &[&str]) -> bool {
+    let mut child = Command::new(BIN)
+        .args(args)
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    let first = lines.next().unwrap().unwrap();
+    assert!(first.starts_with("HERMES_BACKEND_READY port="), "{first}");
+    drop(child.stdin.take());
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        if child.try_wait().unwrap().is_some() {
+            return true;
+        }
+        if Instant::now() > deadline {
+            child.kill().unwrap();
+            child.wait().unwrap();
+            return false;
+        }
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// A launcher that dies without stopping the gateway (killed, or crashed) closes the pipe it
+/// gave as standard input, so the token-bearing port does not outlive it.
+#[test]
+fn stops_when_its_launchers_stdin_pipe_closes() {
+    assert!(exits_when_stdin_closes(&[
+        "--port",
+        "0",
+        "--exit-when-stdin-closes"
+    ]));
+}
+
+/// Without the flag a closed standard input (`nohup`, a service manager) changes nothing.
+#[test]
+fn keeps_serving_after_stdin_closes_without_the_flag() {
+    let mut child = Command::new(BIN)
+        .args(["--port", "0"])
+        .env(TOKEN_ENV, "0123456789abcdef0123456789abcdef-given")
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .unwrap();
+    let mut lines = BufReader::new(child.stdout.take().unwrap()).lines();
+    lines.next().unwrap().unwrap();
+    std::thread::sleep(Duration::from_secs(1));
+    let running = child.try_wait().unwrap().is_none();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        running,
+        "the gateway stopped although stdin closing was not asked for"
+    );
+}
