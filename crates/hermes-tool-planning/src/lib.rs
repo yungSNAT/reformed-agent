@@ -969,4 +969,40 @@ mod tests {
         let names = resolve_platform_tool_names(&cfg, "cli", &reg);
         assert_eq!(names, vec!["mcp_dynserver_ping".to_string()]);
     }
+
+    fn schema_names(cfg: &GatewayConfig, reg: &Arc<ToolRegistry>) -> Vec<String> {
+        resolve_platform_tool_schemas(cfg, "cli", reg)
+            .into_iter()
+            .map(|schema| schema.name)
+            .collect()
+    }
+
+    #[test]
+    fn disabling_every_planned_tool_offers_no_tool() {
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets
+            .insert("cli".to_string(), vec!["web".to_string()]);
+        cfg.tools_config.disabled = ["web_search", "web_extract", "web_crawl"]
+            .map(String::from)
+            .to_vec();
+        let reg = registry_with_minimal_tools();
+
+        assert_eq!(schema_names(&cfg, &reg), Vec::<String>::new());
+    }
+
+    #[test]
+    fn the_fallback_for_an_unresolved_platform_keeps_disabled_tools_out() {
+        let mut cfg = GatewayConfig::default();
+        cfg.platform_toolsets
+            .insert("cli".to_string(), vec!["no-such-toolset".to_string()]);
+        cfg.tools_config.disabled = vec!["terminal".to_string()];
+        cfg.agent.disabled_toolsets = vec!["browser".to_string()];
+        let reg = registry_with_minimal_tools();
+
+        let names = schema_names(&cfg, &reg);
+
+        assert!(names.contains(&"read_file".to_string()), "{names:?}");
+        assert!(!names.contains(&"terminal".to_string()), "{names:?}");
+        assert!(!names.contains(&"browser_navigate".to_string()), "{names:?}");
+    }
 }

@@ -1199,5 +1199,6 @@ mod tests {
     }
 
     include!("tests/session_runtime.rs");
+    include!("tests/tool_scope.rs");
 
 }
