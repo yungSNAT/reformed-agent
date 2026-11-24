@@ -13,7 +13,10 @@ use crate::website::{read_text, rel_posix, rstrip, write_text, WebsiteArgs};
 
 const SITE_BASE: &str = "https://hermes-agent.nousresearch.com/docs";
 
-type Section = (&'static str, &'static [(&'static str, &'static str, Option<&'static str>)]);
+type Section = (
+    &'static str,
+    &'static [(&'static str, &'static str, Option<&'static str>)],
+);
 
 const SECTIONS: &[Section] = &[
     (
@@ -39,7 +42,11 @@ const SECTIONS: &[Section] = &[
             ("user-guide/git-worktrees", "Git Worktrees", None),
             ("user-guide/docker", "Docker Backend", None),
             ("user-guide/security", "Security", None),
-            ("user-guide/checkpoints-and-rollback", "Checkpoints & Rollback", None),
+            (
+                "user-guide/checkpoints-and-rollback",
+                "Checkpoints & Rollback",
+                None,
+            ),
         ],
     ),
     (
@@ -50,12 +57,28 @@ const SECTIONS: &[Section] = &[
             ("user-guide/features/skills", "Skills System", None),
             ("user-guide/features/curator", "Curator", None),
             ("user-guide/features/memory", "Memory", None),
-            ("user-guide/features/memory-providers", "Memory Providers", None),
+            (
+                "user-guide/features/memory-providers",
+                "Memory Providers",
+                None,
+            ),
             ("user-guide/features/context-files", "Context Files", None),
-            ("user-guide/features/context-references", "Context References", None),
-            ("user-guide/features/personality", "Personality & SOUL.md", None),
+            (
+                "user-guide/features/context-references",
+                "Context References",
+                None,
+            ),
+            (
+                "user-guide/features/personality",
+                "Personality & SOUL.md",
+                None,
+            ),
             ("user-guide/features/plugins", "Plugins", None),
-            ("user-guide/features/built-in-plugins", "Built-in Plugins", None),
+            (
+                "user-guide/features/built-in-plugins",
+                "Built-in Plugins",
+                None,
+            ),
         ],
     ),
     (
@@ -64,11 +87,19 @@ const SECTIONS: &[Section] = &[
             ("user-guide/features/cron", "Cron Jobs", None),
             ("user-guide/features/delegation", "Delegation", None),
             ("user-guide/features/kanban", "Kanban Multi-Agent", None),
-            ("user-guide/features/kanban-tutorial", "Kanban Tutorial", None),
+            (
+                "user-guide/features/kanban-tutorial",
+                "Kanban Tutorial",
+                None,
+            ),
             ("user-guide/features/goals", "Persistent Goals", None),
             ("user-guide/features/code-execution", "Code Execution", None),
             ("user-guide/features/hooks", "Hooks", None),
-            ("user-guide/features/batch-processing", "Batch Processing", None),
+            (
+                "user-guide/features/batch-processing",
+                "Batch Processing",
+                None,
+            ),
         ],
     ),
     (
@@ -77,7 +108,11 @@ const SECTIONS: &[Section] = &[
             ("user-guide/features/voice-mode", "Voice Mode", None),
             ("user-guide/features/browser", "Browser", None),
             ("user-guide/features/vision", "Vision", None),
-            ("user-guide/features/image-generation", "Image Generation", None),
+            (
+                "user-guide/features/image-generation",
+                "Image Generation",
+                None,
+            ),
             ("user-guide/features/tts", "Text-to-Speech", None),
         ],
     ),
@@ -103,13 +138,33 @@ const SECTIONS: &[Section] = &[
         &[
             ("integrations/index", "Integrations Overview", None),
             ("integrations/providers", "Providers", None),
-            ("user-guide/features/mcp", "MCP (Model Context Protocol)", None),
-            ("user-guide/features/acp", "ACP (Agent Context Protocol)", None),
+            (
+                "user-guide/features/mcp",
+                "MCP (Model Context Protocol)",
+                None,
+            ),
+            (
+                "user-guide/features/acp",
+                "ACP (Agent Context Protocol)",
+                None,
+            ),
             ("user-guide/features/api-server", "API Server", None),
             ("user-guide/features/honcho", "Honcho Memory", None),
-            ("user-guide/features/provider-routing", "Provider Routing", None),
-            ("user-guide/features/fallback-providers", "Fallback Providers", None),
-            ("user-guide/features/credential-pools", "Credential Pools", None),
+            (
+                "user-guide/features/provider-routing",
+                "Provider Routing",
+                None,
+            ),
+            (
+                "user-guide/features/fallback-providers",
+                "Fallback Providers",
+                None,
+            ),
+            (
+                "user-guide/features/credential-pools",
+                "Credential Pools",
+                None,
+            ),
         ],
     ),
     (
@@ -118,16 +173,40 @@ const SECTIONS: &[Section] = &[
             ("guides/tips", "Tips & Best Practices", None),
             ("guides/local-llm-on-mac", "Local LLMs on Mac", None),
             ("guides/daily-briefing-bot", "Daily Briefing Bot", None),
-            ("guides/team-telegram-assistant", "Team Telegram Assistant", None),
-            ("guides/python-library", "Use Hermes as a Python Library", None),
+            (
+                "guides/team-telegram-assistant",
+                "Team Telegram Assistant",
+                None,
+            ),
+            (
+                "guides/python-library",
+                "Use Hermes as a Python Library",
+                None,
+            ),
             ("guides/use-mcp-with-hermes", "Use MCP with Hermes", None),
-            ("guides/use-voice-mode-with-hermes", "Use Voice Mode with Hermes", None),
-            ("guides/use-soul-with-hermes", "Use SOUL.md with Hermes", None),
-            ("guides/build-a-hermes-plugin", "Build a Hermes Plugin", None),
+            (
+                "guides/use-voice-mode-with-hermes",
+                "Use Voice Mode with Hermes",
+                None,
+            ),
+            (
+                "guides/use-soul-with-hermes",
+                "Use SOUL.md with Hermes",
+                None,
+            ),
+            (
+                "guides/build-a-hermes-plugin",
+                "Build a Hermes Plugin",
+                None,
+            ),
             ("guides/automate-with-cron", "Automate with Cron", None),
             ("guides/work-with-skills", "Work with Skills", None),
             ("guides/delegation-patterns", "Delegation Patterns", None),
-            ("guides/github-pr-review-agent", "GitHub PR Review Agent", None),
+            (
+                "guides/github-pr-review-agent",
+                "GitHub PR Review Agent",
+                None,
+            ),
         ],
     ),
     (
@@ -142,14 +221,26 @@ const SECTIONS: &[Section] = &[
                 "Context Compression & Caching",
                 None,
             ),
-            ("developer-guide/gateway-internals", "Gateway Internals", None),
+            (
+                "developer-guide/gateway-internals",
+                "Gateway Internals",
+                None,
+            ),
             ("developer-guide/session-storage", "Session Storage", None),
             ("developer-guide/provider-runtime", "Provider Runtime", None),
             ("developer-guide/adding-tools", "Adding Tools", None),
             ("developer-guide/adding-providers", "Adding Providers", None),
-            ("developer-guide/adding-platform-adapters", "Adding Platform Adapters", None),
+            (
+                "developer-guide/adding-platform-adapters",
+                "Adding Platform Adapters",
+                None,
+            ),
             ("developer-guide/creating-skills", "Creating Skills", None),
-            ("developer-guide/extending-the-cli", "Extending the CLI", None),
+            (
+                "developer-guide/extending-the-cli",
+                "Extending the CLI",
+                None,
+            ),
         ],
     ),
     (
@@ -158,10 +249,18 @@ const SECTIONS: &[Section] = &[
             ("reference/cli-commands", "CLI Commands", None),
             ("reference/slash-commands", "Slash Commands", None),
             ("reference/profile-commands", "Profile Commands", None),
-            ("reference/environment-variables", "Environment Variables", None),
+            (
+                "reference/environment-variables",
+                "Environment Variables",
+                None,
+            ),
             ("reference/tools-reference", "Tools Reference", None),
             ("reference/toolsets-reference", "Toolsets Reference", None),
-            ("reference/mcp-config-reference", "MCP Config Reference", None),
+            (
+                "reference/mcp-config-reference",
+                "MCP Config Reference",
+                None,
+            ),
             ("reference/model-catalog", "Model Catalog", None),
             (
                 "reference/skills-catalog",
@@ -203,7 +302,13 @@ impl Patterns {
     fn read(&self, path: &Path) -> Result<(DocMeta, String), String> {
         let text = read_text(path)?;
         let Some(m) = self.frontmatter.captures(&text) else {
-            return Ok((DocMeta { title: None, description: None }, text));
+            return Ok((
+                DocMeta {
+                    title: None,
+                    description: None,
+                },
+                text,
+            ));
         };
         let fm = m.get(1).map_or("", |g| g.as_str());
         let capture = |re: &Regex| re.captures(fm).map(|c| c[1].to_string());
@@ -302,14 +407,21 @@ fn emit_llms_full(docs: &Path, patterns: &Patterns) -> Result<String, String> {
         "Short index: https://hermes-agent.nousresearch.com/docs/llms.txt\n".to_string(),
         "\n---\n\n".to_string(),
     ];
-    let mut emit = |rel: &Path, fallback_title: String, chunks: &mut Vec<String>| -> Result<(), String> {
-        let (meta, body) = patterns.read(&docs.join(rel))?;
-        let title = meta.title.filter(|t| !t.is_empty()).unwrap_or(fallback_title);
-        chunks.push(format!("<!-- source: website/docs/{} -->\n", rel_posix(rel, Path::new(""))));
-        chunks.push(format!("# {title}\n\n"));
-        chunks.push(format!("{}\n\n---\n\n", rstrip(&body)));
-        Ok(())
-    };
+    let emit =
+        |rel: &Path, fallback_title: String, chunks: &mut Vec<String>| -> Result<(), String> {
+            let (meta, body) = patterns.read(&docs.join(rel))?;
+            let title = meta
+                .title
+                .filter(|t| !t.is_empty())
+                .unwrap_or(fallback_title);
+            chunks.push(format!(
+                "<!-- source: website/docs/{} -->\n",
+                rel_posix(rel, Path::new(""))
+            ));
+            chunks.push(format!("# {title}\n\n"));
+            chunks.push(format!("{}\n\n---\n\n", rstrip(&body)));
+            Ok(())
+        };
     for (_, items) in SECTIONS {
         for (slug, _, _) in *items {
             let Some(path) = doc_path(docs, slug) else {
@@ -330,7 +442,10 @@ fn emit_llms_full(docs: &Path, patterns: &Patterns) -> Result<String, String> {
         if seen.contains(&rel) {
             continue;
         }
-        let parts: Vec<_> = rel.components().map(|c| c.as_os_str().to_string_lossy()).collect();
+        let parts: Vec<_> = rel
+            .components()
+            .map(|c| c.as_os_str().to_string_lossy())
+            .collect();
         if parts.len() >= 3
             && parts[0] == "user-guide"
             && parts[1] == "skills"

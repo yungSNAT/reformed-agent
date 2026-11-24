@@ -67,7 +67,10 @@ fn expected(name: &str) -> String {
 /// The repository root as the tool prints it, replaced by `<ROOT>`.
 fn mask_root(text: &str, root: &Path) -> String {
     let shown = root.display().to_string();
-    let shown = shown.strip_prefix(r"\\?\").unwrap_or(&shown).replace('\\', "/");
+    let shown = shown
+        .strip_prefix(r"\\?\")
+        .unwrap_or(&shown)
+        .replace('\\', "/");
     text.replace('\\', "/").replace(&shown, "<ROOT>")
 }
 
@@ -101,7 +104,11 @@ fn extract_skills_matches_the_python_generator_in_every_index_mode() {
             "{mode} skills.json"
         );
         let meta = fs::read_to_string(data.join("skills-meta.json")).unwrap();
-        assert!(meta.lines().nth(1).unwrap().starts_with("  \"extractedAt\": \"20"));
+        assert!(meta
+            .lines()
+            .nth(1)
+            .unwrap()
+            .starts_with("  \"extractedAt\": \"20"));
         assert_eq!(
             mask_extracted_at(&meta),
             mask_extracted_at(&expected(&format!("extract-{mode}.meta.json"))),

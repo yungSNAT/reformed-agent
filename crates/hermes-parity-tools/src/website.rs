@@ -15,7 +15,7 @@ use crate::report_io::resolve_argument;
 pub struct WebsiteArgs {
     /// Repository root path
     #[arg(long, default_value = ".")]
-    repo_root: String,
+    pub(crate) repo_root: String,
 }
 
 // ---- Python string helpers ------------------------------------------------
@@ -244,7 +244,8 @@ fn lookup(table: &[(&'static str, &'static str)], key: &str) -> Option<&'static 
 }
 
 fn category_label(category: &str) -> String {
-    lookup(&CATEGORY_LABELS, category).map_or_else(|| title(&category.replace('-', " ")), str::to_string)
+    lookup(&CATEGORY_LABELS, category)
+        .map_or_else(|| title(&category.replace('-', " ")), str::to_string)
 }
 
 fn extract_overview(body: &str) -> String {
@@ -290,7 +291,7 @@ fn docs_page_path(rel: &str, source_label: &str) -> String {
     };
     match parts.as_slice() {
         [category] => format!("{source_dir}/{category}/{category}-{category}"),
-        [category, slug] =>format!("{source_dir}/{category}/{category}-{slug}"),
+        [category, slug] => format!("{source_dir}/{category}/{category}-{slug}"),
         [category, sub, slug] => format!("{source_dir}/{category}/{category}-{sub}-{slug}"),
         _ => String::new(),
     }
@@ -309,7 +310,9 @@ fn skill_dirs(base: &Path, out: &mut Vec<PathBuf>) -> Result<(), String> {
     let mut subdirs = Vec::new();
     for entry in entries {
         let path = entry.path();
-        let Ok(kind) = entry.file_type() else { continue };
+        let Ok(kind) = entry.file_type() else {
+            continue;
+        };
         if kind.is_dir() {
             subdirs.push(path);
         } else if entry.file_name() == "SKILL.md" && path.is_file() {
@@ -393,7 +396,9 @@ fn extract_local_skills(root: &Path) -> Result<Vec<Py>, String> {
 
             let prereq = get(&fm, "prerequisites").filter(|p| truthy(p));
             let (env_vars, commands) = match prereq {
-                Some(p @ Py::Dict(_)) => (str_list(get(p, "env_vars")), str_list(get(p, "commands"))),
+                Some(p @ Py::Dict(_)) => {
+                    (str_list(get(p, "env_vars")), str_list(get(p, "commands")))
+                }
                 _ => (Vec::new(), Vec::new()),
             };
             let basename = dir
@@ -428,7 +433,10 @@ fn guess_category(tags: &[Py]) -> String {
     };
     for tag in tags {
         let lower = as_str(tag).to_lowercase();
-        if let Some((category, _)) = TAG_CATEGORIES.iter().find(|(_, t)| t.contains(&lower.as_str())) {
+        if let Some((category, _)) = TAG_CATEGORIES
+            .iter()
+            .find(|(_, t)| t.contains(&lower.as_str()))
+        {
             return (*category).to_string();
         }
     }
@@ -475,7 +483,8 @@ fn extract_cached_index_skills(root: &Path) -> Vec<Py> {
                     .unwrap_or_else(|| get_or(&meta, "title", "unknown".into()));
                 let description = get(&meta, "description").filter(|d| truthy(d));
                 let description = description.map(as_str).unwrap_or_default();
-                let description = take_chars(description.split('\n').next().unwrap_or_default(), 200);
+                let description =
+                    take_chars(description.split('\n').next().unwrap_or_default(), 200);
                 let tags = get_or(&meta, "tags", Py::List(Vec::new()));
                 skills.push(Py::dict([
                     ("name", name),
@@ -533,7 +542,11 @@ fn label_for_github_identifier(identifier: &str) -> &'static str {
 }
 
 fn install_command(source: &str, identifier: &str, name: &str) -> String {
-    let target = if identifier.is_empty() { name } else { identifier };
+    let target = if identifier.is_empty() {
+        name
+    } else {
+        identifier
+    };
     if target.is_empty() {
         return "hermes skills install <skill>".to_string();
     }
@@ -567,7 +580,12 @@ fn extract_unified_index_skills(root: &Path) -> Option<(Vec<Py>, Py)> {
     ]);
     let mut out = Vec::new();
     for entry in entries.iter().filter(|e| e.is_dict()) {
-        let or_empty = |key: &str| get(entry, key).filter(|v| truthy(v)).map(as_str).unwrap_or_default();
+        let or_empty = |key: &str| {
+            get(entry, key)
+                .filter(|v| truthy(v))
+                .map(as_str)
+                .unwrap_or_default()
+        };
         let source_id = or_empty("source").to_lowercase();
         if source_id == "official" {
             continue;
@@ -580,7 +598,11 @@ fn extract_unified_index_skills(root: &Path) -> Option<(Vec<Py>, Py)> {
                 last => last.into(),
             },
         };
-        let mut description = or_empty("description").split('\n').next().unwrap_or_default().to_string();
+        let mut description = or_empty("description")
+            .split('\n')
+            .next()
+            .unwrap_or_default()
+            .to_string();
         if description.chars().count() > 280 {
             description = format!("{}...", take_chars(&description, 277));
         }
@@ -598,7 +620,8 @@ fn extract_unified_index_skills(root: &Path) -> Option<(Vec<Py>, Py)> {
             source_id.clone()
         };
         let repo = or_empty("repo");
-        let author = if matches!(source_id.as_str(), "skills.sh" | "skills-sh") && !repo.is_empty() {
+        let author = if matches!(source_id.as_str(), "skills.sh" | "skills-sh") && !repo.is_empty()
+        {
             repo.split('/').next().unwrap_or_default()
         } else {
             ""
@@ -642,7 +665,9 @@ fn consolidate_small_categories(skills: &mut [Py]) {
     }
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     for skill in skills.iter() {
-        *counts.entry(field(skill, "category").to_string()).or_default() += 1;
+        *counts
+            .entry(field(skill, "category").to_string())
+            .or_default() += 1;
     }
     for skill in skills.iter_mut() {
         if counts[field(skill, "category")] < MIN_CATEGORY_SIZE {
@@ -694,7 +719,9 @@ pub fn run_extract_skills(args: WebsiteArgs) -> Result<i32, String> {
 
     let mut by_source: BTreeMap<String, usize> = BTreeMap::new();
     for skill in &all {
-        *by_source.entry(field(skill, "source").to_string()).or_default() += 1;
+        *by_source
+            .entry(field(skill, "source").to_string())
+            .or_default() += 1;
     }
     let generated_at = index_meta
         .as_ref()
@@ -730,7 +757,11 @@ pub fn run_extract_skills(args: WebsiteArgs) -> Result<i32, String> {
     write_text(&meta_output, &py::dumps(&meta, Some(2), false))?;
 
     let count = |label: &str| local.iter().filter(|s| field(s, "source") == label).count();
-    println!("Extracted {} skills to {}", all.len(), py::path_str(&output));
+    println!(
+        "Extracted {} skills to {}",
+        all.len(),
+        py::path_str(&output)
+    );
     println!(
         "Wrote metadata to {} ({external_source})",
         py::path_str(&meta_output)

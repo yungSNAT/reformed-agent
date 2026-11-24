@@ -9,8 +9,14 @@ fn title_matches_python_str_title() {
 
 #[test]
 fn split_frontmatter_matches_python_split_with_maxsplit_two() {
-    assert_eq!(split_frontmatter("---\na: 1\n---\nbody"), Some(("\na: 1\n", "\nbody")));
-    assert_eq!(split_frontmatter("---\na: b---c\n---\n"), Some(("\na: b", "c\n---\n")));
+    assert_eq!(
+        split_frontmatter("---\na: 1\n---\nbody"),
+        Some(("\na: 1\n", "\nbody"))
+    );
+    assert_eq!(
+        split_frontmatter("---\na: b---c\n---\n"),
+        Some(("\na: b", "c\n---\n"))
+    );
     assert_eq!(split_frontmatter("--- only"), None);
     assert_eq!(split_frontmatter("no marker"), None);
 }
@@ -34,5 +40,8 @@ fn yaml_values_keep_python_types() {
     let fm = load_yaml("version: 1.0\ncount: 3\nname: x\nlist: [a, 2]").unwrap();
     assert_eq!(fm.get("version"), Some(&Py::Float(1.0)));
     assert_eq!(fm.get("count"), Some(&Py::Int(3)));
-    assert_eq!(py::dumps(fm.get("list").unwrap(), None, false), "[\"a\", 2]");
+    assert_eq!(
+        py::dumps(fm.get("list").unwrap(), None, false),
+        "[\"a\", 2]"
+    );
 }
