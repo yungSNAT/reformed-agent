@@ -66,20 +66,18 @@ fn each_send_is_counted_before_it_is_made_and_the_cap_drops_the_record() {
     assert!(recovering(&dir).is_empty());
 }
 
-#[cfg(unix)]
 #[test]
 fn no_send_is_made_when_its_count_cannot_be_written() {
-    use std::os::unix::fs::PermissionsExt;
     let tmp = tempfile::tempdir().expect("tempdir");
     let dir = records_dir(tmp.path());
     write(&dir, &record("stuck", "1-1"));
     take_over(&dir, never_alive);
     let (path, mut stuck) = recovering(&dir).remove(0);
+    // A file where the folder was: the count cannot be written.
     let taken = recovering_dir(&dir);
-    std::fs::set_permissions(&taken, std::fs::Permissions::from_mode(0o500)).expect("chmod");
-    let counted = count_attempt(&path, &mut stuck);
-    std::fs::set_permissions(&taken, std::fs::Permissions::from_mode(0o700)).expect("chmod");
-    assert!(!counted);
+    std::fs::remove_dir_all(&taken).expect("remove");
+    std::fs::write(&taken, b"").expect("block");
+    assert!(!count_attempt(&path, &mut stuck));
 }
 
 #[cfg(unix)]
