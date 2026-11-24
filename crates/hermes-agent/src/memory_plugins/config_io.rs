@@ -246,4 +246,29 @@ mod tests {
 
         assert_eq!(default_hermes_home(), tmp.path().join(DEFAULT_HOME_DIR));
     }
+
+    /// The plugins must read their configs from the home the file tools'
+    /// write rule protects and `hermes memory setup` writes.
+    #[test]
+    fn the_runtime_memory_home_is_the_configured_hermes_home() {
+        let _guard = TEST_ENV_LOCK.lock().expect("env lock");
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let _home = EnvGuard::remove("HERMES_HOME");
+        let _ultra = EnvGuard::remove("HERMES_AGENT_ULTRA_HOME");
+        let _userprofile = EnvGuard::set("USERPROFILE", tmp.path());
+        let expected = tmp.path().join(DEFAULT_HOME_DIR);
+
+        // Windows launched from a shell that sets no HOME.
+        let _home_dir = EnvGuard::remove("HOME");
+        assert_eq!(hermes_config::hermes_home(), expected);
+        assert_eq!(PathBuf::from(crate::default_memory_home()), expected);
+
+        let _home_dir = EnvGuard::set("HOME", "");
+        assert_eq!(PathBuf::from(crate::default_memory_home()), expected);
+
+        let padded = tmp.path().join("profile");
+        let _home = EnvGuard::set("HERMES_HOME", format!("  {}  ", padded.display()));
+        assert_eq!(hermes_config::hermes_home(), padded);
+        assert_eq!(PathBuf::from(crate::default_memory_home()), padded);
+    }
 }

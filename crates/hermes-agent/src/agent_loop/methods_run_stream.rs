@@ -12,6 +12,8 @@ impl AgentLoop {
     ) -> Result<AgentResult, AgentError> {
         match on_chunk {
             Some(on_chunk) => {
+                let _cache_use =
+                    tool_result_prune::CacheUse::new(self.config.session_id.as_deref());
                 let result =
                     Self::complete_memory_flush(self.run_stream_inner(messages, tools, on_chunk))
                         .await;
@@ -219,6 +221,7 @@ impl AgentLoop {
         // After the prefetch, so recovered results stay out of its query.
         self.add_recovered_sub_agent_results(&mut ctx, &tool_schemas);
 
+        self.prune_tool_results_on_cold_cache(&mut ctx, &tool_schemas);
         if self.config.preflight_context_compress {
             self.preflight_context_compress_with_status(&mut ctx);
         }

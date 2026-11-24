@@ -104,6 +104,28 @@ mod tests {
         }
     }
 
+    #[test]
+    fn a_prune_record_keeps_only_the_calls_whose_results_it_replaced() {
+        let mut step = Message::assistant("");
+        step.tool_calls = Some(vec![terminal_call(1), terminal_call(2)]);
+        let before = vec![
+            Message::user("read both"),
+            step,
+            Message::tool_result("call_1", "one"),
+            Message::tool_result("call_2", "two"),
+        ];
+        let mut after = before.clone();
+        after[2].content = Some("stub".into());
+
+        let kept = replaced_with_calls(&before, &after);
+
+        assert_eq!(kept.len(), 2, "{kept:?}");
+        let calls = kept[0].tool_calls.as_ref().expect("the call");
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0].id, "call_1");
+        assert_eq!(kept[1].content.as_deref(), Some("one"));
+    }
+
     /// Compress `history` with the default budget; returns how many
     /// compressions ran and the kept messages.
     fn compress_default(history: Vec<Message>) -> (usize, Vec<Message>) {

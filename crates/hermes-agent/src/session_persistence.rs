@@ -1047,8 +1047,10 @@ impl SessionPersistence {
         tx.commit()
             .map_err(|e| AgentError::Io(format!("Failed to commit prune transaction: {e}")))?;
         if let Some(home) = self.sessions_dir.parent() {
+            let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
             for sid in &session_ids {
                 crate::sub_agent_orchestrator::forget_session_results(home, sid);
+                crate::context::tool_result_prune::remove_session_archives(&archives, sid);
             }
         }
         Ok(session_ids.len() as u64)
@@ -1098,6 +1100,8 @@ impl SessionPersistence {
         }
         if let Some(home) = self.sessions_dir.parent() {
             crate::sub_agent_orchestrator::forget_session_results(home, session_id);
+            let archives = home.join(crate::context::tool_result_prune::PRUNED_SUBDIR);
+            crate::context::tool_result_prune::remove_session_archives(&archives, session_id);
         }
         let transcript = self.sessions_dir.join(format!("{session_id}.jsonl"));
         match std::fs::remove_file(&transcript) {

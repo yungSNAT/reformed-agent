@@ -285,7 +285,7 @@ impl AgentLoop {
         let total_chars = ctx.total_chars();
         let max_c = ctx.max_context_chars().max(1);
         let threshold = (max_c as f64 * 0.8) as usize;
-        if total_chars <= threshold {
+        if total_chars <= threshold || self.prune_before_compression(ctx) {
             return;
         }
         let message = format!(

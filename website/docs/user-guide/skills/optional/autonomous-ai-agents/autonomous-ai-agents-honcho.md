@@ -107,7 +107,7 @@ Each peer has two observation toggles that control what Honcho learns from:
 
 Default: all four toggles **on** (full bidirectional observation).
 
-Configure per-peer in `honcho.json`:
+Configure per-peer in `honcho.json`. The file also holds the Honcho key, so the file tools refuse to write it: ask the user to edit it.
 
 ```json
 {
