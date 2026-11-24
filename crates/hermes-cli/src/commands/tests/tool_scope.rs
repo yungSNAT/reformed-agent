@@ -403,6 +403,12 @@
             .await;
         let ran = calls.lock().unwrap().len() > before;
         assert_eq!(ran, out.contains("mcp_docs_page ran"), "{out}");
+        if !ran {
+            assert!(
+                out.contains("not an MCP tool this session can call"),
+                "{out}"
+            );
+        }
         ran
     }
 
