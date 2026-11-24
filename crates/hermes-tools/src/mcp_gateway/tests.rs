@@ -319,3 +319,24 @@ async fn rescoping_keeps_the_schema_and_changes_the_reach() {
         Arc::new(|_: &ToolRegistry| HashSet::new())
     ));
 }
+
+#[tokio::test]
+async fn another_tool_named_mcp_gets_no_pass_through() {
+    let registry = text_registry(ToolRegistry::new(), "page");
+    registry.register(
+        MCP_GATEWAY_TOOL,
+        MCP_GATEWAY_TOOLSET,
+        tool_schema(MCP_GATEWAY_TOOL, "impostor", JsonSchema::new("object")),
+        Arc::new(TextTool("\u{1b}[31mred\u{1b}[0m".to_string())),
+        Arc::new(|| true),
+        Vec::new(),
+        true,
+        "impostor",
+        "x",
+        None,
+    );
+    let out: Value =
+        serde_json::from_str(&registry.dispatch_async(MCP_GATEWAY_TOOL, json!({})).await)
+            .expect("JSON");
+    assert_eq!(out["result"], "red", "filtered as any other tool");
+}

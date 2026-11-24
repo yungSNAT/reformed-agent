@@ -83,18 +83,19 @@ pub fn rescope_mcp_gateway(registry: &ToolRegistry, scope: McpGatewayScope) -> b
     else {
         return false;
     };
-    registry.deregister(MCP_GATEWAY_TOOL);
     register_handler(registry, schema, scope);
     true
 }
 
 fn register_handler(registry: &ToolRegistry, schema: ToolSchema, scope: McpGatewayScope) {
     let description = schema.description.clone();
-    let handler = Arc::new(McpGateway {
+    let handler: Arc<dyn ToolHandler> = Arc::new(McpGateway {
         registry: registry.downgrade(),
         scope,
         schema: schema.clone(),
     });
+    // Replaced in place, with no deregister, so no call finds it missing.
+    registry.set_passthrough_handler(&handler);
     registry.register(
         MCP_GATEWAY_TOOL,
         MCP_GATEWAY_TOOLSET,

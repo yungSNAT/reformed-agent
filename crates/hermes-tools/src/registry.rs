@@ -76,6 +76,9 @@ pub struct ToolRegistryInner {
     pub rtk_raw_mode: bool,
     /// One-shot raw pass-through for the next tool call only.
     pub rtk_raw_once: bool,
+    /// The handler whose dispatch passes its result through untouched (the
+    /// MCP gateway's), by address; see [`ToolRegistry::set_passthrough_handler`].
+    passthrough_handler: Option<usize>,
 }
 
 /// Thread-safe wrapper around `ToolRegistryInner`.
@@ -137,6 +140,7 @@ impl ToolRegistry {
                 rtk_filter: RtkFilterEngine::from_env(),
                 rtk_raw_mode: false,
                 rtk_raw_once: false,
+                passthrough_handler: None,
             })),
             disk_cleanup_auto: DiskCleanupAutoTracker::default(),
         }
@@ -154,6 +158,7 @@ impl ToolRegistry {
                 rtk_filter: RtkFilterEngine::from_env(),
                 rtk_raw_mode: false,
                 rtk_raw_once: false,
+                passthrough_handler: None,
             })),
             disk_cleanup_auto: DiskCleanupAutoTracker::default(),
         }
@@ -252,6 +257,12 @@ impl ToolRegistry {
         );
     }
 
+    /// Let `handler`'s dispatch pass its result through: no raw-mode use,
+    /// rewriting or filtering. Only the MCP gateway uses this.
+    pub(crate) fn set_passthrough_handler(&self, handler: &Arc<dyn ToolHandler>) {
+        self.inner.lock().unwrap().passthrough_handler = Some(handler_address(handler));
+    }
+
     /// Deregister a tool by name.
     ///
     /// Returns `true` if the tool was present and removed.
@@ -310,7 +321,7 @@ impl ToolRegistry {
         ) = {
             let mut inner = self.inner.lock().unwrap();
             let decision = evaluate_dispatch_policy(&inner.policy, name, &params);
-            let passthrough = passes_through(inner.tools.get(name));
+            let passthrough = passes_through(&inner, name);
             let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
             if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
@@ -389,7 +400,7 @@ impl ToolRegistry {
             rtk_filter,
         ) = {
             let mut inner = self.inner.lock().unwrap();
-            let passthrough = passes_through(inner.tools.get(name));
+            let passthrough = passes_through(&inner, name);
             let raw_bypassed = passthrough || inner.rtk_raw_mode || inner.rtk_raw_once;
             if inner.rtk_raw_once && !passthrough {
                 inner.rtk_raw_once = false;
@@ -603,14 +614,22 @@ impl ToolRegistry {
     }
 }
 
-/// The MCP gateway's inner dispatch applies raw mode and output filtering for
-/// the tool it calls; applying them to the gateway's own call as well would
-/// spend a one-shot raw request before the inner tool could use it.
-fn passes_through(entry: Option<&ToolEntry>) -> bool {
-    entry.is_some_and(|entry| {
-        entry.name == crate::mcp_gateway::MCP_GATEWAY_TOOL
-            && entry.toolset == crate::mcp_gateway::MCP_GATEWAY_TOOLSET
+/// Whether `name` is the MCP gateway the crate registered. Its inner
+/// dispatch applies raw mode and output filtering for the tool it calls;
+/// applying them to the gateway's own call as well would spend a one-shot
+/// raw request before the inner tool could use it. Matched by handler, so
+/// another tool registered under the same name gets no pass-through.
+fn passes_through(inner: &ToolRegistryInner, name: &str) -> bool {
+    inner.passthrough_handler.is_some_and(|marked| {
+        inner
+            .tools
+            .get(name)
+            .is_some_and(|entry| handler_address(&entry.handler) == marked)
     })
+}
+
+fn handler_address(handler: &Arc<dyn ToolHandler>) -> usize {
+    Arc::as_ptr(handler).cast::<()>() as usize
 }
 
 fn evaluate_dispatch_policy(
