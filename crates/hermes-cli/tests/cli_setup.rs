@@ -43,6 +43,7 @@ async fn run_setup(
     home: &Path,
     catalogue_url: &str,
     mode: &str,
+    model_choice: &str,
     answers: &str,
     tool_to_enable: Option<&str>,
 ) -> String {
@@ -62,7 +63,7 @@ async fn run_setup(
 
         select(&mut menu, &mut input, mode).await;
         select(&mut menu, &mut input, "Ollama Local").await;
-        select(&mut menu, &mut input, "ollama-local:fixture-catalog-model").await;
+        select(&mut menu, &mut input, model_choice).await;
         input
             .write_all(answers.as_bytes())
             .await
@@ -114,6 +115,7 @@ async fn setup_discovers_a_local_model_and_preserves_existing_configuration() {
         sandbox.path(),
         &catalogue_url,
         "Full setup",
+        "ollama-local:fixture-catalog-model",
         "Fixture persona\nn\n",
         None,
     )
@@ -137,7 +139,15 @@ async fn setup_discovers_a_local_model_and_preserves_existing_configuration() {
     let original = std::fs::read(&config_path).expect("original configuration");
     let soul_path = home.join("SOUL.md");
     std::fs::write(&soul_path, "# Fixture prompt\n").expect("personalised prompt");
-    let quick = run_setup(sandbox.path(), &catalogue_url, "Quick setup", "n\n", None).await;
+    let quick = run_setup(
+        sandbox.path(),
+        &catalogue_url,
+        "Quick setup",
+        "ollama-local:fixture-catalog-model",
+        "n\n",
+        None,
+    )
+    .await;
     assert!(quick.contains("Keeping existing config.yaml"), "{quick}");
     assert_eq!(
         std::fs::read(&config_path).expect("preserved configuration"),
@@ -151,6 +161,45 @@ async fn setup_discovers_a_local_model_and_preserves_existing_configuration() {
         std::fs::read_to_string(soul_path).expect("preserved prompt"),
         "# Fixture prompt\n"
     );
+}
+
+#[tokio::test]
+async fn setup_saves_a_custom_model_when_the_local_catalogue_is_unavailable() {
+    let catalogue = MockServer::start().await;
+    Mock::given(method("GET"))
+        .and(path("/v1/models"))
+        .respond_with(ResponseTemplate::new(503))
+        .expect(1)
+        .mount(&catalogue)
+        .await;
+    let sandbox = tempfile::tempdir().expect("temporary CLI home");
+
+    let result = run_setup(
+        sandbox.path(),
+        &format!("{}/v1", catalogue.uri()),
+        "Full setup",
+        "Custom model ID",
+        "  fixture-model  \nfixture-personality\nn\n",
+        None,
+    )
+    .await;
+    assert!(
+        result.contains("personalities/fixture-personality.md"),
+        "{result}"
+    );
+    let home = sandbox.path().join("hermes");
+    let config = hermes_config::load_user_config_file(&home.join("config.yaml"))
+        .expect("generated configuration");
+    assert_eq!(config.model.as_deref(), Some("ollama-local:fixture-model"));
+    assert_eq!(config.personality.as_deref(), Some("fixture-personality"));
+    let profile =
+        std::fs::read_to_string(home.join("profiles/default.yaml")).expect("generated profile");
+    let profile: serde_yaml::Value = serde_yaml::from_str(&profile).expect("parse profile");
+    assert_eq!(
+        profile["model"].as_str(),
+        Some("ollama-local:fixture-model")
+    );
+    assert_eq!(profile["personality"].as_str(), Some("fixture-personality"));
 }
 
 #[tokio::test]
@@ -252,6 +301,7 @@ async fn full_setup_changes_known_tools_and_preserves_custom_keys() {
         sandbox.path(),
         &format!("{}/v1", catalogue.uri()),
         "Full setup",
+        "ollama-local:fixture-catalog-model",
         "\nn\n\n\n",
         Some("todo disabled "),
     )
