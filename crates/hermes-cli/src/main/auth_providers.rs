@@ -984,11 +984,9 @@ fn qqbot_join_https_url(host: &str, path: &str) -> String {
 
 async fn qqbot_create_bind_task(
     client: &reqwest::Client,
-    portal_host: &str,
-    create_path: &str,
+    url: &str,
     key_base64: &str,
 ) -> Result<String, AgentError> {
-    let url = qqbot_join_https_url(portal_host, create_path);
     let resp = client
         .post(url)
         .headers(qqbot_api_headers())
@@ -1026,11 +1024,9 @@ async fn qqbot_create_bind_task(
 
 async fn qqbot_poll_bind_result(
     client: &reqwest::Client,
-    portal_host: &str,
-    poll_path: &str,
+    url: &str,
     task_id: &str,
 ) -> Result<(i64, String, String, String), AgentError> {
-    let url = qqbot_join_https_url(portal_host, poll_path);
     let resp = client
         .post(url)
         .headers(qqbot_api_headers())
@@ -1078,12 +1074,14 @@ async fn qqbot_qr_login_flow(
         .timeout(std::time::Duration::from_secs(10))
         .build()
         .map_err(|e| AgentError::Io(format!("qqbot onboard client init failed: {e}")))?;
+    let create_url = qqbot_join_https_url(portal_host, create_path);
+    let poll_url = qqbot_join_https_url(portal_host, poll_path);
 
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_seconds);
 
     for refresh_idx in 0..=MAX_REFRESHES {
         let bind_key = qqbot_generate_bind_key_base64();
-        let task_id = qqbot_create_bind_task(&client, portal_host, create_path, &bind_key).await?;
+        let task_id = qqbot_create_bind_task(&client, &create_url, &bind_key).await?;
         let connect_url = qqbot_connect_url(&task_id);
 
         println!();
@@ -1100,7 +1098,7 @@ async fn qqbot_qr_login_flow(
                 )));
             }
             if let Ok((status, app_id, encrypted_secret, user_openid)) =
-                qqbot_poll_bind_result(&client, portal_host, poll_path, &task_id).await
+                qqbot_poll_bind_result(&client, &poll_url, &task_id).await
             {
                 match status {
                     2 => {

@@ -302,6 +302,105 @@ fn qqbot_url_helpers() {
 }
 
 #[tokio::test]
+async fn qqbot_binding_requests_parse_created_and_confirmed_tasks() {
+    use wiremock::matchers::{body_json, method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    Mock::given(method("POST"))
+        .and(path("/create"))
+        .and(body_json(serde_json::json!({"key": "fixture-bind-value"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "retcode": 0, "data": {"task_id": "fixture-task"}
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(path("/poll"))
+        .and(body_json(serde_json::json!({"task_id": "fixture-task"})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "retcode": "0",
+            "data": {
+                "status": "2",
+                "app_id": "fixture-app",
+                "encrypt_secret": "opaque-fixture-value",
+                "user_openid": "fixture-user"
+            }
+        })))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let origin = server.uri();
+    let task = qqbot_create_bind_task(&client, &format!("{origin}/create"), "fixture-bind-value")
+        .await
+        .unwrap();
+    assert_eq!(task, "fixture-task");
+    let (status, app_id, sealed_value, user) =
+        qqbot_poll_bind_result(&client, &format!("{origin}/poll"), &task)
+            .await
+            .unwrap();
+    assert_eq!(status, 2);
+    assert_eq!(app_id, "fixture-app");
+    assert_eq!(sealed_value, "opaque-fixture-value");
+    assert_eq!(user, "fixture-user");
+    server.verify().await;
+}
+
+#[tokio::test]
+async fn qqbot_binding_requests_report_service_and_response_errors() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let client = reqwest::Client::builder().no_proxy().build().unwrap();
+    for (route, response, detail) in [
+        (
+            "/unavailable",
+            ResponseTemplate::new(503).set_body_json(serde_json::json!({"msg": "try later"})),
+            "failed (503 Service Unavailable)",
+        ),
+        (
+            "/incomplete",
+            ResponseTemplate::new(200).set_body_string("{"),
+            "parse failed",
+        ),
+        (
+            "/busy",
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({"retcode": 7, "message": "try later"})),
+            "retcode=7: try later",
+        ),
+    ] {
+        Mock::given(method("POST"))
+            .and(path(route))
+            .respond_with(response)
+            .expect(2)
+            .mount(&server)
+            .await;
+        let url = format!("{}{route}", server.uri());
+        let err = qqbot_create_bind_task(&client, &url, "fixture-bind-value")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&format!("create_bind_task {detail}")),
+            "{err}"
+        );
+        let err = qqbot_poll_bind_result(&client, &url, "fixture-task")
+            .await
+            .unwrap_err();
+        assert!(
+            err.to_string()
+                .contains(&format!("poll_bind_result {detail}")),
+            "{err}"
+        );
+    }
+    server.verify().await;
+}
+
+#[tokio::test]
 async fn qqbot_app_id_and_secret_from_existing() {
     let app = qqbot_app_id_from_env_or_prompt(Some("  app-123  "))
         .await
