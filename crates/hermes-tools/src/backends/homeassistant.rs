@@ -239,6 +239,74 @@ impl HomeAssistantBackend for HaRestBackend {
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn loopback_discovery_filters_states_and_services_without_changing_them() {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let mut backend = HaRestBackend::new(format!("{}/", server.uri()), "ha-fixture".into());
+        backend.client = Client::builder()
+            .no_proxy()
+            .redirect(reqwest::redirect::Policy::none())
+            .timeout(std::time::Duration::from_secs(5))
+            .build()
+            .unwrap();
+        let temperature = json!({
+            "entity_id": "sensor.temperature",
+            "state": "21",
+            "attributes": {"friendly_name": "Temperature", "unit_of_measurement": "°C"},
+        });
+        Mock::given(method("GET"))
+            .and(path("/api/states"))
+            .and(header("authorization", "Bearer ha-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                temperature.clone(),
+                {"entity_id": "light.fixture", "state": "off"},
+            ])))
+            .expect(2)
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/api/states/sensor.temperature"))
+            .and(header("authorization", "Bearer ha-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(&temperature))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let sensor_services = json!({"domain": "sensor", "services": {"refresh": {}}});
+        Mock::given(method("GET"))
+            .and(path("/api/services"))
+            .and(header("authorization", "Bearer ha-fixture"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!([
+                sensor_services.clone(),
+                {"domain": "light", "services": {"inspect": {}}},
+            ])))
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let all: Value = serde_json::from_str(&backend.list_entities(None).await.unwrap()).unwrap();
+        assert_eq!(all["total"], 2);
+        assert_eq!(all["entities"][1]["friendly_name"], "");
+        let sensors: Value =
+            serde_json::from_str(&backend.list_entities(Some("sensor")).await.unwrap()).unwrap();
+        assert_eq!(
+            sensors,
+            json!({
+                "entities": [{"entity_id": "sensor.temperature", "state": "21", "friendly_name": "Temperature"}],
+                "total": 1,
+            })
+        );
+        let detail = backend.get_state("sensor.temperature").await.unwrap();
+        assert_eq!(serde_json::from_str::<Value>(&detail).unwrap(), temperature);
+        let services = backend.list_services(Some("sensor")).await.unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&services).unwrap(),
+            json!({"services": [sensor_services], "total": 1})
+        );
+    }
+
     #[test]
     fn parse_entity_id_accepts_valid_ids() {
         let (domain, object_id) = parse_entity_id("light.living_room").unwrap();
