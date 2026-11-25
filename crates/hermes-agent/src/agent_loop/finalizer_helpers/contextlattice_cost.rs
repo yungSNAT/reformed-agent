@@ -256,6 +256,40 @@ fn estimate_usage_cost_usd(usage: &UsageStats, model: &str, config: &AgentConfig
     Some(cost / 1_000_000.0)
 }
 
+#[cfg(test)]
+mod non_anthropic_cache_pricing_tests {
+    use super::*;
+
+    #[test]
+    fn openai_cache_reads_cost_the_listed_cached_price() {
+        // gpt-4o: $2.50 input, $1.25 cached input, $10 output per million.
+        let usage = UsageStats {
+            prompt_tokens: 100_000,
+            completion_tokens: 1_000,
+            cache_read_tokens: 90_000,
+            ..UsageStats::default()
+        };
+        let cost = estimate_usage_cost_usd(&usage, "openai:gpt-4o", &AgentConfig::default());
+        assert!((cost.unwrap() - 0.1475).abs() < 1e-9, "{cost:?}");
+    }
+
+    #[test]
+    fn unlisted_cache_prices_charge_full_input() {
+        let cfg = AgentConfig {
+            prompt_cost_per_million_usd: Some(1.0),
+            completion_cost_per_million_usd: Some(2.0),
+            ..AgentConfig::default()
+        };
+        let usage = UsageStats {
+            prompt_tokens: 1_000_000,
+            cache_read_tokens: 900_000,
+            ..UsageStats::default()
+        };
+        let cost = estimate_usage_cost_usd(&usage, "some-local-model", &cfg);
+        assert!((cost.unwrap() - 1.0).abs() < 1e-9, "{cost:?}");
+    }
+}
+
 /// Merge two UsageStats, summing token counts and keeping the latest cost estimate.
 fn merge_usage(existing: Option<UsageStats>, new: &UsageStats) -> UsageStats {
     match existing {
