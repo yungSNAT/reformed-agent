@@ -728,6 +728,38 @@ mod tests {
     }
 
     #[test]
+    fn billing_routes_preserve_subscription_and_catalogue_pricing() {
+        let model = "fixture-family/fixture-model";
+        let route = resolve_billing_route(model, Some(" OpenAI-Codex "), None);
+        assert_eq!(route.billing_mode, BillingMode::SubscriptionIncluded);
+        assert_eq!(route.model, model);
+        assert!(has_known_pricing(model, Some("openai-codex"), None));
+        assert_eq!(get_pricing(model, Some("openai-codex"), None), (0.0, 0.0));
+
+        let relay = " HTTPS://OPENROUTER.AI/API/V1 ";
+        let route = resolve_billing_route(model, None, Some(relay));
+        assert_eq!(route.billing_mode, BillingMode::ProviderModelsApi);
+        assert_eq!(route.model, model);
+        assert_eq!(route.base_url, "https://openrouter.ai/api/v1");
+        assert!(get_pricing_entry(model, None, Some(relay)).is_none());
+        assert_eq!(get_pricing(model, None, Some(relay)), (0.0, 0.0));
+    }
+
+    #[test]
+    fn compact_usage_labels_handle_each_unit_transition() {
+        assert_eq!(format_token_count_compact(1_000_000_000), "1.0B");
+        for (seconds, label) in [
+            (59.0, "59s"),
+            (60.0, "1m"),
+            (3600.0, "1h"),
+            (3660.0, "1h 1m"),
+            (86400.0, "1.0d"),
+        ] {
+            assert_eq!(format_duration_compact(seconds), label);
+        }
+    }
+
+    #[test]
     fn codex_responses_keep_cached_tokens_separate_from_uncached_input() {
         let raw = serde_json::json!({
             "input_tokens": 100,
@@ -871,16 +903,19 @@ mod tests {
 
     #[test]
     fn test_cache_usage_without_matching_rate_is_unknown() {
-        let usage = CanonicalUsage {
-            input_tokens: 1000,
-            output_tokens: 500,
-            cache_read_tokens: 100,
-            request_count: 1,
-            ..Default::default()
-        };
-        let result = calculate_cost("gemini-2.5-pro", &usage, Some("google"), None);
-        assert_eq!(result.status, CostStatus::Unknown);
-        assert_eq!(result.amount_usd, None);
+        for (cache_read_tokens, cache_write_tokens) in [(100, 0), (0, 100)] {
+            let usage = CanonicalUsage {
+                input_tokens: 1000,
+                output_tokens: 500,
+                cache_read_tokens,
+                cache_write_tokens,
+                request_count: 1,
+                ..Default::default()
+            };
+            let result = calculate_cost("gemini-2.5-pro", &usage, Some("google"), None);
+            assert_eq!(result.status, CostStatus::Unknown);
+            assert_eq!(result.amount_usd, None);
+        }
     }
 
     #[test]
