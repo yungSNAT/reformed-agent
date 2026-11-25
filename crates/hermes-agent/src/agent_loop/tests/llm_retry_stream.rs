@@ -1780,11 +1780,12 @@
     }
 
     #[tokio::test]
-    async fn a_call_that_falls_back_from_its_route_asks_the_primary_for_its_own_model() {
+    async fn primary_model_is_preserved_when_falling_back_or_retrying_without_tools() {
         use futures::stream::BoxStream;
 
         struct EchoProvider {
-            seen_models: Arc<std::sync::Mutex<Vec<String>>>,
+            seen_calls: std::sync::Mutex<Vec<(String, usize)>>,
+            retry_error: Option<&'static str>,
         }
 
         #[async_trait::async_trait]
@@ -1792,17 +1793,23 @@
             async fn chat_completion(
                 &self,
                 _messages: &[Message],
-                _tools: &[ToolSchema],
+                tools: &[ToolSchema],
                 _max_tokens: Option<u32>,
                 _temperature: Option<f64>,
                 model: Option<&str>,
                 _extra_body: Option<&serde_json::Value>,
             ) -> Result<hermes_core::LlmResponse, AgentError> {
                 let model = model.unwrap_or_default().to_string();
-                self.seen_models
+                self.seen_calls
                     .lock()
-                    .expect("seen model lock")
-                    .push(model.clone());
+                    .expect("seen calls lock")
+                    .push((model.clone(), tools.len()));
+                if !tools.is_empty() {
+                    return Err(AgentError::LlmApi("Invalid tools schema".into()));
+                }
+                if let Some(error) = self.retry_error {
+                    return Err(AgentError::LlmApi(error.into()));
+                }
                 // A server labels its reply with the model it was asked for.
                 Ok(hermes_core::LlmResponse {
                     message: Message::assistant("ok"),
@@ -1825,29 +1832,52 @@
             }
         }
 
-        let seen_models = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
-        let provider = Arc::new(EchoProvider {
-            seen_models: seen_models.clone(),
-        });
-        let cfg = AgentConfig {
-            model: "primary-model".to_string(),
-            ..AgentConfig::default()
-        };
-        let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider);
-        // A provider with no key and no local endpoint: the route cannot be built.
-        let mut route = agent.turn_route_cost_guard("routed-model".to_string());
-        route.provider = Some("no-such-provider-for-this-test".to_string());
-        let mut ctx = ContextManager::default_budget();
-        ctx.add_message(Message::system("system"));
-        ctx.add_message(Message::user("run"));
+        let tool = ToolSchema::new(
+            "fixture",
+            "Fixture tool",
+            hermes_core::JsonSchema::new("object"),
+        );
+        for (routed, tools, retry_error, expected_tool_counts) in [
+            (true, &[][..], None, &[0][..]),
+            (true, std::slice::from_ref(&tool), None, &[1, 0]),
+            (false, std::slice::from_ref(&tool), Some("Invalid request"), &[1, 0]),
+        ] {
+            let provider = Arc::new(EchoProvider {
+                seen_calls: std::sync::Mutex::new(Vec::new()),
+                retry_error,
+            });
+            let mut cfg = AgentConfig {
+                model: "primary-model".to_string(),
+                ..AgentConfig::default()
+            };
+            let _home = isolate_route_learning_home(&mut cfg);
+            let agent = AgentLoop::new(cfg, Arc::new(ToolRegistry::new()), provider.clone());
+            let route = routed.then(|| {
+                let mut route = agent.turn_route_cost_guard("routed-model".to_string());
+                route.provider = Some("no-such-provider-for-this-test".to_string());
+                route
+            });
+            let mut ctx = ContextManager::default_budget();
+            ctx.add_message(Message::system("system"));
+            ctx.add_message(Message::user("run"));
 
-        let resp = agent
-            .call_llm_with_retry_inner(&ctx, &[], Some(&route), None)
-            .await
-            .expect("the primary should answer");
-
-        assert_eq!(*seen_models.lock().expect("seen model lock"), ["primary-model"]);
-        assert_eq!(resp.model, "primary-model");
+            let result = agent
+                .call_llm_with_retry_inner(&ctx, tools, route.as_ref(), None)
+                .await;
+            if let Some(error) = retry_error {
+                assert!(
+                    matches!(result, Err(AgentError::LlmApi(message)) if message.contains(error))
+                );
+            } else {
+                assert_eq!(result.expect("the primary should answer").model, "primary-model");
+            }
+            let calls = provider.seen_calls.lock().expect("seen calls lock");
+            assert!(calls.iter().all(|(model, _)| model == "primary-model"));
+            assert_eq!(
+                calls.iter().map(|(_, count)| *count).collect::<Vec<_>>(),
+                expected_tool_counts
+            );
+        }
     }
 
     #[tokio::test]
