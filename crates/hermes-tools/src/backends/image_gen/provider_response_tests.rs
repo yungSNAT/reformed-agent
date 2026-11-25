@@ -159,6 +159,42 @@ async fn compatible_image_failures_leave_the_cache_untouched() {
 }
 
 #[tokio::test]
+async fn compatible_image_diagnostics_distinguish_timeout_and_connection_failure() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("compatible-cache");
+    let mut backend = compatible_backend(&server, cache.clone());
+    backend.client = Client::builder()
+        .no_proxy()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .unwrap();
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_delay(Duration::from_secs(3)))
+        .expect(1)
+        .mount(&server)
+        .await;
+    let error = backend.generate(request("Slow fixture")).await.unwrap_err();
+    assert!(matches!(
+        error,
+        ToolError::ExecutionFailed(detail) if detail.contains("image generation timed out")
+    ));
+    server.verify().await;
+
+    backend.config.base_url = "http://127.0.0.1:0".into();
+    let error = backend
+        .generate(request("Unavailable fixture"))
+        .await
+        .unwrap_err();
+    assert!(matches!(
+        error,
+        ToolError::ExecutionFailed(detail) if detail.contains("image generation connection error")
+    ));
+    assert!(!cache.exists());
+}
+
+#[tokio::test]
 async fn compatible_image_edits_forward_the_reference_and_cache_the_download() {
     let server = MockServer::start().await;
     let directory = tempfile::tempdir().unwrap();
@@ -382,6 +418,49 @@ async fn krea_poll_reports_terminal_jobs_and_keeps_an_unavailable_image_url() {
     server.verify().await;
     assert_eq!(server.received_requests().await.unwrap().len(), 10);
     assert!(!cache.exists() || cache.read_dir().unwrap().next().is_none());
+}
+
+#[tokio::test]
+async fn krea_poll_reports_last_status_when_its_deadline_expires() {
+    let server = MockServer::start().await;
+    let directory = tempfile::tempdir().unwrap();
+    let cache = directory.path().join("krea-cache");
+    let mut backend = krea_backend(
+        KreaTransport::Direct {
+            api_key: "local-krea-fixture".into(),
+            base_url: server.uri(),
+        },
+        cache.clone(),
+    );
+    backend.config.poll_timeout = Duration::ZERO;
+    for (job, reply, diagnostic) in [
+        (
+            "waiting-fixture",
+            ResponseTemplate::new(200).set_body_json(json!({"status": "waiting"})),
+            "last status: waiting",
+        ),
+        (
+            "unknown-fixture",
+            ResponseTemplate::new(200).set_body_json(json!({})),
+            "last status: unknown",
+        ),
+        (
+            "bad-json-fixture",
+            ResponseTemplate::new(200).set_body_string("invalid fixture JSON"),
+            "poll returned invalid JSON",
+        ),
+    ] {
+        Mock::given(method("GET"))
+            .and(path(format!("/jobs/{job}")))
+            .respond_with(reply)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let error = backend.poll_krea_job(job).await.unwrap_err();
+        assert!(matches!(error, ToolError::ExecutionFailed(detail) if detail.contains(diagnostic)));
+    }
+    server.verify().await;
+    assert!(!cache.exists());
 }
 
 #[tokio::test]
