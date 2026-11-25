@@ -862,6 +862,9 @@
     enum StreamRetryScenario {
         CostLimit,
         UnknownTool,
+        SemanticRetry,
+        EmptyStop,
+        PartialInterrupt,
         RecoverOnSecondAttempt,
         AlwaysFailMidToolCall,
         TextOnlyDrop,
@@ -874,6 +877,8 @@
     struct StreamRetryProvider {
         scenario: StreamRetryScenario,
         calls: std::sync::Mutex<u32>,
+        semantic_retries: std::sync::Mutex<u32>,
+        pending_stream_polled: Arc<tokio::sync::Notify>,
     }
 
     impl StreamRetryProvider {
@@ -881,6 +886,8 @@
             Self {
                 scenario,
                 calls: std::sync::Mutex::new(0),
+                semantic_retries: std::sync::Mutex::new(0),
+                pending_stream_polled: Arc::new(tokio::sync::Notify::new()),
             }
         }
     }
@@ -889,14 +896,38 @@
     impl LlmProvider for StreamRetryProvider {
         async fn chat_completion(
             &self,
-            _messages: &[Message],
+            messages: &[Message],
             _tools: &[ToolSchema],
             _max_tokens: Option<u32>,
             _temperature: Option<f64>,
             _model: Option<&str>,
             _extra_body: Option<&serde_json::Value>,
         ) -> Result<hermes_core::LlmResponse, AgentError> {
-            Err(AgentError::LlmApi("unused".to_string()))
+            if !matches!(self.scenario, StreamRetryScenario::SemanticRetry) {
+                return Err(AgentError::LlmApi("unused".to_string()));
+            }
+            assert!(messages.iter().any(|message| {
+                message.role == MessageRole::Assistant
+                    && message.reasoning_content.as_deref() == Some("Fixture draft reasoning")
+            }));
+            let mut retries = self.semantic_retries.lock().unwrap();
+            *retries += 1;
+            let (text, finish_reason, prompt_tokens, completion_tokens) = if *retries == 1 {
+                ("", "length", 4, 2)
+            } else {
+                ("Recovered answer", "stop", 16, 3)
+            };
+            Ok(hermes_core::LlmResponse {
+                message: Message::assistant(text),
+                usage: Some(hermes_core::UsageStats {
+                    prompt_tokens,
+                    completion_tokens,
+                    total_tokens: prompt_tokens + completion_tokens,
+                    ..Default::default()
+                }),
+                model: "fixture-model".into(),
+                finish_reason: Some(finish_reason.into()),
+            })
         }
 
         fn chat_completion_stream(
@@ -935,6 +966,34 @@
                     Ok(stream_chunk_tool_args(0, "{}")),
                     Ok(stream_chunk_finish("tool_calls")),
                 ],
+                StreamRetryScenario::SemanticRetry => vec![
+                    Ok(StreamChunk {
+                        delta: Some(hermes_core::StreamDelta {
+                            content: None,
+                            tool_calls: None,
+                            extra: Some(serde_json::json!({"thinking":"Fixture draft reasoning"})),
+                        }),
+                        usage: Some(hermes_core::UsageStats {
+                            prompt_tokens: 1,
+                            completion_tokens: 1,
+                            total_tokens: 2,
+                            ..Default::default()
+                        }),
+                        finish_reason: None,
+                    }),
+                    Ok(stream_chunk_finish("length")),
+                ],
+                StreamRetryScenario::EmptyStop => vec![Ok(stream_chunk_finish("stop"))],
+                StreamRetryScenario::PartialInterrupt => vec![Ok(StreamChunk {
+                    usage: Some(hermes_core::UsageStats {
+                        prompt_tokens: 2,
+                        completion_tokens: 1,
+                        total_tokens: 3,
+                        estimated_cost: Some(0.125),
+                        ..Default::default()
+                    }),
+                    ..stream_chunk_content("Partial answer")
+                })],
                 StreamRetryScenario::SlowStream => vec![
                     Ok(stream_chunk_content("first ")),
                     Ok(stream_chunk_content("second ")),
@@ -1002,6 +1061,15 @@
             };
 
             let events = futures::stream::iter(events);
+            if matches!(self.scenario, StreamRetryScenario::PartialInterrupt) {
+                let pending_stream_polled = Arc::clone(&self.pending_stream_polled);
+                return events
+                    .chain(futures::stream::poll_fn(move |_| {
+                        pending_stream_polled.notify_one();
+                        std::task::Poll::Pending
+                    }))
+                    .boxed();
+            }
             if matches!(self.scenario, StreamRetryScenario::SlowStream | StreamRetryScenario::SlowRetry) {
                 return events
                     .then(|event| async {
@@ -1012,6 +1080,117 @@
             }
             events.boxed()
         }
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_retries_keep_reasoning_and_accumulate_all_usage() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            thinking_prefill_max_retries: 1,
+            empty_content_max_retries: 1,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::SemanticRetry));
+        let notices = Arc::new(Mutex::new(Vec::new()));
+        let captured = Arc::clone(&notices);
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone())
+            .with_callbacks(AgentCallbacks {
+                status_callback: Some(Arc::new(move |kind, message| {
+                    if kind == "lifecycle" && message.contains("retrying") {
+                        captured.lock().unwrap().push(message.to_owned());
+                    }
+                })),
+                ..Default::default()
+            });
+        let result = agent
+            .run_stream(vec![Message::user("Show the answer")], None, Some(Box::new(|_| {})))
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+        assert_eq!(*provider.semantic_retries.lock().unwrap(), 2);
+        let usage = result.usage.unwrap();
+        assert_eq!((usage.prompt_tokens, usage.completion_tokens, usage.total_tokens), (21, 6, 27));
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some("Recovered answer")
+        );
+        let notices = notices.lock().unwrap();
+        assert_eq!(notices.len(), 2);
+        assert!(notices[0].starts_with("Reasoning-only response"));
+        assert!(notices[1].starts_with("Empty assistant response"));
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_empty_stop_finishes_without_retry() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            empty_content_max_retries: 2,
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::EmptyStop));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let result = agent
+            .run_stream(vec![Message::user("Use an explicit stop")], None, Some(Box::new(|_| {})))
+            .await
+            .unwrap();
+        assert!(result.finished_naturally);
+        assert_eq!(result.total_turns, 1);
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+    }
+
+    #[tokio::test]
+    async fn stream_semantic_interrupt_returns_partial_text_and_usage() {
+        let mut config = AgentConfig {
+            model: "openai:fixture-model".into(),
+            skip_memory: true,
+            skip_context_files: true,
+            ..AgentConfig::default()
+        };
+        let _home = isolate_route_learning_home(&mut config);
+        let provider = Arc::new(StreamRetryProvider::new(StreamRetryScenario::PartialInterrupt));
+        let agent = AgentLoop::new(config, Arc::new(ToolRegistry::new()), provider.clone());
+        let interrupt = agent.interrupt.clone();
+        let pending_stream_polled = Arc::clone(&provider.pending_stream_polled);
+        let cancellation = tokio::spawn(async move {
+            pending_stream_polled.notified().await;
+            interrupt.interrupt(None);
+        });
+        let delivered = Arc::new(Mutex::new(String::new()));
+        let stream_text = Arc::clone(&delivered);
+        let result = tokio::time::timeout(
+            Duration::from_secs(3),
+            agent.run_stream(
+                vec![Message::user("Start a response")],
+                None,
+                Some(Box::new(move |chunk| {
+                    if let Some(text) = chunk.delta.and_then(|delta| delta.content) {
+                        stream_text.lock().unwrap().push_str(&text);
+                    }
+                })),
+            ),
+        )
+        .await
+        .expect("interrupt ends the stalled fixture stream")
+        .unwrap();
+        assert!(result.interrupted);
+        assert!(!result.finished_naturally);
+        cancellation.await.unwrap();
+        assert_eq!(*delivered.lock().unwrap(), "Partial answer");
+        assert_eq!(*provider.calls.lock().unwrap(), 1);
+        assert_eq!(result.usage.unwrap().total_tokens, 3);
+        assert_eq!(result.session_cost_usd, Some(0.125));
+        assert_eq!(
+            result.messages.last().and_then(|message| message.content.as_deref()),
+            Some("Partial answer")
+        );
     }
 
     #[tokio::test]
