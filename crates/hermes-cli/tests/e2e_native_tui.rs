@@ -3,6 +3,7 @@
 #[path = "support/isolated_hermes.rs"]
 mod support;
 
+use serde_json::{json, Value};
 use std::fs::File;
 use std::io::{self, Read, Write};
 use std::os::fd::{AsRawFd, FromRawFd};
@@ -10,6 +11,8 @@ use std::path::Path;
 use std::time::Duration;
 use tokio::process::Child;
 use tokio::time::{sleep, timeout};
+use wiremock::matchers::{body_partial_json, method, path};
+use wiremock::{Mock, MockServer, ResponseTemplate};
 
 fn terminal_flags(terminal: &File) -> libc::tcflag_t {
     let mut attributes = std::mem::MaybeUninit::<libc::termios>::uninit();
@@ -23,7 +26,11 @@ fn terminal_flags(terminal: &File) -> libc::tcflag_t {
     unsafe { attributes.assume_init().c_lflag }
 }
 
-fn start_in_pty(sandbox: &Path, args: &[&str]) -> (Child, File, libc::tcflag_t) {
+fn start_in_pty(
+    sandbox: &Path,
+    args: &[&str],
+    allow_loopback: bool,
+) -> (Child, File, libc::tcflag_t) {
     let mut master_fd = -1;
     let mut slave_fd = -1;
     let dimensions = libc::winsize {
@@ -75,6 +82,9 @@ fn start_in_pty(sandbox: &Path, args: &[&str]) -> (Child, File, libc::tcflag_t) 
         .stdin(slave.try_clone().unwrap())
         .stdout(slave.try_clone().unwrap())
         .stderr(slave);
+    if allow_loopback {
+        command.env("NO_PROXY", "127.0.0.1");
+    }
     // The child attaches only its own PTY slave so crossterm can open /dev/tty.
     unsafe {
         command.pre_exec(|| {
@@ -132,8 +142,11 @@ async fn read_until(terminal: &mut File, expected: &[u8]) -> Vec<u8> {
 #[tokio::test]
 async fn native_tui_handles_pasted_commands_and_restores_the_terminal_on_interrupt() {
     let sandbox = tempfile::tempdir().unwrap();
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &["--ignore-user-config", "--ignore-rules"],
+        false,
+    );
     read_until(&mut terminal, b"\x1b[?1049h").await;
     terminal
         .write_all(b"\x1b[200~/objective Check the synthetic fixture\x1b[201~")
@@ -173,8 +186,11 @@ async fn native_tui_handles_pasted_commands_and_restores_the_terminal_on_interru
 #[tokio::test]
 async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer() {
     let sandbox = tempfile::tempdir().unwrap();
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &["--ignore-user-config", "--ignore-rules"],
+        false,
+    );
     read_until(&mut terminal, b"\x1b[?1049h").await;
     terminal
         .write_all(b"\x1b[200~/timestamps on\x1b[201~\r")
@@ -220,8 +236,11 @@ async fn native_tui_persists_timestamps_and_inserts_the_selected_question_answer
 #[tokio::test]
 async fn native_tui_filters_pickers_and_applies_skin_and_personality() {
     let sandbox = tempfile::tempdir().unwrap();
-    let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["--ignore-user-config", "--ignore-rules"]);
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &["--ignore-user-config", "--ignore-rules"],
+        false,
+    );
     read_until(&mut terminal, b"\x1b[?1049h").await;
 
     terminal
@@ -262,6 +281,156 @@ async fn native_tui_filters_pickers_and_applies_skin_and_personality() {
 }
 
 #[tokio::test]
+async fn native_tui_streams_a_loopback_turn_and_persists_the_full_reply() {
+    let provider = MockServer::start().await;
+    let prompt = "Read back the synthetic fixture";
+    let reply = "QuartzEcho from the loopback fixture.";
+    let mut stream = String::new();
+    for choice in [
+        json!({"index": 0, "delta": {"role": "assistant", "content": "QuartzEcho"}}),
+        json!({"index": 0, "delta": {"content": " from the loopback fixture."}}),
+        json!({"index": 0, "delta": {}, "finish_reason": "stop"}),
+    ] {
+        let chunk = json!({
+            "id": "fixture-stream", "object": "chat.completion.chunk",
+            "created": 0, "model": "deterministic", "choices": [choice]
+        });
+        stream.push_str(&format!("data: {chunk}\n\n"));
+    }
+    stream.push_str("data: [DONE]\n\n");
+    Mock::given(method("POST"))
+        .and(path("/chat/completions"))
+        .and(body_partial_json(
+            json!({"model": "deterministic", "stream": true}),
+        ))
+        .respond_with(ResponseTemplate::new(200).set_body_raw(stream, "text/event-stream"))
+        .expect(1)
+        .mount(&provider)
+        .await;
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let home = sandbox.path().join("hermes");
+    std::fs::create_dir(&home).unwrap();
+    std::fs::write(
+        home.join("config.yaml"),
+        format!(
+            r#"model: local-test:deterministic
+tools: []
+llm_providers:
+  local-test:
+    base_url: {}
+    api_key: local-provider-fixture
+    discover_models: false
+    models:
+      deterministic: {{}}
+streaming:
+  enabled: true
+"#,
+            provider.uri()
+        ),
+    )
+    .unwrap();
+
+    let (mut child, mut terminal, initial_flags) =
+        start_in_pty(sandbox.path(), &["--ignore-rules"], true);
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+    write!(terminal, "\x1b[200~{prompt}\x1b[201~\r").unwrap();
+    // Separate frames can insert cursor escapes between the two deltas.
+    let rendered = read_until(&mut terminal, b"from the loopback fixture.").await;
+    assert!(String::from_utf8_lossy(&rendered).contains("QuartzEcho"));
+
+    timeout(Duration::from_secs(12), async {
+        loop {
+            let saved = std::fs::read_dir(home.join("sessions"))
+                .into_iter()
+                .flatten()
+                .filter_map(Result::ok)
+                .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "json"))
+                .filter_map(|entry| std::fs::read(entry.path()).ok())
+                .filter_map(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
+                .any(|snapshot| {
+                    snapshot["messages"].as_array().is_some_and(|messages| {
+                        let conversation = messages.iter().filter_map(|message| {
+                            let role = message["role"].as_str()?;
+                            let content = message["content"].as_str()?;
+                            matches!(role, "User" | "Assistant").then_some((role, content))
+                        });
+                        conversation.eq([("User", prompt), ("Assistant", reply)])
+                    })
+                });
+            if saved {
+                break;
+            }
+            sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .expect("completed provider turn is saved in the isolated session");
+
+    let requests = provider.received_requests().await.unwrap();
+    assert_eq!(requests.len(), 1);
+    let request: Value = requests[0].body_json().unwrap();
+    let message = request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .rfind(|message| message["role"] == "user")
+        .expect("request has a user message");
+    assert_eq!(message["content"], prompt);
+
+    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
+async fn native_tui_plan_controls_set_depth_and_block_an_unsupported_task() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let (mut child, mut terminal, initial_flags) = start_in_pty(
+        sandbox.path(),
+        &[
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--model",
+            "openai:fixture-plan-no-reason",
+        ],
+        false,
+    );
+    read_until(&mut terminal, b"\x1b[?1049h").await;
+
+    for (command, expected) in [
+        ("/plan", "Planner controls"),
+        ("/plan caps", "mode=off"),
+        ("/plan depth list", "Task depth profiles"),
+        ("/plan depth thorough", "max_iterations=120"),
+        ("/plan depth exhaustive", "max_iterations=250"),
+        ("/plan depth clear", "max_iterations=50"),
+        ("/plan status", "queued=0"),
+        ("/plan caps enforce", "router set to"),
+        ("/plan Audit the fixture", "BLOCKED"),
+    ] {
+        write!(terminal, "\x1b[200~{command}\x1b[201~\r").unwrap();
+        read_until(&mut terminal, expected.as_bytes()).await;
+    }
+    let jobs = sandbox.path().join("hermes/background_jobs");
+    assert!(!jobs.exists() || std::fs::read_dir(jobs).unwrap().next().is_none());
+
+    terminal.write_all(b"\x1b[200~/quit\x1b[201~\r").unwrap();
+    read_until(&mut terminal, b"\x1b[?1049l").await;
+    assert!(timeout(Duration::from_secs(10), child.wait())
+        .await
+        .expect("TUI shutdown timeout")
+        .expect("wait for isolated CLI")
+        .success());
+    assert_eq!(terminal_flags(&terminal), initial_flags);
+}
+
+#[tokio::test]
 async fn gateway_setup_leaves_the_existing_config_unchanged_when_cancelled() {
     let sandbox = tempfile::tempdir().unwrap();
     let config = sandbox.path().join("hermes/config.yaml");
@@ -270,7 +439,7 @@ async fn gateway_setup_leaves_the_existing_config_unchanged_when_cancelled() {
     std::fs::write(&config, existing).unwrap();
 
     let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["gateway", "setup"]);
+        start_in_pty(sandbox.path(), &["gateway", "setup"], false);
     read_until(&mut terminal, "[✓] API Server".as_bytes()).await;
     terminal.write_all(b"k ").unwrap();
     read_until(&mut terminal, b"none selected").await;
@@ -290,7 +459,7 @@ async fn gateway_setup_leaves_the_existing_config_unchanged_when_cancelled() {
 async fn gateway_setup_saves_the_selected_loopback_api_server() {
     let sandbox = tempfile::tempdir().unwrap();
     let (mut child, mut terminal, initial_flags) =
-        start_in_pty(sandbox.path(), &["gateway", "setup"]);
+        start_in_pty(sandbox.path(), &["gateway", "setup"], false);
     read_until(&mut terminal, b"Select platforms to configure").await;
     terminal.write_all(b"kjk ").unwrap();
     read_until(&mut terminal, "[✓] API Server".as_bytes()).await;
