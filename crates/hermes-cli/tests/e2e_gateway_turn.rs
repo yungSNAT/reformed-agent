@@ -171,14 +171,25 @@ platforms:
             }))
             .send()
             .await
-            .unwrap();
+            .unwrap_or_else(|error| {
+                panic!(
+                    "gateway completion request failed (stream={streaming}): {error}\n{}",
+                    fs::read_to_string(&log).unwrap_or_default()
+                );
+            });
         let status = response.status();
+        let connection = response
+            .headers()
+            .get(reqwest::header::CONNECTION)
+            .and_then(|header| header.to_str().ok())
+            .map(str::to_owned);
         let payload = response.text().await.unwrap();
         assert!(
             status.is_success(),
             "{status}: {payload}\n{}",
             fs::read_to_string(&log).unwrap_or_default()
         );
+        assert_eq!(connection.as_deref(), Some("close"));
         if streaming {
             assert!(payload.ends_with("data: [DONE]\n\n"), "{payload}");
             let reply: String = payload

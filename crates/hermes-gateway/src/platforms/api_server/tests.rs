@@ -431,6 +431,8 @@ fn api_discovery_bodies_expose_capabilities_toolsets_and_headers() {
 
     let response =
         json_http_response(HTTP_OK, &serde_json::json!({"status": "ok"})).expect("json response");
+    assert!(response.contains("Connection: close\r\n"));
+    assert!(sse_http_header().contains("Connection: close\r\n"));
     assert!(response.contains("X-Content-Type-Options: nosniff\r\n"));
     assert!(response.contains("Referrer-Policy: no-referrer\r\n"));
     assert!(response.contains("X-Frame-Options: DENY\r\n"));
