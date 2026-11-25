@@ -424,6 +424,17 @@ fn atomic_write_bytes_with_mode(
                 )));
             }
             check_no_follow_leaf(target, expected_id, expected_id.is_some())?;
+            // FAT derives a file's ID from its directory slot, so the read
+            // file renamed away and a new file in its slot would match above;
+            // the held file must still carry the ID too.
+            if let (Some(expected), Some(existing)) = (expected_id, &held) {
+                if crate::file_identity_from_file(existing) != Some(expected) {
+                    return Err(ConfigError::ParseError(format!(
+                        "target file changed concurrently at {}",
+                        path.display()
+                    )));
+                }
+            }
         }
         drop(held.take());
         replace_temp_file(
