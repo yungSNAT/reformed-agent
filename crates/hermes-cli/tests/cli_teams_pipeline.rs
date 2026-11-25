@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::{json, Value};
 use support::isolated_hermes;
 use wiremock::{
-    matchers::{header, method, path},
+    matchers::{body_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
 };
 
@@ -170,6 +170,134 @@ async fn teams_pipeline_fetch_returns_a_bounded_preview_and_artifacts() {
         fetched["call_record"]["metadata"]["metrics"]["participant_count"],
         1
     );
+    graph.verify().await;
+    assert_eq!(graph.received_requests().await.unwrap().len(), 5);
+}
+
+#[tokio::test]
+async fn teams_pipeline_subscription_commands_update_the_local_store() {
+    use hermes_tools::TeamsPipelineStore;
+    use jiff::{SignedDuration, Timestamp};
+
+    let sandbox = tempfile::tempdir().unwrap();
+    let store_path = sandbox.path().join("teams.json");
+    let graph = MockServer::start().await;
+    let graph_url = format!("{}/v1.0", graph.uri());
+    let notification = format!("{}/fixture-notification", graph.uri());
+    let lifecycle = format!("{}/fixture-lifecycle", graph.uri());
+    let fixture_token = "hermes-subscription-fixture";
+    let authorization = format!("Bearer {fixture_token}");
+    let id = "fixture-subscription";
+    let resource = "communications/callRecords";
+    let now = Timestamp::now();
+    let expiration = format!("{:.0}", now + SignedDuration::from_hours(2));
+    let next_expiration = format!("{:.0}", now + SignedDuration::from_hours(48));
+    let mut created = json!({
+        "resource": resource,
+        "changeType": "created",
+        "expirationDateTime": expiration,
+        "notificationUrl": notification,
+        "lifecycleNotificationUrl": lifecycle,
+        "clientState": "fixture-state",
+        "latestSupportedTlsVersion": "v1_2"
+    });
+    let create_request = created.clone();
+    created["id"] = json!(id);
+    let mut renewed = created.clone();
+    renewed["expirationDateTime"] = json!(next_expiration);
+
+    let collection = "/v1.0/subscriptions";
+    let record = format!("{collection}/{id}");
+    let request = |verb: &str, endpoint: &str| {
+        Mock::given(method(verb))
+            .and(path(endpoint))
+            .and(header("authorization", authorization.as_str()))
+    };
+    request("POST", collection)
+        .and(body_json(create_request))
+        .respond_with(ResponseTemplate::new(201).set_body_json(&created))
+        .expect(1)
+        .mount(&graph)
+        .await;
+    request("GET", collection)
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"value": [&created]})))
+        .expect(2)
+        .mount(&graph)
+        .await;
+    request("PATCH", &record)
+        .and(body_json(json!({"expirationDateTime": next_expiration})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(&renewed))
+        .expect(1)
+        .mount(&graph)
+        .await;
+    request("DELETE", &record)
+        .respond_with(ResponseTemplate::new(204))
+        .expect(1)
+        .mount(&graph)
+        .await;
+
+    let command = || {
+        let mut cmd = isolated_hermes(sandbox.path());
+        cmd.env("MSGRAPH_BASE_URL", &graph_url)
+            .env("MSGRAPH_ACCESS_TOKEN", fixture_token)
+            .args(["teams-pipeline", "--store-path"])
+            .arg(&store_path);
+        cmd
+    };
+    let from_store = || {
+        TeamsPipelineStore::new(&store_path)
+            .unwrap()
+            .get_subscription(id)
+            .unwrap()
+    };
+    let output = stdout(command().args([
+        "subscribe",
+        "--resource",
+        resource,
+        "--notification-url",
+        &notification,
+        "--lifecycle-notification-url",
+        &lifecycle,
+        "--expiration",
+        &expiration,
+        "--client-state",
+        "fixture-state",
+    ]))
+    .await;
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), created);
+    let local = from_store().unwrap();
+    assert_eq!(local["status"], "active");
+    assert_eq!(local["expiration_datetime"], expiration);
+
+    let listed = stdout(command().arg("subscriptions")).await;
+    assert!(listed.contains(&format!("{id}  created  {resource}  expires={expiration}")));
+    let output = stdout(command().args(["maintain-subscriptions", "--dry-run"])).await;
+    let plan: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(plan["dry_run"], true);
+    assert_eq!(plan["candidates"][0]["subscription_id"], id);
+    assert_eq!(plan["renewed_count"], 0);
+    assert_eq!(from_store().unwrap()["expiration_datetime"], expiration);
+    assert_eq!(graph.received_requests().await.unwrap().len(), 3);
+
+    let output =
+        stdout(command().args(["renew-subscription", id, "--expiration", &next_expiration])).await;
+    assert_eq!(serde_json::from_str::<Value>(&output).unwrap(), renewed);
+    let local = from_store().unwrap();
+    assert_eq!(local["expiration_datetime"], next_expiration);
+    assert!(local["latest_renewal_at"].is_string());
+
+    let output = stdout(command().args(["delete-subscription", id])).await;
+    let deletion: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(deletion["deleted"], true);
+    assert_eq!(deletion["removed_local"], true);
+    assert!(from_store().is_none());
+
+    let output = stdout(command().args(["token-health", "--force-refresh"])).await;
+    assert!(!output.contains(fixture_token));
+    let health: Value = serde_json::from_str(&output).unwrap();
+    assert_eq!(health["direct_access_token"], true);
+    assert_eq!(health["last_refresh_succeeded"], true);
+    assert_eq!(health["access_token_length"], fixture_token.len());
     graph.verify().await;
     assert_eq!(graph.received_requests().await.unwrap().len(), 5);
 }
