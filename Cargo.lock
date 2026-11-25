@@ -1848,6 +1848,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "hermes-entrypoint"
+version = "0.22.0"
+
+[[package]]
 name = "hermes-environments"
 version = "0.22.0"
 dependencies = [
@@ -2025,11 +2029,13 @@ dependencies = [
  "hermes-py",
  "jiff",
  "regex",
+ "reqwest",
  "serde",
  "serde_json",
  "sha2 0.10.9",
  "syn 2.0.117",
  "tempfile",
+ "tokio",
  "yaml_serde",
 ]
 
