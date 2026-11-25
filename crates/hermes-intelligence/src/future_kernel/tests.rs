@@ -317,6 +317,31 @@ mod tests {
     }
 
     #[test]
+    fn contextlattice_deep_retrieval_preserves_warnings_for_stale_unsourced_hits() {
+        let request = ContextLatticeMemoryRequest {
+            project: "fixture".into(),
+            topic_path: "surveys/estuary".into(),
+            query: "Latest survey count".into(),
+            mode: "deep".into(),
+        };
+        let stats = ContextLatticeRetrievalStats {
+            result_count: 2,
+            degraded: true,
+            source_count: 0,
+            stale_count: 2,
+            warnings: vec!["Fixture retrieval warning".into()],
+        };
+        let plan = plan_contextlattice_memory_cycle(&request, &stats);
+        assert_eq!(plan.retrieval_mode, "deep");
+        assert!(!plan.should_retry_deep);
+        assert!(plan.requires_readback);
+        assert_eq!(plan.warnings[0], "Fixture retrieval warning");
+        for detail in ["retrieval was degraded", "without source coverage", "2 ContextLattice hits are stale"] {
+            assert!(plan.warnings.iter().any(|warning| warning.contains(detail)));
+        }
+    }
+
+    #[test]
     fn research_synthesis_ranks_primary_sources_above_weak_social_leads() {
         let t = now();
         let official = ResearchSource::new(
