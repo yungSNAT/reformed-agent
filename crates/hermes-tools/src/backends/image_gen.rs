@@ -1092,3 +1092,6 @@ include!("image_gen/provider_config_payloads.rs");
 include!("image_gen/auth_and_save.rs");
 #[cfg(test)]
 mod fal_managed_tests;
+
+#[cfg(test)]
+mod provider_response_tests;
