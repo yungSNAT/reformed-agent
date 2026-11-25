@@ -1369,6 +1369,68 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn backend_lists_and_manually_runs_a_paused_job_then_removes_it() {
+        use crate::backend::ScheduledCronjobBackend;
+        use hermes_tools::CronjobBackend;
+        use serde_json::{json, Value};
+
+        let executor = Arc::new(BlockingTestExecutor::default());
+        executor.release.add_permits(1);
+        let provider = Arc::new(RecordingManagedProvider::default());
+        let (scheduler, dir) = make_executor_scheduler_with_provider(executor.clone(), provider);
+        let scheduler = Arc::new(scheduler);
+        let backend = ScheduledCronjobBackend::new(scheduler.clone());
+        let id = scheduler
+            .create_job(CronJob::new("0 * * * *", "Summarise the sample report"))
+            .await
+            .unwrap();
+
+        let paused: Value = serde_json::from_str(&backend.pause(&id).await.unwrap()).unwrap();
+        assert_eq!(paused, json!({"action": "paused", "id": id}));
+        let listing: Value = serde_json::from_str(&backend.list().await.unwrap()).unwrap();
+        assert_eq!(listing["count"], 1);
+        assert_eq!(listing["jobs"][0]["id"], id);
+        assert_eq!(listing["jobs"][0]["status"], "paused");
+
+        let ran = tokio::time::timeout(StdDuration::from_secs(5), backend.run(&id))
+            .await
+            .expect("manual run completed")
+            .unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&ran).unwrap(),
+            json!({
+                "action": "ran", "id": id,
+                "finished_naturally": true, "turns": 1,
+                "output": format!("finished {id}"),
+            })
+        );
+        assert_eq!(executor.recorded_prompts(), ["Summarise the sample report"]);
+        let persisted = FileJobPersistence::with_dir(dir.path().to_path_buf());
+        let jobs = persisted.load_jobs().await.unwrap();
+        assert_eq!(jobs.len(), 1);
+        assert_eq!(jobs[0].status, JobStatus::Paused);
+        assert_eq!(jobs[0].run_count, 0);
+        assert!(jobs[0].last_run.is_some());
+        assert_eq!(jobs[0].last_output, Some(format!("finished {id}")));
+
+        let resumed: Value = serde_json::from_str(&backend.resume(&id).await.unwrap()).unwrap();
+        assert_eq!(resumed, json!({"action": "resumed", "id": id}));
+        assert_eq!(
+            scheduler.get_job(&id).await.unwrap().status,
+            JobStatus::Active
+        );
+        let removed: Value = serde_json::from_str(&backend.remove(&id).await.unwrap()).unwrap();
+        assert_eq!(removed, json!({"action": "removed", "id": id}));
+        assert!(scheduler.get_job(&id).await.is_none());
+        assert!(persisted.load_jobs().await.unwrap().is_empty());
+        assert!(matches!(
+            backend.remove(&id).await,
+            Err(hermes_core::ToolError::ExecutionFailed(message))
+                if message == format!("cron job not found: {id}")
+        ));
+    }
+
+    #[tokio::test]
     async fn managed_provider_reconciles_mutations_and_cancels_disabled_jobs() {
         let executor = Arc::new(BlockingTestExecutor::default());
         let provider = Arc::new(RecordingManagedProvider::default());
