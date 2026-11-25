@@ -36,7 +36,7 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Install cargo-nextest
-        uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2.90.3
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-nextest@0.9.150
           fallback: none
@@ -136,7 +136,7 @@ jobs:
           rustup toolchain install
           rustup component add llvm-tools
       - name: Install cargo-llvm-cov
-        uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2.90.5
         with:
           tool: cargo-llvm-cov@0.9.1
           fallback: none
