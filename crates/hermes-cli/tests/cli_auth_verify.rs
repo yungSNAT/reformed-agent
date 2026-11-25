@@ -684,3 +684,97 @@ async fn qwen_verification_omits_untrusted_refresh_error_details() {
     );
     assert!(stdout.contains("Check the provider's OAuth sign-in and try again."));
 }
+
+#[tokio::test]
+async fn qwen_login_and_pool_import_use_the_isolated_cli_state() {
+    let sandbox = tempfile::tempdir().unwrap();
+    let source = sandbox.path().join("qwen-fixture.json");
+    let state_path = sandbox.path().join("hermes-auth-fixture.json");
+    let access = "synthetic-qwen-access";
+    let refresh = "synthetic-qwen-refresh";
+    let expires = jiff::Timestamp::now().as_millisecond() + 3_600_000;
+    let source_contents = serde_json::json!({
+        "access_token": access,
+        "refresh_token": refresh,
+        "expiry_date": expires,
+    })
+    .to_string();
+    std::fs::write(&source, &source_contents).unwrap();
+
+    let endpoint = MockServer::start().await;
+    assert!(endpoint.address().ip().is_loopback());
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(500))
+        .expect(0)
+        .mount(&endpoint)
+        .await;
+
+    for (args, expected) in [
+        (
+            &["auth", "login", "qwen-oauth"][..],
+            "stored as provider 'qwen-oauth'",
+        ),
+        (
+            &[
+                "auth",
+                "add",
+                "qwen-oauth",
+                "--type",
+                "oauth",
+                "--label",
+                "field-notes",
+            ],
+            "Added Qwen OAuth credential (label='field-notes'",
+        ),
+        (
+            &["auth", "list", "qwen-oauth"],
+            "qwen-oauth (1 credentials):",
+        ),
+        (
+            &["auth", "verify", "qwen-oauth"],
+            "source=qwen-cli, credential_present=true, oauth_state_present=true",
+        ),
+        (&["secrets", "list"], "qwen-oauth"),
+    ] {
+        let output = tokio::time::timeout(
+            Duration::from_secs(20),
+            isolated_hermes(sandbox.path())
+                .env("HERMES_QWEN_CLI_AUTH_FILE", &source)
+                .env("HERMES_AUTH_FILE", &state_path)
+                .env(
+                    "HERMES_QWEN_OAUTH_TOKEN_URL",
+                    format!("{}/token", endpoint.uri()),
+                )
+                .env("HERMES_QWEN_BASE_URL", endpoint.uri())
+                .stdin(std::process::Stdio::null())
+                .args(args)
+                .output(),
+        )
+        .await
+        .expect("offline Qwen CLI timeout")
+        .unwrap();
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let stderr = String::from_utf8(output.stderr).unwrap();
+        assert!(output.status.success(), "{args:?}: {stdout}\n{stderr}");
+        assert!(stdout.contains(expected), "{args:?}: {stdout}");
+        assert!(!stdout.contains(access) && !stdout.contains(refresh));
+        assert!(!stderr.contains(access) && !stderr.contains(refresh));
+
+        let saved: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(&state_path).unwrap()).unwrap();
+        let state = &saved["providers"]["qwen-oauth"];
+        assert_eq!(state["access_token"], access);
+        assert_eq!(state["refresh_token"], refresh);
+        assert_eq!(state["expiry_date"], expires);
+    }
+    assert_eq!(std::fs::read_to_string(&source).unwrap(), source_contents);
+
+    let vault = sandbox
+        .path()
+        .join("hermes")
+        .join("auth")
+        .join("tokens.json");
+    let stored = std::fs::read_to_string(vault).unwrap();
+    assert!(!stored.is_empty());
+    assert!(!stored.contains(access) && !stored.contains(refresh));
+}
