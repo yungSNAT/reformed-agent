@@ -315,6 +315,62 @@
     }
 
     #[test]
+    fn whatsapp_qr_renders_bridge_formats_and_reports_unavailable_codes() {
+        let output = run_scenario("whatsapp-qr", "");
+        assert_output(
+            &output,
+            &[
+                "\n  ▀\n",
+                "\n  ██\n",
+                "\n  ▄▀\n",
+                "Bridge returned HTTP 503",
+                "Could not connect to bridge at fixture://",
+            ],
+        );
+        assert_eq!(output.matches("Scan this QR code").count(), 3);
+    }
+
+    async fn whatsapp_qr_bridge(home: &Path) {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let config = home.join("config.yaml");
+        for (route, response) in [
+            (
+                "primary",
+                ResponseTemplate::new(200).set_body_json(json!({"qr":"a", "data":"aaaa"})),
+            ),
+            (
+                "alternative",
+                ResponseTemplate::new(200).set_body_json(json!({"data":"aaaa"})),
+            ),
+            ("raw", ResponseTemplate::new(200).set_body_string("baab")),
+            ("unavailable", ResponseTemplate::new(503)),
+        ] {
+            Mock::given(method("GET"))
+                .and(path(format!("/{route}/qr")))
+                .respond_with(response)
+                .expect(1)
+                .mount(&server)
+                .await;
+            std::fs::write(
+                &config,
+                format!("platforms:\n  whatsapp:\n    bridge_url: {}/{route}\n", server.uri()),
+            )
+            .unwrap();
+            handle_cli_whatsapp(Some("qr".into())).await.unwrap();
+        }
+        let unsupported = server.uri().replacen("http:", "fixture:", 1);
+        std::fs::write(
+            config,
+            format!("platforms:\n  whatsapp:\n    bridge_url: {unsupported}\n"),
+        )
+        .unwrap();
+        handle_cli_whatsapp(Some("qr".into())).await.unwrap();
+    }
+
+    #[test]
     fn pairing_reports_empty_store_and_requires_device_ids() {
         assert_output(
             &run_scenario("pairing", ""),
@@ -420,6 +476,7 @@
             "mutations" => mutations(&home).await,
             "repair" => repair(&home).await,
             "whatsapp-status" => whatsapp_status_and_art(&home).await,
+            "whatsapp-qr" => whatsapp_qr_bridge(&home).await,
             "whatsapp-setup" => {
                 handle_cli_whatsapp(Some("setup".into())).await.unwrap();
                 assert!(!home.join("config.yaml").exists());
