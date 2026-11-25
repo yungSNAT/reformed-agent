@@ -92,3 +92,68 @@ impl OAuthManager {
         *guard = None;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn cached_credentials_refresh_early_and_survive_failed_refreshes() {
+        let calls = Arc::new(Mutex::new(Vec::new()));
+        let received = Arc::clone(&calls);
+        let manager = OAuthManager::new(Arc::new(move |refresh| {
+            let received = Arc::clone(&received);
+            Box::pin(async move {
+                let count = {
+                    let mut calls = received.lock().await;
+                    calls.push(refresh);
+                    calls.len()
+                };
+                tokio::task::yield_now().await;
+                match count {
+                    1 => Ok(OAuthToken {
+                        access_token: "initial".into(),
+                        refresh_token: Some("renewal".into()),
+                        expires_in_secs: 5,
+                    }),
+                    2 => Err(AgentError::LlmApi("fixture refresh failed".into())),
+                    3 | 4 => Ok(OAuthToken {
+                        access_token: format!("credential-{count}"),
+                        refresh_token: None,
+                        expires_in_secs: 120,
+                    }),
+                    _ => panic!("unexpected fetch {count}"),
+                }
+            })
+        }));
+
+        assert_eq!(manager.access_token().await.unwrap(), "initial");
+        assert!(matches!(
+            manager.access_token().await,
+            Err(AgentError::LlmApi(message)) if message == "fixture refresh failed"
+        ));
+        assert_eq!(
+            manager.authorization_header().await.unwrap(),
+            "Bearer credential-3"
+        );
+        assert_eq!(manager.access_token().await.unwrap(), "credential-3");
+        manager.clear().await;
+        let (access, header) = tokio::join!(manager.access_token(), manager.authorization_header());
+        assert_eq!(access.unwrap(), "credential-4");
+        assert_eq!(header.unwrap(), "Bearer credential-4");
+        assert_eq!(
+            calls.lock().await.as_slice(),
+            &[None, Some("renewal".into()), Some("renewal".into()), None]
+        );
+    }
+
+    #[test]
+    fn bearer_header_preserves_the_access_value() {
+        let credential = OAuthToken {
+            access_token: "fixture-value".into(),
+            refresh_token: None,
+            expires_in_secs: 120,
+        };
+        assert_eq!(credential.bearer(), "Bearer fixture-value");
+    }
+}
