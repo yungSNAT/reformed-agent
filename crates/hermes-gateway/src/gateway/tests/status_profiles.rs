@@ -869,7 +869,9 @@ async fn gateway_compress_command_emits_summary_without_warning() {
         .add_message(&session_key, Message::system("sys"))
         .await;
     for i in 0..40 {
-        let message = if i % 2 == 0 {
+        let message = if i == 0 {
+            Message::user(format!("  {}\n  old draft  ", "🧩".repeat(190)))
+        } else if i % 2 == 0 {
             Message::user(format!("turn {i} content"))
         } else {
             Message::assistant(format!("turn {i} content"))
@@ -897,15 +899,46 @@ async fn gateway_compress_command_emits_summary_without_warning() {
     }
 
     let updated = gw.session_manager.get_messages(&session_key).await;
-    assert!(
-        updated.iter().any(|m| {
-            m.content
-                .as_deref()
-                .unwrap_or("")
-                .contains("[CONTEXT COMPACTION] Earlier conversation was compacted")
-        }),
-        "summary marker should be persisted into compressed transcript"
+    assert_eq!(updated.len(), 25);
+    assert_eq!(updated[0].content.as_deref(), Some("sys"));
+    assert_eq!(updated[1].role, MessageRole::Assistant);
+    let summary = updated[1].content.as_deref().unwrap();
+    let lines: Vec<_> = summary.lines().collect();
+    assert!(lines[0].starts_with("[CONTEXT COMPACTION] Earlier conversation was compacted"));
+    assert_eq!(lines.len(), 7);
+    assert_eq!(lines[1], format!("• user: {}...", "🧩".repeat(177)));
+    assert_eq!(lines[2], "• assistant: turn 1 content");
+    assert_eq!(lines[6], "• assistant: turn 5 content");
+    assert_eq!(updated[2].content.as_deref(), Some("turn 17 content"));
+    assert_eq!(updated[24].content.as_deref(), Some("turn 39 content"));
+}
+
+#[tokio::test]
+async fn gateway_context_compaction_keeps_short_history_and_rejects_stale_generation() {
+    let sessions = Arc::new(SessionManager::new(SessionConfig::default()));
+    let gw = Gateway::new(
+        sessions.clone(),
+        DmManager::with_pair_behavior(),
+        GatewayConfig::default(),
     );
+    let admission = sessions
+        .admit_session("test", "compaction-short", "user", None)
+        .await
+        .unwrap();
+    let key = sessions.compose_session_key("test", "compaction-short", "user");
+    let history = [Message::system("Drafting instructions"), Message::user("Review this draft")];
+    for message in &history {
+        sessions.add_message(&key, message.clone()).await;
+    }
+    let outcome = gw.compress_context(&key, &admission.generation, 2).await;
+    assert!(matches!(outcome, Some(CompressionOutcome::Unchanged)));
+    assert_eq!(sessions.get_messages(&key).await, history);
+
+    sessions.reset_session(&key).await;
+    let new_message = Message::user("Start a new draft");
+    sessions.add_message(&key, new_message.clone()).await;
+    assert!(gw.compress_context(&key, &admission.generation, 0).await.is_none());
+    assert_eq!(sessions.get_messages(&key).await, [new_message]);
 }
 
 #[tokio::test]
