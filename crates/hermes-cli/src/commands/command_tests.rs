@@ -1361,6 +1361,8 @@ note the fixtures"));
     include!("tests/background_jobs.rs");
     include!("tests/surface_and_compression.rs");
     include!("tests/tool_scope.rs");
+    #[cfg(unix)]
+    include!("tests/quorum_policy_contract.rs");
 
     #[cfg(unix)]
     async fn command_output(app: &mut App, command: &str, args: &[&str]) -> String {
