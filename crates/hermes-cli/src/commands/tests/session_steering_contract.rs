@@ -1,6 +1,30 @@
 use super::*;
 
 #[tokio::test]
+async fn non_tui_ask_displays_options_and_picks_the_recommended_default() {
+    if !crate::isolated_test_profile::enter(
+        "commands::tests::session_steering_contract::non_tui_ask_displays_options_and_picks_the_recommended_default",
+    ) {
+        return;
+    }
+    let mut app = build_test_app_with_stream(&hermes_config::hermes_home()).await;
+    let usage = command_output(&mut app, "/ask", &[]).await;
+    assert!(usage.contains("Usage: `/ask <question>"));
+    let incomplete = command_output(&mut app, "/ask", &["Which note? | "]).await;
+    assert!(incomplete.contains("For non-TUI usage provide options"));
+
+    let request = ["Which note?", "|", "Summary", "|", "Details (recommended)"];
+    let output = command_output(&mut app, "/ask", &request).await;
+    assert!(output.contains("Q: Which note?"));
+    assert!(output.contains("1. Summary"));
+    assert!(output.contains("2. Details (recommended)"));
+    assert!(output.contains("Selected: Details (recommended)"));
+
+    let fallback = command_output(&mut app, "/ask", &["Which note? | Summary | Details"]).await;
+    assert!(fallback.contains("Selected: Summary"));
+}
+
+#[tokio::test]
 async fn session_handoff_queues_only_enabled_destinations_and_resolves_the_home_channel() {
     if !crate::isolated_test_profile::enter(
         "commands::tests::session_steering_contract::session_handoff_queues_only_enabled_destinations_and_resolves_the_home_channel",
