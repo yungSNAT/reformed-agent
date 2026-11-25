@@ -80,6 +80,81 @@ mod tests {
     }
 
     #[test]
+    fn keyboard_picker_pages_filters_and_returns_actions() {
+        use crossterm::event::{KeyCode, KeyModifiers};
+
+        let mut state = TuiState::default();
+        let key = |code| KeyEvent::new(code, KeyModifiers::NONE);
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Up)),
+            ModalAction::None
+        ));
+        let items = (1..=12)
+            .map(|index| PickerItem {
+                label: format!("Provider {index}"),
+                detail: String::new(),
+                value: index.to_string(),
+            })
+            .collect();
+        let mut modal = PickerModal::new(PickerKind::ModelProvider, "Fixture provider", items);
+        modal.page_size = 3;
+        state.open_modal(modal);
+
+        for (code, selected) in [
+            (KeyCode::End, 11),
+            (KeyCode::Down, 0),
+            (KeyCode::Up, 11),
+            (KeyCode::PageDown, 2),
+            (KeyCode::PageUp, 11),
+            (KeyCode::Home, 0),
+        ] {
+            assert!(matches!(
+                state.handle_modal_key(key(code)),
+                ModalAction::None
+            ));
+            assert_eq!(state.modal.as_ref().unwrap().selected_filtered, selected);
+        }
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Char('0'))),
+            ModalAction::Confirm
+        ));
+        assert_eq!(
+            state.modal.as_ref().unwrap().selected_item().unwrap().value,
+            "10"
+        );
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Char('d'))),
+            ModalAction::DisconnectProvider
+        ));
+
+        for character in "provider 12".chars().filter(|c| *c != ' ') {
+            assert!(matches!(
+                state.handle_modal_key(key(KeyCode::Char(character))),
+                ModalAction::None
+            ));
+        }
+        let filtered = state.modal.as_ref().unwrap();
+        assert_eq!(filtered.query, "provider12");
+        assert_eq!(filtered.filtered_indices.len(), 1);
+        assert_eq!(filtered.selected_item().unwrap().value, "12");
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Backspace)),
+            ModalAction::None
+        ));
+        assert!(state.modal.as_ref().unwrap().filtered_indices.len() > 1);
+
+        let clear = KeyEvent::new(KeyCode::Char('u'), KeyModifiers::CONTROL);
+        assert!(matches!(state.handle_modal_key(clear), ModalAction::None));
+        let reset = state.modal.as_ref().unwrap();
+        assert_eq!(reset.filtered_indices.len(), 12);
+        assert!(reset.query.is_empty());
+        assert!(matches!(
+            state.handle_modal_key(key(KeyCode::Esc)),
+            ModalAction::Close
+        ));
+    }
+
+    #[test]
     fn test_reformation_skin_renders_black_canvas() {
         use ratatui::backend::TestBackend;
 
